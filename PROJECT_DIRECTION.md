@@ -74,6 +74,9 @@ wasm-pack build --target web --out-dir pkg
 ---
 
 ## Priority List
+
+These are the high level tasks to focus on next:
+
 - [ ] Make sure all code in source that is doing trailer made work to satisfy the test is removed. Source should not have any awareness of test 
 - [ ] Improve testing infrastructure to configure the environment before dunking the tests based on @ directives 
 - [ ] Before diving into more parser and checker enhancement lets review the code and make sure architecture is solid 
