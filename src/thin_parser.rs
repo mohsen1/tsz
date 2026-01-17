@@ -638,6 +638,21 @@ impl ThinParserState {
         }
     }
 
+    /// Error: Comma expected (TS1005) - specifically for missing commas between parameters/arguments
+    fn error_comma_expected(&mut self) {
+        self.error_token_expected(",");
+    }
+
+    /// Check if current token could start a parameter
+    fn is_parameter_start(&self) -> bool {
+        // Parameters can start with modifiers, identifiers, or binding patterns
+        self.is_parameter_modifier()
+            || self.is_token(SyntaxKind::DotDotDotToken) // rest parameter
+            || self.is_identifier_or_keyword()
+            || self.is_token(SyntaxKind::OpenBraceToken) // object binding pattern
+            || self.is_token(SyntaxKind::OpenBracketToken) // array binding pattern
+    }
+
     /// Error: Unterminated template literal (TS1160)
     fn error_unterminated_template_literal_at(&mut self, start: u32, end: u32) {
         use crate::checker::types::diagnostics::diagnostic_codes;
@@ -2306,6 +2321,12 @@ impl ThinParserState {
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                // Check if there's another parameter without comma - this is a TS1005 error
+                if !self.is_token(SyntaxKind::CloseParenToken)
+                    && self.is_parameter_start() {
+                    // Emit TS1005 for missing comma between parameters: f(a b)
+                    self.error_comma_expected();
+                }
                 break;
             }
         }
@@ -6876,6 +6897,10 @@ impl ThinParserState {
                 let operator = self.token() as u16;
                 self.next_token();
                 let operand = self.parse_unary_expression();
+                if operand.is_none() {
+                    // Emit TS1109 for incomplete unary expression: +[missing], ++[missing], etc.
+                    self.error_expression_expected();
+                }
                 let end_pos = self.token_end();
 
                 self.arena.add_unary_expr(
@@ -6890,6 +6915,10 @@ impl ThinParserState {
                 let operator = self.token() as u16;
                 self.next_token();
                 let operand = self.parse_unary_expression();
+                if operand.is_none() {
+                    // Emit TS1109 for incomplete unary expression: typeof[missing], void[missing], delete[missing]
+                    self.error_expression_expected();
+                }
                 let end_pos = self.token_end();
 
                 self.arena.add_unary_expr(
