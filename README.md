@@ -14,6 +14,6 @@ This project is not ready for general use yet. The interface and distribution ar
 - `tsz` CLI (native binaries for major operating systems)
 - Rust crate `tsz` (library + CLI)
 - WASM bindings
-- npm package `@tsz/tsz` (primary)
-- compat package `@tsz/tsc` that exposes a `tsc` executable so tooling can swap without noticing
+- npm package `@mohsen/tsz` (primary)
+- compat package `@mohsen/tsz-tsc-compat` that exposes a `tsc` executable so tooling can swap without noticing
 - Playground
