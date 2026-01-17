@@ -19,6 +19,34 @@ const DEFAULT_LIB_PATH = join(__dirname, '../ts-tests/lib/lib.d.ts');
 const DEFAULT_LIB_SOURCE = readFileSync(DEFAULT_LIB_PATH, 'utf-8');
 const DEFAULT_LIB_NAME = 'lib.d.ts';
 
+/**
+ * Parse TypeScript test directives from source code.
+ *
+ * Supported directives:
+ * - @strict: boolean - enable all strict type checking options
+ * - @noImplicitAny: boolean - raise error on implied 'any' type
+ * - @strictNullChecks: boolean - enable strict null checks
+ * - @target: string - ECMAScript target version (es5, es2015, es2020, esnext, etc.)
+ * - @module: string - module code generation (commonjs, esnext, etc.)
+ * - @lib: string - comma-separated list of lib files (e.g., es2020,dom)
+ * - @declaration: boolean - emit declaration files
+ * - @noEmit: boolean - do not emit output
+ * - @experimentalDecorators: boolean - enable experimental decorators
+ * - @allowSyntheticDefaultImports: boolean - allow default imports from modules with no default export
+ * - @esModuleInterop: boolean - enable ES module interoperability
+ * - @skipLibCheck: boolean - skip type checking of declaration files
+ * - @skipDefaultLibCheck: boolean - skip type checking of default library declaration files
+ * - @moduleResolution: string - module resolution strategy (node, classic, bundler, node16, nodenext)
+ * - @allowJs: boolean - allow JavaScript files to be compiled
+ * - @checkJs: boolean - report errors in JavaScript files
+ * - @jsx: string - JSX code generation (preserve, react, react-native, react-jsx, react-jsxdev)
+ * - @isolatedModules: boolean - ensure each file can be safely transpiled without relying on other imports
+ * - @traceResolution: boolean - enable tracing of module resolution process
+ * - @filename: string - marks multi-file test boundaries (special directive)
+ *
+ * @param {string} code - Source code with test directives
+ * @returns {{options: Object, isMultiFile: boolean, cleanCode: string, files: Array}} Parsed directives and cleaned code
+ */
 function parseTestDirectives(code) {
   const lines = code.split('\n');
   const options = {};
@@ -141,6 +169,24 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
     if (!testOptions.nolib) {
       parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
     }
+
+    // Build compiler options from test directives
+    const compilerOptions = {};
+    if (testOptions.strict !== undefined) {
+      compilerOptions.strict = testOptions.strict;
+    }
+    if (testOptions.noimplicitany !== undefined) {
+      compilerOptions.noImplicitAny = testOptions.noimplicitany;
+    }
+    if (testOptions.strictnullchecks !== undefined) {
+      compilerOptions.strictNullChecks = testOptions.strictnullchecks;
+    }
+
+    // Apply compiler options to the parser
+    if (Object.keys(compilerOptions).length > 0) {
+      parser.setCompilerOptions(JSON.stringify(compilerOptions));
+    }
+
     parser.parseSourceFile();
 
     const parseDiagsJson = parser.getDiagnosticsJson();
