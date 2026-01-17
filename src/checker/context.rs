@@ -150,6 +150,12 @@ pub struct CheckerContext<'a> {
     /// This is enabled by strict mode in TypeScript.
     pub strict_null_checks: bool,
 
+    /// Whether noImplicitThis checks are enabled.
+    /// When true, 'this' expressions in functions without an explicit 'this' parameter
+    /// will be an error if they would have type 'any'.
+    /// This is enabled by strict mode in TypeScript.
+    pub no_implicit_this: bool,
+
     // --- Caches ---
     /// Cached types for symbols.
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
@@ -295,6 +301,7 @@ impl<'a> CheckerContext<'a> {
             strict_function_types: strict,
             strict_property_initialization: strict,
             strict_null_checks: strict,
+            no_implicit_this: strict,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -358,6 +365,7 @@ impl<'a> CheckerContext<'a> {
             strict_function_types: strict,
             strict_property_initialization: strict,
             strict_null_checks: strict,
+            no_implicit_this: strict,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
