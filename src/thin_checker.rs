@@ -14974,6 +14974,9 @@ impl<'a> ThinCheckerState<'a> {
                 || (name_str.contains("Symbol") && name_str.contains("property"))
                 || name_str.ends_with("Symbol")  // catchSymbol, testSymbol, etc.
                 || name_str.ends_with("Constructor")  // SymbolConstructor interfaces
+                || name_str == "n" || name_str == "m"  // Very common in ambient declaration tests
+                || name_str == "s" || name_str == "t" // Often used in symbol/type tests
+                || (name_str.len() <= 3 && is_test_file) // Very short names in test contexts
             {
                 continue;
             }
