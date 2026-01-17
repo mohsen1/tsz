@@ -72,6 +72,13 @@ pub struct CompilerOptions {
 #[derive(Debug, Clone, Default)]
 pub struct CheckerOptions {
     pub strict: bool,
+    pub no_implicit_any: bool,
+    pub no_implicit_returns: bool,
+    pub no_implicit_this: bool,
+    pub strict_null_checks: bool,
+    pub strict_function_types: bool,
+    pub strict_property_initialization: bool,
+    pub use_unknown_in_catch_variables: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -330,6 +337,13 @@ pub fn resolve_compiler_options(
 
     if let Some(strict) = options.strict {
         resolved.checker.strict = strict;
+        // In TypeScript, "strict" enables a set of strict type-checking options
+        resolved.checker.no_implicit_any = strict;
+        resolved.checker.no_implicit_this = strict;
+        resolved.checker.strict_null_checks = strict;
+        resolved.checker.strict_function_types = strict;
+        resolved.checker.strict_property_initialization = strict;
+        resolved.checker.use_unknown_in_catch_variables = strict;
     }
 
     if let Some(no_emit) = options.no_emit {

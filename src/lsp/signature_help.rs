@@ -189,7 +189,16 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         // 5. Create checker with persistent cache if available
-        let strict = self.strict;
+        let compiler_options = crate::cli::config::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+        };
         let mut checker = if let Some(cache) = type_cache.take() {
             ThinCheckerState::with_cache(
                 self.arena,
@@ -197,7 +206,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 self.interner,
                 self.file_name.clone(),
                 cache,
-                strict,
+                compiler_options,
             )
         } else {
             ThinCheckerState::new(
@@ -205,7 +214,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 self.binder,
                 self.interner,
                 self.file_name.clone(),
-                strict,
+                compiler_options,
             )
         };
 
