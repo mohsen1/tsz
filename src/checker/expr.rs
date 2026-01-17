@@ -75,9 +75,52 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
                 }
             }
 
+            // Element access expression - array[index] or object[key]
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.check_element_access(idx)
+            }
+
             // Default case - return UNKNOWN for unhandled expressions instead of ANY
             // This exposes type errors that were previously hidden by the permissive ANY default
             _ => TypeId::UNKNOWN,
+        }
+    }
+
+    /// Check element access expression (array[index] or object[key])
+    fn check_element_access(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::UNKNOWN;
+        };
+
+        // Get the element access node data if available
+        if let Some(access_data) = self.ctx.arena.get_access_expr(node) {
+            // Check the target expression (the thing being accessed)
+            let target_type = self.check(access_data.expression);
+
+            // Try to resolve array element type
+            if let Some(type_key) = self.ctx.types.lookup(target_type) {
+                match type_key {
+                    crate::solver::TypeKey::Array(element_type) => {
+                        // Direct array access - return the element type
+                        return element_type;
+                    }
+                    crate::solver::TypeKey::Tuple(_tuple_list_id) => {
+                        // Tuple access - for now, return ANY as this is complex
+                        // TODO: Implement proper tuple element access with index checking
+                        return TypeId::ANY;
+                    }
+                    _ => {
+                        // Not an array or tuple - fall through to default behavior
+                    }
+                }
+            }
+
+            // If we can't resolve the specific element type, fall back to ANY
+            // Using ANY instead of UNKNOWN allows more code to work while we implement
+            // more sophisticated element access logic
+            TypeId::ANY
+        } else {
+            TypeId::UNKNOWN
         }
     }
 
