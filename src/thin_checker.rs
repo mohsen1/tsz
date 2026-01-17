@@ -14510,8 +14510,10 @@ impl<'a> ThinCheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
-            // Check for unused declarations (6133)
-            self.check_unused_declarations();
+            // NOTE: Unused declarations (TS6133) are only reported in TypeScript when
+            // noUnusedLocals/noUnusedParameters compiler options are enabled (OFF by default).
+            // Skipping this check to match TypeScript's default behavior.
+            // self.check_unused_declarations();
         }
     }
 
