@@ -3772,7 +3772,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let rest_param = if let Some(rest_param) = source.params.last() {
                 rest_param
             } else {
-                return SubtypeResult::False;
+                return None;  // Invalid rest parameter - should not happen
             };
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
             let rest_is_top = self.allow_bivariant_rest
