@@ -660,8 +660,9 @@ impl<'a> ThinCheckerState<'a> {
                     // Arrow functions capture `this` from their enclosing scope, so they
                     // should NOT trigger TS2683. We need to skip past arrow functions
                     // to find the actual enclosing function that defines the `this` context.
-                    if self.find_enclosing_non_arrow_function(idx).is_some() {
+                    if self.ctx.no_implicit_this && self.find_enclosing_non_arrow_function(idx).is_some() {
                         // TS2683: 'this' implicitly has type 'any'
+                        // Only emit when noImplicitThis is enabled
                         use crate::checker::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages,
                         };
@@ -672,8 +673,8 @@ impl<'a> ThinCheckerState<'a> {
                         );
                         TypeId::ANY
                     } else {
-                        // Outside function or only inside arrow functions - use ANY for recovery
-                        // Arrow functions will capture this from outer scope, or it becomes any
+                        // Outside function, only inside arrow functions, or noImplicitThis disabled
+                        // Use ANY for recovery without error
                         TypeId::ANY
                     }
                 }
@@ -7437,10 +7438,12 @@ impl<'a> ThinCheckerState<'a> {
                 if is_super_call {
                     return TypeId::VOID;
                 }
-                // Check if it's a class constructor called without 'new' (TS2348)
+                // Check if it's specifically a class constructor called without 'new' (TS2348)
+                // Only emit TS2348 for types that have construct signatures but zero call signatures
                 if self.is_class_constructor_type(callee_type) {
                     self.error_class_constructor_without_new_at(callee_type, call.expression);
                 } else {
+                    // For other non-callable types, emit the generic not-callable error
                     self.error_not_callable_at(callee_type, call.expression);
                 }
                 TypeId::ERROR
@@ -13485,6 +13488,12 @@ impl<'a> ThinCheckerState<'a> {
             return;
         }
 
+        // Additional suppression for ANY types - ANY should be assignable to and from any type
+        // This matches TypeScript's behavior where any bypasses type checking
+        if source == TypeId::ANY || target == TypeId::ANY {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -14100,6 +14109,15 @@ impl<'a> ThinCheckerState<'a> {
                 !shape.construct_signatures.is_empty()
             }
             _ => false,
+        }
+    }
+
+    fn is_class_symbol(&self, symbol_id: SymbolId) -> bool {
+        use crate::binder::symbol_flags;
+        if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
+            (symbol.flags & symbol_flags::CLASS) != 0
+        } else {
+            false
         }
     }
 
@@ -16631,7 +16649,29 @@ impl<'a> ThinCheckerState<'a> {
                     };
 
                 // Try to resolve the heritage symbol
-                if self.resolve_heritage_symbol(expr_idx).is_none() {
+                if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
+                    // Symbol was resolved - check if it represents a constructor type for extends clauses
+                    if is_extends_clause {
+                        let symbol_type = self.get_type_of_symbol(heritage_sym);
+                        if !self.is_constructor_type(symbol_type) && !self.is_class_symbol(heritage_sym) {
+                            // Resolved to a non-constructor type - emit TS2507
+                            if let Some(name) = self.heritage_name_text(expr_idx) {
+                                use crate::checker::types::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages, format_message,
+                                };
+                                let message = format_message(
+                                    diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                    &[&name],
+                                );
+                                self.error_at_node(
+                                    expr_idx,
+                                    &message,
+                                    diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+                                );
+                            }
+                        }
+                    }
+                } else {
                     if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
                         // Check for literals - emit TS2507 for extends clauses
                         let literal_type_name: Option<&str> = match expr_node.kind {

@@ -2264,7 +2264,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_mapped_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        return PropertyAccessResult::IsUnknown;
+                        // Instead of returning IsUnknown (which causes TS2571), treat as property not found
+                        // This handles circular references and deep nesting more conservatively
+                        return PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom
+                                .unwrap_or_else(|| self.interner.intern_string(prop_name)),
+                        };
                     }
                 };
 
@@ -2287,7 +2293,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let _guard = match self.enter_mapped_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
-                        return PropertyAccessResult::IsUnknown;
+                        return PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom
+                                .unwrap_or_else(|| self.interner.intern_string(prop_name)),
+                        };
                     }
                 };
 
