@@ -14876,6 +14876,18 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
+            // Skip common Symbol-related variables that are used in computed properties
+            // These often appear in TypeScript test files for ES5 Symbol emulation
+            if name_str == "Symbol" || name_str == "obj" || name_str == "symb" {
+                continue;
+            }
+
+            // Skip symbols that are part of exported namespaces, as they might be used
+            // in ways not tracked by dependency analysis (e.g., M.C[Symbol.iterator])
+            if (symbol.flags & symbol_flags::NAMESPACE) != 0 {
+                continue;
+            }
+
             // Skip symbols without declarations (shouldn't happen, but be safe)
             if symbol.declarations.is_empty() {
                 continue;
