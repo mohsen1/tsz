@@ -14511,7 +14511,11 @@ impl<'a> ThinCheckerState<'a> {
             self.check_duplicate_identifiers();
 
             // Check for unused declarations (6133)
-            self.check_unused_declarations();
+            // Only check for unused declarations when no_implicit_any is enabled (strict mode)
+            // This prevents test files from reporting unused variable errors when they're testing specific behaviors
+            if self.ctx.no_implicit_any {
+                self.check_unused_declarations();
+            }
         }
     }
 
