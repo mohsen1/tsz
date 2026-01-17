@@ -435,7 +435,7 @@ impl<'a> Completions<'a> {
         let file_name = self.file_name.as_ref()?;
 
         let mut cache_ref = type_cache;
-        let compiler_options = crate::cli::config::CheckerOptions {
+        let compiler_options = crate::checker::context::CheckerOptions {
             strict: self.strict,
             no_implicit_any: self.strict,
             no_implicit_returns: false,
@@ -627,7 +627,7 @@ impl<'a> Completions<'a> {
 
         // 2. Determine the contextual type (expected type)
         let mut cache_ref = type_cache;
-        let compiler_options = crate::cli::config::CheckerOptions {
+        let compiler_options = crate::checker::context::CheckerOptions {
             strict: self.strict,
             no_implicit_any: self.strict,
             no_implicit_returns: false,

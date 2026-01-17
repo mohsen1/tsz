@@ -437,7 +437,7 @@ if (isString(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -481,7 +481,7 @@ if (guard(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -566,7 +566,7 @@ if (assertString(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -606,7 +606,7 @@ x;
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -684,7 +684,7 @@ x;
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -733,7 +733,7 @@ class Foo {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1172,7 +1172,7 @@ if (isStringArray(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1228,7 +1228,7 @@ const callback = () => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1331,7 +1331,7 @@ arr.forEach((item) => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1405,7 +1405,7 @@ const mapped = arr.map((item) => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1489,7 +1489,7 @@ const outer = () => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1578,7 +1578,7 @@ setTimeout(() => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1650,7 +1650,7 @@ const callback2 = () => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1744,7 +1744,7 @@ if (typeof x === "string") {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -1862,7 +1862,7 @@ const filtered = arr.filter((item) => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let compiler_options = crate::checker::context::CheckerOptions::default();
     let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
@@ -2156,7 +2156,7 @@ function test() {
     binder.bind_source_file(arena, root);
 
     let types = crate::solver::TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // Should have TS2454 error
@@ -2186,7 +2186,7 @@ function test() {
     binder.bind_source_file(arena, root);
 
     let types = crate::solver::TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // Should NOT have TS2454 error

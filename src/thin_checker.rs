@@ -19,7 +19,7 @@ use crate::checker::types::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation,
 };
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
-use crate::cli::config::CheckerOptions;
+use crate::checker::context::CheckerOptions;
 use crate::interner::Atom;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::{ImportDeclData, ThinNodeArena};
@@ -110,16 +110,16 @@ impl<'a> ThinCheckerState<'a> {
     /// * `binder` - The binder state with symbols
     /// * `types` - The shared type interner (for thread-safe type deduplication)
     /// * `file_name` - The source file name
-    /// * `strict` - Whether strict mode is enabled (controls noImplicitAny, etc.)
+    /// * `compiler_options` - Compiler options for type checking
     pub fn new(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
-        strict: bool,
+        compiler_options: CheckerOptions,
     ) -> Self {
         ThinCheckerState {
-            ctx: CheckerContext::new(arena, binder, types, file_name, strict),
+            ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
     }
 
@@ -132,17 +132,17 @@ impl<'a> ThinCheckerState<'a> {
     /// * `types` - The shared type interner
     /// * `file_name` - The source file name
     /// * `cache` - The persistent type cache from previous queries
-    /// * `strict` - Whether strict mode is enabled (controls noImplicitAny, etc.)
+    /// * `compiler_options` - Compiler options for type checking
     pub fn with_cache(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: crate::checker::TypeCache,
-        strict: bool,
+        compiler_options: CheckerOptions,
     ) -> Self {
         ThinCheckerState {
-            ctx: CheckerContext::with_cache(arena, binder, types, file_name, cache, strict),
+            ctx: CheckerContext::with_cache(arena, binder, types, file_name, cache, compiler_options),
         }
     }
 
@@ -708,7 +708,7 @@ impl<'a> ThinCheckerState<'a> {
                     // Arrow functions capture `this` from their enclosing scope, so they
                     // should NOT trigger TS2683. We need to skip past arrow functions
                     // to find the actual enclosing function that defines the `this` context.
-                    if self.ctx.no_implicit_this && self.find_enclosing_non_arrow_function(idx).is_some() {
+                    if self.ctx.no_implicit_this() && self.find_enclosing_non_arrow_function(idx).is_some() {
                         // TS2683: 'this' implicitly has type 'any'
                         // Only emit when noImplicitThis is enabled
                         use crate::checker::types::diagnostics::{
@@ -7353,7 +7353,7 @@ impl<'a> ThinCheckerState<'a> {
             return self.get_type_from_type_node(var_decl.type_annotation);
         }
 
-        if self.is_catch_clause_variable_declaration(idx) && self.ctx.use_unknown_in_catch_variables
+        if self.is_catch_clause_variable_declaration(idx) && self.ctx.use_unknown_in_catch_variables()
         {
             return TypeId::UNKNOWN;
         }
@@ -7503,8 +7503,8 @@ impl<'a> ThinCheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_function_types(self.ctx.strict_function_types);
-            checker.set_strict_null_checks(self.ctx.strict_null_checks);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
             evaluator.resolve_call(callee_type, &arg_types)
         };
@@ -8177,7 +8177,7 @@ impl<'a> ThinCheckerState<'a> {
             let result = {
                 let env = self.ctx.type_env.borrow();
                 let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
                 evaluator.resolve_call(func_type, &arg_types)
             };
@@ -8355,7 +8355,7 @@ impl<'a> ThinCheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_null_checks(self.ctx.strict_null_checks);
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
             evaluator.resolve_call(construct_type, &arg_types)
         };
@@ -10240,7 +10240,7 @@ impl<'a> ThinCheckerState<'a> {
                             diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                         );
                     }
-                } else if self.ctx.no_implicit_returns && has_return && falls_through {
+                } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     use crate::checker::types::diagnostics::{
                         diagnostic_codes, diagnostic_messages,
@@ -10474,7 +10474,7 @@ impl<'a> ThinCheckerState<'a> {
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
                     // and the property value type is 'any'
-                    if self.ctx.no_implicit_any && prev_context.is_some() && value_type == TypeId::ANY {
+                    if self.ctx.no_implicit_any() && prev_context.is_some() && value_type == TypeId::ANY {
                         let message = format_message(
                             diagnostic_messages::MEMBER_IMPLICIT_ANY,
                             &[&name, "any"],
@@ -10537,7 +10537,7 @@ impl<'a> ThinCheckerState<'a> {
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
                     // and the shorthand property value type is 'any'
-                    if self.ctx.no_implicit_any
+                    if self.ctx.no_implicit_any()
                         && prev_context.is_some()
                         && value_type == TypeId::ANY
                     {
@@ -11133,11 +11133,11 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(env) = env {
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                    checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
                     return Some(checker.is_assignable(TypeId::NUMBER, target));
                 }
                 let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-                checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 return Some(checker.is_assignable(TypeId::NUMBER, target));
             }
         }
@@ -11147,11 +11147,11 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(env) = env {
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                    checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
                     return Some(checker.is_assignable(source, TypeId::NUMBER));
                 }
                 let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-                checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 return Some(checker.is_assignable(source, TypeId::NUMBER));
             }
         }
@@ -11929,8 +11929,8 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_function_types(self.ctx.strict_function_types);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_function_types(self.ctx.strict_function_types());
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         checker.is_assignable(source, target)
     }
 
@@ -11961,8 +11961,8 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         let mut checker = CompatChecker::with_resolver(self.ctx.types, env);
-        checker.set_strict_function_types(self.ctx.strict_function_types);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_function_types(self.ctx.strict_function_types());
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         checker.is_assignable(source, target)
     }
 
@@ -11983,7 +11983,7 @@ impl<'a> ThinCheckerState<'a> {
 
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         checker.is_weak_union_violation(source, target)
     }
 
@@ -11997,7 +11997,7 @@ impl<'a> ThinCheckerState<'a> {
         let depth_exceeded = {
             let env = self.ctx.type_env.borrow();
             let mut checker = SubtypeChecker::with_resolver(self.ctx.types, &*env)
-                .with_strict_null_checks(self.ctx.strict_null_checks);
+                .with_strict_null_checks(self.ctx.strict_null_checks());
             let result = checker.is_subtype_of(source, target);
             let depth_exceeded = checker.depth_exceeded;
             (result, depth_exceeded)
@@ -12026,7 +12026,7 @@ impl<'a> ThinCheckerState<'a> {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
         let mut checker = SubtypeChecker::with_resolver(self.ctx.types, env)
-            .with_strict_null_checks(self.ctx.strict_null_checks);
+            .with_strict_null_checks(self.ctx.strict_null_checks());
         let result = checker.is_subtype_of(source, target);
         let depth_exceeded = checker.depth_exceeded;
 
@@ -12085,7 +12085,7 @@ impl<'a> ThinCheckerState<'a> {
         use crate::solver::CompatChecker;
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         for &target in targets {
             if checker.is_assignable(source, target) {
                 return true;
@@ -13328,7 +13328,7 @@ impl<'a> ThinCheckerState<'a> {
                     self.ctx.binder,
                     self.ctx.types,
                     self.ctx.file_name.clone(),
-                    self.ctx.no_implicit_any, // use current strict mode setting
+                    self.ctx.compiler_options.clone(), // use current compiler options
                 );
                 return checker.get_type_params_for_symbol(sym_id);
             }
@@ -14560,7 +14560,7 @@ impl<'a> ThinCheckerState<'a> {
         if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
             return strict;
         }
-        self.ctx.no_implicit_any // Use the value from the strict flag
+        self.ctx.no_implicit_any() // Use the value from the strict flag
     }
 
     fn resolve_no_implicit_returns_from_source(&self, text: &str) -> bool {
@@ -14578,7 +14578,7 @@ impl<'a> ThinCheckerState<'a> {
         if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
             return strict;
         }
-        self.ctx.use_unknown_in_catch_variables // Use the value from the strict flag
+        self.ctx.use_unknown_in_catch_variables() // Use the value from the strict flag
     }
 
     fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
@@ -14624,9 +14624,9 @@ impl<'a> ThinCheckerState<'a> {
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
-            self.ctx.no_implicit_any = self.resolve_no_implicit_any_from_source(&sf.text);
-            self.ctx.no_implicit_returns = self.resolve_no_implicit_returns_from_source(&sf.text);
-            self.ctx.use_unknown_in_catch_variables =
+            self.ctx.compiler_options.no_implicit_any = self.resolve_no_implicit_any_from_source(&sf.text);
+            self.ctx.compiler_options.no_implicit_returns = self.resolve_no_implicit_returns_from_source(&sf.text);
+            self.ctx.compiler_options.use_unknown_in_catch_variables =
                 self.resolve_use_unknown_in_catch_variables_from_source(&sf.text);
 
             // Type check each top-level statement
@@ -14646,7 +14646,7 @@ impl<'a> ThinCheckerState<'a> {
             // Check for unused declarations (6133)
             // Only check for unused declarations when no_implicit_any is enabled (strict mode)
             // This prevents test files from reporting unused variable errors when they're testing specific behaviors
-            if self.ctx.no_implicit_any {
+            if self.ctx.no_implicit_any() {
                 self.check_unused_declarations();
             }
         }
@@ -15544,7 +15544,7 @@ impl<'a> ThinCheckerState<'a> {
                                     diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                                 );
                             }
-                        } else if self.ctx.no_implicit_returns && has_return && falls_through {
+                        } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                             // TS7030: noImplicitReturns - not all code paths return a value
                             use crate::checker::types::diagnostics::{
                                 diagnostic_codes, diagnostic_messages,
@@ -15567,7 +15567,7 @@ impl<'a> ThinCheckerState<'a> {
                         if func.is_async {
                             self.ctx.exit_async_context();
                         }
-                    } else if self.ctx.no_implicit_any && !has_type_annotation {
+                    } else if self.ctx.no_implicit_any() && !has_type_annotation {
                         let is_ambient = self.has_declare_modifier(&func.modifiers)
                             || self.ctx.file_name.ends_with(".d.ts");
                         if is_ambient {
@@ -15776,7 +15776,7 @@ impl<'a> ThinCheckerState<'a> {
             let mut has_type_annotation = !var_decl.type_annotation.is_none();
             let mut declared_type = if has_type_annotation {
                 checker.get_type_from_type_node(var_decl.type_annotation)
-            } else if is_catch_variable && checker.ctx.use_unknown_in_catch_variables {
+            } else if is_catch_variable && checker.ctx.use_unknown_in_catch_variables() {
                 TypeId::UNKNOWN
             } else {
                 TypeId::ANY
@@ -15868,7 +15868,7 @@ impl<'a> ThinCheckerState<'a> {
             // and the inferred type is 'any'
             // Skip destructuring patterns - TypeScript doesn't emit TS7005 for them
             // because binding elements with default values can infer their types
-            if self.ctx.no_implicit_any
+            if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && final_type == TypeId::ANY
             {
@@ -15951,7 +15951,7 @@ impl<'a> ThinCheckerState<'a> {
             {
                 let pattern_type = if !var_decl.type_annotation.is_none() {
                     self.get_type_from_type_node(var_decl.type_annotation)
-                } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables {
+                } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
                     TypeId::UNKNOWN
                 } else {
                     TypeId::ANY
@@ -17305,7 +17305,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Only check property initialization when strictPropertyInitialization is enabled
-        if !self.ctx.strict_property_initialization {
+        if !self.ctx.strict_property_initialization() {
             return;
         }
 
@@ -19230,7 +19230,7 @@ impl<'a> ThinCheckerState<'a> {
 
         // Validate async functions in strict property initialization contexts
         // If we're doing strict property checking, likely need strict async too
-        if self.ctx.strict_property_initialization {
+        if self.ctx.strict_property_initialization() {
             return true;
         }
 
@@ -19241,7 +19241,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks || self.ctx.strict_function_types || self.ctx.no_implicit_any {
+        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
             return true;
         }
 
@@ -20096,7 +20096,7 @@ impl<'a> ThinCheckerState<'a> {
                     }
                 }
                 self.check_type_for_parameter_properties(sig.type_annotation);
-                if self.ctx.no_implicit_any && sig.type_annotation.is_none() {
+                if self.ctx.no_implicit_any() && sig.type_annotation.is_none() {
                     if let Some(name) = self.property_name_for_error(sig.name) {
                         use crate::checker::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
@@ -21934,7 +21934,7 @@ impl<'a> ThinCheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
 
-        if !self.ctx.no_implicit_any || has_contextual_type {
+        if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
         }
         // Skip parameters that have explicit type annotations
@@ -22602,7 +22602,7 @@ impl<'a> ThinCheckerState<'a> {
         // TS7008: Member implicitly has an 'any' type
         // Report this error when noImplicitAny is enabled and the property has no type annotation
         // AND no initializer (if there's an initializer, TypeScript can infer the type)
-        if self.ctx.no_implicit_any && prop.type_annotation.is_none() && prop.initializer.is_none() {
+        if self.ctx.no_implicit_any() && prop.type_annotation.is_none() && prop.initializer.is_none() {
             if let Some(member_name) = self.get_property_name(prop.name) {
                 use crate::checker::types::diagnostics::{
                     diagnostic_codes, diagnostic_messages, format_message,
@@ -22777,7 +22777,7 @@ impl<'a> ThinCheckerState<'a> {
                         diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                     );
                 }
-            } else if self.ctx.no_implicit_returns && has_return && falls_through {
+            } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::checker::types::diagnostics::diagnostic_messages;
                 let error_node = if !method.name.is_none() {
@@ -23015,7 +23015,7 @@ impl<'a> ThinCheckerState<'a> {
                             diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                         );
                     }
-                } else if self.ctx.no_implicit_returns && has_return && falls_through {
+                } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     use crate::checker::types::diagnostics::diagnostic_messages;
                     let error_node = if !accessor.name.is_none() {
@@ -23843,7 +23843,7 @@ impl<'a> ThinCheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
 
-        if !self.ctx.no_implicit_any || has_type_annotation || has_contextual_return {
+        if !self.ctx.no_implicit_any() || has_type_annotation || has_contextual_return {
             return;
         }
         if !self.should_report_implicit_any_return(return_type) {

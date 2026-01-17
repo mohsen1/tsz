@@ -922,7 +922,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
             let binder = create_binder_from_bound_file(file, program, file_idx);
 
             // Create checker for this file, using the shared type interner
-            let compiler_options = crate::cli::config::CheckerOptions::default();
+            let compiler_options = crate::checker::context::CheckerOptions::default();
             let mut checker = ThinCheckerState::new(
                 &file.arena,
                 &binder,

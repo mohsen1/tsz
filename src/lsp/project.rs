@@ -435,7 +435,7 @@ impl ProjectFile {
     pub fn get_diagnostics(&mut self) -> Vec<LspDiagnostic> {
         let file_name = self.file_name.clone();
         let source_text = self.parser.get_source_text();
-        let compiler_options = crate::cli::config::CheckerOptions {
+        let compiler_options = crate::checker::context::CheckerOptions {
             strict: self.strict,
             no_implicit_any: self.strict,
             no_implicit_returns: false,

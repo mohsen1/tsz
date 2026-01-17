@@ -189,7 +189,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         // 5. Create checker with persistent cache if available
-        let compiler_options = crate::cli::config::CheckerOptions {
+        let compiler_options = crate::checker::context::CheckerOptions {
             strict: self.strict,
             no_implicit_any: self.strict,
             no_implicit_returns: false,
