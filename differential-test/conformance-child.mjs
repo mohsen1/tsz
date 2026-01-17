@@ -188,6 +188,16 @@ function compareDiagnostics(tscResult, wasmResult) {
   };
 }
 
+const TEST_TIMEOUT_MS = 30000; // 30 second timeout per test
+
+function withTimeout(promise, ms, errorMsg) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(errorMsg)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+}
+
 async function processTest(filePath) {
   const fileName = basename(filePath);
   const relPath = filePath.replace(conformanceDir + '/', '');
@@ -202,10 +212,14 @@ async function processTest(filePath) {
       return { relPath, cat, skipped: true, reason: 'multi-file' };
     }
 
-    const [tscResult, wasmResult] = await Promise.all([
-      runTsc(cleanCode, fileName, options),
-      runWasm(cleanCode, fileName, options),
-    ]);
+    const [tscResult, wasmResult] = await withTimeout(
+      Promise.all([
+        runTsc(cleanCode, fileName, options),
+        runWasm(cleanCode, fileName, options),
+      ]),
+      TEST_TIMEOUT_MS,
+      `Test ${relPath} timed out after ${TEST_TIMEOUT_MS / 1000}s`
+    );
 
     if (wasmResult.crashed) {
       return { relPath, cat, crashed: true, error: wasmResult.error, isMultiFile: false };

@@ -108,6 +108,19 @@ jobs:
       - name: Build WASM
         run: wasm-pack build --target web --out-dir pkg
 
+      - name: Fetch TypeScript conformance tests
+        run: |
+          # Clone TypeScript repo with sparse checkout (only tests/cases/conformance)
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/microsoft/TypeScript.git ts-repo
+          cd ts-repo
+          git sparse-checkout set tests/cases/conformance tests/lib
+          cd ..
+          # Copy tests to expected location
+          mkdir -p tests/cases
+          cp -r ts-repo/tests/cases/conformance tests/cases/
+          cp -r ts-repo/tests/lib tests/
+          rm -rf ts-repo
+
       - name: Run conformance tests (quick)
         run: |
           cd differential-test

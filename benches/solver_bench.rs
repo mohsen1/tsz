@@ -16,6 +16,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         PropertyInfo {
             name: name_x,
             type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
             optional: false,
             readonly: false,
             is_method: false,
@@ -23,6 +24,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         PropertyInfo {
             name: name_y,
             type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
             optional: false,
             readonly: false,
             is_method: false,
@@ -32,6 +34,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
     let mismatch = interner.object(vec![PropertyInfo {
         name: name_x,
         type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
         optional: false,
         readonly: false,
         is_method: false,
@@ -41,6 +44,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         PropertyInfo {
             name: name_x,
             type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
             optional: false,
             readonly: false,
             is_method: false,
@@ -48,6 +52,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         PropertyInfo {
             name: name_z,
             type_id: TypeId::BOOLEAN,
+            write_type: TypeId::BOOLEAN,
             optional: false,
             readonly: false,
             is_method: false,
@@ -58,6 +63,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         PropertyInfo {
             name: name_x,
             type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
             optional: false,
             readonly: false,
             is_method: false,
@@ -65,6 +71,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         PropertyInfo {
             name: name_y,
             type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
             optional: true,
             readonly: false,
             is_method: false,
@@ -116,6 +123,7 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
         return_type: u_type,
         type_predicate: None,
         is_constructor: false,
+        is_method: false,
     };
 
     let arg = interner.array(TypeId::NUMBER);
@@ -129,6 +137,7 @@ fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Ato
         props.push(PropertyInfo {
             name,
             type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
             optional: false,
             readonly: false,
             is_method: false,
