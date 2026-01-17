@@ -4454,7 +4454,6 @@ impl ThinParserState {
         start_pos: u32,
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
-        use crate::checker::types::diagnostics::diagnostic_codes;
         self.parse_expected(SyntaxKind::TypeKeyword);
 
         let name = self.parse_identifier();
@@ -6878,6 +6877,7 @@ impl ThinParserState {
                             | SyntaxKind::CommaToken
                             | SyntaxKind::ColonToken
                             | SyntaxKind::EqualsGreaterThanToken
+                            | SyntaxKind::CloseParenToken
                             | SyntaxKind::EndOfFileToken
                     );
 
@@ -6889,7 +6889,6 @@ impl ThinParserState {
                     let has_following_expression = !(definitely_incomplete || bracket_incomplete);
 
                     if !has_following_expression {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
                         self.error_expression_expected();
                         // Return await as identifier to maintain parsing state
                         let start_pos = self.token_pos();
