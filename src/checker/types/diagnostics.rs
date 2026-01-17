@@ -234,6 +234,7 @@ pub mod diagnostic_codes {
     pub const TYPE_EXPECTED: u32 = 1110;
     pub const OBJECT_LITERAL_DUPLICATE_PROPERTY: u32 = 1117; // An object literal cannot have multiple properties with the same name.
     pub const DECLARATION_EXPECTED: u32 = 1146;
+    pub const LINE_BREAK_NOT_PERMITTED_HERE: u32 = 1142; // Line break not permitted here.
     pub const EXTENDS_CLAUSE_ALREADY_SEEN: u32 = 1172;
     pub const EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE: u32 = 1173;
     pub const CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS: u32 = 1174;

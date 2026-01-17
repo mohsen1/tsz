@@ -503,6 +503,15 @@ impl ThinParserState {
         }
     }
 
+    /// Error: Line break not permitted here (TS1142)
+    fn error_line_break_not_permitted(&mut self) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        self.parse_error_at_current_token(
+            "Line break not permitted here.",
+            diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE,
+        );
+    }
+
     /// Error: Expression expected (TS1109)
     fn error_expression_expected(&mut self) {
         // Only emit error if we haven't already emitted one at this position
@@ -5965,11 +5974,11 @@ impl ThinParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
-        // For throw statements in TypeScript, emit TS1109 error if there's a line break
+        // For throw statements in TypeScript, emit TS1142 error if there's a line break
         // after 'throw' keyword (unlike JavaScript which allows ASI here)
         let expression = if self.scanner.has_preceding_line_break() {
-            // TypeScript requires expression after throw on same line
-            self.error_expression_expected();
+            // TypeScript requires expression after throw on same line - emit TS1142
+            self.error_line_break_not_permitted();
             NodeIndex::NONE
         } else if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
