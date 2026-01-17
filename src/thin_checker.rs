@@ -14854,6 +14854,30 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
+            // Check if any declaration has an initializer or is ambient
+            // Variables with initializers should not be reported as unused because
+            // the act of declaration + initialization is meaningful usage.
+            // Ambient declarations (declare) also should not be reported as unused.
+            let should_skip = symbol.declarations.iter().any(|&decl_idx| {
+                if let Some(node) = self.ctx.arena.get(decl_idx) {
+                    if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+                        // Skip if has initializer
+                        if !var_decl.initializer.is_none() {
+                            return true;
+                        }
+                    }
+                    // Skip if ambient declaration (has DeclareKeyword modifier)
+                    if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
+                        return true;
+                    }
+                }
+                false
+            });
+
+            if should_skip {
+                continue; // Don't report initialized or ambient variables as unused
+            }
+
             // Symbol is not referenced - emit diagnostic for each declaration
             let name = symbol.escaped_name.clone();
             let message = format!("'{}' is declared but its value is never read.", name);
