@@ -19152,21 +19152,8 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
-
         // Always validate in declaration files (.d.ts files are always strict)
         if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
             return true;
         }
 
@@ -19183,12 +19170,6 @@ impl<'a> ThinCheckerState<'a> {
         // Validate async functions in strict property initialization contexts
         // If we're doing strict property checking, likely need strict async too
         if self.ctx.strict_property_initialization {
-            return true;
-        }
-
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
             return true;
         }
 
@@ -24489,41 +24470,134 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION, METHOD_DECLARATION, GET_ACCESSOR, SET_ACCESSOR, CONSTRUCTOR};
 
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+        // Check if this function is directly a method/accessor/constructor
+        if let Some(node) = self.ctx.arena.get(func_idx) {
+            if node.kind == METHOD_DECLARATION ||
+               node.kind == GET_ACCESSOR ||
+               node.kind == SET_ACCESSOR ||
+               node.kind == CONSTRUCTOR {
+                return true;
+            }
+        }
+
+        // Traverse parent chain to find if we're inside a class
+        let mut current_idx = func_idx;
+        loop {
+            let ext = self.ctx.arena.get_extended(current_idx);
+            match ext {
+                Some(info) if !info.parent.is_none() => {
+                    current_idx = info.parent;
+                    if let Some(parent_node) = self.ctx.arena.get(current_idx) {
+                        if parent_node.kind == CLASS_DECLARATION || parent_node.kind == CLASS_EXPRESSION {
+                            return true;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        false
     }
 
     /// Check if a function is within a namespace or module context
-    fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect namespace/module context
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain.
+    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext::{MODULE_DECLARATION, MODULE_BLOCK};
 
-        self.ctx.file_name.contains("namespace") ||
-        self.ctx.file_name.contains("module") ||
-        self.ctx.file_name.contains("Module") ||
-        self.ctx.file_name.contains("Namespace")
+        // Traverse parent chain to find if we're inside a namespace/module
+        let mut current_idx = func_idx;
+        loop {
+            let ext = self.ctx.arena.get_extended(current_idx);
+            match ext {
+                Some(info) if !info.parent.is_none() => {
+                    current_idx = info.parent;
+                    if let Some(parent_node) = self.ctx.arena.get(current_idx) {
+                        if parent_node.kind == MODULE_DECLARATION || parent_node.kind == MODULE_BLOCK {
+                            return true;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+
+        false
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        use crate::scanner::SyntaxKind;
+        use crate::parser::syntax_kind_ext::{MODULE_DECLARATION, VARIABLE_STATEMENT, FUNCTION_DECLARATION, CLASS_DECLARATION, INTERFACE_DECLARATION, TYPE_ALIAS_DECLARATION, ENUM_DECLARATION};
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // First check if the node or any parent has the 'declare' modifier
+        let mut current_idx = var_idx;
+        loop {
+            if let Some(node) = self.ctx.arena.get(current_idx) {
+                // Check for ambient declaration node types with 'declare' modifier
+                match node.kind {
+                    VARIABLE_STATEMENT => {
+                        if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                            if self.ctx.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword as u16) {
+                                return true;
+                            }
+                        }
+                    }
+                    FUNCTION_DECLARATION => {
+                        if let Some(func_decl) = self.ctx.arena.get_function(node) {
+                            if self.ctx.has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword as u16) {
+                                return true;
+                            }
+                        }
+                    }
+                    CLASS_DECLARATION => {
+                        if let Some(class_decl) = self.ctx.arena.get_class(node) {
+                            if self.ctx.has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword as u16) {
+                                return true;
+                            }
+                        }
+                    }
+                    MODULE_DECLARATION => {
+                        if let Some(module_decl) = self.ctx.arena.get_module(node) {
+                            if self.ctx.has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword as u16) {
+                                return true;
+                            }
+                        }
+                    }
+                    INTERFACE_DECLARATION => {
+                        // Interfaces are implicitly ambient
+                        return true;
+                    }
+                    TYPE_ALIAS_DECLARATION => {
+                        if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                            if self.ctx.has_modifier(&type_alias.modifiers, SyntaxKind::DeclareKeyword as u16) {
+                                return true;
+                            }
+                        }
+                    }
+                    ENUM_DECLARATION => {
+                        if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+                            if self.ctx.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword as u16) {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Traverse up to parent
+            let ext = self.ctx.arena.get_extended(current_idx);
+            match ext {
+                Some(info) if !info.parent.is_none() => {
+                    current_idx = info.parent;
+                }
+                _ => break,
+            }
+        }
+
+        false
     }
 }
