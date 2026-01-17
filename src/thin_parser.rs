@@ -5547,6 +5547,11 @@ impl ThinParserState {
 
         let expression = self.parse_expression();
 
+        // Check for missing condition expression: if () { }
+        if expression == NodeIndex::NONE {
+            self.error_expression_expected();
+        }
+
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         let then_statement = self.parse_statement();
@@ -5601,6 +5606,11 @@ impl ThinParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
 
         let condition = self.parse_expression();
+
+        // Check for missing while condition: while () { }
+        if condition == NodeIndex::NONE {
+            self.error_expression_expected();
+        }
 
         // Error recovery: if condition parsing failed badly, resync to close paren
         if condition.is_none() && !self.is_token(SyntaxKind::CloseParenToken) {
@@ -5670,7 +5680,14 @@ impl ThinParserState {
 
         // Condition
         let condition = if !self.is_token(SyntaxKind::SemicolonToken) {
-            self.parse_expression()
+            let cond = self.parse_expression();
+
+            // Check for missing for condition: for (init; ; incr) when there was content to parse
+            if cond == NodeIndex::NONE {
+                self.error_expression_expected();
+            }
+
+            cond
         } else {
             NodeIndex::NONE
         };
@@ -5686,7 +5703,14 @@ impl ThinParserState {
 
         // Incrementor
         let incrementor = if !self.is_token(SyntaxKind::CloseParenToken) {
-            self.parse_expression()
+            let incr = self.parse_expression();
+
+            // Check for missing for incrementor: for (init; cond; ) when there was content to parse
+            if incr == NodeIndex::NONE {
+                self.error_expression_expected();
+            }
+
+            incr
         } else {
             NodeIndex::NONE
         };
@@ -5946,6 +5970,12 @@ impl ThinParserState {
         self.parse_expected(SyntaxKind::WhileKeyword);
         self.parse_expected(SyntaxKind::OpenParenToken);
         let condition = self.parse_expression();
+
+        // Check for missing condition expression: do { } while ()
+        if condition == NodeIndex::NONE {
+            self.error_expression_expected();
+        }
+
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         self.parse_semicolon();
@@ -5972,6 +6002,11 @@ impl ThinParserState {
 
         let expression = self.parse_expression();
 
+        // Check for missing switch expression: switch () { }
+        if expression == NodeIndex::NONE {
+            self.error_expression_expected();
+        }
+
         self.parse_expected(SyntaxKind::CloseParenToken);
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
@@ -5984,6 +6019,12 @@ impl ThinParserState {
                 let clause_start = self.token_pos();
                 self.next_token();
                 let clause_expr = self.parse_expression();
+
+                // Check for missing case expression: case : { }
+                if clause_expr == NodeIndex::NONE {
+                    self.error_expression_expected();
+                }
+
                 self.parse_expected(SyntaxKind::ColonToken);
 
                 let mut statements = Vec::new();
@@ -6150,6 +6191,11 @@ impl ThinParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
 
         let expression = self.parse_expression();
+
+        // Check for missing with expression: with () { }
+        if expression == NodeIndex::NONE {
+            self.error_expression_expected();
+        }
 
         self.parse_expected(SyntaxKind::CloseParenToken);
 
