@@ -527,3 +527,23 @@ fn debug_await_semicolon() {
         eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}", i, diag.code, diag.message, diag.start);
     }
 }
+
+/// Test await in parameter default value
+#[test]
+fn test_await_parameter_default_ts1109() {
+    let source = r#"async function foo(a = await): Promise<void> {
+}"#;
+
+    let mut parser = ThinParserState::new("paramAwait.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    eprintln!("=== AWAIT PARAMETER DEFAULT TEST ===");
+    eprintln!("Total diagnostics: {}", diagnostics.len());
+    for (i, diag) in diagnostics.iter().enumerate() {
+        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}", i, diag.code, diag.message, diag.start);
+    }
+
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    eprintln!("TS1109 count: {}", ts1109_count);
+}
