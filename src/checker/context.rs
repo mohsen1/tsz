@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
+use crate::cli::config::CheckerOptions;
 use crate::parser::NodeIndex;
 use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
@@ -121,40 +122,12 @@ pub struct CheckerContext<'a> {
     /// Current file name.
     pub file_name: String,
 
-    /// Whether noImplicitAny checks are enabled.
-    pub no_implicit_any: bool,
-
-    /// Whether noImplicitReturns checks are enabled.
-    pub no_implicit_returns: bool,
-
-    /// Whether catch clause variables should default to unknown.
-    pub use_unknown_in_catch_variables: bool,
+    /// Compiler options for type checking.
+    pub compiler_options: CheckerOptions,
 
     /// Whether unresolved import diagnostics should be emitted by the checker.
     /// The CLI driver handles module resolution in multi-file mode.
     pub report_unresolved_imports: bool,
-
-    /// Whether strict function types checking is enabled (contravariant parameters).
-    /// When true, function parameters are checked contravariantly.
-    /// When false, parameters are checked bivariantly (legacy, unsound).
-    pub strict_function_types: bool,
-
-    /// Whether strict property initialization checks are enabled (TS2564).
-    /// When true, class properties without initializers must be definitely assigned in the constructor.
-    /// This is enabled by strict mode in TypeScript.
-    pub strict_property_initialization: bool,
-
-    /// Whether strict null checks are enabled (strictNullChecks).
-    /// When true, null and undefined are not assignable to any other type.
-    /// When false, null and undefined are assignable to any type.
-    /// This is enabled by strict mode in TypeScript.
-    pub strict_null_checks: bool,
-
-    /// Whether noImplicitThis checks are enabled.
-    /// When true, 'this' expressions in functions without an explicit 'this' parameter
-    /// will be an error if they would have type 'any'.
-    /// This is enabled by strict mode in TypeScript.
-    pub no_implicit_this: bool,
 
     // --- Caches ---
     /// Cached types for symbols.
@@ -284,28 +257,18 @@ impl<'a> CheckerContext<'a> {
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
-        strict: bool,
+        compiler_options: CheckerOptions,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
-
-        // Enhanced strict mode detection for better TS2524 coverage
-        // Check for file-level strict indicators in addition to the explicit strict flag
-        let enhanced_strict = strict || Self::should_enable_strict_mode(&file_name);
 
         CheckerContext {
             arena,
             binder,
             types,
             file_name,
-            no_implicit_any: enhanced_strict,
-            no_implicit_returns: false,
-            use_unknown_in_catch_variables: enhanced_strict,
+            compiler_options,
             report_unresolved_imports: true,
-            strict_function_types: enhanced_strict,
-            strict_property_initialization: enhanced_strict,
-            strict_null_checks: enhanced_strict,
-            no_implicit_this: enhanced_strict,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -419,7 +382,7 @@ impl<'a> CheckerContext<'a> {
         types: &'a TypeInterner,
         file_name: String,
         cache: TypeCache,
-        strict: bool,
+        compiler_options: CheckerOptions,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -429,14 +392,8 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any: strict,
-            no_implicit_returns: false,
-            use_unknown_in_catch_variables: strict,
+            compiler_options,
             report_unresolved_imports: true,
-            strict_function_types: strict,
-            strict_property_initialization: strict,
-            strict_null_checks: strict,
-            no_implicit_this: strict,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
@@ -697,28 +654,47 @@ impl<'a> CheckerContext<'a> {
         self.flow_graph.as_ref()
     }
 
-    /// Detect if strict mode should be enabled based on file name and content patterns.
-    /// This helps catch test files that use @strict: true directives.
-    fn should_enable_strict_mode(file_name: &str) -> bool {
-        // Enable strict mode for conformance test files that commonly use strict directives
-        if file_name.contains("conformance") || file_name.contains("test") || file_name.contains("cases") {
-            // Many conformance tests use @strict: true directive which we should respect
-            return true;
-        }
+    // =========================================================================
+    // Compiler Option Accessors
+    // =========================================================================
 
-        // Enable for declaration files (.d.ts) which are typically strict
-        if file_name.ends_with(".d.ts") {
-            return true;
-        }
+    /// Check if strict mode is enabled.
+    pub fn is_strict_mode(&self) -> bool {
+        self.compiler_options.strict
+    }
 
-        // Enable for files that commonly indicate strict usage patterns
-        if file_name.contains("strict") ||
-           file_name.contains("definite") ||
-           file_name.contains("property") ||
-           file_name.contains("class") {
-            return true;
-        }
+    /// Check if noImplicitAny is enabled.
+    pub fn no_implicit_any(&self) -> bool {
+        self.compiler_options.no_implicit_any
+    }
 
-        false
+    /// Check if noImplicitReturns is enabled.
+    pub fn no_implicit_returns(&self) -> bool {
+        self.compiler_options.no_implicit_returns
+    }
+
+    /// Check if noImplicitThis is enabled.
+    pub fn no_implicit_this(&self) -> bool {
+        self.compiler_options.no_implicit_this
+    }
+
+    /// Check if strictNullChecks is enabled.
+    pub fn strict_null_checks(&self) -> bool {
+        self.compiler_options.strict_null_checks
+    }
+
+    /// Check if strictFunctionTypes is enabled.
+    pub fn strict_function_types(&self) -> bool {
+        self.compiler_options.strict_function_types
+    }
+
+    /// Check if strictPropertyInitialization is enabled.
+    pub fn strict_property_initialization(&self) -> bool {
+        self.compiler_options.strict_property_initialization
+    }
+
+    /// Check if useUnknownInCatchVariables is enabled.
+    pub fn use_unknown_in_catch_variables(&self) -> bool {
+        self.compiler_options.use_unknown_in_catch_variables
     }
 }

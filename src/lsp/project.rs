@@ -435,7 +435,16 @@ impl ProjectFile {
     pub fn get_diagnostics(&mut self) -> Vec<LspDiagnostic> {
         let file_name = self.file_name.clone();
         let source_text = self.parser.get_source_text();
-        let strict = self.strict;
+        let compiler_options = crate::cli::config::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+        };
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
             ThinCheckerState::with_cache(
@@ -444,7 +453,7 @@ impl ProjectFile {
                 &self.type_interner,
                 file_name,
                 cache,
-                strict,
+                compiler_options,
             )
         } else {
             ThinCheckerState::new(
@@ -452,7 +461,7 @@ impl ProjectFile {
                 &self.binder,
                 &self.type_interner,
                 file_name,
-                strict,
+                compiler_options,
             )
         };
 

@@ -437,7 +437,8 @@ if (isString(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -480,7 +481,8 @@ if (guard(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -564,7 +566,8 @@ if (assertString(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -603,7 +606,8 @@ x;
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -680,7 +684,8 @@ x;
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -728,7 +733,8 @@ class Foo {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1166,7 +1172,8 @@ if (isStringArray(x)) {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1221,7 +1228,8 @@ const callback = () => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1323,7 +1331,8 @@ arr.forEach((item) => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1396,7 +1405,8 @@ const mapped = arr.map((item) => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1479,7 +1489,8 @@ const outer = () => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1567,7 +1578,8 @@ setTimeout(() => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1638,7 +1650,8 @@ const callback2 = () => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1731,7 +1744,8 @@ if (typeof x === "string") {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1848,7 +1862,8 @@ const filtered = arr.filter((item) => {
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), false);
+    let compiler_options = crate::cli::config::CheckerOptions::default();
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
