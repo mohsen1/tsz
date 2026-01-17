@@ -102,6 +102,69 @@ struct FlowResult {
 }
 
 impl<'a> ThinCheckerState<'a> {
+    /// Create a new ThinCheckerState with compiler options.
+    ///
+    /// # Arguments
+    /// * `arena` - The AST node arena
+    /// * `binder` - The binder state with symbols
+    /// * `types` - The shared type interner (for thread-safe type deduplication)
+    /// * `file_name` - The source file name
+    /// * `options` - Compiler options for type checking
+    pub fn with_options(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        options: &crate::CompilerOptions,
+    ) -> Self {
+        ThinCheckerState {
+            ctx: CheckerContext::new_with_options(
+                arena,
+                binder,
+                types,
+                file_name,
+                options.get_no_implicit_any(),
+                options.get_no_implicit_returns(),
+                options.get_strict_function_types(),
+                options.get_strict_property_initialization(),
+                options.get_strict_null_checks(),
+            ),
+        }
+    }
+
+    /// Create a new ThinCheckerState with a persistent cache and compiler options.
+    ///
+    /// # Arguments
+    /// * `arena` - The AST node arena
+    /// * `binder` - The binder state with symbols
+    /// * `types` - The shared type interner
+    /// * `file_name` - The source file name
+    /// * `cache` - The persistent type cache from previous queries
+    /// * `options` - Compiler options for type checking
+    pub fn with_cache_and_options(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        cache: crate::checker::TypeCache,
+        options: &crate::CompilerOptions,
+    ) -> Self {
+        ThinCheckerState {
+            ctx: CheckerContext::with_cache_and_options(
+                arena,
+                binder,
+                types,
+                file_name,
+                cache,
+                options.get_no_implicit_any(),
+                options.get_no_implicit_returns(),
+                options.get_strict_function_types(),
+                options.get_strict_property_initialization(),
+                options.get_strict_null_checks(),
+            ),
+        }
+    }
+
     /// Create a new ThinCheckerState.
     ///
     /// # Arguments

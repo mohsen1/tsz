@@ -150,12 +150,6 @@ pub struct CheckerContext<'a> {
     /// This is enabled by strict mode in TypeScript.
     pub strict_null_checks: bool,
 
-    /// Whether noImplicitThis checks are enabled.
-    /// When true, 'this' expressions in functions without an explicit 'this' parameter
-    /// will be an error if they would have type 'any'.
-    /// This is enabled by strict mode in TypeScript.
-    pub no_implicit_this: bool,
-
     // --- Caches ---
     /// Cached types for symbols.
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
@@ -278,34 +272,33 @@ pub struct LibContext {
 }
 
 impl<'a> CheckerContext<'a> {
-    /// Create a new CheckerContext.
-    pub fn new(
+    /// Create a new CheckerContext with individual compiler options.
+    pub fn new_with_options(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
-        strict: bool,
+        no_implicit_any: bool,
+        no_implicit_returns: bool,
+        strict_function_types: bool,
+        strict_property_initialization: bool,
+        strict_null_checks: bool,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
-
-        // Enhanced strict mode detection for better TS2524 coverage
-        // Check for file-level strict indicators in addition to the explicit strict flag
-        let enhanced_strict = strict || Self::should_enable_strict_mode(&file_name);
 
         CheckerContext {
             arena,
             binder,
             types,
             file_name,
-            no_implicit_any: enhanced_strict,
-            no_implicit_returns: false,
-            use_unknown_in_catch_variables: enhanced_strict,
+            no_implicit_any,
+            no_implicit_returns,
+            use_unknown_in_catch_variables: strict_null_checks,
             report_unresolved_imports: true,
-            strict_function_types: enhanced_strict,
-            strict_property_initialization: enhanced_strict,
-            strict_null_checks: enhanced_strict,
-            no_implicit_this: enhanced_strict,
+            strict_function_types,
+            strict_property_initialization,
+            strict_null_checks,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -344,15 +337,39 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a new CheckerContext with a persistent cache.
-    /// This allows reusing type checking results from previous queries.
-    pub fn with_cache(
+    /// Create a new CheckerContext (backward compatible API using strict flag).
+    pub fn new(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        strict: bool,
+    ) -> Self {
+        Self::new_with_options(
+            arena,
+            binder,
+            types,
+            file_name,
+            strict,  // no_implicit_any
+            false,   // no_implicit_returns
+            strict,  // strict_function_types
+            strict,  // strict_property_initialization
+            strict,  // strict_null_checks
+        )
+    }
+
+    /// Create a new CheckerContext with a persistent cache and individual compiler options.
+    pub fn with_cache_and_options(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: TypeCache,
-        strict: bool,
+        no_implicit_any: bool,
+        no_implicit_returns: bool,
+        strict_function_types: bool,
+        strict_property_initialization: bool,
+        strict_null_checks: bool,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -362,14 +379,13 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any: strict,
-            no_implicit_returns: false,
-            use_unknown_in_catch_variables: strict,
+            no_implicit_any,
+            no_implicit_returns,
+            use_unknown_in_catch_variables: strict_null_checks,
             report_unresolved_imports: true,
-            strict_function_types: strict,
-            strict_property_initialization: strict,
-            strict_null_checks: strict,
-            no_implicit_this: strict,
+            strict_function_types,
+            strict_property_initialization,
+            strict_null_checks,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
@@ -406,6 +422,30 @@ impl<'a> CheckerContext<'a> {
             flow_graph,
             async_depth: 0,
         }
+    }
+
+    /// Create a new CheckerContext with a persistent cache (backward compatible API using strict flag).
+    /// This allows reusing type checking results from previous queries.
+    pub fn with_cache(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        cache: TypeCache,
+        strict: bool,
+    ) -> Self {
+        Self::with_cache_and_options(
+            arena,
+            binder,
+            types,
+            file_name,
+            cache,
+            strict,  // no_implicit_any
+            false,   // no_implicit_returns
+            strict,  // strict_function_types
+            strict,  // strict_property_initialization
+            strict,  // strict_null_checks
+        )
     }
 
     /// Set lib contexts for global type resolution.
@@ -496,26 +536,14 @@ impl<'a> CheckerContext<'a> {
         self.async_depth > 0
     }
 
-    /// Check if Promise is available in lib files or global scope.
-    /// Returns true if Promise is declared in lib contexts, globals, or type declarations.
+    /// Check if Promise is available in lib files.
+    /// Returns true if any lib context has "Promise" in its file_locals.
     pub fn has_promise_in_lib(&self) -> bool {
-        // Check lib contexts first
         for lib_ctx in &self.lib_contexts {
             if lib_ctx.binder.file_locals.has("Promise") {
                 return true;
             }
         }
-
-        // Check if Promise is available in current scope/global context
-        if self.binder.current_scope.has("Promise") {
-            return true;
-        }
-
-        // Check current file locals as fallback
-        if self.binder.file_locals.has("Promise") {
-            return true;
-        }
-
         false
     }
 
@@ -560,30 +588,5 @@ impl<'a> CheckerContext<'a> {
     /// Get a reference to the flow graph.
     pub fn flow_graph(&self) -> Option<&FlowGraph<'a>> {
         self.flow_graph.as_ref()
-    }
-
-    /// Detect if strict mode should be enabled based on file name and content patterns.
-    /// This helps catch test files that use @strict: true directives.
-    fn should_enable_strict_mode(file_name: &str) -> bool {
-        // Enable strict mode for conformance test files that commonly use strict directives
-        if file_name.contains("conformance") || file_name.contains("test") || file_name.contains("cases") {
-            // Many conformance tests use @strict: true directive which we should respect
-            return true;
-        }
-
-        // Enable for declaration files (.d.ts) which are typically strict
-        if file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Enable for files that commonly indicate strict usage patterns
-        if file_name.contains("strict") ||
-           file_name.contains("definite") ||
-           file_name.contains("property") ||
-           file_name.contains("class") {
-            return true;
-        }
-
-        false
     }
 }
