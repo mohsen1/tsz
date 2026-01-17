@@ -6885,16 +6885,30 @@ impl ThinParserState {
                 // Only parse as await expression if we're in an async context AND NOT in a parameter default
                 // Parameter defaults are evaluated in the parent scope, not the async function body
                 if !self.in_async_context() || self.in_parameter_default_context() {
-                    // Outside async context or in parameter default context, check if await is used as a bare expression
+                    // In parameter default context of non-async functions, 'await' should always be treated as identifier
+                    if self.in_parameter_default_context() && !self.in_async_context() {
+                        // Parse 'await' as regular identifier in parameter defaults of non-async functions
+                        let start_pos = self.token_pos();
+                        let end_pos = self.token_end(); // capture end before consuming
+                        self.next_token(); // consume the await token
+                        return self.arena.add_identifier(
+                            SyntaxKind::Identifier as u16,
+                            start_pos,
+                            end_pos,
+                            crate::parser::thin_node::IdentifierData {
+                                escaped_text: String::from("await"),
+                                original_text: None,
+                                type_arguments: None,
+                            },
+                        );
+                    }
+
+                    // Outside async context or in other contexts, check if await is used as a bare expression
                     // If followed by tokens that can't start an expression, report "Expression expected"
                     // Examples where await is a reserved identifier but invalid as expression:
                     //   await;  // Error: Expression expected (in static blocks)
                     //   await (1);  // Error: Expression expected (in static blocks)
                     //   async (a = await => x) => {}  // Error: Expression expected (before arrow)
-                    //   async (a = await 42) => {}  // Error in parameter default
-                    // But allow:
-                    //   let await = 1;  (declaration)
-                    //   async (a = await) => {}  (default parameter value, as identifier reference)
 
                     // Look ahead to see what token comes after 'await'
                     let snapshot = self.scanner.save_state();
