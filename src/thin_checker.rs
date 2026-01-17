@@ -2141,7 +2141,14 @@ impl<'a> ThinCheckerState<'a> {
                         continue;
                     }
 
-                    let mut props = common_props.take().unwrap();
+                    let mut props = match common_props.take() {
+                        Some(p) => p,
+                        None => {
+                            // This should not happen due to the guard above, but handle gracefully
+                            common_props = Some(member_props);
+                            continue;
+                        }
+                    };
                     props.retain(|name, prop| {
                         let Some(member_prop) = member_props.get(name) else {
                             return false;
@@ -22742,7 +22749,16 @@ impl<'a> ThinCheckerState<'a> {
             return Some(TypeId::UNKNOWN);
         }
 
-        let symbol = symbol.unwrap();
+        let symbol = match symbol {
+            Some(s) => s,
+            None => {
+                // This should not happen due to the guard above, but handle gracefully
+                if let Some(&first_arg) = args.first() {
+                    return Some(first_arg);
+                }
+                return Some(TypeId::UNKNOWN);
+            }
+        };
         let name = symbol.escaped_name.as_str();
 
         if self.is_promise_like_name(name) {
