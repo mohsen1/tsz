@@ -510,6 +510,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Recursively evaluate the nested Application
                 self.evaluate_application(app_id)
             }
+            TypeKey::Ref(sym_ref) => {
+                // Also try to resolve Ref types in type arguments
+                // This helps with generic instantiation accuracy
+                self.resolver
+                    .resolve_ref(sym_ref, self.interner)
+                    .unwrap_or(arg)
+            }
+            TypeKey::Conditional(cond_id) => {
+                // Evaluate conditional types in type arguments
+                let cond = self.interner.conditional_type(cond_id);
+                self.evaluate_conditional(cond.as_ref())
+            }
+            TypeKey::Mapped(mapped_id) => {
+                // Evaluate mapped types in type arguments
+                let mapped = self.interner.mapped_type(mapped_id);
+                self.evaluate_mapped(mapped.as_ref())
+            }
             _ => arg,
         }
     }
