@@ -1,295 +1,562 @@
-# Test Infrastructure
+# Test Infrastructure Documentation
+
+This document describes how the test infrastructure works in the TypeScript compiler, including how test directives are parsed, how compiler options are configured, and the proper way to set up tests.
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Test Directive Parsing](#test-directive-parsing)
+3. [CompilerOptions Flow](#compileroptions-flow)
+4. [Configuring Tests Properly](#configuring-tests-properly)
+5. [Strict Mode Configuration](#strict-mode-configuration)
+6. [Example Workflow](#example-workflow)
+7. [Common Patterns](#common-patterns)
+
+## Overview
+
+The test infrastructure processes TypeScript test files that may contain special comment directives. These directives configure how the compiler parses, type-checks, and emits code. The infrastructure supports both single-file and multi-file tests.
+
+### Key Principles
+
+1. **Explicit Configuration**: Compiler options should be passed explicitly, not inferred from file paths
+2. **Directive-Based**: Test files use comment directives (e.g., `// @strict: true`) to specify compiler options
+3. **Multi-File Support**: Tests can specify multiple files using `// @filename:` directives
+4. **Independence**: Each test should be self-contained with explicit option configuration
+
+## Test Directive Parsing
+
+Test directives are special comments at the beginning of test files that configure compiler behavior.
+
+### Directive Format
+
+Directives follow this pattern:
+```typescript
+// @directiveName: value
+```
+
+### Common Directives
+
+| Directive | Description | Example |
+|-----------|-------------|---------|
+| `@strict` | Enable strict mode checking | `// @strict: true` |
+| `@target` | Set ECMAScript target version | `// @target: es5` |
+| `@module` | Set module system | `// @module: commonjs` |
+| `@lib` | Specify lib files to include | `// @lib: esnext` |
+| `@noImplicitAny` | Control implicit any checking | `// @noImplicitAny: true` |
+| `@strictNullChecks` | Enable strict null checking | `// @strictNullChecks: true` |
+| `@declaration` | Generate .d.ts files | `// @declaration: true` |
+| `@jsx` | Configure JSX handling | `// @jsx: preserve` |
+| `@filename` | Start a new file in multi-file tests | `// @filename: lib.ts` |
+
+### How Directives are Parsed
+
+The test runner (`scripts/run-batch-tests.mjs`) parses these directives:
+
+1. **File Reading**: Test files are read with proper encoding handling (UTF-8, UTF-16 BE/LE)
+2. **Directive Extraction**: Comments starting with `// @` are identified as directives
+3. **Multi-File Detection**: Files with `@filename:` directives are treated as multi-file tests
+4. **Header Parsing**: Lines before the first `@filename:` are treated as global options
+
+```javascript
+// Example from run-batch-tests.mjs
+function parseMultiFileTest(source) {
+    const files = [];
+    const lines = source.split('\n');
+
+    let currentFile = null;
+    let currentContent = [];
+    let headerLines = [];  // Lines before first @filename
+
+    for (const line of lines) {
+        // Match @filename: directive (case insensitive)
+        const filenameMatch = line.match(/^\/\/\s*@filename:\s*(.+)$/i);
+
+        if (filenameMatch) {
+            // Save previous file and start new one
+            if (currentFile !== null) {
+                files.push({
+                    filename: currentFile,
+                    content: currentContent.join('\n')
+                });
+            }
+            currentFile = filenameMatch[1].trim();
+            currentContent = [];
+        } else if (currentFile !== null) {
+            currentContent.push(line);
+        } else {
+            // Header line (compiler options, etc.)
+            headerLines.push(line);
+        }
+    }
+
+    return { files, headerLines };
+}
+```
 
 ## CompilerOptions Flow
 
-This document describes how compiler options flow through the system from test files to the type checker.
+The compiler options flow through several layers from test directives to actual type checking.
 
-### Overview
-
-The compiler is designed to be configuration-driven, not path-driven. Configuration flows explicitly through well-defined interfaces, ensuring that the checker's behavior is determined solely by the `CompilerOptions` object, not by inspecting file paths or other external state.
-
-### Data Flow Diagram
+### Architecture Overview
 
 ```
-Test File (*.ts)
-    |
-    | Contains directives in comments
-    | Example: // @strict
-    |
-    v
-Test Harness/Runner
-    |
-    | 1. Reads test file
-    | 2. Parses comment directives
-    |    - Scans for // @<directive>
-    |    - Extracts configuration settings
-    |
-    v
-Directive Parser
-    |
-    | Converts directives to structured config
-    | Example: // @strict -> { strict: true }
-    |
-    v
-CompilerOptions Object
-    |
-    | Structured configuration object
-    | Contains all compiler settings
-    |
-    v
-createProgram(files, options)
-    |
-    | Explicit API call with options
-    | No file path inspection
-    |
-    v
-Program Object
-    |
-    | Stores CompilerOptions internally
-    | Provides getCompilerOptions() method
-    |
-    v
-Checker (via program.getCompilerOptions())
-    |
-    | Receives configuration explicitly
-    | Uses options to determine behavior
-    | NO file path inspection
-    | NO implicit configuration
-    |
-    v
-Type Checking Behavior
+Test File Directives
+    ↓
+Test Runner Parser (run-batch-tests.mjs)
+    ↓
+ResolvedCompilerOptions (src/cli/config.rs)
+    ↓
+CheckerContext (src/checker/context.rs)
+    ↓
+ThinCheckerState (src/thin_checker.rs)
 ```
 
-### Step-by-Step Flow
+### Configuration Structures
 
-#### 1. Test Infrastructure Reads Test Files
+#### 1. CompilerOptions (Raw Configuration)
 
-The test harness or runner reads TypeScript test files from the filesystem. These files contain both:
-- TypeScript source code to be type-checked
-- Configuration directives in comments
+Located in `src/cli/config.rs`:
 
-Example test file:
-```typescript
-// @strict
-// @target ES2015
-// @module commonjs
-
-function greet(name: string) {
-    console.log("Hello, " + name);
+```rust
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CompilerOptions {
+    pub target: Option<String>,
+    pub module: Option<String>,
+    pub module_resolution: Option<String>,
+    pub jsx: Option<String>,
+    pub lib: Option<Vec<String>>,
+    pub strict: Option<bool>,
+    pub declaration: Option<bool>,
+    pub source_map: Option<bool>,
+    // ... other options
 }
 ```
 
-#### 2. Parse Directives from Comments
+#### 2. ResolvedCompilerOptions (Processed Configuration)
 
-The test infrastructure scans the file for special comment directives that begin with `// @`. Each directive corresponds to a compiler option.
+Also in `src/cli/config.rs`:
 
-Common directives:
-- `// @strict` - Enable strict mode
-- `// @noImplicitAny` - Disallow implicit any types
-- `// @target ES2015` - Set compilation target
-- `// @module commonjs` - Set module system
-- `// @lib ES2015,DOM` - Specify library files
-
-The parser extracts these directives and their values:
 ```rust
-// Pseudocode
-let directives = parse_directives(file_content);
-// Result: [
-//   ("strict", true),
-//   ("target", "ES2015"),
-//   ("module", "commonjs")
-// ]
+pub struct ResolvedCompilerOptions {
+    pub printer: PrinterOptions,
+    pub checker: CheckerOptions,
+    pub jsx: Option<JsxEmit>,
+    pub lib_files: Vec<PathBuf>,
+    pub module_resolution: Option<ModuleResolutionKind>,
+    pub emit_declarations: bool,
+    pub source_map: bool,
+    pub no_emit: bool,
+    // ... other resolved options
+}
+
+pub struct CheckerOptions {
+    pub strict: bool,
+}
 ```
 
-#### 3. Convert Directives to CompilerOptions Object
+#### 3. CheckerContext (Runtime State)
 
-The parsed directives are converted into a structured `CompilerOptions` object. This object contains all configuration settings in a typed, validated format.
+Located in `src/checker/context.rs`:
 
 ```rust
-// Pseudocode
-let mut options = CompilerOptions::default();
-for (directive, value) in directives {
-    match directive {
-        "strict" => options.strict = parse_bool(value),
-        "target" => options.target = parse_target(value),
-        "module" => options.module_kind = parse_module(value),
-        // ... other options
+pub struct CheckerContext<'a> {
+    pub arena: &'a ThinNodeArena,
+    pub binder: &'a ThinBinderState,
+    pub types: &'a TypeInterner,
+    pub file_name: String,
+
+    // Strict mode flags (all controlled by strict option)
+    pub no_implicit_any: bool,
+    pub no_implicit_returns: bool,
+    pub use_unknown_in_catch_variables: bool,
+    pub strict_function_types: bool,
+    pub strict_property_initialization: bool,
+    pub strict_null_checks: bool,
+    pub no_implicit_this: bool,
+
+    // ... other state
+}
+```
+
+### Option Resolution Process
+
+The `resolve_compiler_options` function in `src/cli/config.rs` converts raw options to resolved options:
+
+```rust
+pub fn resolve_compiler_options(
+    options: Option<&CompilerOptions>,
+) -> Result<ResolvedCompilerOptions> {
+    let mut resolved = ResolvedCompilerOptions::default();
+    let Some(options) = options else {
+        return Ok(resolved);
+    };
+
+    // Parse target
+    if let Some(target) = options.target.as_deref() {
+        resolved.printer.target = parse_script_target(target)?;
     }
+
+    // Parse module kind
+    if let Some(module) = options.module.as_deref() {
+        resolved.printer.module = parse_module_kind(module)?;
+    }
+
+    // Parse strict mode
+    if let Some(strict) = options.strict {
+        resolved.checker.strict = strict;
+    }
+
+    // ... other options
+
+    Ok(resolved)
 }
 ```
 
-#### 4. Pass CompilerOptions Explicitly to Compiler API
+## Configuring Tests Properly
 
-The test infrastructure calls `createProgram()` or equivalent compiler API with the constructed `CompilerOptions` object. This is an explicit, type-safe API call.
+### Best Practices
+
+1. **Always Use Explicit Options**: Don't rely on file path inspection to determine compiler options
+2. **Use Directives**: Specify all required compiler options via test directives
+3. **Be Self-Contained**: Tests should work independently of their file location
+4. **Document Intent**: Use directives to make test requirements clear
+
+### Incorrect Approach (Anti-Pattern)
 
 ```rust
-// Pseudocode
-let program = create_program(
-    files: vec!["test.ts"],
-    options: options,  // Explicitly passed
-    host: host
+// DON'T: Infer options from file path
+fn should_use_strict_mode(file_path: &str) -> bool {
+    file_path.contains("strict") || file_path.contains("Strict")
+}
+```
+
+This approach is problematic because:
+- It couples test behavior to file system structure
+- It makes tests fragile when files are moved
+- It's not obvious from the test file what options are used
+- It violates the principle of explicit configuration
+
+### Correct Approach
+
+```typescript
+// test-strict-mode.ts
+// @strict: true
+
+// Test code here
+let x: number = 42;
+```
+
+In the test infrastructure:
+
+```rust
+// Create checker with explicit strict flag
+let mut checker = ThinCheckerState::new(
+    arena,
+    binder,
+    types,
+    file_name,
+    strict  // Passed explicitly, not inferred
 );
 ```
 
-Key principle: **Configuration is passed explicitly, never inferred from file paths or other implicit sources.**
+## Strict Mode Configuration
 
-#### 5. Checker Receives Options via program.getCompilerOptions()
+Strict mode is a meta-option that enables multiple strict checking flags.
 
-When the type checker needs to determine its behavior, it queries the program object for the compiler options:
+### What Strict Mode Enables
+
+When `strict: true` is set, the following flags are enabled:
 
 ```rust
-// Inside the checker
-let options = self.program.get_compiler_options();
-
-// Use options to determine behavior
-if options.strict {
-    // Enable strict type checking
-}
-
-if options.no_implicit_any {
-    // Report errors for implicit any
-}
-```
-
-The checker **never**:
-- Inspects file paths to determine configuration
-- Uses global configuration state
-- Infers settings from the environment
-- Makes assumptions based on file extensions or locations
-
-#### 6. Checker Uses Options to Determine Behavior
-
-The checker's behavior is entirely determined by the `CompilerOptions` object. Different options affect various aspects of type checking:
-
-**Strictness Options:**
-- `strict`: Enables all strict type checking options
-- `noImplicitAny`: Forbids implicit any types
-- `strictNullChecks`: Null and undefined are separate types
-- `strictFunctionTypes`: Stricter function type checking
-
-**Language Options:**
-- `target`: ECMAScript version (affects available features)
-- `lib`: Library type definitions to include
-
-**Module Options:**
-- `module`: Module code generation
-- `moduleResolution`: How modules are resolved
-
-**Example in the checker:**
-```rust
-fn check_function_call(&mut self, node: &CallExpression) -> Type {
-    let options = self.program.get_compiler_options();
-
-    // Behavior varies based on options
-    if options.strict_function_types {
-        // Use stricter contravariance rules
-        self.check_call_strict(node)
-    } else {
-        // Use lenient bivariance rules
-        self.check_call_lenient(node)
+// From src/checker/context.rs
+impl<'a> CheckerContext<'a> {
+    pub fn new(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        strict: bool,  // Single strict flag controls all below
+    ) -> Self {
+        CheckerContext {
+            // Strict mode enables all these checks
+            no_implicit_any: strict,
+            use_unknown_in_catch_variables: strict,
+            strict_function_types: strict,
+            strict_property_initialization: strict,
+            strict_null_checks: strict,
+            no_implicit_this: strict,
+            // ... rest of initialization
+        }
     }
 }
 ```
 
-### Anti-Patterns (What NOT to Do)
+### Individual Strict Flags
 
-The following patterns are explicitly forbidden in our codebase:
+Each flag can be controlled independently in non-strict mode:
 
-#### DO NOT: Inspect File Paths
-```rust
-// WRONG - Never do this!
-fn is_strict_mode(&self, file: &SourceFile) -> bool {
-    file.path.contains("strict") || file.path.ends_with(".strict.ts")
-}
-```
+| Flag | Description | Error Codes |
+|------|-------------|-------------|
+| `noImplicitAny` | Error on expressions with implicit 'any' type | TS7006, TS7031 |
+| `strictNullChecks` | null and undefined are not assignable to other types | TS2322, TS2345 |
+| `strictFunctionTypes` | Check function parameters contravariantly | TS2322 |
+| `strictPropertyInitialization` | Check class properties are initialized | TS2564 |
+| `noImplicitThis` | Error on 'this' expressions with type 'any' | TS2683 |
+| `useUnknownInCatchVariables` | Catch clause variables default to 'unknown' | TS18046 |
 
-#### DO NOT: Use Global Configuration
-```rust
-// WRONG - Never do this!
-static mut GLOBAL_STRICT_MODE: bool = false;
-
-fn check_with_global_config() {
-    if unsafe { GLOBAL_STRICT_MODE } {
-        // ...
-    }
-}
-```
-
-#### DO NOT: Infer Settings from Context
-```rust
-// WRONG - Never do this!
-fn infer_module_kind(&self, file: &SourceFile) -> ModuleKind {
-    if file.text.contains("import") {
-        ModuleKind::ES6
-    } else {
-        ModuleKind::CommonJS
-    }
-}
-```
-
-### Correct Pattern
-
-Always use the explicit CompilerOptions:
-
-```rust
-// CORRECT
-fn get_module_kind(&self) -> ModuleKind {
-    self.program.get_compiler_options().module_kind
-}
-
-fn is_strict_mode(&self) -> bool {
-    self.program.get_compiler_options().strict
-}
-
-fn check_implicit_any(&self, node: &Node) -> bool {
-    let options = self.program.get_compiler_options();
-    options.no_implicit_any || options.strict
-}
-```
-
-### Benefits of This Architecture
-
-1. **Testability**: Each test can specify its own configuration without affecting others
-2. **Predictability**: Behavior is explicit and traceable
-3. **Maintainability**: Configuration logic is centralized
-4. **Debuggability**: Configuration state is inspectable at any point
-5. **Type Safety**: Options are validated at construction time
-6. **Isolation**: Tests don't interfere with each other
-
-### Implementation Notes
-
-- The `CompilerOptions` object should be immutable after creation
-- Default values should be explicitly specified, not assumed
-- All option parsing should happen in the test infrastructure, not the checker
-- The checker should treat the `CompilerOptions` as a read-only configuration source
-- When adding new compiler options, update both the parser and the options struct
-
-### Testing the Flow
-
-When writing tests, you can verify the flow works correctly:
+### Setting Strict Mode in Tests
 
 ```typescript
-// test-strict.ts
-// @strict
+// Option 1: Enable all strict checks
+// @strict: true
 
-let x;  // Should error: Variable 'x' implicitly has an 'any' type
+function foo(x) {  // TS7006: Parameter 'x' implicitly has an 'any' type
+    return x;
+}
+
+// Option 2: Enable individual checks
+// @noImplicitAny: true
+// @strictNullChecks: true
+
+function bar(x: string | null) {
+    console.log(x.length);  // TS2531: Object is possibly 'null'
+}
+```
+
+### Programmatic Configuration
+
+When creating a checker in Rust tests:
+
+```rust
+use crate::thin_checker::ThinCheckerState;
+use crate::thin_binder::ThinBinderState;
+use crate::thin_parser::ThinParserState;
+use crate::solver::TypeInterner;
+
+#[test]
+fn test_strict_mode_checking() {
+    let source = r#"
+function foo(x) {
+    return x + 1;
+}
+"#;
+
+    let mut parser = ThinParserState::new(
+        "test.ts".to_string(),
+        source.to_string()
+    );
+    let root = parser.parse_source_file();
+
+    let mut binder = ThinBinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+
+    // Create checker with strict mode ENABLED
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        true  // strict = true enables all strict checks
+    );
+
+    checker.check_source_file(root);
+
+    // Should have TS7006: implicit any error
+    assert!(!checker.ctx.diagnostics.is_empty());
+}
+```
+
+## Example Workflow
+
+### Single-File Test
+
+```typescript
+// strictModeExample.ts
+// @strict: true
+// @target: es2015
+
+function processUser(user) {  // Will error: implicit any
+    return user.name.toUpperCase();
+}
+
+const result = processUser({ name: "Alice" });
+```
+
+**Flow:**
+
+1. Test file contains directives at the top
+2. Test runner extracts `strict: true` and `target: es2015`
+3. Creates `CompilerOptions { strict: Some(true), target: Some("es2015"), ... }`
+4. Resolves to `ResolvedCompilerOptions` with `checker.strict = true`
+5. Creates `CheckerContext` with all strict flags enabled
+6. `ThinCheckerState` performs type checking with strict mode
+7. Produces TS7006 diagnostic for implicit 'any' parameter
+
+### Multi-File Test
+
+```typescript
+// multiFileTest.ts
+// @strict: true
+// @filename: lib.ts
+export interface User {
+    name: string;
+    age: number;
+}
+
+// @filename: main.ts
+import { User } from "./lib";
+
+function greet(user: User) {
+    console.log(`Hello, ${user.name}!`);
+}
+
+greet({ name: "Bob" });  // TS2345: Missing 'age' property
+```
+
+**Flow:**
+
+1. Test runner detects `@filename:` directives
+2. Splits into two files: `lib.ts` and `main.ts`
+3. Header directives (`@strict: true`) apply to all files
+4. Each file is parsed, bound, and checked independently
+5. Import resolution connects the files
+6. Type checking detects missing property in strict mode
+
+### Rust Unit Test Pattern
+
+```rust
+#[test]
+fn test_strict_null_checks() {
+    let source = r#"
+let x: string = "hello";
+let y: string = null;  // Should error in strict mode
+"#;
+
+    let mut parser = ThinParserState::new(
+        "test.ts".to_string(),
+        source.to_string()
+    );
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty());
+
+    let mut binder = ThinBinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+
+    // Test with strict mode OFF
+    let mut checker_non_strict = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        false  // strict = false
+    );
+    checker_non_strict.check_source_file(root);
+    assert!(checker_non_strict.ctx.diagnostics.is_empty());
+
+    // Test with strict mode ON
+    let mut checker_strict = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        true  // strict = true
+    );
+    checker_strict.check_source_file(root);
+
+    // Should have error: Type 'null' not assignable to 'string'
+    assert!(!checker_strict.ctx.diagnostics.is_empty());
+    let codes: Vec<u32> = checker_strict.ctx.diagnostics
+        .iter()
+        .map(|d| d.code)
+        .collect();
+    assert!(codes.contains(&2322));  // TS2322
+}
+```
+
+## Common Patterns
+
+### Pattern 1: Testing Strict vs Non-Strict Behavior
+
+```typescript
+// @strict: false
+// Test that shows different behavior in strict/non-strict mode
+
+let implicitAny = function(x) { return x; };  // OK in non-strict
 ```
 
 ```typescript
-// test-lenient.ts
-// No @strict directive
+// @strict: true
+// Same code should error in strict mode
 
-let x;  // Should NOT error in lenient mode
+let implicitAny = function(x) { return x; };  // TS7006
 ```
 
-Both tests use the same checker code, but produce different results based on their explicit configuration.
+### Pattern 2: Module Resolution Tests
 
-### Summary
+```typescript
+// @module: commonjs
+// @filename: a.ts
+export const value = 42;
 
-The key principle is: **Configuration flows explicitly from test files through the test infrastructure to the compiler API, and the checker receives it via well-defined interfaces. No file path inspection, no global state, no implicit configuration.**
+// @filename: b.ts
+import { value } from "./a";
+console.log(value);
+```
 
-This architecture ensures that our type checker is:
-- Configuration-driven, not path-driven
-- Testable in isolation
-- Predictable in behavior
-- Easy to reason about
+### Pattern 3: Target-Specific Tests
+
+```typescript
+// @target: es5
+// Test ES5 output (no arrow functions, etc.)
+
+const add = (a: number, b: number) => a + b;
+// Should transpile to function expression
+```
+
+### Pattern 4: Declaration Emit Tests
+
+```typescript
+// @declaration: true
+// @emitDeclarationOnly: true
+
+export class MyClass {
+    private x: number;
+    constructor(x: number) {
+        this.x = x;
+    }
+}
+// Should generate .d.ts with public API only
+```
+
+### Pattern 5: JSX Tests
+
+```typescript
+// @jsx: preserve
+// @filename: Component.tsx
+
+const element = <div>Hello</div>;
+// JSX should be preserved in output
+```
+
+## Summary
+
+The test infrastructure follows these principles:
+
+1. **Explicit Configuration**: Always pass compiler options explicitly through directives or function parameters
+2. **No Path Inference**: Never infer compiler behavior from file paths
+3. **Self-Contained Tests**: Each test file specifies its own requirements
+4. **Clear Separation**: Distinct layers for parsing directives, resolving options, and type checking
+5. **Strict Mode Cascade**: The `strict` flag is a meta-option that enables multiple strict checks
+
+When writing tests:
+- Use `// @directive: value` comments to configure behavior
+- Create checkers with explicit `strict` parameter (true/false)
+- Don't rely on file naming conventions for configuration
+- Test both strict and non-strict modes explicitly when behavior differs
+
+This architecture ensures tests are portable, maintainable, and clearly express their requirements.
