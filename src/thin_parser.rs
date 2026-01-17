@@ -112,8 +112,8 @@ impl ThinParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
-            ts1109_statement_budget: 3, // Reduced from 5 to 3 to allow more legitimate errors
-            ts1005_statement_budget: 2, // Reduced from 4 to 2 to allow more legitimate errors
+            ts1109_statement_budget: 3, // Allow 3 TS1109 errors per statement (reduced for noise suppression)
+            ts1005_statement_budget: 2, // Allow 2 TS1005 errors per statement (reduced for noise suppression)
         }
     }
 
@@ -127,8 +127,8 @@ impl ThinParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
-        self.ts1109_statement_budget = 3; // Reset error budget (reduced to allow more legitimate errors)
-        self.ts1005_statement_budget = 2; // Reset error budget (reduced to allow more legitimate errors)
+        self.ts1109_statement_budget = 3; // Reset error budget (reduced for noise suppression)
+        self.ts1005_statement_budget = 2; // Reset error budget (reduced for noise suppression)
     }
 
     /// Maximum recursion depth to prevent stack overflow on deeply nested code
@@ -322,53 +322,63 @@ impl ThinParserState {
             self.next_token();
             true
         } else {
+            // Special case: Force error emission for missing ) when we see {
+            // This is a common error pattern that should always be reported
+            let force_emit = kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken);
+
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
             // when the real issue is a single missing token
-            if self.token_pos() != self.last_error_pos {
+            if force_emit || self.token_pos() != self.last_error_pos {
                 // Additional check: suppress error for missing closing tokens when we're
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
-                let should_suppress = match kind {
-                    // Only suppress for structural closing tokens, not general punctuation
-                    SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
-                        // At EOF, usually suppress errors except for clear structural issues
-                        // For missing ) after function parameters, we should report the error
-                        if self.is_token(SyntaxKind::EndOfFileToken) {
-                            // Be less aggressive about suppressing missing closing tokens at EOF
-                            // Only suppress if this might be a natural end point
-                            match kind {
-                                SyntaxKind::CloseParenToken => {
-                                    // Don't suppress missing ) at EOF - this is usually a clear error
-                                    false
-                                }
-                                _ => true // Still suppress missing } and ] at EOF for now
+                let should_suppress = if force_emit {
+                    false // Never suppress forced errors
+                } else {
+                    match kind {
+                        SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
+                            // At EOF, clearly the file ended before this closing token
+                            // However, for closing parens, this is more likely to be a real error
+                            // Only suppress for closing braces/brackets
+                            if self.is_token(SyntaxKind::EndOfFileToken) {
+                                kind != SyntaxKind::CloseParenToken
+                            }
+                            // For closing parentheses, be more strict when we see { or if
+                            // These are common cases of missing ) in parameters or conditions
+                            else if kind == SyntaxKind::CloseParenToken &&
+                                   (self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::IfKeyword)) {
+                                // If we're expecting ) but see { or if, this is likely a missing )
+                                // Don't suppress - emit the error
+                                false
+                            }
+                            // If next token starts a statement, the user has clearly moved on
+                            // Don't complain about missing closing token
+                            else if self.is_statement_start() {
+                                true
+                            }
+                            // If there's a line break, give the user benefit of doubt
+                            else if self.scanner.has_preceding_line_break() {
+                                true
+                            }
+                            else {
+                                false
                             }
                         }
-                        // For missing CloseParenToken, be less aggressive about suppression
-                        // when the next token is OpenBraceToken, since that often indicates
-                        // the user wrote "function f( {" expecting the brace to be function body
-                        else if kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken) {
-                            // Don't suppress - this is likely a syntax error in function/method parameters
-                            false
-                        }
-                        // If next token starts a statement, the user has clearly moved on
-                        // Don't complain about missing closing token
-                        else if self.is_statement_start() {
-                            true
-                        }
-                        // If there's a line break, give the user benefit of doubt for structural tokens only
-                        else if self.scanner.has_preceding_line_break() {
-                            true
-                        }
-                        else {
-                            false
-                        }
+                        _ => false
                     }
-                    _ => false
                 };
 
                 if !should_suppress {
-                    self.error_token_expected(Self::token_to_string(kind));
+                    // For forced errors, bypass the normal error budget logic
+                    if force_emit {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            &format!("'{}' expected", Self::token_to_string(kind)),
+                            diagnostic_codes::TOKEN_EXPECTED,
+                        );
+                    } else {
+                        self.error_token_expected(Self::token_to_string(kind));
+                    }
                 }
             }
             false
@@ -452,15 +462,9 @@ impl ThinParserState {
         // This handles cases like `a + (` where we're starting a parenthesized expression
         if self.is_token(SyntaxKind::OpenParenToken)
             || self.is_token(SyntaxKind::OpenBracketToken)
+            || self.is_token(SyntaxKind::OpenBraceToken)
         {
             return true;
-        }
-
-        // For OpenBraceToken, be more careful - don't recover if this could be a function body
-        // following missing close paren in function parameters
-        if self.is_token(SyntaxKind::OpenBraceToken) {
-            // Don't suppress the error - this is likely a structural issue like missing ) in function params
-            return false;
         }
 
         // If we're at a token that clearly starts a new statement, we can recover
@@ -470,26 +474,31 @@ impl ThinParserState {
             return true;
         }
 
-        // Be more conservative about recovery to allow more legitimate TS1005 errors
-        // Only allow recovery for the most obvious cases
+        // If we're at certain expression start tokens, we might be able to recover
+        // But be selective - only recover on tokens that clearly indicate a new expression
         match self.token() {
-            // Literals that clearly start a new expression
+            // Literals and keywords that clearly start a new expression
             SyntaxKind::NumericLiteral
             | SyntaxKind::BigIntLiteral
             | SyntaxKind::StringLiteral
+            | SyntaxKind::NoSubstitutionTemplateLiteral
+            | SyntaxKind::TemplateHead
             | SyntaxKind::TrueKeyword
             | SyntaxKind::FalseKeyword
-            | SyntaxKind::NullKeyword => true,
-
-            // Only unambiguous expression start keywords
-            SyntaxKind::ThisKeyword
+            | SyntaxKind::NullKeyword
+            | SyntaxKind::ThisKeyword
             | SyntaxKind::SuperKeyword
-            | SyntaxKind::FunctionKeyword
-            | SyntaxKind::ClassKeyword
-            | SyntaxKind::NewKeyword => true,
-
-            // Remove overly permissive recovery for identifiers and operators
-            // These might be legitimate TS1005 cases
+            | SyntaxKind::AwaitKeyword
+            | SyntaxKind::YieldKeyword => true,
+            // Open angle bracket for type arguments or JSX
+            SyntaxKind::LessThanToken => true,
+            // Colon for type annotations, object literal properties, or conditional operator
+            // This handles cases like `const x` followed by `: string` where we've moved on
+            SyntaxKind::ColonToken => true,
+            // Arrow function operator - indicates we're in an arrow function
+            SyntaxKind::EqualsGreaterThanToken => true,
+            // Type assertion keyword - indicates we're in a type context
+            SyntaxKind::AsKeyword => true,
             _ => false,
         }
     }
@@ -509,12 +518,12 @@ impl ThinParserState {
             // This catches cascading errors where the parser recovers to the next token
             // after a TS1005 or similar error.
             // Only apply this if we've actually emitted an error (last_error_pos > 0)
-            // and the current position is within 80 characters of the last error.
-            // REDUCED from 150 to 80 to allow more legitimate errors through.
+            // and the current position is within 50 characters of the last error.
+            // REDUCED from 75 to 50 to allow more legitimate TS1109 errors while preventing storms.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(80)
+                && current_pos < self.last_error_pos.saturating_add(50)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1109
                 return;
@@ -584,11 +593,10 @@ impl ThinParserState {
             // Additional check: suppress TS1005 if we're very close to a recent error
             // This catches cascading errors where the parser recovers to the next token
             // after another TS1005 or similar error.
-            // REDUCED from 120 to 60 to allow more legitimate errors through.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(60)
+                && current_pos < self.last_error_pos.saturating_add(80)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1005
                 return;
@@ -597,7 +605,8 @@ impl ThinParserState {
             // Check if we can recover from this error
             // If we're at a position where parsing can reasonably continue, suppress the error
             // This reduces false-positive TS1005 errors in complex expressions
-            if self.can_recover_from_error() {
+            // Exception: Don't suppress ')' expected when we see '{' - this is likely a real error
+            if self.can_recover_from_error() && !(token == ")" && self.is_token(SyntaxKind::OpenBraceToken)) {
                 return;
             }
 
@@ -605,17 +614,8 @@ impl ThinParserState {
             // If we're at a position that naturally ends expressions (closing brace, paren, bracket, EOF),
             // suppress the TS1005 error because we've clearly moved on to the next construct.
             // This was previously only used for TS1109 suppression but is also applicable to TS1005.
-            // However, for missing closing tokens (like missing ) or }), EOF doesn't mean we've moved on.
             if self.is_at_expression_end() {
-                // For missing closing tokens, don't suppress at EOF - it's likely a real error
-                let is_missing_closing_token = matches!(token, ")" | "}" | "]");
-                let is_at_eof = self.is_token(SyntaxKind::EndOfFileToken);
-
-                if is_missing_closing_token && is_at_eof {
-                    // Don't suppress - missing closing token at EOF is usually a real error
-                } else {
-                    return;
-                }
+                return;
             }
 
             // Decrement budget - we're about to emit an error
@@ -763,16 +763,16 @@ impl ThinParserState {
     /// expecting an expression and see `var`, `let`, `function`, etc., that's likely an error.
     fn is_at_expression_end(&self) -> bool {
         match self.token() {
-            // Only the most obvious expression-ending tokens should suppress TS1109
-            // Be more conservative to allow legitimate errors through
+            // Only tokens that naturally end expressions and indicate we've moved on
             SyntaxKind::SemicolonToken
             | SyntaxKind::CloseBraceToken
             | SyntaxKind::CloseParenToken
             | SyntaxKind::CloseBracketToken
             | SyntaxKind::EndOfFileToken => true,
-
-            // Remove over-aggressive suppression for commas, colons, and assignment operators
-            // These could be legitimate TS1109 cases (e.g., incomplete expressions)
+            // NOTE: We do NOT suppress on statement start keywords
+            // If we're expecting an expression and see `var`, `let`, `function`, etc.,
+            // that's likely a genuine error where the user forgot the expression.
+            // This fixes the "missing TS1109" issue where errors were being suppressed too aggressively.
             _ => false,
         }
     }
@@ -4454,6 +4454,7 @@ impl ThinParserState {
         start_pos: u32,
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
+        use crate::checker::types::diagnostics::diagnostic_codes;
         self.parse_expected(SyntaxKind::TypeKeyword);
 
         let name = self.parse_identifier();
@@ -5579,18 +5580,6 @@ impl ThinParserState {
         let expression = if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
         } else {
-            // ASI applies - but check if there's an expression on the next line that
-            // the developer might have intended to return (emit TS1109 warning)
-            if self.scanner.has_preceding_line_break() && self.is_expression_start() {
-                // There's a line break after return AND the next token can start an expression
-                // This suggests the developer might have accidentally inserted a line break
-                // Emit TS1109 "Expression expected" to warn them
-                use crate::checker::types::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    "Expression expected",
-                    diagnostic_codes::EXPRESSION_EXPECTED,
-                );
-            }
             NodeIndex::NONE
         };
 
@@ -5908,14 +5897,26 @@ impl ThinParserState {
 
     /// Parse throw statement
     fn parse_throw_statement(&mut self) -> NodeIndex {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
-        // For throw statements in TypeScript, emit TS1109 error if there's a line break
-        // after 'throw' keyword (unlike JavaScript which allows ASI here)
-        let expression = if self.scanner.has_preceding_line_break() {
-            // TypeScript requires expression after throw on same line
-            self.error_expression_expected();
+        // TypeScript requires an expression after throw
+        // If there's a line break immediately after throw, emit TS1109 (EXPRESSION_EXPECTED)
+        let expression = if self.scanner.has_preceding_line_break()
+            && !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken) {
+            // Line break after throw without semicolon/brace/EOF - emit error
+            let start = self.token_pos();
+            let end = self.token_end();
+            self.parse_error_at(
+                start,
+                end - start,
+                "Expression expected",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
             NodeIndex::NONE
         } else if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
@@ -6716,8 +6717,6 @@ impl ThinParserState {
                 let right = if is_assignment {
                     let result = self.parse_assignment_expression();
                     if result.is_none() {
-                        // Emit TS1109 for incomplete assignment expressions (e.g., "x =" without right operand)
-                        self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
                         // Error recovery: If right-side parsing failed and current token
                         // cannot start an expression, break to prevent cascading errors
@@ -6734,8 +6733,6 @@ impl ThinParserState {
                     };
                     let result = self.parse_binary_expression(next_min);
                     if result.is_none() {
-                        // Emit TS1109 for incomplete binary expressions (e.g., "1 +" without right operand)
-                        self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
                         // Error recovery: If right-side parsing failed and current token
                         // cannot start an expression, break to prevent cascading errors
@@ -6870,40 +6867,23 @@ impl ThinParserState {
                     self.scanner.restore_state(snapshot);
                     self.current_token = current_token;
 
-                    // Check if await is followed by tokens that suggest it's an incomplete await expression
-                    let definitely_incomplete = matches!(
+                    let has_following_expression = !matches!(
                         next_token,
                         SyntaxKind::SemicolonToken
+                            | SyntaxKind::CloseBracketToken
                             | SyntaxKind::CommaToken
                             | SyntaxKind::ColonToken
                             | SyntaxKind::EqualsGreaterThanToken
-                            | SyntaxKind::CloseParenToken
                             | SyntaxKind::EndOfFileToken
                     );
 
-                    // Special case: CloseBracketToken after await
-                    // In non-async contexts: [await] should parse as identifier reference (no error)
-                    // In async contexts: [await] should emit TS1109 because await expects expression
-                    let bracket_incomplete = next_token == SyntaxKind::CloseBracketToken && self.in_async_context();
+                    // Special case: Don't emit TS1109 for 'await' in computed property names like { [await]: foo }
+                    // In this context, 'await' is used as an identifier and CloseBracketToken is expected
+                    let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
 
-                    let has_following_expression = !(definitely_incomplete || bracket_incomplete);
-
-                    if !has_following_expression {
+                    if !has_following_expression && !is_computed_property_context {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
                         self.error_expression_expected();
-                        // Return await as identifier to maintain parsing state
-                        let start_pos = self.token_pos();
-                        let end_pos = self.token_end(); // capture end before consuming
-                        self.next_token(); // consume the await token
-                        return self.arena.add_identifier(
-                            SyntaxKind::Identifier as u16,
-                            start_pos,
-                            end_pos,
-                            crate::parser::thin_node::IdentifierData {
-                                escaped_text: String::from("await"),
-                                original_text: None,
-                                type_arguments: None,
-                            },
-                        );
                     }
 
                     // Fall through to parse as identifier/postfix expression
@@ -6915,23 +6895,9 @@ impl ThinParserState {
                 self.next_token();
 
                 // Check for missing operand (e.g., just "await" with nothing after it)
-                // Also handle cases like { [await]: foo } where : follows await
-                if self.can_parse_semicolon()
-                    || self.is_token(SyntaxKind::SemicolonToken) {
+                if self.can_parse_semicolon() || self.is_token(SyntaxKind::SemicolonToken) {
                     use crate::checker::types::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Expression expected",
-                        diagnostic_codes::EXPRESSION_EXPECTED,
-                    );
-                } else if self.is_token(SyntaxKind::ColonToken)
-                    || self.is_token(SyntaxKind::CloseBracketToken) {
-                    // Special case for computed properties: { [await]: foo }
-                    // Emit TS1109 directly without global suppression logic
-                    use crate::checker::types::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Expression expected",
-                        diagnostic_codes::EXPRESSION_EXPECTED,
-                    );
+                    self.error_expression_expected();
                 }
 
                 let expression = self.parse_unary_expression();
@@ -6966,25 +6932,6 @@ impl ThinParserState {
                 {
                     self.parse_assignment_expression()
                 } else {
-                    // Special case: yield* requires an expression (emit TS1109 if missing)
-                    if asterisk_token && (self.is_token(SyntaxKind::SemicolonToken) || self.scanner.has_preceding_line_break()) {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
-                            "Expression expected",
-                            diagnostic_codes::EXPRESSION_EXPECTED,
-                        );
-                    }
-                    // Check for line break + expression pattern (emit TS1109 warning)
-                    else if self.scanner.has_preceding_line_break() && self.is_expression_start() {
-                        // There's a line break after yield AND the next token can start an expression
-                        // This suggests the developer might have accidentally inserted a line break
-                        // Emit TS1109 "Expression expected" to warn them
-                        use crate::checker::types::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
-                            "Expression expected",
-                            diagnostic_codes::EXPRESSION_EXPECTED,
-                        );
-                    }
                     NodeIndex::NONE
                 };
 
@@ -8596,29 +8543,9 @@ impl ThinParserState {
                 let start_pos = self.token_pos();
                 self.next_token();
 
-                // Special case for [await]: emit TS1005 instead of TS1109
-                // TypeScript emits TS1005 ('] expected') for patterns like { [await]: foo }
-                // rather than TS1109 (Expression expected)
-                if self.is_token(SyntaxKind::AwaitKeyword) {
-                    // Look ahead to see if await is immediately followed by ]
-                    let snapshot = self.scanner.save_state();
-                    let current_token = self.current_token;
-                    self.next_token(); // consume 'await'
-                    let next_token = self.token();
-                    self.scanner.restore_state(snapshot);
-                    self.current_token = current_token;
-
-                    if next_token == SyntaxKind::CloseBracketToken {
-                        // Emit TS1005: '] expected' for [await] pattern
-                        use crate::checker::types::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
-                            "']' expected",
-                            diagnostic_codes::TOKEN_EXPECTED,
-                        );
-                        // Skip the await token and continue parsing
-                        self.next_token();
-                    }
-                }
+                // Note: await in computed property name is NOT a parser error
+                // The type checker will emit TS2304 if 'await' is not in scope
+                // Example: { [await]: foo } should only emit TS2304, not TS1109
 
                 let expression = self.parse_expression();
                 self.parse_expected(SyntaxKind::CloseBracketToken);
@@ -8669,16 +8596,6 @@ impl ThinParserState {
         }
 
         // Parse the callee expression - member access without call (we handle call ourselves)
-        // Special check for missing identifier: new () should emit TS1109
-        if self.is_token(SyntaxKind::OpenParenToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Expression expected",
-                diagnostic_codes::EXPRESSION_EXPECTED,
-            );
-            // Continue parsing as if there was an identifier
-        }
-
         let expression = self.parse_member_expression_base();
         let mut end_pos = self
             .arena
@@ -10577,171 +10494,392 @@ impl ThinParserState {
                 },
             )
         } else {
-            // Self-closing element
+            // Self-closing element, already complete
             opening
         }
     }
 
-    /// Parse JSX closing fragment
-    fn parse_jsx_closing_fragment(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::LessThanToken);
-        self.parse_expected(SyntaxKind::SlashToken);
-        self.parse_expected(SyntaxKind::GreaterThanToken);
-        let end_pos = self.token_end();
-
-        self.arena.add_token(
-            syntax_kind_ext::JSX_CLOSING_FRAGMENT as u16,
-            start_pos,
-            end_pos,
-        )
-    }
-
-    /// Parse JSX opening element, self-closing element, or fragment start
-    fn parse_jsx_opening_or_self_closing_or_fragment(&mut self, _in_expression_context: bool) -> NodeIndex {
+    /// Parse JSX opening element, self-closing element, or opening fragment.
+    fn parse_jsx_opening_or_self_closing_or_fragment(
+        &mut self,
+        _in_expression_context: bool,
+    ) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::LessThanToken);
 
-        // Check if this is a fragment (<>)
+        // Check for fragment: <>
         if self.is_token(SyntaxKind::GreaterThanToken) {
             let end_pos = self.token_end();
             self.next_token(); // consume >
-            return self.arena.add_token(
-                syntax_kind_ext::JSX_OPENING_FRAGMENT as u16,
-                start_pos,
-                end_pos,
-            );
+            return self
+                .arena
+                .add_token(syntax_kind_ext::JSX_OPENING_FRAGMENT, start_pos, end_pos);
         }
 
-        // Parse tag name (identifier or member expression)
-        let tag_name = self.parse_jsx_tag_name_expression();
+        // Parse tag name
+        let tag_name = self.parse_jsx_element_name();
+
+        // Parse optional type arguments
+        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
+            Some(self.parse_type_arguments())
+        } else {
+            None
+        };
 
         // Parse attributes
         let attributes = self.parse_jsx_attributes();
 
-        // Check if self-closing (/>)
+        // Check for self-closing: />
         if self.is_token(SyntaxKind::SlashToken) {
             self.next_token(); // consume /
-            self.parse_expected(SyntaxKind::GreaterThanToken);
             let end_pos = self.token_end();
-
+            self.parse_expected(SyntaxKind::GreaterThanToken);
             return self.arena.add_jsx_opening(
                 syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
                 start_pos,
                 end_pos,
                 crate::parser::thin_node::JsxOpeningData {
                     tag_name,
-                    type_arguments: None,
+                    type_arguments,
                     attributes,
                 },
             );
         }
 
-        // Opening element
-        self.parse_expected(SyntaxKind::GreaterThanToken);
+        // Opening element: consume > and continue parsing children
         let end_pos = self.token_end();
-
+        self.parse_expected(SyntaxKind::GreaterThanToken);
         self.arena.add_jsx_opening(
             syntax_kind_ext::JSX_OPENING_ELEMENT,
             start_pos,
             end_pos,
             crate::parser::thin_node::JsxOpeningData {
                 tag_name,
-                type_arguments: None,
+                type_arguments,
                 attributes,
             },
         )
     }
 
-    /// Parse JSX tag name (identifier or member expression)
-    fn parse_jsx_tag_name_expression(&mut self) -> NodeIndex {
-        if self.is_token(SyntaxKind::Identifier) {
-            self.parse_identifier()
-        } else {
-            // For simplicity, just return an empty node for now
-            NodeIndex::NONE
+    /// Parse JSX element name (identifier, this, namespaced, or property access).
+    fn parse_jsx_element_name(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        // Error recovery: if the current token can't start a JSX element name,
+        // return a missing identifier to avoid crashes
+        if !self.is_token(SyntaxKind::Identifier)
+            && !self.is_token(SyntaxKind::ThisKeyword)
+            && !self.is_identifier_or_keyword()
+        {
+            self.error_identifier_expected();
+            // Create a missing identifier node
+            let end_pos = self.token_end();
+            return self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                start_pos,
+                end_pos,
+                IdentifierData {
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            );
         }
+
+        // Parse the initial name (identifier or this)
+        let mut expr = if self.is_token(SyntaxKind::ThisKeyword) {
+            let pos = self.token_pos();
+            self.next_token();
+            let end_pos = self.token_end();
+            self.arena
+                .add_token(SyntaxKind::ThisKeyword as u16, pos, end_pos)
+        } else {
+            if self.is_token(SyntaxKind::Identifier) {
+                self.scanner.scan_jsx_identifier();
+            }
+            let name = self.parse_identifier();
+
+            // Check for namespaced name (a:b)
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.next_token(); // consume :
+                let local_name = self.parse_identifier();
+                let end_pos = self.token_end();
+                return self.arena.add_jsx_namespaced_name(
+                    syntax_kind_ext::JSX_NAMESPACED_NAME,
+                    start_pos,
+                    end_pos,
+                    crate::parser::thin_node::JsxNamespacedNameData {
+                        namespace: name,
+                        name: local_name,
+                    },
+                );
+            }
+
+            name
+        };
+
+        // Parse property access chain (Foo.Bar.Baz)
+        while self.is_token(SyntaxKind::DotToken) {
+            self.next_token(); // consume .
+            let name = self.parse_identifier();
+            let end_pos = self.token_end();
+            expr = self.arena.add_access_expr(
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
+                start_pos,
+                end_pos,
+                crate::parser::thin_node::AccessExprData {
+                    expression: expr,
+                    name_or_argument: name,
+                    question_dot_token: false,
+                },
+            );
+        }
+
+        expr
     }
 
-    /// Parse JSX attributes
+    /// Parse JSX attributes list.
     fn parse_jsx_attributes(&mut self) -> NodeIndex {
-        // For now, just return a placeholder node
-        // In a full implementation, this would parse all attributes into a list
+        let start_pos = self.token_pos();
+        let mut properties = Vec::new();
+
         while !self.is_token(SyntaxKind::GreaterThanToken)
             && !self.is_token(SyntaxKind::SlashToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken) {
-
-            if self.is_token(SyntaxKind::Identifier) {
-                // Parse attribute name
-                let _name = self.parse_identifier();
-
-                // Parse optional value
-                if self.is_token(SyntaxKind::EqualsToken) {
-                    self.next_token(); // consume =
-                    if self.is_token(SyntaxKind::StringLiteral) {
-                        self.next_token(); // consume string value
-                    } else if self.is_token(SyntaxKind::OpenBraceToken) {
-                        // JSX expression
-                        self.next_token(); // consume {
-                        self.parse_expression();
-                        self.parse_expected(SyntaxKind::CloseBraceToken);
-                    }
-                }
-            } else {
-                // Skip unexpected token
-                self.next_token();
-            }
-        }
-
-        NodeIndex::NONE
-    }
-
-    /// Parse JSX children
-    fn parse_jsx_children(&mut self) -> crate::parser::NodeList {
-        let mut children = Vec::new();
-
-        while !self.is_token(SyntaxKind::LessThanToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken) {
-
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
             if self.is_token(SyntaxKind::OpenBraceToken) {
-                // JSX expression
-                self.next_token(); // consume {
-                self.parse_expression();
-                self.parse_expected(SyntaxKind::CloseBraceToken);
+                // Spread attribute: {...props}
+                properties.push(self.parse_jsx_spread_attribute());
             } else {
-                // JSX text or other content - skip for now
-                self.next_token();
+                // Regular attribute: name="value" or name={expr} or just name
+                properties.push(self.parse_jsx_attribute());
             }
         }
 
-        crate::parser::NodeList {
-            nodes: children,
-            pos: 0,
-            end: 0,
-            has_trailing_comma: false,
-        }
-    }
-
-    /// Parse JSX closing element
-    fn parse_jsx_closing_element(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::LessThanToken);
-        self.parse_expected(SyntaxKind::SlashToken);
-
-        // Parse tag name
-        let _tag_name = self.parse_jsx_tag_name_expression();
-
-        self.parse_expected(SyntaxKind::GreaterThanToken);
         let end_pos = self.token_end();
-
-        self.arena.add_token(
-            syntax_kind_ext::JSX_CLOSING_ELEMENT as u16,
+        self.arena.add_jsx_attributes(
+            syntax_kind_ext::JSX_ATTRIBUTES,
             start_pos,
             end_pos,
+            crate::parser::thin_node::JsxAttributesData {
+                properties: self.make_node_list(properties),
+            },
         )
     }
 
-    /// Extract arena and diagnostics from parser state
+    /// Parse a single JSX attribute.
+    fn parse_jsx_attribute(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        // Error recovery: if the current token can't start an attribute name,
+        // report error and skip to next attribute or end of attributes
+        if !self.is_token(SyntaxKind::Identifier) && !self.is_identifier_or_keyword() {
+            self.error_identifier_expected();
+            // Skip the invalid token to prevent infinite loops
+            self.next_token();
+            // Return a dummy attribute with missing name
+            let end_pos = self.token_end();
+            return self.arena.add_jsx_attribute(
+                syntax_kind_ext::JSX_ATTRIBUTE,
+                start_pos,
+                end_pos,
+                crate::parser::thin_node::JsxAttributeData {
+                    name: NodeIndex::NONE,
+                    initializer: NodeIndex::NONE,
+                },
+            );
+        }
+
+        let name = self.parse_jsx_attribute_name();
+
+        // Check for value: = followed by string, expression, or nested JSX
+        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+            if self.is_token(SyntaxKind::StringLiteral) {
+                self.parse_string_literal()
+            } else if self.is_token(SyntaxKind::OpenBraceToken) {
+                self.parse_jsx_expression()
+            } else if self.is_token(SyntaxKind::LessThanToken) {
+                self.parse_jsx_element_or_self_closing_or_fragment(true)
+            } else {
+                self.error_expression_expected();
+                NodeIndex::NONE
+            }
+        } else {
+            NodeIndex::NONE
+        };
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_attribute(
+            syntax_kind_ext::JSX_ATTRIBUTE,
+            start_pos,
+            end_pos,
+            crate::parser::thin_node::JsxAttributeData { name, initializer },
+        )
+    }
+
+    /// Parse JSX attribute name (possibly namespaced).
+    /// JSX attribute names can be keywords like "extends", "class", etc.
+    fn parse_jsx_attribute_name(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        if self.is_token(SyntaxKind::Identifier) {
+            self.scanner.scan_jsx_identifier();
+        }
+        // Use parse_identifier_name to allow keywords as attribute names
+        let name = self.parse_identifier_name();
+
+        // Check for namespaced name (a:b)
+        if self.is_token(SyntaxKind::ColonToken) {
+            self.next_token(); // consume :
+            // Also allow keywords for the local part of namespaced names
+            let local_name = self.parse_identifier_name();
+            let end_pos = self.token_end();
+            return self.arena.add_jsx_namespaced_name(
+                syntax_kind_ext::JSX_NAMESPACED_NAME,
+                start_pos,
+                end_pos,
+                crate::parser::thin_node::JsxNamespacedNameData {
+                    namespace: name,
+                    name: local_name,
+                },
+            );
+        }
+
+        name
+    }
+
+    /// Parse a JSX spread attribute: {...props}
+    fn parse_jsx_spread_attribute(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::OpenBraceToken);
+        self.parse_expected(SyntaxKind::DotDotDotToken);
+        let expression = self.parse_expression();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_spread_attribute(
+            syntax_kind_ext::JSX_SPREAD_ATTRIBUTE,
+            start_pos,
+            end_pos,
+            crate::parser::thin_node::JsxSpreadAttributeData { expression },
+        )
+    }
+
+    /// Parse a JSX expression: {expr} or {...expr}
+    fn parse_jsx_expression(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::OpenBraceToken);
+
+        // Check for spread: {...}
+        let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+
+        // Check for empty expression: {}
+        let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
+            NodeIndex::NONE
+        } else {
+            self.parse_expression()
+        };
+
+        self.parse_expected(SyntaxKind::CloseBraceToken);
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_expression(
+            syntax_kind_ext::JSX_EXPRESSION,
+            start_pos,
+            end_pos,
+            crate::parser::thin_node::JsxExpressionData {
+                dot_dot_dot_token,
+                expression,
+            },
+        )
+    }
+
+    /// Parse JSX children (elements, text, expressions).
+    fn parse_jsx_children(&mut self) -> NodeList {
+        let mut children = Vec::new();
+
+        loop {
+            // Rescan in JSX context to get proper JsxText tokens and LessThanSlashToken
+            // This is necessary because after parsing expressions or nested elements,
+            // the scanner may not be in JSX mode.
+            self.current_token = self.scanner.re_scan_jsx_token(true);
+
+            match self.current_token {
+                SyntaxKind::LessThanSlashToken => {
+                    // Closing tag/fragment - stop parsing children
+                    break;
+                }
+                SyntaxKind::LessThanToken => {
+                    // Nested JSX element
+                    children.push(self.parse_jsx_element_or_self_closing_or_fragment(false));
+                }
+                SyntaxKind::OpenBraceToken => {
+                    // JSX expression: {expr}
+                    children.push(self.parse_jsx_expression());
+                }
+                SyntaxKind::JsxText => {
+                    // Text node
+                    children.push(self.parse_jsx_text());
+                }
+                SyntaxKind::EndOfFileToken => {
+                    break;
+                }
+                _ => {
+                    // Unknown token in JSX children - stop
+                    break;
+                }
+            }
+        }
+
+        self.make_node_list(children)
+    }
+
+    /// Parse JSX text content.
+    fn parse_jsx_text(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let text = self.scanner.get_token_value_ref().to_string();
+        let end_pos = self.token_end();
+        self.next_token();
+
+        self.arena.add_jsx_text(
+            SyntaxKind::JsxText as u16,
+            start_pos,
+            end_pos,
+            crate::parser::thin_node::JsxTextData {
+                text,
+                contains_only_trivia_white_spaces: false,
+            },
+        )
+    }
+
+    /// Parse a JSX closing element: </Foo>
+    fn parse_jsx_closing_element(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        // In JSX mode, </ is scanned as a single LessThanSlashToken
+        self.parse_expected(SyntaxKind::LessThanSlashToken);
+        let tag_name = self.parse_jsx_element_name();
+        let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::GreaterThanToken);
+        self.arena.add_jsx_closing(
+            syntax_kind_ext::JSX_CLOSING_ELEMENT,
+            start_pos,
+            end_pos,
+            crate::parser::thin_node::JsxClosingData { tag_name },
+        )
+    }
+
+    /// Parse a JSX closing fragment: </>
+    fn parse_jsx_closing_fragment(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        // In JSX mode, </ is scanned as a single LessThanSlashToken
+        self.parse_expected(SyntaxKind::LessThanSlashToken);
+        let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::GreaterThanToken);
+        self.arena
+            .add_token(syntax_kind_ext::JSX_CLOSING_FRAGMENT, start_pos, end_pos)
+    }
+
+    /// Consume the parser and return its parts.
+    /// This is useful for taking ownership of the arena after parsing.
     pub fn into_parts(self) -> (ThinNodeArena, Vec<ParseDiagnostic>) {
         (self.arena, self.parse_diagnostics)
     }
