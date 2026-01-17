@@ -189,6 +189,339 @@ The test infrastructure:
 
 **The compiler itself never sees or cares about file names.**
 
+## CompilerOptions Data Flow
+
+This section describes the complete flow of configuration from test files through the system to the type checker.
+
+### Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Test File (example.ts)                                      │
+│                                                             │
+│ // @strict                                                  │
+│ // @noImplicitAny                                           │
+│ // @target ES2015                                           │
+│                                                             │
+│ function greet(name: string) { ... }                        │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ 1. Test Infrastructure reads file
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Test Harness/Runner                                         │
+│                                                             │
+│ - Scans for // @directive comments                         │
+│ - Extracts directive names and values                       │
+│ - Example: "@strict" → ("strict", true)                     │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ 2. Parse directives
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Directive Parser                                            │
+│                                                             │
+│ Converts comment directives to structured config:          │
+│ {                                                           │
+│   strict: true,                                             │
+│   noImplicitAny: true,                                      │
+│   target: ScriptTarget::ES2015                              │
+│ }                                                           │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ 3. Convert to CompilerOptions
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ CompilerOptions Object                                      │
+│                                                             │
+│ pub struct CompilerOptions {                                │
+│     pub strict: bool,                                       │
+│     pub no_implicit_any: bool,                              │
+│     pub target: ScriptTarget,                               │
+│     pub module_kind: ModuleKind,                            │
+│     // ... all configuration fields                         │
+│ }                                                           │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ 4. Pass to createProgram()
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ createProgram(files: Vec<String>,                           │
+│               options: CompilerOptions,                     │
+│               host: CompilerHost)                           │
+│                                                             │
+│ - Creates Program with explicit configuration               │
+│ - NO file path inspection                                   │
+│ - NO implicit configuration inference                       │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ 5. Store options in Program
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Program Object                                              │
+│                                                             │
+│ pub struct Program {                                        │
+│     compiler_options: CompilerOptions,                      │
+│     // ...                                                  │
+│ }                                                           │
+│                                                             │
+│ pub fn get_compiler_options(&self) -> &CompilerOptions {    │
+│     &self.compiler_options                                  │
+│ }                                                           │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ 6. Checker queries via program.get_compiler_options()
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Type Checker                                                │
+│                                                             │
+│ fn check_function(&mut self, node: &Node) {                 │
+│     let options = self.program.get_compiler_options();      │
+│                                                             │
+│     if options.strict {                                     │
+│         // Strict type checking                             │
+│     }                                                       │
+│                                                             │
+│     if options.no_implicit_any {                            │
+│         // Report implicit any errors                       │
+│     }                                                       │
+│ }                                                           │
+│                                                             │
+│ NEVER:                                                      │
+│ - self.ctx.file_name.contains("strict") ❌                  │
+│ - Inspect file paths for configuration ❌                   │
+│ - Use global configuration state ❌                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Step-by-Step Process
+
+#### Step 1: Test Infrastructure Reads Test Files
+
+The test harness reads TypeScript files from disk. These files contain:
+- TypeScript source code
+- Configuration directives in comments
+
+```typescript
+// test-cases/strict-mode/test.ts
+// @strict
+// @target ES2015
+
+function example(x) {  // Error expected if strict mode
+    return x;
+}
+```
+
+#### Step 2: Parse Directives from Comments
+
+The test infrastructure scans comments for `// @directive` patterns:
+
+```rust
+// Pseudocode - Test Infrastructure
+fn parse_directives(file_content: &str) -> Vec<(String, String)> {
+    let mut directives = Vec::new();
+    for line in file_content.lines() {
+        if let Some(directive) = extract_directive(line) {
+            // "@strict" → ("strict", "true")
+            // "@target ES2015" → ("target", "ES2015")
+            directives.push(directive);
+        }
+    }
+    directives
+}
+```
+
+Common directives:
+- `// @strict` → Enable all strict options
+- `// @noImplicitAny` → Forbid implicit any
+- `// @strictNullChecks` → Null/undefined are separate types
+- `// @target ES2015` → Set ECMAScript target version
+- `// @module commonjs` → Set module system
+
+#### Step 3: Convert Directives to CompilerOptions
+
+Directives are converted to a typed `CompilerOptions` struct:
+
+```rust
+fn directives_to_options(directives: Vec<(String, String)>) -> CompilerOptions {
+    let mut options = CompilerOptions::default();
+
+    for (key, value) in directives {
+        match key.as_str() {
+            "strict" => {
+                options.strict = true;
+                // Strict implies multiple sub-options
+                options.strict_null_checks = true;
+                options.strict_function_types = true;
+                options.strict_property_initialization = true;
+                options.no_implicit_any = true;
+                options.no_implicit_this = true;
+            }
+            "noImplicitAny" => {
+                options.no_implicit_any = parse_bool(&value);
+            }
+            "target" => {
+                options.target = parse_script_target(&value);
+            }
+            "module" => {
+                options.module_kind = parse_module_kind(&value);
+            }
+            // ... handle all directives
+            _ => warn!("Unknown directive: {}", key),
+        }
+    }
+
+    options
+}
+```
+
+#### Step 4: Pass CompilerOptions to createProgram()
+
+The test infrastructure calls the compiler API with explicit configuration:
+
+```rust
+// Test Infrastructure
+let program = create_program(
+    vec!["test-cases/strict-mode/test.ts".to_string()],
+    options,  // Explicitly constructed CompilerOptions
+    compiler_host
+);
+
+// Run type checking
+let diagnostics = program.get_semantic_diagnostics();
+```
+
+This is the **ONLY** way configuration enters the compiler. There is no:
+- Environment variable checking
+- Global configuration state
+- File path pattern matching
+- Implicit configuration inference
+
+#### Step 5: Program Stores and Provides Options
+
+The `Program` object stores the `CompilerOptions` immutably:
+
+```rust
+pub struct Program {
+    compiler_options: CompilerOptions,
+    source_files: Vec<SourceFile>,
+    // ...
+}
+
+impl Program {
+    pub fn get_compiler_options(&self) -> &CompilerOptions {
+        &self.compiler_options
+    }
+}
+```
+
+The options are read-only after program creation. This ensures:
+- Configuration doesn't change during compilation
+- Behavior is consistent and predictable
+- No hidden state mutations
+
+#### Step 6: Checker Uses Options via program.get_compiler_options()
+
+The type checker queries configuration **only** through the Program interface:
+
+```rust
+impl ThinCheckerState {
+    fn check_implicit_any(&mut self, node: &Node, inferred_type: &Type) {
+        let options = self.program.get_compiler_options();
+
+        // Configuration-driven behavior
+        if options.no_implicit_any || options.strict {
+            if is_implicit_any_type(inferred_type) {
+                self.error(node, Diagnostics::ImplicitAny);
+            }
+        }
+    }
+
+    fn check_null_assignment(&mut self, target: &Type, source: &Type) {
+        let options = self.program.get_compiler_options();
+
+        // Behavior depends on explicit configuration
+        if options.strict_null_checks {
+            if is_nullable(source) && !is_nullable(target) {
+                self.error(node, Diagnostics::NullAssignment);
+            }
+        }
+        // Without strict_null_checks, null is assignable to all types
+    }
+}
+```
+
+### What the Checker NEVER Does
+
+```rust
+// ❌ FORBIDDEN: File path inspection
+fn is_strict_mode(&self) -> bool {
+    self.ctx.file_name.contains("strict")  // NEVER DO THIS
+}
+
+// ❌ FORBIDDEN: Global configuration
+static mut GLOBAL_STRICT: bool = false;  // NEVER DO THIS
+
+// ❌ FORBIDDEN: Implicit inference
+fn infer_module_kind(&self) -> ModuleKind {
+    if self.source_text.contains("import") {  // NEVER DO THIS
+        ModuleKind::ES6
+    } else {
+        ModuleKind::CommonJS
+    }
+}
+
+// ✅ CORRECT: Explicit configuration query
+fn get_module_kind(&self) -> ModuleKind {
+    self.program.get_compiler_options().module_kind
+}
+```
+
+### Benefits of This Flow
+
+1. **Explicit Over Implicit**: Configuration is passed explicitly at every step
+2. **Testable**: Each component can be tested in isolation with controlled configuration
+3. **Predictable**: Same input always produces same output
+4. **Traceable**: Configuration flow can be traced from test file to checker behavior
+5. **Type-Safe**: Configuration is validated at parse time, not runtime
+6. **Immutable**: Configuration can't change during compilation
+
+### Example: How Strict Mode Works
+
+```
+Test File:
+    // @strict
+    let x;  // Should error
+
+Test Infrastructure:
+    directives = [("strict", "true")]
+    options = CompilerOptions { strict: true, ... }
+
+Compiler API:
+    program = createProgram(files, options)
+
+Checker:
+    fn check_variable_declaration(&mut self, node: &VariableDecl) {
+        let options = self.program.get_compiler_options();
+
+        if options.strict && node.type_annotation.is_none() {
+            // In strict mode, untyped variables get implicit any error
+            self.error(node, Diagnostics::ImplicitAny);
+        }
+    }
+
+Result:
+    Error: Variable 'x' implicitly has an 'any' type
+```
+
+The same file without `// @strict` would not produce an error, because `options.strict` would be `false`. The checker code is identical; only the configuration changes.
+
 ## Benefits
 
 ### 1. Cleaner Separation of Concerns
