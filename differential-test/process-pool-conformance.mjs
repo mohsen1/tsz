@@ -15,7 +15,7 @@ const __dirname = dirname(__filename);
 
 const CONFIG = {
   wasmPkgPath: resolve(__dirname, '../pkg'),
-  conformanceDir: resolve(__dirname, '../tests/cases/conformance'),
+  conformanceDir: resolve(__dirname, '../ts-tests/cases/conformance'),
 };
 
 const colors = {

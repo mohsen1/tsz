@@ -15,7 +15,7 @@ const __dirname = dirname(__filename);
 // Read config from temp file passed as argument
 const configFile = process.argv[2];
 const { testFiles, wasmPkgPath, conformanceDir } = JSON.parse(readFileSync(configFile, 'utf-8'));
-const DEFAULT_LIB_PATH = join(__dirname, '../tests/lib/lib.d.ts');
+const DEFAULT_LIB_PATH = join(__dirname, '../ts-tests/lib/lib.d.ts');
 const DEFAULT_LIB_SOURCE = readFileSync(DEFAULT_LIB_PATH, 'utf-8');
 const DEFAULT_LIB_NAME = 'lib.d.ts';
 
