@@ -112,8 +112,8 @@ impl ThinParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
-            ts1109_statement_budget: 5, // Increased from 3 to 5 to reduce false positives
-            ts1005_statement_budget: 4, // Increased from 2 to 4 to reduce false positives
+            ts1109_statement_budget: 3, // Reduced from 5 to 3 to allow more legitimate errors
+            ts1005_statement_budget: 2, // Reduced from 4 to 2 to allow more legitimate errors
         }
     }
 
@@ -127,8 +127,8 @@ impl ThinParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
-        self.ts1109_statement_budget = 5; // Reset error budget (increased to reduce false positives)
-        self.ts1005_statement_budget = 4; // Reset error budget (increased to reduce false positives)
+        self.ts1109_statement_budget = 3; // Reset error budget (reduced to allow more legitimate errors)
+        self.ts1005_statement_budget = 2; // Reset error budget (reduced to allow more legitimate errors)
     }
 
     /// Maximum recursion depth to prevent stack overflow on deeply nested code
@@ -329,10 +329,8 @@ impl ThinParserState {
                 // Additional check: suppress error for missing closing tokens when we're
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
                 let should_suppress = match kind {
-                    // Enhanced suppression for all common missing tokens (Tier 1 improvement)
-                    SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
-                    | SyntaxKind::SemicolonToken | SyntaxKind::CommaToken | SyntaxKind::ColonToken
-                    | SyntaxKind::EqualsToken | SyntaxKind::GreaterThanToken => {
+                    // Only suppress for structural closing tokens, not general punctuation
+                    SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
                         // At EOF, usually suppress errors except for clear structural issues
                         // For missing ) after function parameters, we should report the error
                         if self.is_token(SyntaxKind::EndOfFileToken) {
@@ -358,16 +356,8 @@ impl ThinParserState {
                         else if self.is_statement_start() {
                             true
                         }
-                        // If there's a line break, give the user benefit of doubt
+                        // If there's a line break, give the user benefit of doubt for structural tokens only
                         else if self.scanner.has_preceding_line_break() {
-                            true
-                        }
-                        // If we can recover from this error position, suppress it (Tier 1 improvement)
-                        else if self.can_recover_from_error() {
-                            true
-                        }
-                        // If we're at an expression end, suppress (Tier 1 improvement)
-                        else if self.is_at_expression_end() {
                             true
                         }
                         else {
@@ -480,49 +470,26 @@ impl ThinParserState {
             return true;
         }
 
-        // If we're at certain expression start tokens, we might be able to recover
-        // Made more permissive to reduce false-positive TS1005 errors
+        // Be more conservative about recovery to allow more legitimate TS1005 errors
+        // Only allow recovery for the most obvious cases
         match self.token() {
-            // Literals and keywords that clearly start a new expression
+            // Literals that clearly start a new expression
             SyntaxKind::NumericLiteral
             | SyntaxKind::BigIntLiteral
             | SyntaxKind::StringLiteral
-            | SyntaxKind::NoSubstitutionTemplateLiteral
-            | SyntaxKind::TemplateHead
             | SyntaxKind::TrueKeyword
             | SyntaxKind::FalseKeyword
-            | SyntaxKind::NullKeyword
-            | SyntaxKind::ThisKeyword
+            | SyntaxKind::NullKeyword => true,
+
+            // Only unambiguous expression start keywords
+            SyntaxKind::ThisKeyword
             | SyntaxKind::SuperKeyword
-            | SyntaxKind::AwaitKeyword
-            | SyntaxKind::YieldKeyword => true,
-
-            // Identifiers are very common start tokens - allow recovery
-            SyntaxKind::Identifier | SyntaxKind::PrivateIdentifier => true,
-
-            // Type-related tokens
-            SyntaxKind::LessThanToken | SyntaxKind::TypeOfKeyword | SyntaxKind::KeyOfKeyword => true,
-
-            // Unary operators that can start expressions
-            SyntaxKind::PlusToken
-            | SyntaxKind::MinusToken
-            | SyntaxKind::TildeToken
-            | SyntaxKind::ExclamationToken
-            | SyntaxKind::PlusPlusToken
-            | SyntaxKind::MinusMinusToken => true,
-
-            // Function/class/object start tokens
-            SyntaxKind::FunctionKeyword
+            | SyntaxKind::FunctionKeyword
             | SyntaxKind::ClassKeyword
-            | SyntaxKind::NewKeyword
-            | SyntaxKind::DeleteKeyword => true,
-            // Colon for type annotations, object literal properties, or conditional operator
-            // This handles cases like `const x` followed by `: string` where we've moved on
-            SyntaxKind::ColonToken => true,
-            // Arrow function operator - indicates we're in an arrow function
-            SyntaxKind::EqualsGreaterThanToken => true,
-            // Type assertion keyword - indicates we're in a type context
-            SyntaxKind::AsKeyword => true,
+            | SyntaxKind::NewKeyword => true,
+
+            // Remove overly permissive recovery for identifiers and operators
+            // These might be legitimate TS1005 cases
             _ => false,
         }
     }
@@ -542,12 +509,12 @@ impl ThinParserState {
             // This catches cascading errors where the parser recovers to the next token
             // after a TS1005 or similar error.
             // Only apply this if we've actually emitted an error (last_error_pos > 0)
-            // and the current position is within 150 characters of the last error.
-            // INCREASED from 100 to 150 for better cascading error suppression.
+            // and the current position is within 80 characters of the last error.
+            // REDUCED from 150 to 80 to allow more legitimate errors through.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(150)
+                && current_pos < self.last_error_pos.saturating_add(80)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1109
                 return;
@@ -617,11 +584,11 @@ impl ThinParserState {
             // Additional check: suppress TS1005 if we're very close to a recent error
             // This catches cascading errors where the parser recovers to the next token
             // after another TS1005 or similar error.
-            // INCREASED from 80 to 120 for better cascading error suppression.
+            // REDUCED from 120 to 60 to allow more legitimate errors through.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(120)
+                && current_pos < self.last_error_pos.saturating_add(60)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1005
                 return;
@@ -796,33 +763,16 @@ impl ThinParserState {
     /// expecting an expression and see `var`, `let`, `function`, etc., that's likely an error.
     fn is_at_expression_end(&self) -> bool {
         match self.token() {
-            // Tokens that clearly end expressions
+            // Only the most obvious expression-ending tokens should suppress TS1109
+            // Be more conservative to allow legitimate errors through
             SyntaxKind::SemicolonToken
             | SyntaxKind::CloseBraceToken
             | SyntaxKind::CloseParenToken
             | SyntaxKind::CloseBracketToken
             | SyntaxKind::EndOfFileToken => true,
 
-            // Comma can end expression in certain contexts (parameter lists, array literals)
-            SyntaxKind::CommaToken => true,
-
-            // Colon can end expression in object literals and type annotations
-            SyntaxKind::ColonToken => true,
-
-            // Assignment operators indicate end of left-hand expression
-            SyntaxKind::EqualsToken
-            | SyntaxKind::PlusEqualsToken
-            | SyntaxKind::MinusEqualsToken => true,
-
-            // Binary operators at start of line often indicate a new expression context
-            SyntaxKind::PlusToken
-            | SyntaxKind::MinusToken
-            | SyntaxKind::AsteriskToken
-            | SyntaxKind::SlashToken => {
-                // Only suppress if we have a line break before this token
-                self.scanner.has_preceding_line_break()
-            },
-
+            // Remove over-aggressive suppression for commas, colons, and assignment operators
+            // These could be legitimate TS1109 cases (e.g., incomplete expressions)
             _ => false,
         }
     }
@@ -1395,8 +1345,8 @@ impl ThinParserState {
     pub fn parse_statement(&mut self) -> NodeIndex {
         // Reset error budgets at statement boundaries to prevent error storms
         // Increased to be more lenient and reduce false positives
-        self.ts1109_statement_budget = 5;
-        self.ts1005_statement_budget = 4;
+        self.ts1109_statement_budget = 3;
+        self.ts1005_statement_budget = 2;
 
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
@@ -6755,6 +6705,8 @@ impl ThinParserState {
                 let right = if is_assignment {
                     let result = self.parse_assignment_expression();
                     if result.is_none() {
+                        // Emit TS1109 for incomplete assignment expressions (e.g., "x =" without right operand)
+                        self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
                         // Error recovery: If right-side parsing failed and current token
                         // cannot start an expression, break to prevent cascading errors
@@ -6771,6 +6723,8 @@ impl ThinParserState {
                     };
                     let result = self.parse_binary_expression(next_min);
                     if result.is_none() {
+                        // Emit TS1109 for incomplete binary expressions (e.g., "1 +" without right operand)
+                        self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
                         // Error recovery: If right-side parsing failed and current token
                         // cannot start an expression, break to prevent cascading errors
@@ -10528,393 +10482,23 @@ impl ThinParserState {
                 },
             )
         } else {
-            // Self-closing element, already complete
+            // Self-closing element
             opening
         }
     }
 
-    /// Parse JSX opening element, self-closing element, or opening fragment.
-    fn parse_jsx_opening_or_self_closing_or_fragment(
-        &mut self,
-        _in_expression_context: bool,
-    ) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::LessThanToken);
-
-        // Check for fragment: <>
-        if self.is_token(SyntaxKind::GreaterThanToken) {
-            let end_pos = self.token_end();
-            self.next_token(); // consume >
-            return self
-                .arena
-                .add_token(syntax_kind_ext::JSX_OPENING_FRAGMENT, start_pos, end_pos);
-        }
-
-        // Parse tag name
-        let tag_name = self.parse_jsx_element_name();
-
-        // Parse optional type arguments
-        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_arguments())
-        } else {
-            None
-        };
-
-        // Parse attributes
-        let attributes = self.parse_jsx_attributes();
-
-        // Check for self-closing: />
-        if self.is_token(SyntaxKind::SlashToken) {
-            self.next_token(); // consume /
-            let end_pos = self.token_end();
-            self.parse_expected(SyntaxKind::GreaterThanToken);
-            return self.arena.add_jsx_opening(
-                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
-                start_pos,
-                end_pos,
-                crate::parser::thin_node::JsxOpeningData {
-                    tag_name,
-                    type_arguments,
-                    attributes,
-                },
-            );
-        }
-
-        // Opening element: consume > and continue parsing children
-        let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::GreaterThanToken);
-        self.arena.add_jsx_opening(
-            syntax_kind_ext::JSX_OPENING_ELEMENT,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::JsxOpeningData {
-                tag_name,
-                type_arguments,
-                attributes,
-            },
-        )
-    }
-
-    /// Parse JSX element name (identifier, this, namespaced, or property access).
-    fn parse_jsx_element_name(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-
-        // Error recovery: if the current token can't start a JSX element name,
-        // return a missing identifier to avoid crashes
-        if !self.is_token(SyntaxKind::Identifier)
-            && !self.is_token(SyntaxKind::ThisKeyword)
-            && !self.is_identifier_or_keyword()
-        {
-            self.error_identifier_expected();
-            // Create a missing identifier node
-            let end_pos = self.token_end();
-            return self.arena.add_identifier(
-                SyntaxKind::Identifier as u16,
-                start_pos,
-                end_pos,
-                IdentifierData {
-                    escaped_text: String::new(),
-                    original_text: None,
-                    type_arguments: None,
-                },
-            );
-        }
-
-        // Parse the initial name (identifier or this)
-        let mut expr = if self.is_token(SyntaxKind::ThisKeyword) {
-            let pos = self.token_pos();
-            self.next_token();
-            let end_pos = self.token_end();
-            self.arena
-                .add_token(SyntaxKind::ThisKeyword as u16, pos, end_pos)
-        } else {
-            if self.is_token(SyntaxKind::Identifier) {
-                self.scanner.scan_jsx_identifier();
-            }
-            let name = self.parse_identifier();
-
-            // Check for namespaced name (a:b)
-            if self.is_token(SyntaxKind::ColonToken) {
-                self.next_token(); // consume :
-                let local_name = self.parse_identifier();
-                let end_pos = self.token_end();
-                return self.arena.add_jsx_namespaced_name(
-                    syntax_kind_ext::JSX_NAMESPACED_NAME,
-                    start_pos,
-                    end_pos,
-                    crate::parser::thin_node::JsxNamespacedNameData {
-                        namespace: name,
-                        name: local_name,
-                    },
-                );
-            }
-
-            name
-        };
-
-        // Parse property access chain (Foo.Bar.Baz)
-        while self.is_token(SyntaxKind::DotToken) {
-            self.next_token(); // consume .
-            let name = self.parse_identifier();
-            let end_pos = self.token_end();
-            expr = self.arena.add_access_expr(
-                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
-                start_pos,
-                end_pos,
-                crate::parser::thin_node::AccessExprData {
-                    expression: expr,
-                    name_or_argument: name,
-                    question_dot_token: false,
-                },
-            );
-        }
-
-        expr
-    }
-
-    /// Parse JSX attributes list.
-    fn parse_jsx_attributes(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        let mut properties = Vec::new();
-
-        while !self.is_token(SyntaxKind::GreaterThanToken)
-            && !self.is_token(SyntaxKind::SlashToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken)
-        {
-            if self.is_token(SyntaxKind::OpenBraceToken) {
-                // Spread attribute: {...props}
-                properties.push(self.parse_jsx_spread_attribute());
-            } else {
-                // Regular attribute: name="value" or name={expr} or just name
-                properties.push(self.parse_jsx_attribute());
-            }
-        }
-
-        let end_pos = self.token_end();
-        self.arena.add_jsx_attributes(
-            syntax_kind_ext::JSX_ATTRIBUTES,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::JsxAttributesData {
-                properties: self.make_node_list(properties),
-            },
-        )
-    }
-
-    /// Parse a single JSX attribute.
-    fn parse_jsx_attribute(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-
-        // Error recovery: if the current token can't start an attribute name,
-        // report error and skip to next attribute or end of attributes
-        if !self.is_token(SyntaxKind::Identifier) && !self.is_identifier_or_keyword() {
-            self.error_identifier_expected();
-            // Skip the invalid token to prevent infinite loops
-            self.next_token();
-            // Return a dummy attribute with missing name
-            let end_pos = self.token_end();
-            return self.arena.add_jsx_attribute(
-                syntax_kind_ext::JSX_ATTRIBUTE,
-                start_pos,
-                end_pos,
-                crate::parser::thin_node::JsxAttributeData {
-                    name: NodeIndex::NONE,
-                    initializer: NodeIndex::NONE,
-                },
-            );
-        }
-
-        let name = self.parse_jsx_attribute_name();
-
-        // Check for value: = followed by string, expression, or nested JSX
-        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-            if self.is_token(SyntaxKind::StringLiteral) {
-                self.parse_string_literal()
-            } else if self.is_token(SyntaxKind::OpenBraceToken) {
-                self.parse_jsx_expression()
-            } else if self.is_token(SyntaxKind::LessThanToken) {
-                self.parse_jsx_element_or_self_closing_or_fragment(true)
-            } else {
-                self.error_expression_expected();
-                NodeIndex::NONE
-            }
-        } else {
-            NodeIndex::NONE
-        };
-
-        let end_pos = self.token_end();
-        self.arena.add_jsx_attribute(
-            syntax_kind_ext::JSX_ATTRIBUTE,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::JsxAttributeData { name, initializer },
-        )
-    }
-
-    /// Parse JSX attribute name (possibly namespaced).
-    /// JSX attribute names can be keywords like "extends", "class", etc.
-    fn parse_jsx_attribute_name(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        if self.is_token(SyntaxKind::Identifier) {
-            self.scanner.scan_jsx_identifier();
-        }
-        // Use parse_identifier_name to allow keywords as attribute names
-        let name = self.parse_identifier_name();
-
-        // Check for namespaced name (a:b)
-        if self.is_token(SyntaxKind::ColonToken) {
-            self.next_token(); // consume :
-            // Also allow keywords for the local part of namespaced names
-            let local_name = self.parse_identifier_name();
-            let end_pos = self.token_end();
-            return self.arena.add_jsx_namespaced_name(
-                syntax_kind_ext::JSX_NAMESPACED_NAME,
-                start_pos,
-                end_pos,
-                crate::parser::thin_node::JsxNamespacedNameData {
-                    namespace: name,
-                    name: local_name,
-                },
-            );
-        }
-
-        name
-    }
-
-    /// Parse a JSX spread attribute: {...props}
-    fn parse_jsx_spread_attribute(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::OpenBraceToken);
-        self.parse_expected(SyntaxKind::DotDotDotToken);
-        let expression = self.parse_expression();
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
-        let end_pos = self.token_end();
-        self.arena.add_jsx_spread_attribute(
-            syntax_kind_ext::JSX_SPREAD_ATTRIBUTE,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::JsxSpreadAttributeData { expression },
-        )
-    }
-
-    /// Parse a JSX expression: {expr} or {...expr}
-    fn parse_jsx_expression(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::OpenBraceToken);
-
-        // Check for spread: {...}
-        let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
-
-        // Check for empty expression: {}
-        let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
-            NodeIndex::NONE
-        } else {
-            self.parse_expression()
-        };
-
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
-        let end_pos = self.token_end();
-        self.arena.add_jsx_expression(
-            syntax_kind_ext::JSX_EXPRESSION,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::JsxExpressionData {
-                dot_dot_dot_token,
-                expression,
-            },
-        )
-    }
-
-    /// Parse JSX children (elements, text, expressions).
-    fn parse_jsx_children(&mut self) -> NodeList {
-        let mut children = Vec::new();
-
-        loop {
-            // Rescan in JSX context to get proper JsxText tokens and LessThanSlashToken
-            // This is necessary because after parsing expressions or nested elements,
-            // the scanner may not be in JSX mode.
-            self.current_token = self.scanner.re_scan_jsx_token(true);
-
-            match self.current_token {
-                SyntaxKind::LessThanSlashToken => {
-                    // Closing tag/fragment - stop parsing children
-                    break;
-                }
-                SyntaxKind::LessThanToken => {
-                    // Nested JSX element
-                    children.push(self.parse_jsx_element_or_self_closing_or_fragment(false));
-                }
-                SyntaxKind::OpenBraceToken => {
-                    // JSX expression: {expr}
-                    children.push(self.parse_jsx_expression());
-                }
-                SyntaxKind::JsxText => {
-                    // Text node
-                    children.push(self.parse_jsx_text());
-                }
-                SyntaxKind::EndOfFileToken => {
-                    break;
-                }
-                _ => {
-                    // Unknown token in JSX children - stop
-                    break;
-                }
-            }
-        }
-
-        self.make_node_list(children)
-    }
-
-    /// Parse JSX text content.
-    fn parse_jsx_text(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        let text = self.scanner.get_token_value_ref().to_string();
-        let end_pos = self.token_end();
-        self.next_token();
-
-        self.arena.add_jsx_text(
-            SyntaxKind::JsxText as u16,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::JsxTextData {
-                text,
-                contains_only_trivia_white_spaces: false,
-            },
-        )
-    }
-
-    /// Parse a JSX closing element: </Foo>
-    fn parse_jsx_closing_element(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        // In JSX mode, </ is scanned as a single LessThanSlashToken
-        self.parse_expected(SyntaxKind::LessThanSlashToken);
-        let tag_name = self.parse_jsx_element_name();
-        let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::GreaterThanToken);
-        self.arena.add_jsx_closing(
-            syntax_kind_ext::JSX_CLOSING_ELEMENT,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::JsxClosingData { tag_name },
-        )
-    }
-
-    /// Parse a JSX closing fragment: </>
+    /// Parse JSX closing fragment
     fn parse_jsx_closing_fragment(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
-        // In JSX mode, </ is scanned as a single LessThanSlashToken
-        self.parse_expected(SyntaxKind::LessThanSlashToken);
-        let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::LessThanToken);
+        self.parse_expected(SyntaxKind::SlashToken);
         self.parse_expected(SyntaxKind::GreaterThanToken);
-        self.arena
-            .add_token(syntax_kind_ext::JSX_CLOSING_FRAGMENT, start_pos, end_pos)
-    }
+        let end_pos = self.token_end();
 
-    /// Consume the parser and return its parts.
-    /// This is useful for taking ownership of the arena after parsing.
-    pub fn into_parts(self) -> (ThinNodeArena, Vec<ParseDiagnostic>) {
-        (self.arena, self.parse_diagnostics)
+        self.arena.add_token(
+            syntax_kind_ext::JSX_CLOSING_FRAGMENT as u16,
+            start_pos,
+            end_pos,
+        )
     }
 }
