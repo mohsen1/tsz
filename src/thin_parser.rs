@@ -6881,8 +6881,8 @@ impl ThinParserState {
                         self.error_expression_expected();
                         // Return await as identifier to maintain parsing state
                         let start_pos = self.token_pos();
-                        let end_pos = self.token_end();
                         self.next_token(); // consume the await token
+                        let end_pos = self.token_pos(); // position after consuming await
                         return self.arena.add_identifier(
                             SyntaxKind::Identifier as u16,
                             start_pos,
@@ -8552,9 +8552,9 @@ impl ThinParserState {
                 let start_pos = self.token_pos();
                 self.next_token();
 
-                // Note: await in computed property name is NOT a parser error
-                // The type checker will emit TS2304 if 'await' is not in scope
-                // Example: { [await]: foo } should only emit TS2304, not TS1109
+                // Note: await in computed property name in async functions emits TS1109
+                // In non-async contexts, await is parsed as identifier (no parser error)
+                // Example: async fn() { { [await]: foo } } emits TS1109
 
                 let expression = self.parse_expression();
                 self.parse_expected(SyntaxKind::CloseBracketToken);
