@@ -12,6 +12,7 @@ use std::sync::Arc;
 use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
+use crate::cli::config::CheckerOptions;
 use crate::parser::NodeIndex;
 use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
@@ -350,12 +351,7 @@ impl<'a> CheckerContext<'a> {
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
-        no_implicit_any: bool,
-        no_implicit_returns: bool,
-        strict_null_checks: bool,
-        strict_function_types: bool,
-        strict_property_initialization: bool,
-        no_implicit_this: bool,
+        compiler_options: &CheckerOptions,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -365,14 +361,14 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any,
-            no_implicit_returns,
-            use_unknown_in_catch_variables: strict_null_checks,
+            no_implicit_any: compiler_options.no_implicit_any,
+            no_implicit_returns: compiler_options.no_implicit_returns,
+            use_unknown_in_catch_variables: compiler_options.use_unknown_in_catch_variables,
             report_unresolved_imports: true,
-            strict_function_types,
-            strict_property_initialization,
-            strict_null_checks,
-            no_implicit_this,
+            strict_function_types: compiler_options.strict_function_types,
+            strict_property_initialization: compiler_options.strict_property_initialization,
+            strict_null_checks: compiler_options.strict_null_checks,
+            no_implicit_this: compiler_options.no_implicit_this,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -482,12 +478,7 @@ impl<'a> CheckerContext<'a> {
         types: &'a TypeInterner,
         file_name: String,
         cache: TypeCache,
-        no_implicit_any: bool,
-        no_implicit_returns: bool,
-        strict_null_checks: bool,
-        strict_function_types: bool,
-        strict_property_initialization: bool,
-        no_implicit_this: bool,
+        compiler_options: &CheckerOptions,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -497,14 +488,14 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any,
-            no_implicit_returns,
-            use_unknown_in_catch_variables: strict_null_checks,
+            no_implicit_any: compiler_options.no_implicit_any,
+            no_implicit_returns: compiler_options.no_implicit_returns,
+            use_unknown_in_catch_variables: compiler_options.use_unknown_in_catch_variables,
             report_unresolved_imports: true,
-            strict_function_types,
-            strict_property_initialization,
-            strict_null_checks,
-            no_implicit_this,
+            strict_function_types: compiler_options.strict_function_types,
+            strict_property_initialization: compiler_options.strict_property_initialization,
+            strict_null_checks: compiler_options.strict_null_checks,
+            no_implicit_this: compiler_options.no_implicit_this,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,

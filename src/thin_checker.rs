@@ -19,6 +19,7 @@ use crate::checker::types::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation,
 };
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
+use crate::cli::config::CheckerOptions;
 use crate::interner::Atom;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::{ImportDeclData, ThinNodeArena};
@@ -152,23 +153,13 @@ impl<'a> ThinCheckerState<'a> {
     /// * `binder` - The binder state with symbols
     /// * `types` - The shared type interner
     /// * `file_name` - The source file name
-    /// * `no_implicit_any` - Raise error on implied 'any' type
-    /// * `no_implicit_returns` - Report error when not all paths return
-    /// * `strict_null_checks` - Enable strict null checks
-    /// * `strict_function_types` - Enable strict function type checking
-    /// * `strict_property_initialization` - Enable strict property initialization
-    /// * `no_implicit_this` - Raise error on 'this' with implied 'any' type
+    /// * `compiler_options` - Compiler options for type checking
     pub fn with_options(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
-        no_implicit_any: bool,
-        no_implicit_returns: bool,
-        strict_null_checks: bool,
-        strict_function_types: bool,
-        strict_property_initialization: bool,
-        no_implicit_this: bool,
+        compiler_options: &CheckerOptions,
     ) -> Self {
         ThinCheckerState {
             ctx: CheckerContext::with_options(
@@ -176,12 +167,7 @@ impl<'a> ThinCheckerState<'a> {
                 binder,
                 types,
                 file_name,
-                no_implicit_any,
-                no_implicit_returns,
-                strict_null_checks,
-                strict_function_types,
-                strict_property_initialization,
-                no_implicit_this,
+                compiler_options,
             ),
         }
     }
@@ -193,12 +179,7 @@ impl<'a> ThinCheckerState<'a> {
         types: &'a TypeInterner,
         file_name: String,
         cache: crate::checker::TypeCache,
-        no_implicit_any: bool,
-        no_implicit_returns: bool,
-        strict_null_checks: bool,
-        strict_function_types: bool,
-        strict_property_initialization: bool,
-        no_implicit_this: bool,
+        compiler_options: &CheckerOptions,
     ) -> Self {
         ThinCheckerState {
             ctx: CheckerContext::with_cache_and_options(
@@ -207,12 +188,7 @@ impl<'a> ThinCheckerState<'a> {
                 types,
                 file_name,
                 cache,
-                no_implicit_any,
-                no_implicit_returns,
-                strict_null_checks,
-                strict_function_types,
-                strict_property_initialization,
-                no_implicit_this,
+                compiler_options,
             ),
         }
     }
