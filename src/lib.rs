@@ -367,7 +367,7 @@ impl ThinParser {
 
         if let (Some(root_idx), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            let strict = true; // Enable strict mode for conformance with tsc
+            let strict = false; // Default to non-strict; directives in source can enable specific checks
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache(
                     self.parser.get_arena(),
@@ -436,7 +436,7 @@ impl ThinParser {
     pub fn get_type_of_node(&mut self, node_idx: u32) -> String {
         if let (Some(_), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            let strict = true; // Enable strict mode for conformance with tsc
+            let strict = false; // Default to non-strict; directives in source can enable specific checks
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache(
                     self.parser.get_arena(),
@@ -1343,7 +1343,7 @@ impl ThinParser {
         let line_map = self.line_map.as_ref().unwrap();
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
-        let strict = true; // Enable strict mode for conformance with tsc
+        let strict = false; // Default to non-strict; directives in source can enable specific checks
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
             ThinCheckerState::with_cache(

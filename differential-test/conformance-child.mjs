@@ -71,7 +71,7 @@ async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
   const ts = require('typescript');
 
   const compilerOptions = {
-    strict: testOptions.strict !== false,
+    strict: testOptions.strict === true,  // Only enable strict if explicitly set
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.ESNext,
     noEmit: true,

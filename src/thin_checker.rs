@@ -5661,11 +5661,10 @@ impl<'a> ThinCheckerState<'a> {
         if (symbol.flags & symbol_flags::VARIABLE) == 0 {
             return false;
         }
-        // Check both block-scoped (let/const) and function-scoped (var) variables
-        // definite assignment should apply to all typed variables without initializers
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
-            && (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) == 0
-        {
+        // Only check definite assignment for block-scoped (let/const) variables.
+        // Function-scoped (var) variables are hoisted and implicitly initialized to undefined,
+        // so TypeScript doesn't check definite assignment for them.
+        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
             return false;
         }
 
