@@ -2478,7 +2478,7 @@ impl<'a> ThinCheckerState<'a> {
             } else if let Some(name) = name_text {
                 if is_identifier {
                     if self.is_known_global_value_name(&name) {
-                        return TypeId::UNKNOWN; // Known global but not resolved - use UNKNOWN
+                        return TypeId::ANY; // Known global but not resolved - use ANY
                     }
                     self.error_cannot_find_name_at(&name, type_query.expr_name);
                     return TypeId::ERROR;
@@ -5424,8 +5424,10 @@ impl<'a> ThinCheckerState<'a> {
             // Symbol constructor - synthesize proper type for call signature validation
             "Symbol" => self.get_symbol_constructor_type(),
             _ if self.is_known_global_value_name(name) => {
-                // Return UNKNOWN instead of ANY for known globals without resolved type
-                TypeId::UNKNOWN
+                // Return ANY for known globals without resolved type
+                // This matches TypeScript's behavior in non-strict mode and avoids
+                // TS2571 (Object is of type 'unknown') errors on property access
+                TypeId::ANY
             }
             _ => {
                 // Check if we're inside a class and the name matches a static member (error 2662)
@@ -14080,7 +14082,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         if self.is_known_global_value_name(name) {
-            return TypeId::UNKNOWN; // Known global but unresolved - use UNKNOWN
+            return TypeId::ANY; // Known global but unresolved - use ANY
         }
 
         self.error_property_not_exist_at(name, TypeId::ANY, error_node);
