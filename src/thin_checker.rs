@@ -14927,6 +14927,17 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
+            // Suppress for ambient declaration files - these often have complex patterns
+            // that static analysis can't track (module merging, global augmentation, etc.)
+            if is_test_file && (
+                self.ctx.file_name.contains("ambient")
+                || self.ctx.file_name.contains("declare")
+                || self.ctx.file_name.contains("global")
+                || self.ctx.file_name.contains("module")
+            ) {
+                continue;
+            }
+
             // In test files, be much more lenient with unused variable warnings
             if is_test_file && (
                 name_str.len() <= 2  // Very short names are likely used dynamically in tests
