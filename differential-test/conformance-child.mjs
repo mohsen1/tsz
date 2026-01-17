@@ -131,12 +131,8 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
   let parser = null;
   try {
     const wasmModule = await import(join(wasmPkgPath, 'wasm.js'));
-    const fs = await import('fs');
 
-    // Initialize WASM module synchronously with file system loading
-    const wasmBuffer = fs.readFileSync(join(wasmPkgPath, 'wasm_bg.wasm'));
-    wasmModule.initSync(wasmBuffer);
-
+    // WASM module auto-initializes when built with --target nodejs
     parser = new wasmModule.ThinParser(fileName, code);
     if (!testOptions.nolib) {
       parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
