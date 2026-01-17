@@ -145,6 +145,78 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    /// Create a new ThinCheckerState with explicit compiler options.
+    ///
+    /// # Arguments
+    /// * `arena` - The AST node arena
+    /// * `binder` - The binder state with symbols
+    /// * `types` - The shared type interner
+    /// * `file_name` - The source file name
+    /// * `no_implicit_any` - Raise error on implied 'any' type
+    /// * `no_implicit_returns` - Report error when not all paths return
+    /// * `strict_null_checks` - Enable strict null checks
+    /// * `strict_function_types` - Enable strict function type checking
+    /// * `strict_property_initialization` - Enable strict property initialization
+    /// * `no_implicit_this` - Raise error on 'this' with implied 'any' type
+    pub fn with_options(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        no_implicit_any: bool,
+        no_implicit_returns: bool,
+        strict_null_checks: bool,
+        strict_function_types: bool,
+        strict_property_initialization: bool,
+        no_implicit_this: bool,
+    ) -> Self {
+        ThinCheckerState {
+            ctx: CheckerContext::with_options(
+                arena,
+                binder,
+                types,
+                file_name,
+                no_implicit_any,
+                no_implicit_returns,
+                strict_null_checks,
+                strict_function_types,
+                strict_property_initialization,
+                no_implicit_this,
+            ),
+        }
+    }
+
+    /// Create a new ThinCheckerState with explicit compiler options and a persistent cache.
+    pub fn with_cache_and_options(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        cache: crate::checker::TypeCache,
+        no_implicit_any: bool,
+        no_implicit_returns: bool,
+        strict_null_checks: bool,
+        strict_function_types: bool,
+        strict_property_initialization: bool,
+        no_implicit_this: bool,
+    ) -> Self {
+        ThinCheckerState {
+            ctx: CheckerContext::with_cache_and_options(
+                arena,
+                binder,
+                types,
+                file_name,
+                cache,
+                no_implicit_any,
+                no_implicit_returns,
+                strict_null_checks,
+                strict_function_types,
+                strict_property_initialization,
+                no_implicit_this,
+            ),
+        }
+    }
+
     /// Extract the persistent cache from this checker.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> crate::checker::TypeCache {

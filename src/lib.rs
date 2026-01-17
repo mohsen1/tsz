@@ -166,6 +166,92 @@ struct ImportCandidateInput {
     is_type_only: bool,
 }
 
+/// Compiler options passed from JavaScript/WASM.
+/// Maps to TypeScript compiler options.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+struct CompilerOptions {
+    /// Enable all strict type checking options.
+    #[serde(default)]
+    strict: Option<bool>,
+
+    /// Raise error on expressions and declarations with an implied 'any' type.
+    #[serde(default)]
+    no_implicit_any: Option<bool>,
+
+    /// Enable strict null checks.
+    #[serde(default)]
+    strict_null_checks: Option<bool>,
+
+    /// Enable strict checking of function types.
+    #[serde(default)]
+    strict_function_types: Option<bool>,
+
+    /// Enable strict property initialization checks in classes.
+    #[serde(default)]
+    strict_property_initialization: Option<bool>,
+
+    /// Report error when not all code paths in function return a value.
+    #[serde(default)]
+    no_implicit_returns: Option<bool>,
+
+    /// Raise error on 'this' expressions with an implied 'any' type.
+    #[serde(default)]
+    no_implicit_this: Option<bool>,
+
+    /// Specify ECMAScript target version.
+    #[serde(default)]
+    target: Option<u32>,
+
+    /// Specify module code generation.
+    #[serde(default)]
+    module: Option<u32>,
+}
+
+impl CompilerOptions {
+    /// Resolve a boolean option with strict mode fallback.
+    /// If the specific option is set, use it; otherwise, fall back to strict mode.
+    fn resolve_bool(&self, specific: Option<bool>, strict_implies: bool) -> bool {
+        if let Some(value) = specific {
+            return value;
+        }
+        if strict_implies {
+            return self.strict.unwrap_or(false);
+        }
+        false
+    }
+
+    /// Get the effective value for noImplicitAny.
+    pub fn get_no_implicit_any(&self) -> bool {
+        self.resolve_bool(self.no_implicit_any, true)
+    }
+
+    /// Get the effective value for strictNullChecks.
+    pub fn get_strict_null_checks(&self) -> bool {
+        self.resolve_bool(self.strict_null_checks, true)
+    }
+
+    /// Get the effective value for strictFunctionTypes.
+    pub fn get_strict_function_types(&self) -> bool {
+        self.resolve_bool(self.strict_function_types, true)
+    }
+
+    /// Get the effective value for strictPropertyInitialization.
+    pub fn get_strict_property_initialization(&self) -> bool {
+        self.resolve_bool(self.strict_property_initialization, true)
+    }
+
+    /// Get the effective value for noImplicitReturns.
+    pub fn get_no_implicit_returns(&self) -> bool {
+        self.resolve_bool(self.no_implicit_returns, false)
+    }
+
+    /// Get the effective value for noImplicitThis.
+    pub fn get_no_implicit_this(&self) -> bool {
+        self.resolve_bool(self.no_implicit_this, true)
+    }
+}
+
 impl TryFrom<ImportCandidateInput> for ImportCandidate {
     type Error = JsValue;
 
@@ -232,6 +318,8 @@ pub struct ThinParser {
     scope_cache: ScopeCache,
     /// Pre-loaded lib files (parsed and bound) for global type resolution
     lib_files: Vec<Arc<LibFile>>,
+    /// Compiler options for type checking
+    compiler_options: CompilerOptions,
 }
 
 #[wasm_bindgen]
@@ -248,6 +336,37 @@ impl ThinParser {
             type_cache: None,
             scope_cache: ScopeCache::default(),
             lib_files: Vec::new(),
+            compiler_options: CompilerOptions::default(),
+        }
+    }
+
+    /// Set compiler options from JSON.
+    ///
+    /// # Arguments
+    /// * `options_json` - JSON string containing compiler options
+    ///
+    /// # Example
+    /// ```javascript
+    /// const parser = new ThinParser("file.ts", "const x = 1;");
+    /// parser.setCompilerOptions(JSON.stringify({
+    ///   strict: true,
+    ///   noImplicitAny: true,
+    ///   strictNullChecks: true
+    /// }));
+    /// ```
+    #[wasm_bindgen(js_name = setCompilerOptions)]
+    pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
+        match serde_json::from_str::<CompilerOptions>(options_json) {
+            Ok(options) => {
+                self.compiler_options = options;
+                // Invalidate type cache when compiler options change
+                self.type_cache = None;
+                Ok(())
+            }
+            Err(e) => Err(JsValue::from_str(&format!(
+                "Failed to parse compiler options: {}",
+                e
+            ))),
         }
     }
 
@@ -367,23 +486,40 @@ impl ThinParser {
 
         if let (Some(root_idx), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            let strict = false; // Default to non-strict; directives in source can enable specific checks
+
+            // Get compiler options
+            let no_implicit_any = self.compiler_options.get_no_implicit_any();
+            let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
+            let strict_null_checks = self.compiler_options.get_strict_null_checks();
+            let strict_function_types = self.compiler_options.get_strict_function_types();
+            let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
+            let no_implicit_this = self.compiler_options.get_no_implicit_this();
             let mut checker = if let Some(cache) = self.type_cache.take() {
-                ThinCheckerState::with_cache(
+                ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
                     cache,
-                    strict,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             } else {
-                ThinCheckerState::new(
+                ThinCheckerState::with_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
-                    strict,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             };
 
@@ -436,23 +572,40 @@ impl ThinParser {
     pub fn get_type_of_node(&mut self, node_idx: u32) -> String {
         if let (Some(_), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            let strict = false; // Default to non-strict; directives in source can enable specific checks
+
+            // Get compiler options
+            let no_implicit_any = self.compiler_options.get_no_implicit_any();
+            let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
+            let strict_null_checks = self.compiler_options.get_strict_null_checks();
+            let strict_function_types = self.compiler_options.get_strict_function_types();
+            let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
+            let no_implicit_this = self.compiler_options.get_no_implicit_this();
             let mut checker = if let Some(cache) = self.type_cache.take() {
-                ThinCheckerState::with_cache(
+                ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
                     cache,
-                    strict,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             } else {
-                ThinCheckerState::new(
+                ThinCheckerState::with_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
-                    strict,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             };
 
@@ -1347,24 +1500,41 @@ impl ThinParser {
         let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
-        let strict = false; // Default to non-strict; directives in source can enable specific checks
+
+        // Get compiler options
+        let no_implicit_any = self.compiler_options.get_no_implicit_any();
+        let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
+        let strict_null_checks = self.compiler_options.get_strict_null_checks();
+        let strict_function_types = self.compiler_options.get_strict_function_types();
+        let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
+        let no_implicit_this = self.compiler_options.get_no_implicit_this();
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
-            ThinCheckerState::with_cache(
+            ThinCheckerState::with_cache_and_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
                 file_name.clone(),
                 cache,
-                strict,
+                no_implicit_any,
+                no_implicit_returns,
+                strict_null_checks,
+                strict_function_types,
+                strict_property_initialization,
+                no_implicit_this,
             )
         } else {
-            ThinCheckerState::new(
+            ThinCheckerState::with_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
                 file_name.clone(),
-                strict,
+                no_implicit_any,
+                no_implicit_returns,
+                strict_null_checks,
+                strict_function_types,
+                strict_property_initialization,
+                no_implicit_this,
             )
         };
 
