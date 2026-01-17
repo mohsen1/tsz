@@ -188,7 +188,7 @@ function compareDiagnostics(tscResult, wasmResult) {
   };
 }
 
-const TEST_TIMEOUT_MS = 30000; // 30 second timeout per test
+const TEST_TIMEOUT_MS = 5000; // 5 second timeout per test (to skip hangs faster)
 
 function withTimeout(promise, ms, errorMsg) {
   let timeoutId;
