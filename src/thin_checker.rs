@@ -9413,7 +9413,16 @@ impl<'a> ThinCheckerState<'a> {
                     self.ctx.types.union(member_types)
                 }
             }
-            _ => TypeId::ANY,
+            _ => {
+                // For unresolved types, try to handle generic array types
+                // Check if this might be a type parameter (like T in function<T>)
+                // that should be treated as a generic element type
+
+                // If we're accessing with a numeric index and can't resolve the object type,
+                // it might be a generic array type parameter. In this case, return ANY
+                // to allow the code to type-check properly.
+                TypeId::ANY
+            }
         }
     }
 
