@@ -3186,13 +3186,40 @@ impl<'a> ThinCheckerState<'a> {
             let atom = self.ctx.types.intern_string(&name);
 
             let constraint = if data.constraint != NodeIndex::NONE {
-                Some(self.get_type_from_type_node(data.constraint))
+                let constraint_type = self.get_type_from_type_node(data.constraint);
+                // Validate that the constraint is a valid type
+                if constraint_type == TypeId::ERROR {
+                    // If constraint is invalid, emit diagnostic and use unknown
+                    self.error_at_node(
+                        data.constraint,
+                        crate::checker::types::diagnostics::diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
+                        crate::checker::types::diagnostics::diagnostic_codes::CONSTRAINT_OF_TYPE_PARAMETER,
+                    );
+                    Some(TypeId::UNKNOWN)
+                } else {
+                    Some(constraint_type)
+                }
             } else {
                 None
             };
 
             let default = if data.default != NodeIndex::NONE {
-                Some(self.get_type_from_type_node(data.default))
+                let default_type = self.get_type_from_type_node(data.default);
+                // Validate that default satisfies constraint if present
+                if let Some(constraint_type) = constraint {
+                    if default_type != TypeId::ERROR && !self.is_assignable_to(default_type, constraint_type) {
+                        self.error_at_node(
+                            data.default,
+                            crate::checker::types::diagnostics::diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
+                            crate::checker::types::diagnostics::diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
+                        );
+                    }
+                }
+                if default_type == TypeId::ERROR {
+                    None
+                } else {
+                    Some(default_type)
+                }
             } else {
                 None
             };
