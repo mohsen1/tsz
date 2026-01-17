@@ -7431,6 +7431,10 @@ impl ThinParserState {
                 let spread_start = self.token_pos();
                 self.next_token();
                 let expression = self.parse_assignment_expression();
+                if expression.is_none() {
+                    // Emit TS1109 for incomplete spread argument: func(...missing)
+                    self.error_expression_expected();
+                }
                 let spread_end = self.token_end();
                 let spread = self.arena.add_unary_expr_ex(
                     syntax_kind_ext::SPREAD_ELEMENT,
@@ -7628,6 +7632,10 @@ impl ThinParserState {
             if dot_dot_dot {
                 // Rest element: just name
                 let name = self.parse_binding_element_name();
+                if name.is_none() {
+                    // Emit TS1109 for missing rest binding element: {...missing}
+                    self.error_expression_expected();
+                }
                 let elem_end = self.token_end();
                 elements.push(self.arena.add_binding_element(
                     syntax_kind_ext::BINDING_ELEMENT,
@@ -7647,6 +7655,10 @@ impl ThinParserState {
                 let (property_name, name) = if self.parse_optional(SyntaxKind::ColonToken) {
                     // propertyName: name
                     let name = self.parse_binding_element_name();
+                    if name.is_none() {
+                        // Emit TS1109 for missing property binding element: {prop: missing}
+                        self.error_expression_expected();
+                    }
                     (first_name, name)
                 } else {
                     // Just name (shorthand)
@@ -7655,7 +7667,12 @@ impl ThinParserState {
 
                 // Optional initializer: = value
                 let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-                    self.parse_assignment_expression()
+                    let init = self.parse_assignment_expression();
+                    if init.is_none() {
+                        // Emit TS1109 for missing object binding initializer: {x = missing}
+                        self.error_expression_expected();
+                    }
+                    init
                 } else {
                     NodeIndex::NONE
                 };
@@ -7717,10 +7734,19 @@ impl ThinParserState {
 
             // Parse name (can be identifier or nested binding pattern)
             let name = self.parse_binding_element_name();
+            if name.is_none() {
+                // Emit TS1109 for missing binding element: [...missing] or [missing]
+                self.error_expression_expected();
+            }
 
             // Optional initializer: = value
             let initializer = if !dot_dot_dot && self.parse_optional(SyntaxKind::EqualsToken) {
-                self.parse_assignment_expression()
+                let init = self.parse_assignment_expression();
+                if init.is_none() {
+                    // Emit TS1109 for missing binding initializer: [x = missing]
+                    self.error_expression_expected();
+                }
+                init
             } else {
                 NodeIndex::NONE
             };
@@ -8222,6 +8248,10 @@ impl ThinParserState {
                 let spread_start = self.token_pos();
                 self.next_token();
                 let expression = self.parse_assignment_expression();
+                if expression.is_none() {
+                    // Emit TS1109 for incomplete spread element: [...missing]
+                    self.error_expression_expected();
+                }
                 let spread_end = self.token_end();
                 let spread = self.arena.add_unary_expr_ex(
                     syntax_kind_ext::SPREAD_ELEMENT,
@@ -8345,6 +8375,10 @@ impl ThinParserState {
         if self.is_token(SyntaxKind::DotDotDotToken) {
             self.next_token();
             let expression = self.parse_assignment_expression();
+            if expression.is_none() {
+                // Emit TS1109 for incomplete spread element: {...missing}
+                self.error_expression_expected();
+            }
             let end_pos = self.token_end();
             return self.arena.add_unary_expr_ex(
                 syntax_kind_ext::SPREAD_ELEMENT,
