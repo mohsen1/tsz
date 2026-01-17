@@ -4926,7 +4926,7 @@ impl NodeAccess for ThinNodeArena {
                 }
             }
             THROW_STATEMENT => {
-                if let Some(data) = self.get_return_statement(node) {
+                if let Some(data) = self.get_throw_statement(node) {
                     children.push(data.expression);
                 }
             }
