@@ -484,14 +484,26 @@ impl<'a> CheckerContext<'a> {
         self.async_depth > 0
     }
 
-    /// Check if Promise is available in lib files.
-    /// Returns true if any lib context has "Promise" in its file_locals.
+    /// Check if Promise is available in lib files or global scope.
+    /// Returns true if Promise is declared in lib contexts, globals, or type declarations.
     pub fn has_promise_in_lib(&self) -> bool {
+        // Check lib contexts first
         for lib_ctx in &self.lib_contexts {
             if lib_ctx.binder.file_locals.has("Promise") {
                 return true;
             }
         }
+
+        // Check if Promise is available in current scope/global context
+        if self.binder.current_scope.has("Promise") {
+            return true;
+        }
+
+        // Check current file locals as fallback
+        if self.binder.file_locals.has("Promise") {
+            return true;
+        }
+
         false
     }
 
