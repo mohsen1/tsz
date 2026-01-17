@@ -159,6 +159,10 @@ pub mod diagnostic_messages {
         "Cannot redeclare block-scoped variable '{0}'.";
     pub const VARIABLE_USED_BEFORE_ASSIGNED: &str = "Variable '{0}' is used before being assigned.";
 
+    // Definite assignment errors
+    pub const PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT: &str =
+        "Property '{0}' has no initializer and is not definitely assigned in the constructor.";
+
     // Switch exhaustiveness / control flow
     pub const NOT_EXHAUSTIVE: &str = "Not all code paths return a value.";
     pub const NOT_ALL_CODE_PATHS_RETURN: &str = "Not all code paths return a value.";
@@ -381,6 +385,9 @@ pub mod diagnostic_codes {
     pub const TYPE_PARAMETER_CANNOT_HAVE_VARIANCE_MODIFIER: u32 = 2637;
     pub const CONSTRAINT_OF_TYPE_PARAMETER: u32 = 2313;
     pub const TYPE_INSTANTIATION_EXCESSIVELY_DEEP: u32 = 2589;
+
+    // Definite assignment errors
+    pub const PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT: u32 = 2524;
 
     // Enum errors
     pub const ENUM_MEMBER_MUST_HAVE_INITIALIZER: u32 = 2432;
