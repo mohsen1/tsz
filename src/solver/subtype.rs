@@ -928,7 +928,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let resolved_key = self.interner.lookup(resolved);
             if let Some(TypeKey::Application(resolved_app_id)) = resolved_key {
                 if resolved_app_id == app_id {
-                    return SubtypeResult::False;
+                    return None;
                 }
             }
 
@@ -1030,7 +1030,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 if shape.properties.is_empty() {
-                    return SubtypeResult::False;
+                    return None;
                 }
                 Some(shape.properties.iter().map(|p| p.name).collect())
             }
@@ -1038,7 +1038,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Try to resolve the ref and get keys from the resolved type
                 let resolved = self.resolver.resolve_ref(symbol, self.interner)?;
                 if resolved == operand {
-                    return SubtypeResult::False; // Avoid infinite recursion
+                    return None; // Avoid infinite recursion
                 }
                 self.try_get_keyof_keys(resolved)
             }
@@ -3943,7 +3943,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             });
                         }
                     }
-                    return SubtypeResult::False;
+                    return None;
                 }
 
                 if source_iter.next().is_some() {
@@ -3952,7 +3952,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         target_count: target.len(),
                     });
                 }
-                return SubtypeResult::False;
+                return None;
             }
 
             if let Some(s_elem) = source.get(i) {
