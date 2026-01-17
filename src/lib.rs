@@ -152,52 +152,8 @@ use crate::thin_checker::ThinCheckerState;
 use crate::thin_emitter::{ModuleKind, PrinterOptions, ScriptTarget, ThinPrinter};
 use crate::thin_parser::ThinParserState;
 use crate::transform_context::TransformContext;
-use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use serde::Deserialize;
 use std::sync::Arc;
-
-
-/// Compiler options for TypeScript compilation.
-/// Controls type checking behavior, target output, and module system.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompilerOptions {
-    /// Enable all strict type checking options.
-    #[serde(default)]
-    pub strict: bool,
-    /// Raise error on expressions and declarations with an implied 'any' type.
-    #[serde(default)]
-    pub no_implicit_any: bool,
-    /// Enable strict null checks.
-    #[serde(default)]
-    pub strict_null_checks: bool,
-    /// Enable strict checking of function types.
-    #[serde(default)]
-    pub strict_function_types: bool,
-    /// Specify ECMAScript target version (e.g., "ES5", "ES2015", "ESNext").
-    #[serde(default)]
-    pub target: String,
-    /// Specify module code generation (e.g., "CommonJS", "ES2015", "ESNext").
-    #[serde(default)]
-    pub module: String,
-}
-
-impl CompilerOptions {
-    /// Convert to CheckerOptions for internal use
-    fn to_checker_options(&self) -> crate::cli::config::CheckerOptions {
-        let strict = self.strict;
-        crate::cli::config::CheckerOptions {
-            strict,
-            no_implicit_any: if strict { true } else { self.no_implicit_any },
-            no_implicit_returns: strict,
-            no_implicit_this: strict,
-            strict_null_checks: if strict { true } else { self.strict_null_checks },
-            strict_function_types: if strict { true } else { self.strict_function_types },
-            strict_property_initialization: strict,
-            use_unknown_in_catch_variables: strict,
-        }
-    }
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,6 +164,108 @@ struct ImportCandidateInput {
     export_name: Option<String>,
     #[serde(default)]
     is_type_only: bool,
+}
+
+/// Compiler options passed from JavaScript/WASM.
+/// Maps to TypeScript compiler options.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+struct CompilerOptions {
+    /// Enable all strict type checking options.
+    #[serde(default)]
+    strict: Option<bool>,
+
+    /// Raise error on expressions and declarations with an implied 'any' type.
+    #[serde(default)]
+    no_implicit_any: Option<bool>,
+
+    /// Enable strict null checks.
+    #[serde(default)]
+    strict_null_checks: Option<bool>,
+
+    /// Enable strict checking of function types.
+    #[serde(default)]
+    strict_function_types: Option<bool>,
+
+    /// Enable strict property initialization checks in classes.
+    #[serde(default)]
+    strict_property_initialization: Option<bool>,
+
+    /// Report error when not all code paths in function return a value.
+    #[serde(default)]
+    no_implicit_returns: Option<bool>,
+
+    /// Raise error on 'this' expressions with an implied 'any' type.
+    #[serde(default)]
+    no_implicit_this: Option<bool>,
+
+    /// Specify ECMAScript target version.
+    #[serde(default)]
+    target: Option<u32>,
+
+    /// Specify module code generation.
+    #[serde(default)]
+    module: Option<u32>,
+}
+
+impl CompilerOptions {
+    /// Resolve a boolean option with strict mode fallback.
+    /// If the specific option is set, use it; otherwise, fall back to strict mode.
+    fn resolve_bool(&self, specific: Option<bool>, strict_implies: bool) -> bool {
+        if let Some(value) = specific {
+            return value;
+        }
+        if strict_implies {
+            return self.strict.unwrap_or(false);
+        }
+        false
+    }
+
+    /// Get the effective value for noImplicitAny.
+    pub fn get_no_implicit_any(&self) -> bool {
+        self.resolve_bool(self.no_implicit_any, true)
+    }
+
+    /// Get the effective value for strictNullChecks.
+    pub fn get_strict_null_checks(&self) -> bool {
+        self.resolve_bool(self.strict_null_checks, true)
+    }
+
+    /// Get the effective value for strictFunctionTypes.
+    pub fn get_strict_function_types(&self) -> bool {
+        self.resolve_bool(self.strict_function_types, true)
+    }
+
+    /// Get the effective value for strictPropertyInitialization.
+    pub fn get_strict_property_initialization(&self) -> bool {
+        self.resolve_bool(self.strict_property_initialization, true)
+    }
+
+    /// Get the effective value for noImplicitReturns.
+    pub fn get_no_implicit_returns(&self) -> bool {
+        self.resolve_bool(self.no_implicit_returns, false)
+    }
+
+    /// Get the effective value for noImplicitThis.
+    pub fn get_no_implicit_this(&self) -> bool {
+        self.resolve_bool(self.no_implicit_this, true)
+    }
+
+    /// Convert to CheckerOptions for type checking.
+    pub fn to_checker_options(&self) -> crate::cli::config::CheckerOptions {
+        let strict = self.strict.unwrap_or(false);
+        let strict_null_checks = self.get_strict_null_checks();
+        crate::cli::config::CheckerOptions {
+            strict,
+            no_implicit_any: self.get_no_implicit_any(),
+            no_implicit_returns: self.get_no_implicit_returns(),
+            strict_null_checks,
+            strict_function_types: self.get_strict_function_types(),
+            strict_property_initialization: self.get_strict_property_initialization(),
+            no_implicit_this: self.get_no_implicit_this(),
+            use_unknown_in_catch_variables: strict_null_checks,
+        }
+    }
 }
 
 impl TryFrom<ImportCandidateInput> for ImportCandidate {
@@ -276,10 +334,8 @@ pub struct ThinParser {
     scope_cache: ScopeCache,
     /// Pre-loaded lib files (parsed and bound) for global type resolution
     lib_files: Vec<Arc<LibFile>>,
-    /// Compiler options for controlling compilation behavior
-    compiler_options: Option<CompilerOptions>,
-    /// Set of lib file IDs that have been marked as lib files
-    lib_file_ids: HashSet<u32>,
+    /// Compiler options for type checking
+    compiler_options: CompilerOptions,
 }
 
 #[wasm_bindgen]
@@ -296,8 +352,37 @@ impl ThinParser {
             type_cache: None,
             scope_cache: ScopeCache::default(),
             lib_files: Vec::new(),
-            compiler_options: None,
-            lib_file_ids: HashSet::new(),
+            compiler_options: CompilerOptions::default(),
+        }
+    }
+
+    /// Set compiler options from JSON.
+    ///
+    /// # Arguments
+    /// * `options_json` - JSON string containing compiler options
+    ///
+    /// # Example
+    /// ```javascript
+    /// const parser = new ThinParser("file.ts", "const x = 1;");
+    /// parser.setCompilerOptions(JSON.stringify({
+    ///   strict: true,
+    ///   noImplicitAny: true,
+    ///   strictNullChecks: true
+    /// }));
+    /// ```
+    #[wasm_bindgen(js_name = setCompilerOptions)]
+    pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
+        match serde_json::from_str::<CompilerOptions>(options_json) {
+            Ok(options) => {
+                self.compiler_options = options;
+                // Invalidate type cache when compiler options change
+                self.type_cache = None;
+                Ok(())
+            }
+            Err(e) => Err(JsValue::from_str(&format!(
+                "Failed to parse compiler options: {}",
+                e
+            ))),
         }
     }
 
@@ -324,24 +409,6 @@ impl ThinParser {
         // Invalidate binder since we have new global symbols
         self.binder = None;
         self.type_cache = None;
-    }
-
-
-    /// Set compiler options from a JSON string.
-    /// The JSON string should match the CompilerOptions struct format.
-    #[wasm_bindgen(js_name = setCompilerOptions)]
-    pub fn set_compiler_options(&mut self, json: String) -> Result<(), JsValue> {
-        let options: CompilerOptions = serde_json::from_str(&json)
-            .map_err(|e| JsValue::from_str(&format!("Failed to parse compiler options: {}", e)))?;
-        self.compiler_options = Some(options);
-        Ok(())
-    }
-
-    /// Mark a file ID as a lib file.
-    /// This is used to track which files are lib files (e.g., lib.d.ts, lib.es5.d.ts).
-    #[wasm_bindgen(js_name = markAsLibFile)]
-    pub fn mark_as_lib_file(&mut self, file_id: u32) {
-        self.lib_file_ids.insert(file_id);
     }
 
     /// Parse the source file and return the root node index.
@@ -435,27 +502,25 @@ impl ThinParser {
 
         if let (Some(root_idx), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            // Use compiler options if set, otherwise default to non-strict
-            let compiler_options = self.compiler_options
-                .as_ref()
-                .map(|opts| opts.to_checker_options())
-                .unwrap_or_default();
+
+            // Get compiler options
+            let checker_options = self.compiler_options.to_checker_options();
             let mut checker = if let Some(cache) = self.type_cache.take() {
-                ThinCheckerState::with_cache(
+                ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
                     cache,
-                    compiler_options,
+                    &checker_options,
                 )
             } else {
-                ThinCheckerState::new(
+                ThinCheckerState::with_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
-                    compiler_options,
+                    &checker_options,
                 )
             };
 
@@ -508,27 +573,25 @@ impl ThinParser {
     pub fn get_type_of_node(&mut self, node_idx: u32) -> String {
         if let (Some(_), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            // Use compiler options if set, otherwise default to non-strict
-            let compiler_options = self.compiler_options
-                .as_ref()
-                .map(|opts| opts.to_checker_options())
-                .unwrap_or_default();
+
+            // Get compiler options
+            let checker_options = self.compiler_options.to_checker_options();
             let mut checker = if let Some(cache) = self.type_cache.take() {
-                ThinCheckerState::with_cache(
+                ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
                     cache,
-                    compiler_options,
+                    &checker_options,
                 )
             } else {
-                ThinCheckerState::new(
+                ThinCheckerState::with_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
                     file_name,
-                    compiler_options,
+                    &checker_options,
                 )
             };
 
@@ -1423,28 +1486,26 @@ impl ThinParser {
         let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
-        // Use compiler options if set, otherwise default to non-strict
-        let compiler_options = self.compiler_options
-            .as_ref()
-            .map(|opts| opts.to_checker_options())
-            .unwrap_or_default();
+
+        // Get compiler options
+        let checker_options = self.compiler_options.to_checker_options();
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
-            ThinCheckerState::with_cache(
+            ThinCheckerState::with_cache_and_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
                 file_name.clone(),
                 cache,
-                compiler_options,
+                &checker_options,
             )
         } else {
-            ThinCheckerState::new(
+            ThinCheckerState::with_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
                 file_name.clone(),
-                compiler_options,
+                &checker_options,
             )
         };
 
@@ -1558,13 +1619,7 @@ impl WasmProgram {
         self.merged = None;
         self.bind_results = None;
 
-        // Detect lib files by name pattern.
-        // NOTE: This file name inspection is acceptable because:
-        // 1. The "lib.*.d.ts" pattern is defined in the TypeScript specification
-        // 2. TypeScript's standard library files follow this official naming convention
-        // 3. These are not heuristics but specification-defined patterns (see TypeScript Handbook:
-        //    "Including Built-in Type Definitions" and compiler's lib.d.ts documentation)
-        // 4. The ".d.ts" extension itself is part of TypeScript's official type declaration format
+        // Detect lib files by name pattern
         let is_lib_file = file_name.contains("lib.d.ts")
             || file_name.contains("lib.es")
             || file_name.contains("lib.dom")
