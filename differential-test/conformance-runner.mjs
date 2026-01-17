@@ -163,6 +163,18 @@ async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
   if (testOptions.strictnullchecks !== undefined) {
     compilerOptions.strictNullChecks = testOptions.strictnullchecks;
   }
+  if (testOptions.noimplicitreturns !== undefined) {
+    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
+  }
+  if (testOptions.noimplicitthis !== undefined) {
+    compilerOptions.noImplicitThis = testOptions.noimplicitthis;
+  }
+  if (testOptions.strictfunctiontypes !== undefined) {
+    compilerOptions.strictFunctionTypes = testOptions.strictfunctiontypes;
+  }
+  if (testOptions.strictpropertyinitialization !== undefined) {
+    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
+  }
 
   const sourceFile = ts.createSourceFile(
     fileName,
@@ -234,6 +246,18 @@ async function runTscMultiFile(files, testOptions = {}) {
   }
   if (testOptions.strictnullchecks !== undefined) {
     compilerOptions.strictNullChecks = testOptions.strictnullchecks;
+  }
+  if (testOptions.noimplicitreturns !== undefined) {
+    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
+  }
+  if (testOptions.noimplicitthis !== undefined) {
+    compilerOptions.noImplicitThis = testOptions.noimplicitthis;
+  }
+  if (testOptions.strictfunctiontypes !== undefined) {
+    compilerOptions.strictFunctionTypes = testOptions.strictfunctiontypes;
+  }
+  if (testOptions.strictpropertyinitialization !== undefined) {
+    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
   }
 
   // Create source files for all files
