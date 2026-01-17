@@ -5592,7 +5592,7 @@ impl<'a> ThinCheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             // If the node doesn't exist in the arena, emit error with position 0
             self.ctx.diagnostics.push(Diagnostic::error(
-                "file".to_string(), // TODO: Get actual file name
+                self.ctx.file_name.clone(),
                 0,
                 0,
                 format!("Variable '{}' is used before being assigned", name),
@@ -5604,7 +5604,7 @@ impl<'a> ThinCheckerState<'a> {
         let length = node.end - node.pos;
 
         self.ctx.diagnostics.push(Diagnostic::error(
-            "file".to_string(), // TODO: Get actual file name
+            self.ctx.file_name.clone(),
             start,
             length,
             format!("Variable '{}' is used before being assigned", name),
