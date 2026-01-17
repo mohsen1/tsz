@@ -72,6 +72,13 @@ pub struct CompilerOptions {
 #[derive(Debug, Clone, Default)]
 pub struct CheckerOptions {
     pub strict: bool,
+    pub no_implicit_any: bool,
+    pub no_implicit_returns: bool,
+    pub strict_null_checks: bool,
+    pub strict_function_types: bool,
+    pub strict_property_initialization: bool,
+    pub no_implicit_this: bool,
+    pub use_unknown_in_catch_variables: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -330,6 +337,15 @@ pub fn resolve_compiler_options(
 
     if let Some(strict) = options.strict {
         resolved.checker.strict = strict;
+        if strict {
+            resolved.checker.no_implicit_any = true;
+            resolved.checker.no_implicit_returns = true;
+            resolved.checker.strict_null_checks = true;
+            resolved.checker.strict_function_types = true;
+            resolved.checker.strict_property_initialization = true;
+            resolved.checker.no_implicit_this = true;
+            resolved.checker.use_unknown_in_catch_variables = true;
+        }
     }
 
     if let Some(no_emit) = options.no_emit {

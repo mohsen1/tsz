@@ -250,6 +250,22 @@ impl CompilerOptions {
     pub fn get_no_implicit_this(&self) -> bool {
         self.resolve_bool(self.no_implicit_this, true)
     }
+
+    /// Convert to CheckerOptions for type checking.
+    pub fn to_checker_options(&self) -> crate::cli::config::CheckerOptions {
+        let strict = self.strict.unwrap_or(false);
+        let strict_null_checks = self.get_strict_null_checks();
+        crate::cli::config::CheckerOptions {
+            strict,
+            no_implicit_any: self.get_no_implicit_any(),
+            no_implicit_returns: self.get_no_implicit_returns(),
+            strict_null_checks,
+            strict_function_types: self.get_strict_function_types(),
+            strict_property_initialization: self.get_strict_property_initialization(),
+            no_implicit_this: self.get_no_implicit_this(),
+            use_unknown_in_catch_variables: strict_null_checks,
+        }
+    }
 }
 
 impl TryFrom<ImportCandidateInput> for ImportCandidate {
@@ -488,12 +504,7 @@ impl ThinParser {
             let file_name = self.parser.get_file_name().to_string();
 
             // Get compiler options
-            let no_implicit_any = self.compiler_options.get_no_implicit_any();
-            let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
-            let strict_null_checks = self.compiler_options.get_strict_null_checks();
-            let strict_function_types = self.compiler_options.get_strict_function_types();
-            let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
-            let no_implicit_this = self.compiler_options.get_no_implicit_this();
+            let checker_options = self.compiler_options.to_checker_options();
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
@@ -501,12 +512,7 @@ impl ThinParser {
                     &self.type_interner,
                     file_name,
                     cache,
-                    no_implicit_any,
-                    no_implicit_returns,
-                    strict_null_checks,
-                    strict_function_types,
-                    strict_property_initialization,
-                    no_implicit_this,
+                    &checker_options,
                 )
             } else {
                 ThinCheckerState::with_options(
@@ -514,12 +520,7 @@ impl ThinParser {
                     binder,
                     &self.type_interner,
                     file_name,
-                    no_implicit_any,
-                    no_implicit_returns,
-                    strict_null_checks,
-                    strict_function_types,
-                    strict_property_initialization,
-                    no_implicit_this,
+                    &checker_options,
                 )
             };
 
@@ -574,12 +575,7 @@ impl ThinParser {
             let file_name = self.parser.get_file_name().to_string();
 
             // Get compiler options
-            let no_implicit_any = self.compiler_options.get_no_implicit_any();
-            let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
-            let strict_null_checks = self.compiler_options.get_strict_null_checks();
-            let strict_function_types = self.compiler_options.get_strict_function_types();
-            let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
-            let no_implicit_this = self.compiler_options.get_no_implicit_this();
+            let checker_options = self.compiler_options.to_checker_options();
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
@@ -587,12 +583,7 @@ impl ThinParser {
                     &self.type_interner,
                     file_name,
                     cache,
-                    no_implicit_any,
-                    no_implicit_returns,
-                    strict_null_checks,
-                    strict_function_types,
-                    strict_property_initialization,
-                    no_implicit_this,
+                    &checker_options,
                 )
             } else {
                 ThinCheckerState::with_options(
@@ -600,12 +591,7 @@ impl ThinParser {
                     binder,
                     &self.type_interner,
                     file_name,
-                    no_implicit_any,
-                    no_implicit_returns,
-                    strict_null_checks,
-                    strict_function_types,
-                    strict_property_initialization,
-                    no_implicit_this,
+                    &checker_options,
                 )
             };
 
@@ -1502,12 +1488,7 @@ impl ThinParser {
         let source_text = self.parser.get_source_text();
 
         // Get compiler options
-        let no_implicit_any = self.compiler_options.get_no_implicit_any();
-        let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
-        let strict_null_checks = self.compiler_options.get_strict_null_checks();
-        let strict_function_types = self.compiler_options.get_strict_function_types();
-        let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
-        let no_implicit_this = self.compiler_options.get_no_implicit_this();
+        let checker_options = self.compiler_options.to_checker_options();
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
             ThinCheckerState::with_cache_and_options(
@@ -1516,12 +1497,7 @@ impl ThinParser {
                 &self.type_interner,
                 file_name.clone(),
                 cache,
-                no_implicit_any,
-                no_implicit_returns,
-                strict_null_checks,
-                strict_function_types,
-                strict_property_initialization,
-                no_implicit_this,
+                &checker_options,
             )
         } else {
             ThinCheckerState::with_options(
@@ -1529,12 +1505,7 @@ impl ThinParser {
                 binder,
                 &self.type_interner,
                 file_name.clone(),
-                no_implicit_any,
-                no_implicit_returns,
-                strict_null_checks,
-                strict_function_types,
-                strict_property_initialization,
-                no_implicit_this,
+                &checker_options,
             )
         };
 
