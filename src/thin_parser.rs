@@ -112,7 +112,7 @@ impl ThinParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
-            ts1109_statement_budget: 3, // Reduced from 5 to 3 to allow more legitimate errors
+            ts1109_statement_budget: 4, // Increased from 3 to 4 to detect more missing expression errors
             ts1005_statement_budget: 2, // Reduced from 4 to 2 to allow more legitimate errors
         }
     }
@@ -127,7 +127,7 @@ impl ThinParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
-        self.ts1109_statement_budget = 3; // Reset error budget (reduced to allow more legitimate errors)
+        self.ts1109_statement_budget = 4; // Reset error budget (increased to detect more missing expression errors)
         self.ts1005_statement_budget = 2; // Reset error budget (reduced to allow more legitimate errors)
     }
 
@@ -1354,7 +1354,7 @@ impl ThinParserState {
     pub fn parse_statement(&mut self) -> NodeIndex {
         // Reset error budgets at statement boundaries to prevent error storms
         // Increased to be more lenient and reduce false positives
-        self.ts1109_statement_budget = 3;
+        self.ts1109_statement_budget = 4;
         self.ts1005_statement_budget = 2;
 
         match self.token() {
@@ -6720,11 +6720,15 @@ impl ThinParserState {
             if op == SyntaxKind::QuestionToken {
                 let when_true = self.parse_assignment_expression();
                 if when_true.is_none() {
+                    // Emit TS1109 for incomplete conditional expression: condition ? [missing]
+                    self.error_expression_expected();
                     self.resync_to_next_expression_boundary();
                 }
                 self.parse_expected(SyntaxKind::ColonToken);
                 let when_false = self.parse_assignment_expression();
                 if when_false.is_none() {
+                    // Emit TS1109 for incomplete conditional expression: condition ? true : [missing]
+                    self.error_expression_expected();
                     self.resync_to_next_expression_boundary();
                 }
                 let end_pos = self.token_end();
