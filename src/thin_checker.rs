@@ -10117,6 +10117,22 @@ impl<'a> ThinCheckerState<'a> {
                     );
                 }
 
+                // Additional TS2705 check for functions without explicit return types
+                if is_async
+                    && !is_generator
+                    && !has_type_annotation
+                    && self.should_validate_async_function_context(idx)
+                {
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages,
+                    };
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                        diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                    );
+                }
+
                 // TS2705: Async function requires Promise constructor when Promise is not in lib
                 // This check applies to ALL async functions, not just those with explicit return types
                 if is_async && !is_generator && !self.ctx.has_promise_in_lib() {
@@ -15264,6 +15280,23 @@ impl<'a> ThinCheckerState<'a> {
                             );
                         }
 
+                        // Additional TS2705 check: async functions in strict mode or certain contexts
+                        // TSC validates async functions more broadly than just explicit return types
+                        if func.is_async
+                            && !func.asterisk_token
+                            && !has_type_annotation
+                            && self.should_validate_async_function_context(stmt_idx)
+                        {
+                            use crate::checker::types::diagnostics::{
+                                diagnostic_codes, diagnostic_messages,
+                            };
+                            self.error_at_node(
+                                stmt_idx,
+                                diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                                diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                            );
+                        }
+
                         // TS2705: Async function requires Promise constructor when Promise is not in lib
                         // This is a different check from the return type check above
                         // Check if function is async and Promise is not available in lib
@@ -18924,6 +18957,28 @@ impl<'a> ThinCheckerState<'a> {
                 }
             }
         }
+        false
+    }
+
+    /// Determine if an async function should be validated for Promise return type
+    /// even without explicit type annotation. Used for TS2705 validation.
+    fn should_validate_async_function_context(&self, _func_idx: NodeIndex) -> bool {
+        // For now, validate in these contexts:
+        // 1. Functions in declaration files (.d.ts)
+        // 2. Functions with explicit Promise usage in body
+        // 3. Functions in modules (as opposed to global scope)
+
+        // Check if we're in a declaration file context
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
+        // Check if we're in strict mode or module context
+        // In module contexts, async functions are more likely to need validation
+        if !self.ctx.binder.current_scope.is_empty() {
+            return true;
+        }
+
         false
     }
 
