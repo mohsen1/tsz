@@ -115,10 +115,10 @@ jobs:
           cd ts-repo
           git sparse-checkout set tests/cases/conformance tests/lib
           cd ..
-          # Copy tests to expected location
-          mkdir -p tests/cases
-          cp -r ts-repo/tests/cases/conformance tests/cases/
-          cp -r ts-repo/tests/lib tests/
+          # Copy tests to expected location (ts-tests to avoid conflict with Rust tests)
+          mkdir -p ts-tests/cases
+          cp -r ts-repo/tests/cases/conformance ts-tests/cases/
+          cp -r ts-repo/tests/lib ts-tests/
           rm -rf ts-repo
 
       - name: Run conformance tests (quick)
