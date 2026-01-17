@@ -155,93 +155,6 @@ use crate::transform_context::TransformContext;
 use serde::Deserialize;
 use std::sync::Arc;
 
-/// Compiler options that can be passed from JavaScript to configure type checking.
-#[derive(Deserialize, Default, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CompilerOptions {
-    /// Enable all strict mode checks (noImplicitAny, strictNullChecks, etc.)
-    #[serde(default)]
-    pub strict: Option<bool>,
-
-    /// Raise error on expressions and declarations with an implied 'any' type.
-    #[serde(default)]
-    pub no_implicit_any: Option<bool>,
-
-    /// Enable strict null checks.
-    #[serde(default)]
-    pub strict_null_checks: Option<bool>,
-
-    /// Report error when not all code paths in function return a value.
-    #[serde(default)]
-    pub no_implicit_returns: Option<bool>,
-
-    /// Raise error on 'this' expressions with an implied 'any' type.
-    #[serde(default)]
-    pub no_implicit_this: Option<bool>,
-
-    /// Enable strict checking of function types.
-    #[serde(default)]
-    pub strict_function_types: Option<bool>,
-
-    /// Enable strict checking of property initialization in classes.
-    #[serde(default)]
-    pub strict_property_initialization: Option<bool>,
-
-    /// List of library files to include (e.g., "es5", "es2015", "dom").
-    #[serde(default)]
-    pub lib: Option<Vec<String>>,
-
-    /// Module system to use (e.g., "commonjs", "esnext", "node16").
-    #[serde(default)]
-    pub module: Option<String>,
-
-    /// Skip lib file loading
-    #[serde(default)]
-    pub nolib: Option<bool>,
-}
-
-impl CompilerOptions {
-    /// Resolve the effective value for noImplicitAny based on strict flag.
-    pub fn get_no_implicit_any(&self) -> bool {
-        self.no_implicit_any
-            .or(self.strict)
-            .unwrap_or(false)
-    }
-
-    /// Resolve the effective value for strictNullChecks based on strict flag.
-    pub fn get_strict_null_checks(&self) -> bool {
-        self.strict_null_checks
-            .or(self.strict)
-            .unwrap_or(false)
-    }
-
-    /// Resolve the effective value for noImplicitReturns.
-    pub fn get_no_implicit_returns(&self) -> bool {
-        self.no_implicit_returns.unwrap_or(false)
-    }
-
-    /// Resolve the effective value for noImplicitThis based on strict flag.
-    pub fn get_no_implicit_this(&self) -> bool {
-        self.no_implicit_this
-            .or(self.strict)
-            .unwrap_or(false)
-    }
-
-    /// Resolve the effective value for strictFunctionTypes based on strict flag.
-    pub fn get_strict_function_types(&self) -> bool {
-        self.strict_function_types
-            .or(self.strict)
-            .unwrap_or(false)
-    }
-
-    /// Resolve the effective value for strictPropertyInitialization based on strict flag.
-    pub fn get_strict_property_initialization(&self) -> bool {
-        self.strict_property_initialization
-            .or(self.strict)
-            .unwrap_or(false)
-    }
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportCandidateInput {
@@ -251,6 +164,92 @@ struct ImportCandidateInput {
     export_name: Option<String>,
     #[serde(default)]
     is_type_only: bool,
+}
+
+/// Compiler options passed from JavaScript/WASM.
+/// Maps to TypeScript compiler options.
+#[derive(Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+struct CompilerOptions {
+    /// Enable all strict type checking options.
+    #[serde(default)]
+    strict: Option<bool>,
+
+    /// Raise error on expressions and declarations with an implied 'any' type.
+    #[serde(default)]
+    no_implicit_any: Option<bool>,
+
+    /// Enable strict null checks.
+    #[serde(default)]
+    strict_null_checks: Option<bool>,
+
+    /// Enable strict checking of function types.
+    #[serde(default)]
+    strict_function_types: Option<bool>,
+
+    /// Enable strict property initialization checks in classes.
+    #[serde(default)]
+    strict_property_initialization: Option<bool>,
+
+    /// Report error when not all code paths in function return a value.
+    #[serde(default)]
+    no_implicit_returns: Option<bool>,
+
+    /// Raise error on 'this' expressions with an implied 'any' type.
+    #[serde(default)]
+    no_implicit_this: Option<bool>,
+
+    /// Specify ECMAScript target version.
+    #[serde(default)]
+    target: Option<u32>,
+
+    /// Specify module code generation.
+    #[serde(default)]
+    module: Option<u32>,
+}
+
+impl CompilerOptions {
+    /// Resolve a boolean option with strict mode fallback.
+    /// If the specific option is set, use it; otherwise, fall back to strict mode.
+    fn resolve_bool(&self, specific: Option<bool>, strict_implies: bool) -> bool {
+        if let Some(value) = specific {
+            return value;
+        }
+        if strict_implies {
+            return self.strict.unwrap_or(false);
+        }
+        false
+    }
+
+    /// Get the effective value for noImplicitAny.
+    pub fn get_no_implicit_any(&self) -> bool {
+        self.resolve_bool(self.no_implicit_any, true)
+    }
+
+    /// Get the effective value for strictNullChecks.
+    pub fn get_strict_null_checks(&self) -> bool {
+        self.resolve_bool(self.strict_null_checks, true)
+    }
+
+    /// Get the effective value for strictFunctionTypes.
+    pub fn get_strict_function_types(&self) -> bool {
+        self.resolve_bool(self.strict_function_types, true)
+    }
+
+    /// Get the effective value for strictPropertyInitialization.
+    pub fn get_strict_property_initialization(&self) -> bool {
+        self.resolve_bool(self.strict_property_initialization, true)
+    }
+
+    /// Get the effective value for noImplicitReturns.
+    pub fn get_no_implicit_returns(&self) -> bool {
+        self.resolve_bool(self.no_implicit_returns, false)
+    }
+
+    /// Get the effective value for noImplicitThis.
+    pub fn get_no_implicit_this(&self) -> bool {
+        self.resolve_bool(self.no_implicit_this, true)
+    }
 }
 
 impl TryFrom<ImportCandidateInput> for ImportCandidate {
@@ -341,13 +340,26 @@ impl ThinParser {
         }
     }
 
-    /// Set compiler options from JSON configuration.
+    /// Set compiler options from JSON.
+    ///
+    /// # Arguments
+    /// * `options_json` - JSON string containing compiler options
+    ///
+    /// # Example
+    /// ```javascript
+    /// const parser = new ThinParser("file.ts", "const x = 1;");
+    /// parser.setCompilerOptions(JSON.stringify({
+    ///   strict: true,
+    ///   noImplicitAny: true,
+    ///   strictNullChecks: true
+    /// }));
+    /// ```
     #[wasm_bindgen(js_name = setCompilerOptions)]
     pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
         match serde_json::from_str::<CompilerOptions>(options_json) {
             Ok(options) => {
                 self.compiler_options = options;
-                // Invalidate caches when compiler options change
+                // Invalidate type cache when compiler options change
                 self.type_cache = None;
                 Ok(())
             }
@@ -474,6 +486,14 @@ impl ThinParser {
 
         if let (Some(root_idx), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
+
+            // Get compiler options
+            let no_implicit_any = self.compiler_options.get_no_implicit_any();
+            let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
+            let strict_null_checks = self.compiler_options.get_strict_null_checks();
+            let strict_function_types = self.compiler_options.get_strict_function_types();
+            let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
+            let no_implicit_this = self.compiler_options.get_no_implicit_this();
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
@@ -481,7 +501,12 @@ impl ThinParser {
                     &self.type_interner,
                     file_name,
                     cache,
-                    &self.compiler_options,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             } else {
                 ThinCheckerState::with_options(
@@ -489,7 +514,12 @@ impl ThinParser {
                     binder,
                     &self.type_interner,
                     file_name,
-                    &self.compiler_options,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             };
 
@@ -542,6 +572,14 @@ impl ThinParser {
     pub fn get_type_of_node(&mut self, node_idx: u32) -> String {
         if let (Some(_), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
+
+            // Get compiler options
+            let no_implicit_any = self.compiler_options.get_no_implicit_any();
+            let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
+            let strict_null_checks = self.compiler_options.get_strict_null_checks();
+            let strict_function_types = self.compiler_options.get_strict_function_types();
+            let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
+            let no_implicit_this = self.compiler_options.get_no_implicit_this();
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache_and_options(
                     self.parser.get_arena(),
@@ -549,7 +587,12 @@ impl ThinParser {
                     &self.type_interner,
                     file_name,
                     cache,
-                    &self.compiler_options,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             } else {
                 ThinCheckerState::with_options(
@@ -557,7 +600,12 @@ impl ThinParser {
                     binder,
                     &self.type_interner,
                     file_name,
-                    &self.compiler_options,
+                    no_implicit_any,
+                    no_implicit_returns,
+                    strict_null_checks,
+                    strict_function_types,
+                    strict_property_initialization,
+                    no_implicit_this,
                 )
             };
 
@@ -1080,9 +1128,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1110,9 +1158,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1140,9 +1188,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
 
@@ -1172,9 +1220,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
 
@@ -1208,9 +1256,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
 
@@ -1240,8 +1288,8 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
 
         let provider = DocumentSymbolProvider::new(self.parser.get_arena(), line_map, source_text);
@@ -1256,9 +1304,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
 
         let mut provider =
@@ -1273,8 +1321,12 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let binder = self.binder.as_ref().ok_or_else(|| {
+            JsValue::from_str("Internal error: binder not available")
+        })?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| {
+            JsValue::from_str("Internal error: line map not available")
+        })?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1302,9 +1354,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1341,9 +1393,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1408,9 +1460,9 @@ impl ThinParser {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1443,29 +1495,46 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
-        let strict = true; // Enable strict mode for conformance with tsc
+
+        // Get compiler options
+        let no_implicit_any = self.compiler_options.get_no_implicit_any();
+        let no_implicit_returns = self.compiler_options.get_no_implicit_returns();
+        let strict_null_checks = self.compiler_options.get_strict_null_checks();
+        let strict_function_types = self.compiler_options.get_strict_function_types();
+        let strict_property_initialization = self.compiler_options.get_strict_property_initialization();
+        let no_implicit_this = self.compiler_options.get_no_implicit_this();
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
-            ThinCheckerState::with_cache(
+            ThinCheckerState::with_cache_and_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
                 file_name.clone(),
                 cache,
-                strict,
+                no_implicit_any,
+                no_implicit_returns,
+                strict_null_checks,
+                strict_function_types,
+                strict_property_initialization,
+                no_implicit_this,
             )
         } else {
-            ThinCheckerState::new(
+            ThinCheckerState::with_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
                 file_name.clone(),
-                strict,
+                no_implicit_any,
+                no_implicit_returns,
+                strict_null_checks,
+                strict_function_types,
+                strict_property_initialization,
+                no_implicit_this,
             )
         };
 
@@ -2063,10 +2132,10 @@ pub fn normalize_slashes(path: &str) -> String {
 /// Determines whether a path has a trailing separator (`/` or `\\`).
 #[wasm_bindgen(js_name = hasTrailingDirectorySeparator)]
 pub fn has_trailing_directory_separator(path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    let last_char = path.chars().last().unwrap();
+    let last_char = match path.chars().last() {
+        Some(c) => c,
+        None => return false,
+    };
     last_char == DIRECTORY_SEPARATOR || last_char == ALT_DIRECTORY_SEPARATOR
 }
 
@@ -2259,6 +2328,9 @@ mod lib_tests;
 // ASI Conformance tests for verifying TS1005/TS1109 patterns
 #[cfg(test)]
 mod asi_conformance_tests;
+
+#[cfg(test)]
+mod debug_asi;
 
 // P1 Error Recovery tests for synchronization point improvements
 #[cfg(test)]
