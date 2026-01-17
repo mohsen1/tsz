@@ -1,128 +1,123 @@
 # Project Zang
 
-## Mission
-
-Project Zang is a complete rewrite of the TypeScript compiler and type checker in Rust, compiled to WebAssembly. The goal is to achieve performance improvements while maintaining compatibility with the original TypeScript compiler.
-
-## Architecture Overview
-
-### Never Break The Build
-
-- No commit should break the build or cause test failures
-- All changes must pass the unit tests
-- No change should reduce conformance test accuracy
-
-
-### Keep the architecture clean
-
-- dont take shortcuts
-- dont modify the code specifically for tests. source code should not know about tests. revert changes that have done that in the past
-- make good judgement on how to approach work
-- pick the right work item based on the current state of the codebase
-
-### Key Components
-
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| Parser | `src/thin_parser.rs` | Rust implementation of TypeScript parser |
-| Checker | `src/thin_checker.rs` | Type checking and semantic analysis |
-| Solver | `src/solver/` | Type resolution and constraint solving |
-| Binder | `src/binder/` | Symbol binding and scope management |
-| Diagnostics | `src/checker/types/diagnostics.rs` | Error codes and messages |
-
-### Spec Documents
-
-- `specs/WASM_ARCHITECTURE.md` - Architecture deep dive
-- `specs/SOLVER.md` - Type solver design
-- `specs/` - Other component designs
+TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
 ---
 
-## Running Conformance Tests
+## Priority List (Current Focus)
 
-To get current metrics, run the conformance test suite:
+**Stop all feature work until these are addressed:**
+
+### 1. Remove Test-Aware Code from Source
+
+The checker has ~40 places that check file names to suppress errors for tests. This is architectural debt that must be removed.
+
+**What to remove from `src/thin_checker.rs`:**
+```rust
+// BAD - This pattern appears 40+ times and must be removed:
+let is_test_file = self.ctx.file_name.contains("conformance")
+    || self.ctx.file_name.contains("test")
+    || self.ctx.file_name.contains("cases");
+
+if is_test_file && self.ctx.file_name.contains("Symbol") {
+    return; // Suppressing errors for tests
+}
+```
+
+**The rule:** Source code must not know about tests. If a test fails, fix the underlying logic, not by adding special cases for test file names.
+
+### 2. Fix Testing Infrastructure
+
+Before fixing more checker/parser bugs, the test infrastructure needs to:
+- Parse `@` directives from test files (like `@strict`, `@noImplicitAny`)
+- Configure the checker environment based on those directives
+- Match how TypeScript's own test runner works
+
+### 3. Architecture Review
+
+Review and clean up before adding features:
+- Remove all `file_name.contains()` checks in checker
+- Ensure parser and checker are test-agnostic
+- Document actual architectural decisions in specs/
+
+### 4. Use ts-tests Properly
+
+The `ts-tests/` directory should work like TypeScript's test suite:
+- Test infrastructure reads directives from test files
+- Configures compiler options accordingly
+- Compares output to baselines
+
+### 5. Study Results, Then Plan
+
+After cleanup, analyze test results to identify:
+- Root causes of failures (not symptoms)
+- Patterns in missing/extra errors
+- Priority order for fixes
+
+### 6. Update agents.md
+
+Enforce these rules in agent instructions to prevent regression.
+
+---
+
+## Rules
+
+### Never Break The Build
+- All commits must pass unit tests
+- No change should reduce conformance accuracy
+
+### Keep Architecture Clean
+- No shortcuts
+- No test-aware code in source
+- Fix root causes, not symptoms
+- No whack-a-mole error suppression
+
+### Anti-Patterns to Avoid
+
+| Don't | Do Instead |
+|-------|------------|
+| Check file names in checker | Fix the underlying logic |
+| Suppress errors for specific tests | Implement correct behavior |
+| Add "Tier 0/1/2" patches | Fix root cause once |
+| Add filtering for test patterns | Make checker correct for all code |
+
+---
+
+## Commands
 
 ```bash
-# Quick test (200 files, ~1 min)
+# Build WASM
+wasm-pack build --target web --out-dir pkg
+
+# Quick conformance test
 ./differential-test/run-conformance.sh --max=200 --workers=4
 
-# Standard test (500 files, ~3 min)
-./differential-test/run-conformance.sh --max=500 --workers=8
-
-# Full test (all files, ~15 min)
+# Full conformance test
 ./differential-test/run-conformance.sh --all --workers=14
 ```
 
-### Understanding Results
-
-| Metric | Meaning |
-|--------|---------|
-| Exact Match | WASM and TSC emit identical error codes |
-| Same Error Count | Same number of errors (may differ in codes) |
-| Missing Errors | TSC emits but WASM doesn't (under-reporting) |
-| Extra Errors | WASM emits but TSC doesn't (over-reporting) |
-| Crashed | WASM panicked during test |
-
-**Target:** 95%+ exact match before production release.
-
-### Building WASM
-
-```bash
-wasm-pack build --target web --out-dir pkg
-```
-
 ---
 
-## Priority List
-
-These are the high level tasks to focus on next:
-
-- [ ] Make sure all code in source that is doing trailer made work to satisfy the test is removed. Source should not have any awareness of test 
-- [ ] Improve testing infrastructure to configure the environment before dunking the tests based on @ directives 
-- [ ] Before diving into more parser and checker enhancement lets review the code and make sure architecture is solid 
-- [ ] We should be able to use ts-tests directory how the original typescript repo use their tests to ensure parser and checker is working correctly. Testing infrastructure should be solid 
-- [ ] Study test results and write a new plan of attack for getting to 100% tsc compatibility 
-- [ ] Update agents.md to enforce good practices as mentioned above 
-- [ ] Work on getting to 100%
-
-
-
-## File Reference
+## Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/thin_parser.rs` | Main parser implementation |
-| `src/thin_checker.rs` | Main type checker (~22k lines) |
-| `src/binder/` | Symbol table and scope management |
-| `src/solver/` | Type resolution engine |
-| `src/checker/types/diagnostics.rs` | Error codes and message templates |
-| `differential-test/` | Conformance test infrastructure |
-| `differential-test/run-conformance.sh` | Docker-based test runner |
+| `src/thin_parser.rs` | Parser |
+| `src/thin_checker.rs` | Type checker (needs cleanup) |
+| `src/binder/` | Symbol binding |
+| `src/solver/` | Type resolution |
+| `src/checker/types/diagnostics.rs` | Error codes |
+| `differential-test/` | Test infrastructure |
+| `specs/` | Architecture docs |
 
 ---
 
-## Adding New Diagnostics
+## Test Results
 
-1. Add code to `src/checker/types/diagnostics.rs`:
-   ```rust
-   pub const NEW_ERROR_CODE: u32 = XXXX;
-   ```
+| Metric | Meaning |
+|--------|---------|
+| Exact Match | Identical errors to TSC |
+| Missing Errors | TSC emits, we don't |
+| Extra Errors | We emit, TSC doesn't |
 
-2. Add message template:
-   ```rust
-   pub const NEW_ERROR_MESSAGE: &str = "Error message with {0} placeholder.";
-   ```
-
-3. Emit in checker:
-   ```rust
-   use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-   let message = format_message(diagnostic_messages::NEW_ERROR_MESSAGE, &[arg]);
-   self.error_at_node(node_idx, &message, diagnostic_codes::NEW_ERROR_CODE);
-   ```
-
-4. Rebuild and test:
-   ```bash
-   wasm-pack build --target web --out-dir pkg
-   node /tmp/test.mjs
-   ```
+**Target:** 95%+ exact match.
