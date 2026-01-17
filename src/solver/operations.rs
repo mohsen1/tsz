@@ -1066,9 +1066,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
                 if placeholder_count == 1 {
-                    let member = placeholder_member.unwrap();
-                    if !self.defaulted_placeholders.contains(&member) {
-                        self.constrain_types(ctx, var_map, source, member);
+                    if let Some(member) = placeholder_member {
+                        if !self.defaulted_placeholders.contains(&member) {
+                            self.constrain_types(ctx, var_map, source, member);
+                        }
                     }
                 }
             }
