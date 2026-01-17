@@ -285,14 +285,23 @@ impl ThinParserState {
     fn check_illegal_binding_identifier(&mut self) -> bool {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
-        // In static blocks, 'await' cannot be used as a binding identifier
-        if self.in_static_block_context() {
-            // Check if current token is 'await' (either as keyword or identifier)
-            let is_await = self.is_token(SyntaxKind::AwaitKeyword)
-                || (self.is_token(SyntaxKind::Identifier)
-                    && self.scanner.get_token_value_ref() == "await");
+        // Check if current token is 'await' (either as keyword or identifier)
+        let is_await = self.is_token(SyntaxKind::AwaitKeyword)
+            || (self.is_token(SyntaxKind::Identifier)
+                && self.scanner.get_token_value_ref() == "await");
 
-            if is_await {
+        if is_await {
+            // In static blocks, 'await' cannot be used as a binding identifier
+            if self.in_static_block_context() {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                    diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                );
+                return true;
+            }
+
+            // In async contexts, 'await' cannot be used as a binding identifier
+            if self.in_async_context() {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
                     diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
@@ -503,6 +512,15 @@ impl ThinParserState {
         }
     }
 
+    /// Error: Line break not permitted here (TS1142)
+    fn error_line_break_not_permitted(&mut self) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        self.parse_error_at_current_token(
+            "Line break not permitted here.",
+            diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE,
+        );
+    }
+
     /// Error: Expression expected (TS1109)
     fn error_expression_expected(&mut self) {
         // Only emit error if we haven't already emitted one at this position
@@ -627,6 +645,21 @@ impl ThinParserState {
                 diagnostic_codes::TOKEN_EXPECTED,
             );
         }
+    }
+
+    /// Error: Comma expected (TS1005) - specifically for missing commas between parameters/arguments
+    fn error_comma_expected(&mut self) {
+        self.error_token_expected(",");
+    }
+
+    /// Check if current token could start a parameter
+    fn is_parameter_start(&self) -> bool {
+        // Parameters can start with modifiers, identifiers, or binding patterns
+        self.is_parameter_modifier()
+            || self.is_token(SyntaxKind::DotDotDotToken) // rest parameter
+            || self.is_identifier_or_keyword()
+            || self.is_token(SyntaxKind::OpenBraceToken) // object binding pattern
+            || self.is_token(SyntaxKind::OpenBracketToken) // array binding pattern
     }
 
     /// Error: Unterminated template literal (TS1160)
@@ -2026,7 +2059,12 @@ impl ThinParserState {
                 self.error_expression_expected();
                 NodeIndex::NONE
             } else {
-                self.parse_assignment_expression()
+                let expr = self.parse_assignment_expression();
+                if expr.is_none() {
+                    // Emit TS1109 for missing variable initializer: let x = [missing]
+                    self.error_expression_expected();
+                }
+                expr
             }
         } else {
             NodeIndex::NONE
@@ -2297,6 +2335,12 @@ impl ThinParserState {
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                // Check if there's another parameter without comma - this is a TS1005 error
+                if !self.is_token(SyntaxKind::CloseParenToken)
+                    && self.is_parameter_start() {
+                    // Emit TS1005 for missing comma between parameters: f(a b)
+                    self.error_comma_expected();
+                }
                 break;
             }
         }
@@ -2372,6 +2416,10 @@ impl ThinParserState {
             // Also temporarily disable async context so 'await' is not treated as an await expression
             self.context_flags &= !CONTEXT_FLAG_ASYNC;
             let initializer = self.parse_assignment_expression();
+            if initializer.is_none() {
+                // Emit TS1109 for missing parameter default value: param = [missing]
+                self.error_expression_expected();
+            }
             self.context_flags = saved_flags;
             initializer
         } else {
@@ -6019,12 +6067,6 @@ impl ThinParserState {
                 let clause_start = self.token_pos();
                 self.next_token();
                 let clause_expr = self.parse_expression();
-
-                // Check for missing case expression: case : { }
-                if clause_expr == NodeIndex::NONE {
-                    self.error_expression_expected();
-                }
-
                 self.parse_expected(SyntaxKind::ColonToken);
 
                 let mut statements = Vec::new();
@@ -6291,6 +6333,11 @@ impl ThinParserState {
         while self.is_token(SyntaxKind::CommaToken) {
             self.next_token(); // consume comma
             let right = self.parse_assignment_expression();
+            if right.is_none() {
+                // Emit TS1109 for trailing comma or missing expression: expr, [missing]
+                self.error_expression_expected();
+                break; // Exit loop to prevent cascading errors
+            }
             let end_pos = self.token_end();
 
             left = self.arena.add_binary_expr(
@@ -6718,11 +6765,15 @@ impl ThinParserState {
             if op == SyntaxKind::QuestionToken {
                 let when_true = self.parse_assignment_expression();
                 if when_true.is_none() {
+                    // Emit TS1109 for incomplete conditional expression: condition ? [missing]
+                    self.error_expression_expected();
                     self.resync_to_next_expression_boundary();
                 }
                 self.parse_expected(SyntaxKind::ColonToken);
                 let when_false = self.parse_assignment_expression();
                 if when_false.is_none() {
+                    // Emit TS1109 for incomplete conditional expression: condition ? true : [missing]
+                    self.error_expression_expected();
                     self.resync_to_next_expression_boundary();
                 }
                 let end_pos = self.token_end();
@@ -6764,11 +6815,8 @@ impl ThinParserState {
                     let result = self.parse_assignment_expression();
                     if result.is_none() {
                         self.resync_to_next_expression_boundary();
-                        // Error recovery: If right-side parsing failed and current token
-                        // cannot start an expression, break to prevent cascading errors
-                        if !self.is_token(SyntaxKind::EndOfFileToken) && !self.is_expression_start() {
-                            return left;
-                        }
+                        // Break out of binary expression loop when parsing fails to prevent infinite loops
+                        return left;
                     }
                     result
                 } else {
@@ -6780,11 +6828,8 @@ impl ThinParserState {
                     let result = self.parse_binary_expression(next_min);
                     if result.is_none() {
                         self.resync_to_next_expression_boundary();
-                        // Error recovery: If right-side parsing failed and current token
-                        // cannot start an expression, break to prevent cascading errors
-                        if !self.is_token(SyntaxKind::EndOfFileToken) && !self.is_expression_start() {
-                            return left;
-                        }
+                        // Break out of binary expression loop when parsing fails to prevent infinite loops
+                        return left;
                     }
                     result
                 };
@@ -6867,6 +6912,10 @@ impl ThinParserState {
                 let operator = self.token() as u16;
                 self.next_token();
                 let operand = self.parse_unary_expression();
+                if operand.is_none() {
+                    // Emit TS1109 for incomplete unary expression: +[missing], ++[missing], etc.
+                    self.error_expression_expected();
+                }
                 let end_pos = self.token_end();
 
                 self.arena.add_unary_expr(
@@ -6881,6 +6930,10 @@ impl ThinParserState {
                 let operator = self.token() as u16;
                 self.next_token();
                 let operand = self.parse_unary_expression();
+                if operand.is_none() {
+                    // Emit TS1109 for incomplete unary expression: typeof[missing], void[missing], delete[missing]
+                    self.error_expression_expected();
+                }
                 let end_pos = self.token_end();
 
                 self.arena.add_unary_expr(
@@ -6894,16 +6947,30 @@ impl ThinParserState {
                 // Only parse as await expression if we're in an async context AND NOT in a parameter default
                 // Parameter defaults are evaluated in the parent scope, not the async function body
                 if !self.in_async_context() || self.in_parameter_default_context() {
-                    // Outside async context or in parameter default context, check if await is used as a bare expression
+                    // In parameter default context of non-async functions, 'await' should always be treated as identifier
+                    if self.in_parameter_default_context() && !self.in_async_context() {
+                        // Parse 'await' as regular identifier in parameter defaults of non-async functions
+                        let start_pos = self.token_pos();
+                        let end_pos = self.token_end(); // capture end before consuming
+                        self.next_token(); // consume the await token
+                        return self.arena.add_identifier(
+                            SyntaxKind::Identifier as u16,
+                            start_pos,
+                            end_pos,
+                            crate::parser::thin_node::IdentifierData {
+                                escaped_text: String::from("await"),
+                                original_text: None,
+                                type_arguments: None,
+                            },
+                        );
+                    }
+
+                    // Outside async context or in other contexts, check if await is used as a bare expression
                     // If followed by tokens that can't start an expression, report "Expression expected"
                     // Examples where await is a reserved identifier but invalid as expression:
                     //   await;  // Error: Expression expected (in static blocks)
                     //   await (1);  // Error: Expression expected (in static blocks)
                     //   async (a = await => x) => {}  // Error: Expression expected (before arrow)
-                    //   async (a = await 42) => {}  // Error in parameter default
-                    // But allow:
-                    //   let await = 1;  (declaration)
-                    //   async (a = await) => {}  (default parameter value, as identifier reference)
 
                     // Look ahead to see what token comes after 'await'
                     let snapshot = self.scanner.save_state();
@@ -7060,6 +7127,10 @@ impl ThinParserState {
                 SyntaxKind::OpenBracketToken => {
                     self.next_token();
                     let argument = self.parse_expression();
+                    if argument.is_none() {
+                        // Emit TS1109 for empty brackets or invalid expression: obj[[missing]]
+                        self.error_expression_expected();
+                    }
                     let end_pos = self.token_end();
                     self.parse_expected(SyntaxKind::CloseBracketToken);
 
@@ -7307,6 +7378,10 @@ impl ThinParserState {
                 let spread_start = self.token_pos();
                 self.next_token();
                 let expression = self.parse_assignment_expression();
+                if expression.is_none() {
+                    // Emit TS1109 for incomplete spread argument: func(...missing)
+                    self.error_expression_expected();
+                }
                 let spread_end = self.token_end();
                 let spread = self.arena.add_unary_expr_ex(
                     syntax_kind_ext::SPREAD_ELEMENT,
@@ -7503,6 +7578,10 @@ impl ThinParserState {
             if dot_dot_dot {
                 // Rest element: just name
                 let name = self.parse_binding_element_name();
+                if name.is_none() {
+                    // Emit TS1109 for missing rest binding element: {...missing}
+                    self.error_expression_expected();
+                }
                 let elem_end = self.token_end();
                 elements.push(self.arena.add_binding_element(
                     syntax_kind_ext::BINDING_ELEMENT,
@@ -7522,6 +7601,10 @@ impl ThinParserState {
                 let (property_name, name) = if self.parse_optional(SyntaxKind::ColonToken) {
                     // propertyName: name
                     let name = self.parse_binding_element_name();
+                    if name.is_none() {
+                        // Emit TS1109 for missing property binding element: {prop: missing}
+                        self.error_expression_expected();
+                    }
                     (first_name, name)
                 } else {
                     // Just name (shorthand)
@@ -7530,7 +7613,12 @@ impl ThinParserState {
 
                 // Optional initializer: = value
                 let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-                    self.parse_assignment_expression()
+                    let init = self.parse_assignment_expression();
+                    if init.is_none() {
+                        // Emit TS1109 for missing object binding initializer: {x = missing}
+                        self.error_expression_expected();
+                    }
+                    init
                 } else {
                     NodeIndex::NONE
                 };
@@ -7592,10 +7680,19 @@ impl ThinParserState {
 
             // Parse name (can be identifier or nested binding pattern)
             let name = self.parse_binding_element_name();
+            if name.is_none() {
+                // Emit TS1109 for missing binding element: [...missing] or [missing]
+                self.error_expression_expected();
+            }
 
             // Optional initializer: = value
             let initializer = if !dot_dot_dot && self.parse_optional(SyntaxKind::EqualsToken) {
-                self.parse_assignment_expression()
+                let init = self.parse_assignment_expression();
+                if init.is_none() {
+                    // Emit TS1109 for missing binding initializer: [x = missing]
+                    self.error_expression_expected();
+                }
+                init
             } else {
                 NodeIndex::NONE
             };
@@ -8065,6 +8162,10 @@ impl ThinParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenParenToken);
         let expression = self.parse_expression();
+        if expression.is_none() {
+            // Emit TS1109 for empty parentheses or invalid expression: ([missing])
+            self.error_expression_expected();
+        }
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::CloseParenToken);
 
@@ -8093,6 +8194,10 @@ impl ThinParserState {
                 let spread_start = self.token_pos();
                 self.next_token();
                 let expression = self.parse_assignment_expression();
+                if expression.is_none() {
+                    // Emit TS1109 for incomplete spread element: [...missing]
+                    self.error_expression_expected();
+                }
                 let spread_end = self.token_end();
                 let spread = self.arena.add_unary_expr_ex(
                     syntax_kind_ext::SPREAD_ELEMENT,
@@ -8216,6 +8321,10 @@ impl ThinParserState {
         if self.is_token(SyntaxKind::DotDotDotToken) {
             self.next_token();
             let expression = self.parse_assignment_expression();
+            if expression.is_none() {
+                // Emit TS1109 for incomplete spread element: {...missing}
+                self.error_expression_expected();
+            }
             let end_pos = self.token_end();
             return self.arena.add_unary_expr_ex(
                 syntax_kind_ext::SPREAD_ELEMENT,
@@ -8616,6 +8725,10 @@ impl ThinParserState {
                 // Example: { [await]: foo } should only emit TS2304, not TS1109
 
                 let expression = self.parse_expression();
+                if expression.is_none() {
+                    // Emit TS1109 for empty computed property: { [[missing]]: value }
+                    self.error_expression_expected();
+                }
                 self.parse_expected(SyntaxKind::CloseBracketToken);
                 let end_pos = self.token_end();
 
@@ -8750,6 +8863,10 @@ impl ThinParserState {
                 SyntaxKind::OpenBracketToken => {
                     self.next_token();
                     let argument = self.parse_expression();
+                    if argument.is_none() {
+                        // Emit TS1109 for empty brackets or invalid expression: obj[[missing]]
+                        self.error_expression_expected();
+                    }
                     let end_pos = self.token_end();
                     self.parse_expected(SyntaxKind::CloseBracketToken);
 
