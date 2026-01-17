@@ -2358,11 +2358,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_has_rest = target.params.last().map_or(false, |p| p.rest);
         let source_has_rest = source.params.last().map_or(false, |p| p.rest);
         let rest_elem_type = if target_has_rest {
-            if let Some(last_param) = target.params.last() {
-                Some(self.get_array_element_type(last_param.type_id))
-            } else {
-                None
-            }
+            target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
             None
         };
@@ -2425,8 +2421,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // If target has rest parameter, check source's extra params against the rest type
         if target_has_rest {
             let Some(rest_elem_type) = rest_elem_type else {
-                // This shouldn't happen if target_has_rest is true, but handle gracefully
-                return SubtypeResult::False;
+                return SubtypeResult::False; // Invalid rest parameter
             };
             if rest_is_top {
                 return SubtypeResult::True;
@@ -2444,10 +2439,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // If source also has a rest param, check it against target's rest
             if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    // This shouldn't happen if source_has_rest is true, but handle gracefully
-                    return SubtypeResult::False;
-                };
+                let Some(s_rest_param) = source.params.last() else { return SubtypeResult::False; };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
                 // Check rest-to-rest parameter compatibility
                 if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
@@ -2457,8 +2449,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if source_has_rest {
-            let Some(rest_param) = source.params.last() else {
-                // This shouldn't happen if source_has_rest is true, but handle gracefully
+            let rest_param = if let Some(rest_param) = source.params.last() {
+                rest_param
+            } else {
                 return SubtypeResult::False;
             };
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
@@ -2611,11 +2604,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_has_rest = target.params.last().map_or(false, |p| p.rest);
         let source_has_rest = source.params.last().map_or(false, |p| p.rest);
         let rest_elem_type = if target_has_rest {
-            if let Some(last_param) = target.params.last() {
-                Some(self.get_array_element_type(last_param.type_id))
-            } else {
-                None
-            }
+            target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
             None
         };
@@ -2665,8 +2654,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // If target has rest parameter, check source's extra params against the rest type
         if target_has_rest {
             let Some(rest_elem_type) = rest_elem_type else {
-                // This shouldn't happen if target_has_rest is true, but handle gracefully
-                return SubtypeResult::False;
+                return SubtypeResult::False; // Invalid rest parameter
             };
             if rest_is_top {
                 return SubtypeResult::True;
@@ -2680,10 +2668,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    // This shouldn't happen if source_has_rest is true, but handle gracefully
-                    return SubtypeResult::False;
-                };
+                let Some(s_rest_param) = source.params.last() else { return SubtypeResult::False; };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
                 // Check rest-to-rest parameter compatibility
                 if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
@@ -2693,8 +2678,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if source_has_rest {
-            let Some(rest_param) = source.params.last() else {
-                // This shouldn't happen if source_has_rest is true, but handle gracefully
+            let rest_param = if let Some(rest_param) = source.params.last() {
+                rest_param
+            } else {
                 return SubtypeResult::False;
             };
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
@@ -2736,11 +2722,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_has_rest = target.params.last().map_or(false, |p| p.rest);
         let source_has_rest = source.params.last().map_or(false, |p| p.rest);
         let rest_elem_type = if target_has_rest {
-            if let Some(last_param) = target.params.last() {
-                Some(self.get_array_element_type(last_param.type_id))
-            } else {
-                None
-            }
+            target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
             None
         };
@@ -2790,8 +2772,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // If target has rest parameter, check source's extra params against the rest type
         if target_has_rest {
             let Some(rest_elem_type) = rest_elem_type else {
-                // This shouldn't happen if target_has_rest is true, but handle gracefully
-                return SubtypeResult::False;
+                return SubtypeResult::False; // Invalid rest parameter
             };
             if rest_is_top {
                 return SubtypeResult::True;
@@ -2805,10 +2786,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    // This shouldn't happen if source_has_rest is true, but handle gracefully
-                    return SubtypeResult::False;
-                };
+                let Some(s_rest_param) = source.params.last() else { return SubtypeResult::False; };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
                 // Check rest-to-rest parameter compatibility
                 if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
@@ -2818,8 +2796,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if source_has_rest {
-            let Some(rest_param) = source.params.last() else {
-                // This shouldn't happen if source_has_rest is true, but handle gracefully
+            let rest_param = if let Some(rest_param) = source.params.last() {
+                rest_param
+            } else {
                 return SubtypeResult::False;
             };
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
@@ -2861,11 +2840,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_has_rest = target.params.last().map_or(false, |p| p.rest);
         let source_has_rest = source.params.last().map_or(false, |p| p.rest);
         let rest_elem_type = if target_has_rest {
-            if let Some(last_param) = target.params.last() {
-                Some(self.get_array_element_type(last_param.type_id))
-            } else {
-                None
-            }
+            target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
             None
         };
@@ -2915,8 +2890,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // If target has rest parameter, check source's extra params against the rest type
         if target_has_rest {
             let Some(rest_elem_type) = rest_elem_type else {
-                // This shouldn't happen if target_has_rest is true, but handle gracefully
-                return SubtypeResult::False;
+                return SubtypeResult::False; // Invalid rest parameter
             };
             if rest_is_top {
                 return SubtypeResult::True;
@@ -2930,10 +2904,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    // This shouldn't happen if source_has_rest is true, but handle gracefully
-                    return SubtypeResult::False;
-                };
+                let Some(s_rest_param) = source.params.last() else { return SubtypeResult::False; };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
                 // Check rest-to-rest parameter compatibility
                 if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
@@ -2943,8 +2914,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if source_has_rest {
-            let Some(rest_param) = source.params.last() else {
-                // This shouldn't happen if source_has_rest is true, but handle gracefully
+            let rest_param = if let Some(rest_param) = source.params.last() {
+                rest_param
+            } else {
                 return SubtypeResult::False;
             };
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
@@ -3712,11 +3684,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check parameter count
         let target_has_rest = target.params.last().map_or(false, |p| p.rest);
         let rest_elem_type = if target_has_rest {
-            if let Some(last_param) = target.params.last() {
-                Some(self.get_array_element_type(last_param.type_id))
-            } else {
-                None
-            }
+            target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
             None
         };
@@ -3770,8 +3738,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if target_has_rest {
             let Some(rest_elem_type) = rest_elem_type else {
-                // This shouldn't happen if target_has_rest is true, but handle gracefully
-                return None;
+                return None; // Invalid rest parameter
             };
             if rest_is_top {
                 return None;
@@ -3789,10 +3756,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    // This shouldn't happen if source_has_rest is true, but handle gracefully
-                    return None;
-                };
+                let Some(s_rest_param) = source.params.last() else { return None; };
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
                 if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
@@ -3805,9 +3769,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if source_has_rest {
-            let Some(rest_param) = source.params.last() else {
-                // This shouldn't happen if source_has_rest is true, but handle gracefully
-                return None;
+            let rest_param = if let Some(rest_param) = source.params.last() {
+                rest_param
+            } else {
+                return SubtypeResult::False;
             };
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
             let rest_is_top = self.allow_bivariant_rest
