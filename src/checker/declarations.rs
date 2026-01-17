@@ -485,6 +485,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // Don't update current after a return/throw
             } else if let Some(normal_set) = result.normal {
                 current = normal_set;
+                // Handle exits from statements that have both normal and exit flows (like if statements)
+                if let Some(exit_set) = result.exits {
+                    exits = Some(match exits {
+                        Some(current_exits) => self.intersect_sets(&current_exits, &exit_set),
+                        None => exit_set,
+                    });
+                }
             }
         }
 
