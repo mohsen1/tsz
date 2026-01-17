@@ -7397,11 +7397,10 @@ impl ThinParserState {
                     let start_pos = self.token_pos();
                     let end_pos = self.token_end();
 
-                    // Additional suppression: Don't emit TS1109 if we're at a position
-                    // where parsing can clearly recover (e.g., at statement boundary, EOF, etc.)
-                    // This reduces false-positive "expression expected" errors
+                    // More precise TS1109 suppression: Only suppress at clear expression boundaries
+                    // Don't suppress when we see statement keywords - those are genuine expression errors
+                    // This helps catch the 22 missing TS1109 errors we need to emit
                     let should_emit_error = !self.is_at_expression_end()
-                        && !self.is_statement_start()
                         && !self.is_token(SyntaxKind::EndOfFileToken);
 
                     if should_emit_error {

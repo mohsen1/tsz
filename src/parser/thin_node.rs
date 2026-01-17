@@ -5332,9 +5332,6 @@ impl NodeAccess for ThinNodeArena {
                     add_opt(&mut children, data.expression);
                 }
             }
-            JSX_TEXT => {
-                // No children
-            }
             JSX_NAMESPACED_NAME => {
                 if let Some(data) = self.get_jsx_namespaced_name(node) {
                     children.push(data.namespace);
