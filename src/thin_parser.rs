@@ -6904,9 +6904,20 @@ impl ThinParserState {
                 self.next_token();
 
                 // Check for missing operand (e.g., just "await" with nothing after it)
-                if self.can_parse_semicolon() || self.is_token(SyntaxKind::SemicolonToken) {
+                // Also handle cases like { [await]: foo } where : follows await
+                if self.can_parse_semicolon()
+                    || self.is_token(SyntaxKind::SemicolonToken) {
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.error_expression_expected();
+                } else if self.is_token(SyntaxKind::ColonToken)
+                    || self.is_token(SyntaxKind::CloseBracketToken) {
+                    // Special case for computed properties: { [await]: foo }
+                    // Emit TS1109 directly without global suppression logic
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Expression expected",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
                 }
 
                 let expression = self.parse_unary_expression();
