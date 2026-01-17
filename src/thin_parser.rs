@@ -330,10 +330,25 @@ impl ThinParserState {
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
                 let should_suppress = match kind {
                     SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
-                        // At EOF, clearly the file ended before this closing token
-                        // Don't emit an error - just recover
+                        // At EOF, usually suppress errors except for clear structural issues
+                        // For missing ) after function parameters, we should report the error
                         if self.is_token(SyntaxKind::EndOfFileToken) {
-                            true
+                            // Be less aggressive about suppressing missing closing tokens at EOF
+                            // Only suppress if this might be a natural end point
+                            match kind {
+                                SyntaxKind::CloseParenToken => {
+                                    // Don't suppress missing ) at EOF - this is usually a clear error
+                                    false
+                                }
+                                _ => true // Still suppress missing } and ] at EOF for now
+                            }
+                        }
+                        // For missing CloseParenToken, be less aggressive about suppression
+                        // when the next token is OpenBraceToken, since that often indicates
+                        // the user wrote "function f( {" expecting the brace to be function body
+                        else if kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken) {
+                            // Don't suppress - this is likely a syntax error in function/method parameters
+                            false
                         }
                         // If next token starts a statement, the user has clearly moved on
                         // Don't complain about missing closing token
@@ -436,9 +451,15 @@ impl ThinParserState {
         // This handles cases like `a + (` where we're starting a parenthesized expression
         if self.is_token(SyntaxKind::OpenParenToken)
             || self.is_token(SyntaxKind::OpenBracketToken)
-            || self.is_token(SyntaxKind::OpenBraceToken)
         {
             return true;
+        }
+
+        // For OpenBraceToken, be more careful - don't recover if this could be a function body
+        // following missing close paren in function parameters
+        if self.is_token(SyntaxKind::OpenBraceToken) {
+            // Don't suppress the error - this is likely a structural issue like missing ) in function params
+            return false;
         }
 
         // If we're at a token that clearly starts a new statement, we can recover
@@ -587,8 +608,17 @@ impl ThinParserState {
             // If we're at a position that naturally ends expressions (closing brace, paren, bracket, EOF),
             // suppress the TS1005 error because we've clearly moved on to the next construct.
             // This was previously only used for TS1109 suppression but is also applicable to TS1005.
+            // However, for missing closing tokens (like missing ) or }), EOF doesn't mean we've moved on.
             if self.is_at_expression_end() {
-                return;
+                // For missing closing tokens, don't suppress at EOF - it's likely a real error
+                let is_missing_closing_token = matches!(token, ")" | "}" | "]");
+                let is_at_eof = self.is_token(SyntaxKind::EndOfFileToken);
+
+                if is_missing_closing_token && is_at_eof {
+                    // Don't suppress - missing closing token at EOF is usually a real error
+                } else {
+                    return;
+                }
             }
 
             // Decrement budget - we're about to emit an error
@@ -5873,20 +5903,11 @@ impl ThinParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
-        // For TypeScript compatibility, throw statement requires an expression
-        // If there's a line break after throw, emit TS1109 error
-        let expression = if self.scanner.has_preceding_line_break()
-            && !self.is_token(SyntaxKind::SemicolonToken)
-            && !self.is_token(SyntaxKind::CloseBraceToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken) {
-            // Line break after throw without explicit semicolon - emit TS1109
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at(
-                start_pos,
-                self.token_end() - start_pos,
-                "Expression expected",
-                diagnostic_codes::EXPRESSION_EXPECTED
-            );
+        // For throw statements in TypeScript, emit TS1109 error if there's a line break
+        // after 'throw' keyword (unlike JavaScript which allows ASI here)
+        let expression = if self.scanner.has_preceding_line_break() {
+            // TypeScript requires expression after throw on same line
+            self.error_expression_expected();
             NodeIndex::NONE
         } else if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
