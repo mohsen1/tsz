@@ -178,17 +178,23 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet> {
 }
 
 fn allow_entry(entry: &DirEntry, base_dir: &Path, exclude: Option<&GlobSet>) -> bool {
-    if exclude.is_none() {
+    let Some(exclude) = exclude else {
         return true;
-    }
+    };
 
-    let exclude = exclude.expect("exclude set is present");
     let path = entry.path();
     if path == base_dir {
         return true;
     }
 
-    let rel_path = path.strip_prefix(base_dir).unwrap_or(path);
+    // Use safe path handling instead of unwrap_or for panic hardening
+    let rel_path = match path.strip_prefix(base_dir) {
+        Ok(stripped) => stripped,
+        Err(_) => {
+            // If path is not under base_dir, use the path itself for matching
+            return !exclude.is_match(path);
+        }
+    };
     !exclude.is_match(rel_path)
 }
 
