@@ -115,20 +115,199 @@ impl NodeAccess for NodeArena {
         }
     }
 
-    fn get_children(&self, _index: NodeIndex) -> Vec<NodeIndex> {
-        // NOTE: AST child enumeration is a complex task that requires matching
-        // each node variant to its specific child fields. Due to the large number
-        // of node types (180+ variants) and field name variations across the AST,
-        // a complete implementation requires careful handling of each case.
-        //
-        // This is a placeholder that returns empty. For a full implementation:
-        // 1. Match on node kind
-        // 2. Extract child NodeIndex fields based on node type
-        // 3. Handle optional fields (NodeIndex may be 0/u32::MAX for none)
-        // 4. Handle NodeList fields (iterate over .nodes)
-        //
-        // The ThinNodeArena implementation may be prioritized as it's the primary
-        // arena used in the parser.
-        Vec::new()
+    fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex> {
+        if index.is_none() {
+            return Vec::new();
+        }
+
+        let node = match self.get(index) {
+            Some(n) => n,
+            None => return Vec::new(),
+        };
+
+        // Helper to add optional NodeIndex (ignoring NONE)
+        let add_opt = |children: &mut Vec<NodeIndex>, idx: NodeIndex| {
+            if idx.is_some() {
+                children.push(idx);
+            }
+        };
+
+        // Helper to add NodeList (expanding to individual nodes)
+        let add_list = |children: &mut Vec<NodeIndex>, list: &super::ast::NodeList| {
+            children.extend(list.nodes.iter().copied());
+        };
+
+        // Helper to add optional NodeList
+        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<super::ast::NodeList>| {
+            if let Some(l) = list {
+                children.extend(l.nodes.iter().copied());
+            }
+        };
+
+        let mut children = Vec::new();
+
+        // Match on node variants and extract child NodeIndex fields
+        match node {
+            Node::QualifiedName { left, right, .. } => {
+                add_opt(&mut children, *left);
+                add_opt(&mut children, *right);
+            }
+            Node::ComputedPropertyName { expression, .. } => {
+                add_opt(&mut children, *expression);
+            }
+            Node::BinaryExpression(expr) => {
+                add_opt(&mut children, expr.left);
+                add_opt(&mut children, expr.right);
+            }
+            Node::PrefixUnaryExpression(expr) => {
+                add_opt(&mut children, expr.operand);
+            }
+            Node::PostfixUnaryExpression(expr) => {
+                add_opt(&mut children, expr.operand);
+            }
+            Node::CallExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+                add_opt_list(&mut children, &expr.type_arguments);
+                add_list(&mut children, &expr.arguments);
+            }
+            Node::NewExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+                add_opt_list(&mut children, &expr.type_arguments);
+                add_opt_list(&mut children, &expr.arguments);
+            }
+            Node::PropertyAccessExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+                add_opt(&mut children, expr.name);
+            }
+            Node::ElementAccessExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+                add_opt(&mut children, expr.argument_expression);
+            }
+            Node::ConditionalExpression(expr) => {
+                add_opt(&mut children, expr.condition);
+                add_opt(&mut children, expr.when_true);
+                add_opt(&mut children, expr.when_false);
+            }
+            Node::ArrowFunction(func) => {
+                add_opt_list(&mut children, &func.type_parameters);
+                add_list(&mut children, &func.parameters);
+                add_opt(&mut children, func.type_annotation);
+                add_opt(&mut children, func.body);
+            }
+            Node::FunctionExpression(func) => {
+                add_opt(&mut children, func.name);
+                add_opt_list(&mut children, &func.type_parameters);
+                add_list(&mut children, &func.parameters);
+                add_opt(&mut children, func.type_annotation);
+                add_opt(&mut children, func.body);
+            }
+            Node::ObjectLiteralExpression(obj) => {
+                add_list(&mut children, &obj.properties);
+            }
+            Node::ArrayLiteralExpression(arr) => {
+                add_list(&mut children, &arr.elements);
+            }
+            Node::ParenthesizedExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+            }
+            Node::AsExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+                add_opt(&mut children, expr.type_node);
+            }
+            Node::SatisfiesExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+                add_opt(&mut children, expr.type_node);
+            }
+            Node::NonNullExpression(expr) => {
+                add_opt(&mut children, expr.expression);
+            }
+            Node::TypeAssertion(expr) => {
+                add_opt(&mut children, expr.type_node);
+                add_opt(&mut children, expr.expression);
+            }
+            Node::VariableStatement(stmt) => {
+                add_opt(&mut children, stmt.declaration_list);
+            }
+            Node::VariableDeclarationList(list) => {
+                add_list(&mut children, &list.declarations);
+            }
+            Node::VariableDeclaration(decl) => {
+                add_opt(&mut children, decl.name);
+                add_opt(&mut children, decl.type_annotation);
+                add_opt(&mut children, decl.initializer);
+            }
+            Node::ExpressionStatement(stmt) => {
+                add_opt(&mut children, stmt.expression);
+            }
+            Node::IfStatement(stmt) => {
+                add_opt(&mut children, stmt.expression);
+                add_opt(&mut children, stmt.then_statement);
+                add_opt(&mut children, stmt.else_statement);
+            }
+            Node::WhileStatement(stmt) => {
+                add_opt(&mut children, stmt.expression);
+                add_opt(&mut children, stmt.statement);
+            }
+            Node::DoStatement(stmt) => {
+                add_opt(&mut children, stmt.statement);
+                add_opt(&mut children, stmt.expression);
+            }
+            Node::ForStatement(stmt) => {
+                add_opt(&mut children, stmt.initializer);
+                add_opt(&mut children, stmt.condition);
+                add_opt(&mut children, stmt.incrementor);
+                add_opt(&mut children, stmt.statement);
+            }
+            Node::Block(block) => {
+                add_list(&mut children, &block.statements);
+            }
+            Node::FunctionDeclaration(func) => {
+                add_opt(&mut children, func.name);
+                add_opt_list(&mut children, &func.type_parameters);
+                add_list(&mut children, &func.parameters);
+                add_opt(&mut children, func.type_annotation);
+                add_opt(&mut children, func.body);
+            }
+            Node::ReturnStatement(stmt) => {
+                add_opt(&mut children, stmt.expression);
+            }
+            Node::ThrowStatement(stmt) => {
+                add_opt(&mut children, stmt.expression);
+            }
+            Node::TryStatement(stmt) => {
+                add_opt(&mut children, stmt.try_block);
+                add_opt(&mut children, stmt.catch_clause);
+                add_opt(&mut children, stmt.finally_block);
+            }
+            Node::CatchClause(clause) => {
+                add_opt(&mut children, clause.variable_declaration);
+                add_opt(&mut children, clause.block);
+            }
+            // Tokens and simple nodes typically have no children
+            Node::Token(_) |
+            Node::Identifier(_) |
+            Node::PrivateIdentifier(_) |
+            Node::StringLiteral(_) |
+            Node::NumericLiteral(_) |
+            Node::BigIntLiteral(_) |
+            Node::RegularExpressionLiteral(_) |
+            Node::NoSubstitutionTemplateLiteral(_) |
+            Node::TemplateHead(_) |
+            Node::TemplateMiddle(_) |
+            Node::TemplateTail(_) |
+            Node::EmptyStatement(_) |
+            Node::BreakStatement(_) |
+            Node::ContinueStatement(_) |
+            Node::DebuggerStatement(_) => {
+                // No children for these node types
+            }
+            // For any unhandled node types, return empty children
+            // TODO: Add support for more node types as needed
+            _ => {
+                // Fallback for unhandled node types
+            }
+        }
+
+        children
     }
 }
