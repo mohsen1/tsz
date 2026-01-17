@@ -469,3 +469,61 @@ fn test_new_missing_identifier_ts1109() {
     // Should have exactly 1 TS1109 error
     assert!(ts1109_count >= 1, "Should emit at least 1 TS1109 for missing identifier after new");
 }
+
+/// Test await and yield* missing value patterns
+#[test]
+fn test_await_yield_missing_value_ts1109() {
+    // Pattern 1: await without value
+    let await_source = r#"async function f() {
+    await;
+}"#;
+
+    let mut parser = ThinParserState::new("awaitMissingValue.ts".to_string(), await_source.to_string());
+    parser.parse_source_file();
+    let await_diagnostics = parser.get_diagnostics();
+
+    // Pattern 2: yield* without value
+    let yield_star_source = r#"function* f() {
+    yield *;
+}"#;
+
+    let mut parser = ThinParserState::new("yieldStarMissingValue.ts".to_string(), yield_star_source.to_string());
+    parser.parse_source_file();
+    let yield_star_diagnostics = parser.get_diagnostics();
+
+    eprintln!("=== AWAIT/YIELD* MISSING VALUE TEST ===");
+    
+    eprintln!("Await missing value diagnostics:");
+    for (i, diag) in await_diagnostics.iter().enumerate() {
+        eprintln!("  [{}] Code: {}, Message: \"{}\"", i, diag.code, diag.message);
+    }
+
+    eprintln!("Yield* missing value diagnostics:");
+    for (i, diag) in yield_star_diagnostics.iter().enumerate() {
+        eprintln!("  [{}] Code: {}, Message: \"{}\"", i, diag.code, diag.message);
+    }
+
+    let await_ts1109 = await_diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let yield_star_ts1109 = yield_star_diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+
+    eprintln!("Await TS1109 count: {}", await_ts1109);
+    eprintln!("Yield* TS1109 count: {}", yield_star_ts1109);
+}
+
+/// Debug await semicolon specifically
+#[test]  
+fn debug_await_semicolon() {
+    let source = r#"async function f() {
+    await;
+}"#;
+
+    let mut parser = ThinParserState::new("await_debug.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    eprintln!("=== AWAIT SEMICOLON DEBUG ===");
+    eprintln!("Total diagnostics: {}", diagnostics.len());
+    for (i, diag) in diagnostics.iter().enumerate() {
+        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}", i, diag.code, diag.message, diag.start);
+    }
+}
