@@ -68,6 +68,8 @@ function chunkArray(array, chunks) {
 }
 
 async function runChildProcess(testFiles, workerId, wasmPkgPath, conformanceDir, onProgress) {
+  const TIMEOUT_MS = 5 * 60 * 1000; // 5 minute timeout per worker
+
   return new Promise((resolve, reject) => {
     // Write test files to a temp file for the child process
     const tempFile = `/tmp/conformance-tests-${workerId}-${Date.now()}.json`;
@@ -79,6 +81,20 @@ async function runChildProcess(testFiles, workerId, wasmPkgPath, conformanceDir,
 
     let results = [];
     let stderr = '';
+    let timeoutId = null;
+
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      try { unlinkSync(tempFile); } catch {}
+    };
+
+    // Set timeout to prevent hanging
+    timeoutId = setTimeout(() => {
+      log(`Worker ${workerId} timed out after ${TIMEOUT_MS / 1000}s, killing...`, colors.yellow);
+      child.kill('SIGKILL');
+      cleanup();
+      reject(new Error(`Worker ${workerId} timed out after ${TIMEOUT_MS / 1000}s`));
+    }, TIMEOUT_MS);
 
     child.stdout.on('data', (data) => {
       // Ignore stdout (children use IPC for progress)
@@ -92,6 +108,7 @@ async function runChildProcess(testFiles, workerId, wasmPkgPath, conformanceDir,
       if (msg.type === 'done') {
         results = msg.results;
       } else if (msg.type === 'error') {
+        cleanup();
         reject(new Error(msg.error));
       } else if (msg.type === 'progress' && onProgress) {
         onProgress(msg.completed, msg.total);
@@ -99,8 +116,7 @@ async function runChildProcess(testFiles, workerId, wasmPkgPath, conformanceDir,
     });
 
     child.on('exit', (code) => {
-      // Clean up temp file
-      try { unlinkSync(tempFile); } catch {}
+      cleanup();
 
       if (code !== 0 && results.length === 0) {
         reject(new Error(`Worker ${workerId} exited with code ${code}: ${stderr}`));
@@ -110,7 +126,7 @@ async function runChildProcess(testFiles, workerId, wasmPkgPath, conformanceDir,
     });
 
     child.on('error', (err) => {
-      try { unlinkSync(tempFile); } catch {}
+      cleanup();
       reject(err);
     });
   });
