@@ -6759,11 +6759,8 @@ impl ThinParserState {
                         // Emit TS1109 for incomplete assignment expressions (e.g., "x =" without right operand)
                         self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
-                        // Error recovery: If right-side parsing failed and current token
-                        // cannot start an expression, break to prevent cascading errors
-                        if !self.is_token(SyntaxKind::EndOfFileToken) && !self.is_expression_start() {
-                            return left;
-                        }
+                        // Break out of binary expression loop when parsing fails to prevent infinite loops
+                        return left;
                     }
                     result
                 } else {
@@ -6777,11 +6774,8 @@ impl ThinParserState {
                         // Emit TS1109 for incomplete binary expressions (e.g., "1 +" without right operand)
                         self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
-                        // Error recovery: If right-side parsing failed and current token
-                        // cannot start an expression, break to prevent cascading errors
-                        if !self.is_token(SyntaxKind::EndOfFileToken) && !self.is_expression_start() {
-                            return left;
-                        }
+                        // Break out of binary expression loop when parsing fails to prevent infinite loops
+                        return left;
                     }
                     result
                 };
