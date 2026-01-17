@@ -2155,6 +2155,9 @@ mod lib_tests;
 #[cfg(test)]
 mod asi_conformance_tests;
 
+#[cfg(test)]
+mod debug_asi;
+
 // P1 Error Recovery tests for synchronization point improvements
 #[cfg(test)]
 mod p1_error_recovery_tests;
