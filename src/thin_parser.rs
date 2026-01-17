@@ -112,7 +112,7 @@ impl ThinParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
-            ts1109_statement_budget: 3, // Allow 3 TS1109 errors per statement (reduced for noise suppression)
+            ts1109_statement_budget: 5, // Allow 5 TS1109 errors per statement (increased for better accuracy)
             ts1005_statement_budget: 2, // Allow 2 TS1005 errors per statement (reduced for noise suppression)
         }
     }
@@ -127,7 +127,7 @@ impl ThinParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
-        self.ts1109_statement_budget = 3; // Reset error budget (reduced for noise suppression)
+        self.ts1109_statement_budget = 5; // Reset error budget (increased for better accuracy)
         self.ts1005_statement_budget = 2; // Reset error budget (reduced for noise suppression)
     }
 
@@ -518,12 +518,12 @@ impl ThinParserState {
             // This catches cascading errors where the parser recovers to the next token
             // after a TS1005 or similar error.
             // Only apply this if we've actually emitted an error (last_error_pos > 0)
-            // and the current position is within 50 characters of the last error.
-            // REDUCED from 75 to 50 to allow more legitimate TS1109 errors while preventing storms.
+            // and the current position is within 30 characters of the last error.
+            // REDUCED from 50 to 30 to allow more legitimate TS1109 errors while preventing storms.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(50)
+                && current_pos < self.last_error_pos.saturating_add(30)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1109
                 return;
@@ -1345,7 +1345,7 @@ impl ThinParserState {
     pub fn parse_statement(&mut self) -> NodeIndex {
         // Reset error budgets at statement boundaries to prevent error storms
         // Increased to be more lenient and reduce false positives
-        self.ts1109_statement_budget = 3;
+        self.ts1109_statement_budget = 5;
         self.ts1005_statement_budget = 2;
 
         match self.token() {
