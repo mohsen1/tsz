@@ -330,10 +330,18 @@ impl ThinParserState {
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
                 let should_suppress = match kind {
                     SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
-                        // At EOF, clearly the file ended before this closing token
-                        // Don't emit an error - just recover
+                        // At EOF, usually suppress errors except for clear structural issues
+                        // For missing ) after function parameters, we should report the error
                         if self.is_token(SyntaxKind::EndOfFileToken) {
-                            true
+                            // Be less aggressive about suppressing missing closing tokens at EOF
+                            // Only suppress if this might be a natural end point
+                            match kind {
+                                SyntaxKind::CloseParenToken => {
+                                    // Don't suppress missing ) at EOF - this is usually a clear error
+                                    false
+                                }
+                                _ => true // Still suppress missing } and ] at EOF for now
+                            }
                         }
                         // For missing CloseParenToken, be less aggressive about suppression
                         // when the next token is OpenBraceToken, since that often indicates
@@ -600,8 +608,17 @@ impl ThinParserState {
             // If we're at a position that naturally ends expressions (closing brace, paren, bracket, EOF),
             // suppress the TS1005 error because we've clearly moved on to the next construct.
             // This was previously only used for TS1109 suppression but is also applicable to TS1005.
+            // However, for missing closing tokens (like missing ) or }), EOF doesn't mean we've moved on.
             if self.is_at_expression_end() {
-                return;
+                // For missing closing tokens, don't suppress at EOF - it's likely a real error
+                let is_missing_closing_token = matches!(token, ")" | "}" | "]");
+                let is_at_eof = self.is_token(SyntaxKind::EndOfFileToken);
+
+                if is_missing_closing_token && is_at_eof {
+                    // Don't suppress - missing closing token at EOF is usually a real error
+                } else {
+                    return;
+                }
             }
 
             // Decrement budget - we're about to emit an error
