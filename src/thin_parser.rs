@@ -518,12 +518,12 @@ impl ThinParserState {
             // This catches cascading errors where the parser recovers to the next token
             // after a TS1005 or similar error.
             // Only apply this if we've actually emitted an error (last_error_pos > 0)
-            // and the current position is within 75 characters of the last error.
-            // REDUCED from 100 to 75 to allow more legitimate TS1109 errors while preventing storms.
+            // and the current position is within 50 characters of the last error.
+            // REDUCED from 75 to 50 to allow more legitimate TS1109 errors while preventing storms.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(75)
+                && current_pos < self.last_error_pos.saturating_add(50)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1109
                 return;
