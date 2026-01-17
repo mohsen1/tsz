@@ -272,13 +272,17 @@ pub struct LibContext {
 }
 
 impl<'a> CheckerContext<'a> {
-    /// Create a new CheckerContext.
-    pub fn new(
+    /// Create a new CheckerContext with individual compiler options.
+    pub fn new_with_options(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
-        strict: bool,
+        no_implicit_any: bool,
+        no_implicit_returns: bool,
+        strict_function_types: bool,
+        strict_property_initialization: bool,
+        strict_null_checks: bool,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -288,13 +292,13 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any: strict,
-            no_implicit_returns: false,
-            use_unknown_in_catch_variables: strict,
+            no_implicit_any,
+            no_implicit_returns,
+            use_unknown_in_catch_variables: strict_null_checks,
             report_unresolved_imports: true,
-            strict_function_types: strict,
-            strict_property_initialization: strict,
-            strict_null_checks: strict,
+            strict_function_types,
+            strict_property_initialization,
+            strict_null_checks,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -333,15 +337,39 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a new CheckerContext with a persistent cache.
-    /// This allows reusing type checking results from previous queries.
-    pub fn with_cache(
+    /// Create a new CheckerContext (backward compatible API using strict flag).
+    pub fn new(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        strict: bool,
+    ) -> Self {
+        Self::new_with_options(
+            arena,
+            binder,
+            types,
+            file_name,
+            strict,  // no_implicit_any
+            false,   // no_implicit_returns
+            strict,  // strict_function_types
+            strict,  // strict_property_initialization
+            strict,  // strict_null_checks
+        )
+    }
+
+    /// Create a new CheckerContext with a persistent cache and individual compiler options.
+    pub fn with_cache_and_options(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: TypeCache,
-        strict: bool,
+        no_implicit_any: bool,
+        no_implicit_returns: bool,
+        strict_function_types: bool,
+        strict_property_initialization: bool,
+        strict_null_checks: bool,
     ) -> Self {
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -351,13 +379,13 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any: strict,
-            no_implicit_returns: false,
-            use_unknown_in_catch_variables: strict,
+            no_implicit_any,
+            no_implicit_returns,
+            use_unknown_in_catch_variables: strict_null_checks,
             report_unresolved_imports: true,
-            strict_function_types: strict,
-            strict_property_initialization: strict,
-            strict_null_checks: strict,
+            strict_function_types,
+            strict_property_initialization,
+            strict_null_checks,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
@@ -394,6 +422,30 @@ impl<'a> CheckerContext<'a> {
             flow_graph,
             async_depth: 0,
         }
+    }
+
+    /// Create a new CheckerContext with a persistent cache (backward compatible API using strict flag).
+    /// This allows reusing type checking results from previous queries.
+    pub fn with_cache(
+        arena: &'a ThinNodeArena,
+        binder: &'a ThinBinderState,
+        types: &'a TypeInterner,
+        file_name: String,
+        cache: TypeCache,
+        strict: bool,
+    ) -> Self {
+        Self::with_cache_and_options(
+            arena,
+            binder,
+            types,
+            file_name,
+            cache,
+            strict,  // no_implicit_any
+            false,   // no_implicit_returns
+            strict,  // strict_function_types
+            strict,  // strict_property_initialization
+            strict,  // strict_null_checks
+        )
     }
 
     /// Set lib contexts for global type resolution.
