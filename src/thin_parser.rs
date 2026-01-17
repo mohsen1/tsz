@@ -5873,11 +5873,22 @@ impl ThinParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
-        // For restricted productions (throw), ASI applies immediately after line break
-        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // NOTE: The previous implementation incorrectly treated line break as a syntax error.
-        // According to JavaScript spec, ASI should apply: throw\nx parses as throw; x;
-        let expression = if !self.can_parse_semicolon_for_restricted_production() {
+        // For TypeScript compatibility, throw statement requires an expression
+        // If there's a line break after throw, emit TS1109 error
+        let expression = if self.scanner.has_preceding_line_break()
+            && !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken) {
+            // Line break after throw without explicit semicolon - emit TS1109
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                start_pos,
+                self.token_end() - start_pos,
+                "Expression expected",
+                diagnostic_codes::EXPRESSION_EXPECTED
+            );
+            NodeIndex::NONE
+        } else if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
         } else {
             NodeIndex::NONE
