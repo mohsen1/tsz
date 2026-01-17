@@ -46,10 +46,23 @@ function parseTestDirectives(code) {
     const match = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
     if (match) {
       const [, key, value] = match;
-      if (value === 'true') options[key.toLowerCase()] = true;
-      else if (value === 'false') options[key.toLowerCase()] = false;
-      else if (!isNaN(Number(value))) options[key.toLowerCase()] = Number(value);
-      else options[key.toLowerCase()] = value;
+      const lowerKey = key.toLowerCase();
+
+      // Parse boolean values
+      if (value === 'true') {
+        options[lowerKey] = true;
+      } else if (value === 'false') {
+        options[lowerKey] = false;
+      } else if (!isNaN(Number(value))) {
+        options[lowerKey] = Number(value);
+      } else {
+        // Handle comma-separated values (e.g., @lib: es5,dom)
+        if (value.includes(',')) {
+          options[lowerKey] = value.split(',').map(v => v.trim());
+        } else {
+          options[lowerKey] = value;
+        }
+      }
       continue;
     }
 
@@ -95,11 +108,43 @@ async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
     compilerOptions.target = targetMap[testOptions.target.toLowerCase()] || ts.ScriptTarget.ES2020;
   }
 
+  // Apply all TypeScript compiler options from test directives
+  if (testOptions.strict !== undefined) {
+    compilerOptions.strict = testOptions.strict;
+  }
   if (testOptions.noimplicitany !== undefined) {
     compilerOptions.noImplicitAny = testOptions.noimplicitany;
   }
   if (testOptions.strictnullchecks !== undefined) {
     compilerOptions.strictNullChecks = testOptions.strictnullchecks;
+  }
+  if (testOptions.noimplicitreturns !== undefined) {
+    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
+  }
+  if (testOptions.noimplicitthis !== undefined) {
+    compilerOptions.noImplicitThis = testOptions.noimplicitthis;
+  }
+  if (testOptions.strictfunctiontypes !== undefined) {
+    compilerOptions.strictFunctionTypes = testOptions.strictfunctiontypes;
+  }
+  if (testOptions.strictpropertyinitialization !== undefined) {
+    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
+  }
+  if (testOptions.module) {
+    const moduleMap = {
+      'commonjs': ts.ModuleKind.CommonJS,
+      'amd': ts.ModuleKind.AMD,
+      'umd': ts.ModuleKind.UMD,
+      'system': ts.ModuleKind.System,
+      'es6': ts.ModuleKind.ES2015,
+      'es2015': ts.ModuleKind.ES2015,
+      'es2020': ts.ModuleKind.ES2020,
+      'es2022': ts.ModuleKind.ES2022,
+      'esnext': ts.ModuleKind.ESNext,
+      'node16': ts.ModuleKind.Node16,
+      'nodenext': ts.ModuleKind.NodeNext,
+    };
+    compilerOptions.module = moduleMap[testOptions.module.toLowerCase()] || ts.ModuleKind.ESNext;
   }
 
   const sourceFile = ts.createSourceFile(fileName, code, ts.ScriptTarget.ES2020, true);
@@ -138,6 +183,31 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
     wasmModule.initSync(wasmBuffer);
 
     parser = new wasmModule.ThinParser(fileName, code);
+
+    // Set compiler options from test directives
+    const compilerOptions = {
+      strict: testOptions.strict,
+      noImplicitAny: testOptions.noimplicitany,
+      strictNullChecks: testOptions.strictnullchecks,
+      noImplicitReturns: testOptions.noimplicitreturns,
+      noImplicitThis: testOptions.noimplicitthis,
+      strictFunctionTypes: testOptions.strictfunctiontypes,
+      strictPropertyInitialization: testOptions.strictpropertyinitialization,
+      lib: testOptions.lib,
+      module: testOptions.module,
+      nolib: testOptions.nolib,
+    };
+
+    // Remove undefined values
+    Object.keys(compilerOptions).forEach(key =>
+      compilerOptions[key] === undefined && delete compilerOptions[key]
+    );
+
+    // Apply compiler options to WASM parser
+    if (Object.keys(compilerOptions).length > 0) {
+      parser.setCompilerOptions(JSON.stringify(compilerOptions));
+    }
+
     if (!testOptions.nolib) {
       parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
     }
