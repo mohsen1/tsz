@@ -222,17 +222,17 @@ impl NodeAccess for NodeArena {
             }
             Node::AsExpression(expr) => {
                 add_opt(&mut children, expr.expression);
-                add_opt(&mut children, expr.type_annotation);
+                add_opt(&mut children, expr.type_node);
             }
             Node::SatisfiesExpression(expr) => {
                 add_opt(&mut children, expr.expression);
-                add_opt(&mut children, expr.type_annotation);
+                add_opt(&mut children, expr.type_node);
             }
             Node::NonNullExpression(expr) => {
                 add_opt(&mut children, expr.expression);
             }
             Node::TypeAssertion(expr) => {
-                add_opt(&mut children, expr.type_annotation);
+                add_opt(&mut children, expr.type_node);
                 add_opt(&mut children, expr.expression);
             }
 
