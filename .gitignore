@@ -1,0 +1,52 @@
+# OS
+**/.DS_Store
+
+# Editors/IDEs
+**/.vs
+**/.vscode/*
+!**/.vscode/extensions.json
+!**/.vscode/launch.template.json
+!**/.vscode/settings.template.json
+!**/.vscode/tasks.json
+.idea
+.settings
+*.swp
+.\#*
+\#*\#
+
+# Node
+node_modules/
+.node_modules/
+package-lock.json
+
+# Build artifacts
+*.actual
+*.config
+*v8.log
+coverage/
+
+# Rust/WASM
+pkg/
+target/
+
+# Tests
+ts-tests/baselines/local/*
+ts-tests/baselines/local.old/*
+ts-tests/baselines/prototyping/local/*
+ts-tests/baselines/rwc/*
+ts-tests/baselines/symlinks/*
+ts-tests/cases/perf/*
+ts-tests/cases/rwc/*
+!ts-tests/baselines/reference/project/nodeModules*/**/*
+!ts-tests/cases/projects/NodeModulesSearch/**/*
+!ts-tests/cases/projects/projectOption/**/node_modules
+
+# Misc
+.env.local
+.claude/settings.local.json
+.role/
+.notify/*.notify
+test-args.txt
+yarn-error.log
+yarn.lock
+~*.docx

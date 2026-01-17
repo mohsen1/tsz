@@ -1,0 +1,17 @@
+{
+    "name": "zang",
+    "version": "0.1.0",
+    "license": "Apache-2.0",
+    "description": "TypeScript compiler rewritten in Rust/WASM",
+    "scripts": {
+        "build": "wasm-pack build --target web --out-dir pkg",
+        "build:node": "wasm-pack build --target nodejs --out-dir pkg",
+        "test": "./test.sh",
+        "conformance": "./differential-test/run-conformance.sh --all"
+    },
+    "dependencies": {
+        "chalk": "^5.6.2",
+        "commander": "^14.0.2",
+        "dotenv": "^17.2.3"
+    }
+}

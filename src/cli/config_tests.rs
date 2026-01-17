@@ -1,0 +1,289 @@
+use super::config::{
+    JsxEmit, ModuleResolutionKind, load_tsconfig, parse_tsconfig, resolve_compiler_options,
+};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::thin_emitter::{ModuleKind, ScriptTarget};
+
+struct TempDir {
+    path: PathBuf,
+}
+
+impl TempDir {
+    fn new() -> std::io::Result<Self> {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("tsz_cli_test_{}_{}", std::process::id(), nanos));
+        std::fs::create_dir_all(&path)?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn write_file(dir: &Path, name: &str, contents: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, contents).expect("failed to write test file");
+    path
+}
+
+#[test]
+fn parses_jsonc_with_trailing_commas() {
+    let input = r#"
+    {
+      // comment
+      "compilerOptions": {
+        "target": "es2017", /* inline */
+        "module": "commonjs",
+      },
+      "include": ["src/**/*",],
+    }
+    "#;
+
+    let config = parse_tsconfig(input).expect("should parse JSONC");
+    let options = config.compiler_options.expect("compilerOptions missing");
+
+    assert_eq!(options.target.as_deref(), Some("es2017"));
+    assert_eq!(options.module.as_deref(), Some("commonjs"));
+    assert_eq!(config.include, Some(vec!["src/**/*".to_string()]));
+}
+
+#[test]
+fn load_tsconfig_merges_extends() {
+    let temp = TempDir::new().expect("temp dir");
+
+    write_file(
+        &temp.path,
+        "tsconfig.base.json",
+        r#"{
+          "compilerOptions": {"target": "es2015", "strict": true},
+          "include": ["src"],
+          "exclude": ["dist"]
+        }"#,
+    );
+
+    let child_path = write_file(
+        &temp.path,
+        "tsconfig.json",
+        r#"{
+          "extends": "./tsconfig.base.json",
+          "compilerOptions": {"module": "commonjs", "strict": false},
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let config = load_tsconfig(&child_path).expect("should load config");
+    let options = config.compiler_options.expect("compilerOptions missing");
+
+    assert_eq!(options.target.as_deref(), Some("es2015"));
+    assert_eq!(options.module.as_deref(), Some("commonjs"));
+    assert_eq!(options.strict, Some(false));
+    assert_eq!(config.include, Some(vec!["src".to_string()]));
+    assert_eq!(config.exclude, Some(vec!["dist".to_string()]));
+    assert_eq!(config.files, Some(vec!["main.ts".to_string()]));
+}
+
+#[test]
+fn load_tsconfig_detects_extends_cycle() {
+    let temp = TempDir::new().expect("temp dir");
+
+    write_file(&temp.path, "a.json", r#"{"extends":"./b.json"}"#);
+    write_file(&temp.path, "b.json", r#"{"extends":"./a.json"}"#);
+
+    let err = load_tsconfig(&temp.path.join("a.json")).expect_err("cycle should error");
+    let message = err.to_string();
+    assert!(message.contains("extends cycle"), "{message}");
+}
+
+#[test]
+fn resolve_compiler_options_defaults() {
+    let resolved = resolve_compiler_options(None).expect("defaults should resolve");
+
+    assert_eq!(resolved.printer.target, ScriptTarget::ESNext);
+    assert_eq!(resolved.printer.module, ModuleKind::None);
+    assert!(resolved.jsx.is_none());
+    assert!(resolved.lib_files.is_empty());
+    assert!(resolved.root_dir.is_none());
+    assert!(resolved.out_dir.is_none());
+    assert!(!resolved.checker.strict);
+    assert!(!resolved.no_emit);
+    assert!(!resolved.no_emit_on_error);
+}
+
+#[test]
+fn resolve_compiler_options_overrides() {
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "target": "ES2020",
+            "module": "common-js",
+            "moduleResolution": "bundler",
+            "jsx": "preserve",
+            "rootDir": "src",
+            "outDir": "dist",
+            "declaration": true,
+            "declarationDir": "types",
+            "strict": true,
+            "noEmit": true,
+            "noEmitOnError": true
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let resolved = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect("compiler options should resolve");
+
+    assert_eq!(resolved.printer.target, ScriptTarget::ES2020);
+    assert_eq!(resolved.printer.module, ModuleKind::CommonJS);
+    assert_eq!(
+        resolved.module_resolution,
+        Some(ModuleResolutionKind::Bundler)
+    );
+    assert_eq!(resolved.jsx, Some(JsxEmit::Preserve));
+    assert!(resolved.lib_files.is_empty());
+    assert_eq!(resolved.root_dir, Some(PathBuf::from("src")));
+    assert_eq!(resolved.out_dir, Some(PathBuf::from("dist")));
+    assert_eq!(resolved.declaration_dir, Some(PathBuf::from("types")));
+    assert!(resolved.emit_declarations);
+    assert!(resolved.checker.strict);
+    assert!(resolved.no_emit);
+    assert!(resolved.no_emit_on_error);
+}
+
+#[test]
+fn resolve_compiler_options_rejects_unknown_values() {
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "target": "es2999",
+            "module": "totally-not-a-module"
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let err = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect_err("unknown compilerOptions should error");
+    let message = err.to_string();
+    assert!(message.contains("compilerOptions.target"), "{message}");
+}
+
+#[test]
+fn resolve_compiler_options_rejects_unknown_module_resolution() {
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "moduleResolution": "sideways"
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let err = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect_err("unknown moduleResolution should error");
+    let message = err.to_string();
+    assert!(
+        message.contains("compilerOptions.moduleResolution"),
+        "{message}"
+    );
+}
+
+#[test]
+fn resolve_compiler_options_rejects_unsupported_jsx() {
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "jsx": "react"
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let err = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect_err("unsupported jsx should error");
+    let message = err.to_string();
+    assert!(message.contains("compilerOptions.jsx"), "{message}");
+}
+
+#[test]
+fn resolve_compiler_options_rejects_paths_without_base_url() {
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "paths": {
+              "@app/*": ["src/*"]
+            }
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let err = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect_err("paths without baseUrl should error");
+    let message = err.to_string();
+    assert!(message.contains("compilerOptions.paths"), "{message}");
+}
+
+#[test]
+fn resolve_compiler_options_resolves_lib_files() {
+    let lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib");
+    if !lib_dir.is_dir() {
+        return;
+    }
+
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "lib": ["es2015", "dom"]
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let resolved = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect("compiler options should resolve");
+
+    let es2015 = canonicalize_or_owned(&lib_dir.join("es2015.d.ts"));
+    let es5 = canonicalize_or_owned(&lib_dir.join("es5.d.ts"));
+    let dom = canonicalize_or_owned(&lib_dir.join("dom.generated.d.ts"));
+
+    assert!(resolved.lib_files.contains(&es2015));
+    assert!(resolved.lib_files.contains(&es5));
+    assert!(resolved.lib_files.contains(&dom));
+}
+
+#[test]
+fn resolve_compiler_options_rejects_unknown_lib() {
+    let lib_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lib");
+
+    let config = parse_tsconfig(
+        r#"{
+          "compilerOptions": {
+            "lib": ["nope"]
+          }
+        }"#,
+    )
+    .expect("should parse config");
+
+    let err = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect_err("unsupported lib should error");
+    let message = err.to_string();
+    if lib_dir.is_dir() {
+        assert!(message.contains("compilerOptions.lib"), "{message}");
+    } else {
+        assert!(message.contains("lib directory"), "{message}");
+    }
+}
+
+fn canonicalize_or_owned(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}

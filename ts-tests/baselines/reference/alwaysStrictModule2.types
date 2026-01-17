@@ -1,0 +1,35 @@
+//// [tests/cases/compiler/alwaysStrictModule2.ts] ////
+
+=== a.ts ===
+namespace M {
+>M : typeof M
+>  : ^^^^^^^^
+
+    export function f() {
+>f : () => void
+>  : ^^^^^^^^^^
+
+        var arguments = [];
+>arguments : any[]
+>          : ^^^^^
+>[] : undefined[]
+>   : ^^^^^^^^^^^
+    }
+}
+
+=== b.ts ===
+namespace M {
+>M : typeof M
+>  : ^^^^^^^^
+
+    export function f2() {
+>f2 : () => void
+>   : ^^^^^^^^^^
+
+        var arguments = [];
+>arguments : any[]
+>          : ^^^^^
+>[] : undefined[]
+>   : ^^^^^^^^^^^
+    }
+}

@@ -1,0 +1,2 @@
+declare namespace M {
+}

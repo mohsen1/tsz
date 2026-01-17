@@ -1,0 +1,3 @@
+namespace M {
+   function foo();
+}

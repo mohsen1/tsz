@@ -1,0 +1,15 @@
+{
+  "name": "tsz-differential-test",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Differential testing harness for TypeScript vs Rust/WASM compiler",
+  "scripts": {
+    "test": "node runner.js",
+    "test:catalog": "node runner.js --catalog",
+    "test:verbose": "node runner.js --verbose",
+    "report": "node runner.js --report-only"
+  },
+  "dependencies": {
+    "typescript": "^5.9.3"
+  }
+}

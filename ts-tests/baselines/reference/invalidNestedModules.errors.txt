@@ -1,0 +1,41 @@
+invalidNestedModules.ts(1,15): error TS2434: A namespace declaration cannot be located prior to a class or function with which it is merged.
+invalidNestedModules.ts(17,18): error TS2300: Duplicate identifier 'Point'.
+invalidNestedModules.ts(24,20): error TS2300: Duplicate identifier 'Point'.
+
+
+==== invalidNestedModules.ts (3 errors) ====
+    namespace A.B.C {
+                  ~
+!!! error TS2434: A namespace declaration cannot be located prior to a class or function with which it is merged.
+        export class Point {
+            x: number;
+            y: number;
+        }
+    }
+    
+    namespace A {
+        export namespace B {
+            export class C { // Error
+                name: string;
+            }
+        }
+    }
+    
+    namespace M2.X {
+        export class Point {
+                     ~~~~~
+!!! error TS2300: Duplicate identifier 'Point'.
+            x: number; y: number;
+        }
+    }
+    
+    namespace M2 {
+        export namespace X {
+            export var Point: number; // Error
+                       ~~~~~
+!!! error TS2300: Duplicate identifier 'Point'.
+        }
+    }
+    
+    
+    
