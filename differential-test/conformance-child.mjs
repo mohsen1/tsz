@@ -6,7 +6,7 @@
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join, basename } from 'path';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +18,83 @@ const { testFiles, wasmPkgPath, conformanceDir } = JSON.parse(readFileSync(confi
 const DEFAULT_LIB_PATH = join(__dirname, '../ts-tests/lib/lib.d.ts');
 const DEFAULT_LIB_SOURCE = readFileSync(DEFAULT_LIB_PATH, 'utf-8');
 const DEFAULT_LIB_NAME = 'lib.d.ts';
+
+// TypeScript lib directory - try to find system TypeScript installation
+const TYPESCRIPT_LIB_DIR = (() => {
+  try {
+    const ts = require('typescript');
+    // TypeScript's lib files are in node_modules/typescript/lib/
+    const tsPath = require.resolve('typescript');
+    return join(dirname(tsPath), 'lib');
+  } catch {
+    return null;
+  }
+})();
+
+/**
+ * Get the file path for a TypeScript lib file by name.
+ * Maps lib names (e.g., "es2020", "dom") to actual file paths.
+ *
+ * @param {string} libName - The lib name (e.g., "es2020", "dom", "esnext")
+ * @returns {string|null} - Full path to the lib file, or null if not found
+ */
+function getLibFilePath(libName) {
+  const normalized = libName.toLowerCase().trim();
+
+  // Special case: es6 is an alias for es2015
+  const fileName = normalized === 'es6' ? 'lib.es2015.d.ts' : `lib.${normalized}.d.ts`;
+
+  if (!TYPESCRIPT_LIB_DIR) {
+    return null;
+  }
+
+  const libPath = join(TYPESCRIPT_LIB_DIR, fileName);
+  return existsSync(libPath) ? libPath : null;
+}
+
+/**
+ * Load TypeScript lib file content, reading dependencies recursively.
+ * Handles /// <reference lib="..." /> directives in lib files.
+ *
+ * @param {string} libName - The lib name to load
+ * @param {Set<string>} loaded - Set of already loaded lib names to prevent cycles
+ * @returns {Array<{name: string, content: string}>} - Array of lib files with their content
+ */
+function loadLibFile(libName, loaded = new Set()) {
+  const normalized = libName.toLowerCase().trim();
+
+  // Prevent loading the same lib twice
+  if (loaded.has(normalized)) {
+    return [];
+  }
+  loaded.add(normalized);
+
+  const libPath = getLibFilePath(normalized);
+  if (!libPath) {
+    return [];
+  }
+
+  try {
+    const content = readFileSync(libPath, 'utf-8');
+    const results = [];
+
+    // Parse /// <reference lib="..." /> directives
+    const referenceRegex = /^\/\/\/\s*<reference\s+lib="([^"]+)"\s*\/>/gm;
+    let match;
+    while ((match = referenceRegex.exec(content)) !== null) {
+      const referencedLib = match[1];
+      // Recursively load referenced libs
+      results.push(...loadLibFile(referencedLib, loaded));
+    }
+
+    // Add this lib after its dependencies
+    results.push({ name: `lib.${normalized}.d.ts`, content });
+
+    return results;
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Parse TypeScript test directives from source code.
@@ -74,10 +151,24 @@ function parseTestDirectives(code) {
     const match = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
     if (match) {
       const [, key, value] = match;
-      if (value === 'true') options[key.toLowerCase()] = true;
-      else if (value === 'false') options[key.toLowerCase()] = false;
-      else if (!isNaN(Number(value))) options[key.toLowerCase()] = Number(value);
-      else options[key.toLowerCase()] = value;
+      const normalizedKey = key.toLowerCase();
+
+      // Special handling for @lib directive - parse as comma-separated list and accumulate
+      if (normalizedKey === 'lib') {
+        if (!options[normalizedKey]) {
+          options[normalizedKey] = [];
+        }
+        const libs = value.split(',').map(lib => lib.trim()).filter(lib => lib.length > 0);
+        options[normalizedKey].push(...libs);
+      } else if (value === 'true') {
+        options[normalizedKey] = true;
+      } else if (value === 'false') {
+        options[normalizedKey] = false;
+      } else if (!isNaN(Number(value))) {
+        options[normalizedKey] = Number(value);
+      } else {
+        options[normalizedKey] = value;
+      }
       continue;
     }
 
@@ -166,8 +257,27 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
     wasmModule.initSync(wasmBuffer);
 
     parser = new wasmModule.ThinParser(fileName, code);
+
+    // Handle lib files
     if (!testOptions.nolib) {
-      parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
+      if (testOptions.lib && Array.isArray(testOptions.lib)) {
+        // Load specified lib files
+        let hasLoadedLibs = false;
+        for (const libName of testOptions.lib) {
+          const libFiles = loadLibFile(libName);
+          for (const { name, content } of libFiles) {
+            parser.addLibFile(name, content);
+            hasLoadedLibs = true;
+          }
+        }
+        // Fallback to default lib if no lib files could be loaded
+        if (!hasLoadedLibs) {
+          parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
+        }
+      } else {
+        // Use default lib
+        parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
+      }
     }
 
     // Build compiler options from test directives
