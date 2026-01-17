@@ -186,7 +186,7 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
 
     // Set compiler options from test directives
     const compilerOptions = {
-      strict: testOptions.strict,
+      strict: testOptions.strict !== false,
       noImplicitAny: testOptions.noimplicitany,
       strictNullChecks: testOptions.strictnullchecks,
       noImplicitReturns: testOptions.noimplicitreturns,
