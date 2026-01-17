@@ -11,7 +11,7 @@ fn test_thin_checker_creation() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Basic sanity check
     assert!(checker.ctx.diagnostics.is_empty());
@@ -22,7 +22,7 @@ fn test_thin_checker_basic_types() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let _checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let _checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Verify intrinsic TypeIds are constants (compile-time values)
     assert_eq!(TypeId::NUMBER.0, 9);
@@ -37,7 +37,7 @@ fn test_thin_checker_type_interner() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Test that TypeInterner is properly initialized
     // Intrinsics should be pre-registered
@@ -51,7 +51,7 @@ fn test_thin_checker_structural_equality() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Test structural equality via TypeInterner
     // Same string literal should get same TypeId
@@ -68,7 +68,7 @@ fn test_thin_checker_union_normalization() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Test union normalization
     // Union with `any` should be `any`
@@ -127,7 +127,7 @@ async function foo() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -201,7 +201,7 @@ const bad: Foo = { x: 1, y: 2 };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -241,7 +241,7 @@ const ok: Foo = obj;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -278,7 +278,7 @@ let bad: object = "hi";
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -316,7 +316,7 @@ const mk = (e: number) => ({ e });
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -357,7 +357,7 @@ declare module "*!text" {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -395,7 +395,7 @@ var v: await;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -435,7 +435,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -476,7 +476,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -515,7 +515,7 @@ const bad: Tup = arr;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -555,7 +555,7 @@ const log2: Logger = (id: number, extra: string) => {};
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -597,7 +597,7 @@ const badAssign: Weak = bad;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -641,7 +641,7 @@ b.valueOf();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -677,7 +677,7 @@ const ok: VoidFn = () => "value";
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -713,7 +713,7 @@ const y = true;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -755,7 +755,7 @@ takesFoo(obj);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -816,7 +816,7 @@ mixed;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let numbers_type = checker.get_type_of_node(numbers_expr.expression);
@@ -876,7 +876,7 @@ obj[key];
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let access_type = checker.get_type_of_node(expr_stmt.expression);
@@ -930,7 +930,7 @@ export function f(node: { body: number }) {
     );
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&file.arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&file.arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(file.source_file);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -964,7 +964,7 @@ function makeFoo(): Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -982,7 +982,7 @@ fn test_thin_checker_subtype_intrinsics() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Test intrinsic subtype relations
     // Any is assignable to everything
@@ -1012,7 +1012,7 @@ fn test_thin_checker_subtype_literals() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // String literal is subtype of string
     let hello = checker.ctx.types.literal_string("hello");
@@ -1035,7 +1035,7 @@ fn test_thin_checker_subtype_unions() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Create string | number union
     let string_or_number = checker.get_union_type(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -1057,7 +1057,7 @@ fn test_thin_checker_type_identity() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     // Same type is identical to itself
     assert!(checker.are_types_identical(TypeId::STRING, TypeId::STRING));
@@ -1091,7 +1091,7 @@ fn test_function_overload_missing_implementation_2391() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1123,7 +1123,7 @@ function foo() {}
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1155,7 +1155,7 @@ function bar() {}
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1194,7 +1194,7 @@ function foo() {}
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1238,7 +1238,7 @@ let foo = 2;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1285,7 +1285,7 @@ interface Bar { y: number; }
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1335,7 +1335,7 @@ enum Color {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1374,7 +1374,7 @@ function Foo() {}
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1427,7 +1427,7 @@ class Rectangle {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1473,7 +1473,7 @@ class Rectangle {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1514,7 +1514,7 @@ f(true);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1550,7 +1550,7 @@ fn(42);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1585,7 +1585,7 @@ opt("x", 1);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1620,7 +1620,7 @@ rest("a", "b");
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1657,7 +1657,7 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1692,7 +1692,7 @@ ft4(["hello", 42]);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1727,7 +1727,7 @@ id(123);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1761,7 +1761,7 @@ arr.reduce((a, b) => a + b, 0);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1800,7 +1800,7 @@ c.foo("ok");
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -1843,7 +1843,7 @@ const f = new Foo();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -1926,7 +1926,7 @@ const f = new Foo(1, "x", 2);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -2002,7 +2002,7 @@ const d = new Derived();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -2064,7 +2064,7 @@ const b = new Box("hi");
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -2119,7 +2119,7 @@ d.name;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2158,7 +2158,7 @@ b.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2197,7 +2197,7 @@ function f(obj: B) { return obj.x + obj.y; }
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2237,7 +2237,7 @@ doc.print();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2275,7 +2275,7 @@ new Foo(true);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2313,7 +2313,7 @@ new Foo(42);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2350,7 +2350,7 @@ new Foo("a", "b");
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2380,7 +2380,7 @@ fn test_parameter_property_in_function_2369() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2409,7 +2409,7 @@ fn test_parameter_property_in_arrow_2369() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2444,7 +2444,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2480,7 +2480,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2510,7 +2510,7 @@ fn test_class_name_any_error_2414() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2546,7 +2546,7 @@ fn test_local_variable_scope_resolution() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2583,7 +2583,7 @@ fn test_for_loop_variable_scope() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2620,7 +2620,7 @@ function test() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2655,7 +2655,7 @@ declare module "foo" {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2687,7 +2687,7 @@ let x = MissingName;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2719,7 +2719,7 @@ let x: MissingType;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2763,7 +2763,7 @@ value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2822,7 +2822,7 @@ type Fn = (value: MissingType) => void;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2855,7 +2855,7 @@ obj.missing;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2900,7 +2900,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2935,7 +2935,7 @@ interface BaseConstructor {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -2967,7 +2967,7 @@ class C extends undefined {}
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3000,7 +3000,7 @@ class D extends (null) {}
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3047,7 +3047,7 @@ var x: number;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3117,7 +3117,7 @@ fn test_abstract_class_in_local_scope_2511() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3178,7 +3178,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3232,7 +3232,7 @@ let ctor: typeof A = B;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3277,7 +3277,7 @@ const a: A = new B();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3323,7 +3323,7 @@ f.y;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3374,7 +3374,7 @@ class Baz {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3419,7 +3419,7 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3469,7 +3469,7 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3512,7 +3512,7 @@ abstract class AbstractClass {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3542,7 +3542,7 @@ fn test_interface_name_cannot_be_reserved_2427() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3578,7 +3578,7 @@ fn test_const_modifier_on_class_property_1248() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3618,7 +3618,7 @@ fn test_accessor_type_compatibility_2322() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3666,7 +3666,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3703,7 +3703,7 @@ new cls2();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -3754,7 +3754,7 @@ new cls1();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -3806,7 +3806,7 @@ class NoError {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -3861,7 +3861,7 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
     println!("File locals count: {}", binder.file_locals.len());
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -3907,7 +3907,7 @@ class Derived extends Base<string> {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -3943,7 +3943,7 @@ class C extends B {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -3999,7 +3999,7 @@ c.ro = "error: lhs of assignment can't be readonly";
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -4041,7 +4041,7 @@ config["name"] = "error";
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -4074,7 +4074,7 @@ xs[0] = 3;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -4110,7 +4110,7 @@ svc.run = () => {};
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -4146,7 +4146,7 @@ map["a"] = 2;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -4183,7 +4183,7 @@ map[key] = 2;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -4233,7 +4233,7 @@ c.ro = "error: lhs of assignment can't be readonly";
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -4364,7 +4364,7 @@ takesHandler(function(this: { value: number }, x) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.get_type_of_node(call_idx);
 
     let func_type = checker.get_type_of_node(func_idx);
@@ -4410,7 +4410,7 @@ const handler: (x: string) => void = (x) => {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4448,7 +4448,7 @@ register((x) => {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4520,7 +4520,7 @@ const h: Handler = { cb: x => x.toUpperCase() };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4559,7 +4559,7 @@ value.bar();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4599,7 +4599,7 @@ obj.foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4646,7 +4646,7 @@ function f() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4693,7 +4693,7 @@ function read(value: A | B) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4736,7 +4736,7 @@ Derived.foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4779,7 +4779,7 @@ c.hasOwnProperty("x");
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4820,7 +4820,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4865,7 +4865,7 @@ c.bar;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4904,7 +4904,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4947,7 +4947,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -4991,7 +4991,7 @@ class A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5035,7 +5035,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5083,7 +5083,7 @@ c.y;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5297,7 +5297,7 @@ const s3 = Symbol(42);"#;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5324,7 +5324,7 @@ fn test_symbol_constructor_too_many_args() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5360,7 +5360,7 @@ fn test_variable_redeclaration_same_type() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5391,7 +5391,7 @@ fn test_variable_redeclaration_different_type_2403() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5428,7 +5428,7 @@ fn test_variable_self_reference_no_2403() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5557,7 +5557,7 @@ const val = obj.someProperty;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5594,7 +5594,7 @@ const val = obj.explicitProp;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5627,7 +5627,7 @@ const val = obj.x;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5662,7 +5662,7 @@ type Qux = { [key: string]: Foo };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -5765,7 +5765,7 @@ const derived_value = obj.derived;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -5816,7 +5816,7 @@ const value = obj.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -5855,7 +5855,7 @@ const value = obj.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -5896,7 +5896,7 @@ const value = obj.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -5935,7 +5935,7 @@ interface Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -5972,7 +5972,7 @@ interface Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6009,7 +6009,7 @@ const ok3: Foo = { x: undefined };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6044,7 +6044,7 @@ interface Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6081,7 +6081,7 @@ interface Derived extends Base<string> {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6118,7 +6118,7 @@ interface Derived extends Base<string> {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6156,7 +6156,7 @@ interface Derived extends NS.Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6193,7 +6193,7 @@ interface Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6228,7 +6228,7 @@ type Alias = Outer.Inner;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6287,7 +6287,7 @@ namespace A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6328,7 +6328,7 @@ namespace A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6366,7 +6366,7 @@ class C1 extends null {}
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6404,7 +6404,7 @@ exports.foo = 1;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6448,7 +6448,7 @@ namespace Models {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -6487,7 +6487,7 @@ type AliasB = Outer.B;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6569,7 +6569,7 @@ type Alias = Box<string>;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6632,7 +6632,7 @@ const f: <T>(value: T) => T = (value) => value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6704,7 +6704,7 @@ interface Callable {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6786,7 +6786,7 @@ interface Factory {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6868,7 +6868,7 @@ function id<T>(value: T): T {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6940,7 +6940,7 @@ function id(x: string) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -6987,7 +6987,7 @@ const f = (flag: boolean) => {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -7069,7 +7069,7 @@ const anon = () => { return null; };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7144,7 +7144,7 @@ const obj = { baz() { return undefined; } };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7197,7 +7197,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7250,7 +7250,7 @@ const arrowReturnsAny = () => anyValue;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7301,7 +7301,7 @@ function returnsNullOrUndefined(flag: boolean) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7350,7 +7350,7 @@ function createClass() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7431,7 +7431,7 @@ function loopWithNestedSwitchBreak(flag: boolean) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     let arena = parser.get_arena();
@@ -7522,7 +7522,7 @@ function fallsThrough(): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7580,7 +7580,7 @@ function loopWithBreak(): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7636,7 +7636,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7675,7 +7675,7 @@ async function f(): Promise<number> { }
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7719,7 +7719,7 @@ async function* g4(): {} { yield 1; }
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7764,7 +7764,7 @@ async function f(): PromiseAlias<void> {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7827,7 +7827,7 @@ function usesFailInList(): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7902,7 +7902,7 @@ function tryCatchFallsThrough(): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7947,7 +7947,7 @@ function implicitAnyParam(x) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -7986,7 +7986,7 @@ function implicitAnyParam(x) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -8045,7 +8045,7 @@ type PropAlias = { handler: (g) => void; };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -8095,7 +8095,7 @@ const arrow = (...items) => items;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -8167,7 +8167,7 @@ const value = arr[0];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8202,7 +8202,7 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8252,7 +8252,7 @@ const second = tup[1];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8295,7 +8295,7 @@ const value = arr[0];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8331,7 +8331,7 @@ const first = tup[0];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8374,7 +8374,7 @@ const value = obj["x"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8409,7 +8409,7 @@ const length = arr["length"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8447,7 +8447,7 @@ const value = arr["0"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8485,7 +8485,7 @@ const value = map["foo"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8523,7 +8523,7 @@ const value = map[1];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8560,7 +8560,7 @@ const value = obj[key];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -8595,7 +8595,7 @@ const value = obj[key];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -8630,7 +8630,7 @@ const value = obj[key];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -8666,7 +8666,7 @@ const value = obj[key];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8712,7 +8712,7 @@ const value = obj[key];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8763,7 +8763,7 @@ const value = obj[key];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8800,7 +8800,7 @@ const value = tup[idx];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8846,7 +8846,7 @@ const value = arr[key];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8891,7 +8891,7 @@ const value = obj["a"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -8930,7 +8930,7 @@ const value = obj?.["a"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -8975,7 +8975,7 @@ const value = obj?.a;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9020,7 +9020,7 @@ const value = obj.a;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9067,7 +9067,7 @@ type Alias = Foo.Bar;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9121,7 +9121,7 @@ type Alias = Foo.Bar;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9174,7 +9174,7 @@ const direct = Foo.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9214,7 +9214,7 @@ const direct = Foo.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9256,7 +9256,7 @@ const sum = Merge.a + Merge.b;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9297,7 +9297,7 @@ const value: Merge.B = { y: 1 };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9350,7 +9350,7 @@ const direct = Merge.extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9390,7 +9390,7 @@ const direct = Merge.extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9431,7 +9431,7 @@ type Alias = Merge.Extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9485,7 +9485,7 @@ type Alias = Merge.Extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9540,7 +9540,7 @@ const direct = Merge.extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9582,7 +9582,7 @@ const direct = Merge.extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9625,7 +9625,7 @@ type Alias = Merge.Extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9681,7 +9681,7 @@ type Alias = Merge.Extra;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9734,7 +9734,7 @@ const direct = Foo["value"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9778,7 +9778,7 @@ interface Bar {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9856,7 +9856,7 @@ type T = typeof Alias.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9903,7 +9903,7 @@ type Alias = typeof Foo<string>;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -9951,7 +9951,7 @@ type B = A;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10035,7 +10035,7 @@ declare module "." {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10076,7 +10076,7 @@ declare module "@scoped/package" {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10119,7 +10119,7 @@ declare class AmbientClass {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10166,7 +10166,7 @@ class RegularClass {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10206,7 +10206,7 @@ class A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10247,7 +10247,7 @@ let x = A.quux;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10291,7 +10291,7 @@ class A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10339,7 +10339,7 @@ class A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10385,7 +10385,7 @@ namespace MyNamespace {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10423,7 +10423,7 @@ var x: number;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10457,7 +10457,7 @@ var x: string;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10497,7 +10497,7 @@ var e: typeof E;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10545,7 +10545,7 @@ var e: typeof E1;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10583,7 +10583,7 @@ function f1() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10620,7 +10620,7 @@ var n: number;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10657,7 +10657,7 @@ var p: foo.NotExist;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10697,7 +10697,7 @@ const badAlias = Alias.missing;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10736,7 +10736,7 @@ var y: NS.Exported;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10776,7 +10776,7 @@ var x: Alias;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10813,7 +10813,7 @@ Foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10850,7 +10850,7 @@ let b: B = a;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10884,7 +10884,7 @@ let s: S = "a";
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10923,7 +10923,7 @@ let missing: Outer.Inner.Missing;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -10967,7 +10967,7 @@ let missing: Alias.Missing;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11009,7 +11009,7 @@ const bad = NS.Foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11044,7 +11044,7 @@ const bad = NS["Foo"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11082,7 +11082,7 @@ const bad = Outer.Inner.Foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11124,7 +11124,7 @@ const bad = Alias;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11161,7 +11161,7 @@ const bad = Alias.Foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11206,7 +11206,7 @@ const bad = Alias.Inner.Foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11246,7 +11246,7 @@ const bad = Foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11280,7 +11280,7 @@ const bad = Foo;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11314,7 +11314,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11348,7 +11348,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11381,7 +11381,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11414,7 +11414,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11450,7 +11450,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11484,7 +11484,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11518,7 +11518,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11554,7 +11554,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11591,7 +11591,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11627,7 +11627,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11664,7 +11664,7 @@ let useIt: T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11705,7 +11705,7 @@ const viaAlias = Alias.value;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -11760,7 +11760,7 @@ const viaAlias = Alias["value"];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
     assert!(
@@ -11811,7 +11811,7 @@ const bad = Alias.missing;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11855,7 +11855,7 @@ const badValue = Outer.Inner.missing;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11901,7 +11901,7 @@ const bad = NS.hidden;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -11946,7 +11946,7 @@ fn test_deep_binary_expression_type_check() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12022,7 +12022,7 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(inner_expr.expression);
@@ -12087,7 +12087,7 @@ if (typeof x === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -12120,7 +12120,7 @@ if (typeof x === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12186,7 +12186,7 @@ while (typeof x === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12247,7 +12247,7 @@ for (; typeof x === "string"; ) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12308,7 +12308,7 @@ for (const value of [x]) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12373,7 +12373,7 @@ for (const key in { a: x }) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12407,7 +12407,7 @@ do {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12459,7 +12459,7 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12510,7 +12510,7 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12561,7 +12561,7 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12629,7 +12629,7 @@ if (typeof Alias.value === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -12692,7 +12692,7 @@ if (typeof Ns["value"] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -12726,7 +12726,7 @@ if (typeof Alias.value === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12763,7 +12763,7 @@ if (typeof obj.prop === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12801,7 +12801,7 @@ if (typeof obj["prop"] === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12837,7 +12837,7 @@ if (typeof obj["prop"] === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12872,7 +12872,7 @@ if (typeof obj.prop === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12909,7 +12909,7 @@ if (typeof obj["prop"] === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -12947,7 +12947,7 @@ if (typeof obj.prop === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13015,7 +13015,7 @@ if (typeof obj[key] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13085,7 +13085,7 @@ if (typeof obj[key] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13123,7 +13123,7 @@ if (typeof obj[key] === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13191,7 +13191,7 @@ if (typeof arr[idx] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13229,7 +13229,7 @@ if (typeof arr[idx] === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13297,7 +13297,7 @@ if (typeof obj[key] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13364,7 +13364,7 @@ if (typeof arr[idx] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13432,7 +13432,7 @@ if (obj[key] === "a") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13498,7 +13498,7 @@ if (typeof obj["prop"] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13535,7 +13535,7 @@ if (typeof obj.prop === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13573,7 +13573,7 @@ if (typeof obj["prop"] === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13627,7 +13627,7 @@ function f(x: number) { return x; }
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let param_type = checker.get_type_of_node(return_data.expression);
@@ -13691,7 +13691,7 @@ const reducer = createReducer(0, {
     );
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&file.arena, &binder, &types, "lib.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(&file.arena, &binder, &types, "lib.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(file.source_file);
 
     assert!(
@@ -13760,7 +13760,7 @@ const reducer = createReducer(0, {
         );
 
         let mut checker =
-            ThinCheckerState::new(&file.arena, &binder, &types, file.file_name.clone(), crate::cli::config::CheckerOptions::default());
+            ThinCheckerState::new(&file.arena, &binder, &types, file.file_name.clone(), crate::checker::context::CheckerOptions::default());
         checker.check_source_file(file.source_file);
         assert!(
             checker.ctx.diagnostics.is_empty(),
@@ -13825,7 +13825,7 @@ declare const p: MyPick<Person, "name">;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13883,7 +13883,7 @@ const ctor2: DefaultCtor = AnotherClass;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13931,7 +13931,7 @@ declare const y: NonDistributive<string>;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -13980,7 +13980,7 @@ declare const t: TupleCheck;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14037,7 +14037,7 @@ declare const end: ExtractElementNonDist<string[]>;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14091,7 +14091,7 @@ const n: number = s;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14154,7 +14154,7 @@ const m: string = state.message;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14213,7 +14213,7 @@ const partial: PartialState = { nested: { value: 42 } };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14274,7 +14274,7 @@ const n: number = state;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14334,7 +14334,7 @@ declare const action: AllActions;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14401,7 +14401,7 @@ const reducers: RootReducers = {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14477,7 +14477,7 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14532,7 +14532,7 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14604,7 +14604,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14681,7 +14681,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14749,7 +14749,7 @@ box.value = 42; // OK: setter accepts number
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14801,7 +14801,7 @@ const n: number = box.value; // ERROR: string not assignable to number
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14859,7 +14859,7 @@ box.value = true; // Should ERROR: boolean not assignable to string
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -14925,7 +14925,7 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15002,7 +15002,7 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15067,7 +15067,7 @@ var CC: typeof C = B;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15154,7 +15154,7 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15232,7 +15232,7 @@ const c3: AnyCallable = named; // OK
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15289,7 +15289,7 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15362,7 +15362,7 @@ declare const obj: NotCallable;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15426,7 +15426,7 @@ const s: string = strings[0]; // OK
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15498,7 +15498,7 @@ const name = pet.name; // OK: both Dog and Cat have name
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15565,7 +15565,7 @@ const b: boolean = bools[0]; // OK
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15636,7 +15636,7 @@ const l: string = box.label;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15696,7 +15696,7 @@ const product: number = calc.multiply(3, 4);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15765,7 +15765,7 @@ const e: string = person.email;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15832,7 +15832,7 @@ const fromString: Color = Color.fromHex("#FF0000");
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15908,7 +15908,7 @@ const created: Album = Album.create("New Album");
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -15974,7 +15974,7 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16050,7 +16050,7 @@ const animalHandler: HandlerWithAnimal = dogHandler;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16125,7 +16125,7 @@ const dogHandler: HandlerWithDog = animalHandler;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16198,7 +16198,7 @@ const dogHandler: HandlerWithDogProp = animalHandler;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16266,7 +16266,7 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16335,7 +16335,7 @@ elem.addEventListener(handleMouse);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16410,7 +16410,7 @@ processor.process(dogs, handleDog);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16473,7 +16473,7 @@ const arr: number[] = anyVal;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16536,7 +16536,7 @@ anyTarget = arr;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16593,7 +16593,7 @@ expectObject(anyVal);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16651,7 +16651,7 @@ const obj: { x: number } = call;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16710,7 +16710,7 @@ function returnNever(): never {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16769,7 +16769,7 @@ const config: Config = {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16837,7 +16837,7 @@ const config: Config = obj;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16891,7 +16891,7 @@ configure({ timeout: 5000, retries: 3 });
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -16951,7 +16951,7 @@ function getResult(): Result {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17003,7 +17003,7 @@ const u: U = { a: 1, c: 2 };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17067,7 +17067,7 @@ const u: U = { c: 1 };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17132,7 +17132,7 @@ f({ c: 1 });
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17197,7 +17197,7 @@ const u: U = obj;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17249,7 +17249,7 @@ const config: Config = { ...base };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17327,7 +17327,7 @@ const animal: Animal = new Dog();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17404,7 +17404,7 @@ const result = new AdvancedBuilder()
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17471,7 +17471,7 @@ const p2 = p1.clone();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17547,7 +17547,7 @@ const b: Box = new NumberBox();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17611,7 +17611,7 @@ const maybeNum: number | undefined = undefined;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17659,7 +17659,7 @@ const str: string = null;
         &binder,
         &types,
         "test.ts".to_string(),
-        true,  // strict mode to enable strictNullChecks
+        crate::checker::context::CheckerOptions { strict: true, strict_null_checks: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -17699,7 +17699,7 @@ const num: number = undefined;
         &binder,
         &types,
         "test.ts".to_string(),
-        true,  // strict mode to enable strictNullChecks
+        crate::checker::context::CheckerOptions { strict: true, strict_null_checks: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -17744,7 +17744,7 @@ const num: number | undefined = 42;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17800,7 +17800,7 @@ function test(obj: AB) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17859,7 +17859,7 @@ function test(obj: AB) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17914,7 +17914,7 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -17968,7 +17968,7 @@ function getKind(shape: Shape): string {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18027,7 +18027,7 @@ if (typeof x === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18080,7 +18080,7 @@ if (typeof x === "string") {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18134,7 +18134,7 @@ if (value !== null) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18188,7 +18188,7 @@ if (data !== undefined) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18245,7 +18245,7 @@ const elem2 = <span id="foo" />;
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // Currently expect errors - JSX type checking not implemented
@@ -18303,7 +18303,7 @@ const btn = <MyButton label="Click me" />;
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     eprintln!("=== JSX Component Uppercase Diagnostics ===");
@@ -18351,7 +18351,7 @@ const elem = <unknowntag />;
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // Once JSX checking is implemented, expect 1 error for unknown element
@@ -18410,7 +18410,7 @@ function getUser(): Models.User {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18455,7 +18455,7 @@ const pair: Types.Pair<number> = [1, 2];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18504,7 +18504,7 @@ const value: Outer.Inner.Deep.Value = "test";
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18553,7 +18553,7 @@ const optString: Collections.Optional<string> = null;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18605,7 +18605,7 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18663,7 +18663,7 @@ function qux() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18713,7 +18713,7 @@ function foo() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18761,7 +18761,7 @@ function foo(items: number[]) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18810,7 +18810,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode enables strictPropertyInitialization
+        crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -18855,7 +18855,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18896,7 +18896,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18938,7 +18938,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -18980,7 +18980,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19022,7 +19022,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19068,7 +19068,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19124,7 +19124,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode enables strictPropertyInitialization
+        crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19180,7 +19180,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19225,7 +19225,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19270,7 +19270,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19316,7 +19316,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19367,7 +19367,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19413,7 +19413,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19460,7 +19460,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19510,7 +19510,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true,
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -19551,7 +19551,7 @@ foo.a;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 }
@@ -19595,7 +19595,7 @@ x.type;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 }
@@ -19637,7 +19637,7 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 }
@@ -19668,7 +19668,7 @@ fn test_unterminated_template_expression_reports_missing_name() {
         &binder,
         &types,
         "TemplateExpression1.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19710,7 +19710,7 @@ augmented;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19750,7 +19750,7 @@ const z = Utils.y;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19793,7 +19793,7 @@ declare module "pkg" {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19837,7 +19837,7 @@ declare let x: Recurse;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19922,7 +19922,7 @@ interface MyError extends Error {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -19978,7 +19978,7 @@ type Foo = {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20033,7 +20033,7 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20073,7 +20073,7 @@ class Wat {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20113,7 +20113,7 @@ const assertFn: (value: unknown) => asserts value = value => {};
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20158,7 +20158,7 @@ const obj = {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20195,7 +20195,7 @@ exports.foo = 1;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20230,7 +20230,7 @@ type Properties<T extends { [key: string]: Types }> = {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20268,7 +20268,7 @@ accessor export default V1;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20312,7 +20312,7 @@ namespace Utils {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20356,7 +20356,7 @@ namespace A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20402,7 +20402,7 @@ namespace C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20447,7 +20447,7 @@ const x = globalValue;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20490,7 +20490,7 @@ const opts: Options = { value: 1 };
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20557,7 +20557,7 @@ class D3 extends getBase() <string, number> {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20602,7 +20602,7 @@ const r: Base[] = [d1, d2];
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20646,7 +20646,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20689,7 +20689,7 @@ const willErrorSomeDay: typeof A = class {};
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20732,7 +20732,7 @@ if ((o = fn()).done) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20769,7 +20769,7 @@ const bb: 0 = b;
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20808,7 +20808,7 @@ if (a in c) {
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20847,7 +20847,7 @@ function f<T>(x: T) {
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20883,7 +20883,7 @@ if (o?.x === 1) {
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20929,7 +20929,7 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -20987,7 +20987,7 @@ d.mixinMethod();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21062,7 +21062,7 @@ class Thing3 extends Thing2 {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21131,7 +21131,7 @@ class D3 extends getBase() <string, number> {
 
     let types = TypeInterner::new();
     let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21172,7 +21172,7 @@ function f(obj: B) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21218,7 +21218,7 @@ class C extends B {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21260,7 +21260,7 @@ function f(i: I) { return i.x; }
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21303,7 +21303,7 @@ function f(obj: C) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21346,7 +21346,7 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21401,7 +21401,7 @@ function f() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21461,7 +21461,7 @@ function f() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21517,7 +21517,7 @@ class C2 extends Mixed1 {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21575,7 +21575,7 @@ wasConcrete.mixinMethod();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21629,7 +21629,7 @@ class Derived extends getBase() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21670,7 +21670,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21714,7 +21714,7 @@ function func(x: I) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     // This should not crash with stack overflow
@@ -21759,7 +21759,7 @@ function maybeReturn(x: boolean) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21814,7 +21814,7 @@ function maybeReturn(x: boolean) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21865,7 +21865,7 @@ class Example {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21923,7 +21923,7 @@ class Example {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -21978,7 +21978,7 @@ aFn(), b;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22047,7 +22047,7 @@ void a, b;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22118,7 +22118,7 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22176,7 +22176,7 @@ fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22234,7 +22234,7 @@ declare var x: Circular<tup>;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     // Should complete without crashing or hanging
@@ -22276,7 +22276,7 @@ product.users;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     // Should complete without crashing or hanging
@@ -22315,7 +22315,7 @@ let { x, y }: { x: string, y: string } = obj;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22377,7 +22377,7 @@ let [a, b]: [number, number] = arr;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22440,7 +22440,7 @@ let { x = 42 }: { x: string } = obj;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22502,7 +22502,7 @@ let { a: { b } }: { a: { b: string } } = obj;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22563,7 +22563,7 @@ let { x = 42 }: { x: string } = obj;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22625,7 +22625,7 @@ let { x = "hello" }: { x?: number } = {};
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22727,7 +22727,7 @@ type t1 = DeepMap<tpl, number>;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     // This should NOT crash even with recursive types
@@ -22803,7 +22803,7 @@ function identity<T>(x: T): T {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22850,7 +22850,7 @@ class C {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -22907,7 +22907,7 @@ class A {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
 
     checker.check_source_file(root);
@@ -22969,7 +22969,7 @@ function extract<T>(x: Extract<T, typeof identity>): T {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -23012,7 +23012,7 @@ function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -23062,7 +23062,7 @@ function g1<T extends Box<T> | undefined>(x: T) {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -23103,7 +23103,7 @@ function f1<T extends string | undefined>(x: T): string {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // Should have no TS2322 errors - after narrowing, x should be assignable to string
@@ -23158,7 +23158,7 @@ class A2 {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -23218,7 +23218,7 @@ var instance = MyClass();
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -23287,7 +23287,7 @@ function f1<T extends string | undefined>(y: { a: T }): string {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // Should have no TS2322 errors - after narrowing, y.a should be assignable to string
@@ -23341,7 +23341,7 @@ function test(obj: A | B | null) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23393,7 +23393,7 @@ function test2(obj: A | B) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let ts2339_errors: Vec<_> = checker
@@ -23448,7 +23448,7 @@ class C {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -23504,7 +23504,7 @@ class C {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
     checker.check_source_file(root);
 
@@ -23551,7 +23551,7 @@ function test(obj: A | B) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23612,7 +23612,7 @@ function test2(obj: NumberIndexed) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23660,7 +23660,7 @@ function test(obj: NoIndex) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23710,7 +23710,7 @@ function test(obj: A | null) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // obj?.a should NOT produce TS2339
@@ -23765,7 +23765,7 @@ function test2(obj: A & { c: boolean }) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23817,7 +23817,7 @@ mixed(42, 99, 100);
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -23905,7 +23905,7 @@ const noAnnotation = () => {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -23960,7 +23960,7 @@ const noAnnotation = function() {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24004,7 +24004,7 @@ function outer(): (x: number) => string {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24059,7 +24059,7 @@ const switchWithDefault = (value: number): string => {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24118,7 +24118,7 @@ const tryFinallyFallthrough = (): number => {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24171,7 +24171,7 @@ function test3(): string {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24216,7 +24216,7 @@ function test2(): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24263,7 +24263,7 @@ function test2(): void {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24327,7 +24327,7 @@ function test3(x: number): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24379,7 +24379,7 @@ function test2(x: number): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24435,7 +24435,7 @@ function test3(x: number): number {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24484,7 +24484,7 @@ class MyClass {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24542,7 +24542,7 @@ const arrowPromise = async (): Promise<string> => "test";
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24587,7 +24587,7 @@ class DuplicateProperties {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24634,7 +24634,7 @@ const obj = {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24688,7 +24688,7 @@ const obj2 = {
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24794,7 +24794,7 @@ const prop = win.myCustomProperty;
         &binder,
         &types,
         "test.ts".to_string(),
-        false,
+        crate::checker::context::CheckerOptions::default(),
     );
     checker.check_source_file(root);
 
@@ -24838,7 +24838,7 @@ const MyClass = class {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -24882,7 +24882,7 @@ const MyClass = class {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -24922,7 +24922,7 @@ const MyClass = class NamedClass {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -24966,7 +24966,7 @@ const Derived = class extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -24998,7 +24998,7 @@ abstract class AbstractBase {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     // Abstract classes should not have TS2564 errors
@@ -25030,7 +25030,7 @@ function test() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25064,7 +25064,7 @@ function test() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25100,7 +25100,7 @@ function test() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25131,7 +25131,7 @@ function test() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25178,7 +25178,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25227,7 +25227,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25271,7 +25271,7 @@ class Container<T> {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25320,7 +25320,7 @@ class Container<T> {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25366,7 +25366,7 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25422,7 +25422,7 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25468,7 +25468,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25512,7 +25512,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25561,7 +25561,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25605,7 +25605,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25657,7 +25657,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25706,7 +25706,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25746,7 +25746,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25787,7 +25787,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25836,7 +25836,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25880,7 +25880,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25929,7 +25929,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -25973,7 +25973,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -26021,7 +26021,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -26074,7 +26074,7 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
     checker.check_source_file(root);
 
@@ -26169,7 +26169,7 @@ function booleanInstance(bool: Boolean): boolean {
         &binder,
         &types,
         "test.ts".to_string(),
-        true, // strict mode
+        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
     );
 
     // Set lib contexts for type resolution (clone Arc fields)
@@ -26223,8 +26223,8 @@ fn test_tier_2_type_checker_accuracy_fixes() {
     let types = TypeInterner::new();
 
     // Test 1: Verify no_implicit_this flag exists in CheckerContext
-    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::cli::config::CheckerOptions { strict: true, no_implicit_any: true, no_implicit_returns: false, no_implicit_this: true, strict_null_checks: true, strict_function_types: true, strict_property_initialization: true, use_unknown_in_catch_variables: true });
-    assert!(checker.ctx.no_implicit_this, "no_implicit_this flag should be enabled in strict mode");
+    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions { strict: true, no_implicit_any: true, no_implicit_returns: false, no_implicit_this: true, strict_null_checks: true, strict_function_types: true, strict_property_initialization: true, use_unknown_in_catch_variables: true });
+    assert!(checker.ctx.no_implicit_this(), "no_implicit_this flag should be enabled in strict mode");
 
     // Test 2: Verify ANY type suppression constants exist
     assert_eq!(TypeId::ANY.0, 4); // ANY should be TypeId(4)

@@ -172,7 +172,7 @@ mod tests {
 
         let types = TypeInterner::new();
         let mut ctx =
-            CheckerContext::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), false);
+            CheckerContext::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
 
         // Get the block statement
         if let Some(root_node) = parser.get_arena().get(root) {

@@ -252,10 +252,10 @@ impl CompilerOptions {
     }
 
     /// Convert to CheckerOptions for type checking.
-    pub fn to_checker_options(&self) -> crate::cli::config::CheckerOptions {
+    pub fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
         let strict = self.strict.unwrap_or(false);
         let strict_null_checks = self.get_strict_null_checks();
-        crate::cli::config::CheckerOptions {
+        crate::checker::context::CheckerOptions {
             strict,
             no_implicit_any: self.get_no_implicit_any(),
             no_implicit_returns: self.get_no_implicit_returns(),

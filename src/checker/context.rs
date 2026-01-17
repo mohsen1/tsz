@@ -12,8 +12,20 @@ use std::sync::Arc;
 use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
 use crate::checker::types::diagnostics::Diagnostic;
-use crate::cli::config::CheckerOptions;
 use crate::parser::NodeIndex;
+
+/// Compiler options for type checking.
+#[derive(Debug, Clone, Default)]
+pub struct CheckerOptions {
+    pub strict: bool,
+    pub no_implicit_any: bool,
+    pub no_implicit_returns: bool,
+    pub strict_null_checks: bool,
+    pub strict_function_types: bool,
+    pub strict_property_initialization: bool,
+    pub no_implicit_this: bool,
+    pub use_unknown_in_catch_variables: bool,
+}
 use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
 use crate::thin_binder::ThinBinderState;
@@ -323,14 +335,8 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any: compiler_options.no_implicit_any,
-            no_implicit_returns: compiler_options.no_implicit_returns,
-            use_unknown_in_catch_variables: compiler_options.use_unknown_in_catch_variables,
+            compiler_options: compiler_options.clone(),
             report_unresolved_imports: true,
-            strict_function_types: compiler_options.strict_function_types,
-            strict_property_initialization: compiler_options.strict_property_initialization,
-            strict_null_checks: compiler_options.strict_null_checks,
-            no_implicit_this: compiler_options.no_implicit_this,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
@@ -444,14 +450,8 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            no_implicit_any: compiler_options.no_implicit_any,
-            no_implicit_returns: compiler_options.no_implicit_returns,
-            use_unknown_in_catch_variables: compiler_options.use_unknown_in_catch_variables,
+            compiler_options: compiler_options.clone(),
             report_unresolved_imports: true,
-            strict_function_types: compiler_options.strict_function_types,
-            strict_property_initialization: compiler_options.strict_property_initialization,
-            strict_null_checks: compiler_options.strict_null_checks,
-            no_implicit_this: compiler_options.no_implicit_this,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,

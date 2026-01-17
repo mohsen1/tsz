@@ -60,6 +60,15 @@ Enforce these rules in agent instructions to prevent regression.
 
 ---
 
+## Merge Criteria
+
+**Before merging any branch:**
+1. `cargo build` must pass with no errors
+2. `cargo test` must pass with no failures
+3. Tests must run fast (< 30 seconds for unit tests)
+
+---
+
 ## Rules
 
 ### Never Break The Build
@@ -120,4 +129,7 @@ wasm-pack build --target web --out-dir pkg
 | Missing Errors | TSC emits, we don't |
 | Extra Errors | We emit, TSC doesn't |
 
-**Target:** 95%+ exact match.
+
+## Project Goals
+
+**Target:** 95%+ exact match with TypeScript compiler on conformance tests, with clean architecture and maintainable codebase.

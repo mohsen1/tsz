@@ -69,17 +69,8 @@ pub struct CompilerOptions {
     pub no_emit_on_error: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct CheckerOptions {
-    pub strict: bool,
-    pub no_implicit_any: bool,
-    pub no_implicit_returns: bool,
-    pub strict_null_checks: bool,
-    pub strict_function_types: bool,
-    pub strict_property_initialization: bool,
-    pub no_implicit_this: bool,
-    pub use_unknown_in_catch_variables: bool,
-}
+// Re-export CheckerOptions from checker::context for unified API
+pub use crate::checker::context::CheckerOptions;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedCompilerOptions {

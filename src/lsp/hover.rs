@@ -130,7 +130,7 @@ impl<'a> HoverProvider<'a> {
 
         // 3. Compute Type Information
         // Use persistent cache if available for O(1) lookups on repeated queries
-        let compiler_options = crate::cli::config::CheckerOptions {
+        let compiler_options = crate::checker::context::CheckerOptions {
             strict: self.strict,
             no_implicit_any: self.strict,
             no_implicit_returns: false,
