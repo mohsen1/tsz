@@ -322,37 +322,63 @@ impl ThinParserState {
             self.next_token();
             true
         } else {
+            // Special case: Force error emission for missing ) when we see {
+            // This is a common error pattern that should always be reported
+            let force_emit = kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken);
+
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
             // when the real issue is a single missing token
-            if self.token_pos() != self.last_error_pos {
+            if force_emit || self.token_pos() != self.last_error_pos {
                 // Additional check: suppress error for missing closing tokens when we're
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
-                let should_suppress = match kind {
-                    SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
-                        // At EOF, clearly the file ended before this closing token
-                        // Don't emit an error - just recover
-                        if self.is_token(SyntaxKind::EndOfFileToken) {
-                            true
+                let should_suppress = if force_emit {
+                    false // Never suppress forced errors
+                } else {
+                    match kind {
+                        SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
+                            // At EOF, clearly the file ended before this closing token
+                            // However, for closing parens, this is more likely to be a real error
+                            // Only suppress for closing braces/brackets
+                            if self.is_token(SyntaxKind::EndOfFileToken) {
+                                kind != SyntaxKind::CloseParenToken
+                            }
+                            // For closing parentheses, be more strict when we see { or if
+                            // These are common cases of missing ) in parameters or conditions
+                            else if kind == SyntaxKind::CloseParenToken &&
+                                   (self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::IfKeyword)) {
+                                // If we're expecting ) but see { or if, this is likely a missing )
+                                // Don't suppress - emit the error
+                                false
+                            }
+                            // If next token starts a statement, the user has clearly moved on
+                            // Don't complain about missing closing token
+                            else if self.is_statement_start() {
+                                true
+                            }
+                            // If there's a line break, give the user benefit of doubt
+                            else if self.scanner.has_preceding_line_break() {
+                                true
+                            }
+                            else {
+                                false
+                            }
                         }
-                        // If next token starts a statement, the user has clearly moved on
-                        // Don't complain about missing closing token
-                        else if self.is_statement_start() {
-                            true
-                        }
-                        // If there's a line break, give the user benefit of doubt
-                        else if self.scanner.has_preceding_line_break() {
-                            true
-                        }
-                        else {
-                            false
-                        }
+                        _ => false
                     }
-                    _ => false
                 };
 
                 if !should_suppress {
-                    self.error_token_expected(Self::token_to_string(kind));
+                    // For forced errors, bypass the normal error budget logic
+                    if force_emit {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            &format!("'{}' expected", Self::token_to_string(kind)),
+                            diagnostic_codes::TOKEN_EXPECTED,
+                        );
+                    } else {
+                        self.error_token_expected(Self::token_to_string(kind));
+                    }
                 }
             }
             false
@@ -579,7 +605,8 @@ impl ThinParserState {
             // Check if we can recover from this error
             // If we're at a position where parsing can reasonably continue, suppress the error
             // This reduces false-positive TS1005 errors in complex expressions
-            if self.can_recover_from_error() {
+            // Exception: Don't suppress ')' expected when we see '{' - this is likely a real error
+            if self.can_recover_from_error() && !(token == ")" && self.is_token(SyntaxKind::OpenBraceToken)) {
                 return;
             }
 
@@ -5870,14 +5897,28 @@ impl ThinParserState {
 
     /// Parse throw statement
     fn parse_throw_statement(&mut self) -> NodeIndex {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
-        // For restricted productions (throw), ASI applies immediately after line break
-        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // NOTE: The previous implementation incorrectly treated line break as a syntax error.
-        // According to JavaScript spec, ASI should apply: throw\nx parses as throw; x;
-        let expression = if !self.can_parse_semicolon_for_restricted_production() {
+        // TypeScript requires an expression after throw
+        // If there's a line break immediately after throw, emit TS1109 (EXPRESSION_EXPECTED)
+        let expression = if self.scanner.has_preceding_line_break()
+            && !self.is_token(SyntaxKind::SemicolonToken)
+            && !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken) {
+            // Line break after throw without semicolon/brace/EOF - emit error
+            let start = self.token_pos();
+            let end = self.token_end();
+            self.parse_error_at(
+                start,
+                end - start,
+                "Expression expected",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            NodeIndex::NONE
+        } else if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
         } else {
             NodeIndex::NONE
