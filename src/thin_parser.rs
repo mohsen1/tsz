@@ -6889,7 +6889,11 @@ impl ThinParserState {
                             | SyntaxKind::EndOfFileToken
                     );
 
-                    if !has_following_expression {
+                    // Special case: Don't emit TS1109 for 'await' in computed property names like { [await]: foo }
+                    // In this context, 'await' is used as an identifier and CloseBracketToken is expected
+                    let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
+
+                    if !has_following_expression && !is_computed_property_context {
                         use crate::checker::types::diagnostics::diagnostic_codes;
                         self.error_expression_expected();
                     }
