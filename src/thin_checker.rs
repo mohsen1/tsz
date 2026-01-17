@@ -5815,6 +5815,11 @@ impl<'a> ThinCheckerState<'a> {
                 {
                     return Some(current);
                 }
+                // Skip arrow functions - they don't define their own `this` context
+                // but continue traversal to find enclosing non-arrow function
+                if node.kind == ARROW_FUNCTION {
+                    // Continue searching - arrow functions inherit `this`
+                }
             }
             let ext = self.ctx.arena.get_extended(current)?;
             if ext.parent.is_none() {
