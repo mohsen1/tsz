@@ -6911,7 +6911,10 @@ impl ThinParserState {
                 if self.can_parse_semicolon()
                     || self.is_token(SyntaxKind::SemicolonToken) {
                     use crate::checker::types::diagnostics::diagnostic_codes;
-                    self.error_expression_expected();
+                    self.parse_error_at_current_token(
+                        "Expression expected",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
                 } else if self.is_token(SyntaxKind::ColonToken)
                     || self.is_token(SyntaxKind::CloseBracketToken) {
                     // Special case for computed properties: { [await]: foo }
@@ -6955,8 +6958,16 @@ impl ThinParserState {
                 {
                     self.parse_assignment_expression()
                 } else {
+                    // Special case: yield* requires an expression (emit TS1109 if missing)
+                    if asterisk_token && (self.is_token(SyntaxKind::SemicolonToken) || self.scanner.has_preceding_line_break()) {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Expression expected",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                    }
                     // Check for line break + expression pattern (emit TS1109 warning)
-                    if self.scanner.has_preceding_line_break() && self.is_expression_start() {
+                    else if self.scanner.has_preceding_line_break() && self.is_expression_start() {
                         // There's a line break after yield AND the next token can start an expression
                         // This suggests the developer might have accidentally inserted a line break
                         // Emit TS1109 "Expression expected" to warn them
@@ -8630,6 +8641,16 @@ impl ThinParserState {
         }
 
         // Parse the callee expression - member access without call (we handle call ourselves)
+        // Special check for missing identifier: new () should emit TS1109
+        if self.is_token(SyntaxKind::OpenParenToken) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Expression expected",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            // Continue parsing as if there was an identifier
+        }
+
         let expression = self.parse_member_expression_base();
         let mut end_pos = self
             .arena
