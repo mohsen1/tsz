@@ -12,6 +12,14 @@ Project Zang is a complete rewrite of the TypeScript compiler and type checker i
 - All changes must pass the unit tests
 - No change should reduce conformance test accuracy
 
+
+### Keep the architecture clean
+
+- dont take shortcuts
+- dont modify the code specifically for tests. source code should not know about tests. revert changes that have done that in the past
+- make good judgement on how to approach work
+- pick the right work item based on the current state of the codebase
+
 ### Key Components
 
 | Component | Location | Purpose |
