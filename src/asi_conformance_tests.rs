@@ -223,3 +223,41 @@ fn test_asi_ts1005_token_expected_patterns() {
         }
     }
 }
+
+/// Test async await issue - function declaration
+#[test]
+fn test_async_function_await_computed_property() {
+    let source = r#"async function foo(): Promise<void> {
+  var v = { [await]: foo }
+}"#;
+
+    let mut parser = ThinParserState::new("asyncFunctionDeclaration9_es2017.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED).count();
+
+    assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 error");
+    assert_eq!(ts1005_count, 0, "Should emit no TS1005 errors");
+    assert_eq!(diagnostics.len(), 1, "Should emit exactly 1 diagnostic total");
+}
+
+/// Test async await issue - arrow function
+#[test]
+fn test_async_arrow_await_computed_property() {
+    let source = r#"var foo = async (): Promise<void> => {
+  var v = { [await]: foo }
+}"#;
+
+    let mut parser = ThinParserState::new("asyncArrowFunction8_es6.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED).count();
+
+    assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 error");
+    assert_eq!(ts1005_count, 0, "Should emit no TS1005 errors");
+    assert_eq!(diagnostics.len(), 1, "Should emit exactly 1 diagnostic total");
+}
