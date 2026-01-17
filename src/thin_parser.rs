@@ -6881,8 +6881,8 @@ impl ThinParserState {
                         self.error_expression_expected();
                         // Return await as identifier to maintain parsing state
                         let start_pos = self.token_pos();
+                        let end_pos = self.token_end(); // capture end before consuming
                         self.next_token(); // consume the await token
-                        let end_pos = self.token_pos(); // position after consuming await
                         return self.arena.add_identifier(
                             SyntaxKind::Identifier as u16,
                             start_pos,
