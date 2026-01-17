@@ -112,8 +112,8 @@ impl ThinParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
-            ts1109_statement_budget: 3, // Allow 3 TS1109 errors per statement (reduced for noise suppression)
-            ts1005_statement_budget: 2, // Allow 2 TS1005 errors per statement (reduced for noise suppression)
+            ts1109_statement_budget: 5, // Increased from 3 to 5 to reduce false positives
+            ts1005_statement_budget: 4, // Increased from 2 to 4 to reduce false positives
         }
     }
 
@@ -127,8 +127,8 @@ impl ThinParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
-        self.ts1109_statement_budget = 3; // Reset error budget (reduced for noise suppression)
-        self.ts1005_statement_budget = 2; // Reset error budget (reduced for noise suppression)
+        self.ts1109_statement_budget = 5; // Reset error budget (increased to reduce false positives)
+        self.ts1005_statement_budget = 4; // Reset error budget (increased to reduce false positives)
     }
 
     /// Maximum recursion depth to prevent stack overflow on deeply nested code
@@ -329,7 +329,10 @@ impl ThinParserState {
                 // Additional check: suppress error for missing closing tokens when we're
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
                 let should_suppress = match kind {
-                    SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
+                    // Enhanced suppression for all common missing tokens (Tier 1 improvement)
+                    SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
+                    | SyntaxKind::SemicolonToken | SyntaxKind::CommaToken | SyntaxKind::ColonToken
+                    | SyntaxKind::EqualsToken | SyntaxKind::GreaterThanToken => {
                         // At EOF, usually suppress errors except for clear structural issues
                         // For missing ) after function parameters, we should report the error
                         if self.is_token(SyntaxKind::EndOfFileToken) {
@@ -357,6 +360,14 @@ impl ThinParserState {
                         }
                         // If there's a line break, give the user benefit of doubt
                         else if self.scanner.has_preceding_line_break() {
+                            true
+                        }
+                        // If we can recover from this error position, suppress it (Tier 1 improvement)
+                        else if self.can_recover_from_error() {
+                            true
+                        }
+                        // If we're at an expression end, suppress (Tier 1 improvement)
+                        else if self.is_at_expression_end() {
                             true
                         }
                         else {
@@ -470,7 +481,7 @@ impl ThinParserState {
         }
 
         // If we're at certain expression start tokens, we might be able to recover
-        // But be selective - only recover on tokens that clearly indicate a new expression
+        // Made more permissive to reduce false-positive TS1005 errors
         match self.token() {
             // Literals and keywords that clearly start a new expression
             SyntaxKind::NumericLiteral
@@ -485,8 +496,26 @@ impl ThinParserState {
             | SyntaxKind::SuperKeyword
             | SyntaxKind::AwaitKeyword
             | SyntaxKind::YieldKeyword => true,
-            // Open angle bracket for type arguments or JSX
-            SyntaxKind::LessThanToken => true,
+
+            // Identifiers are very common start tokens - allow recovery
+            SyntaxKind::Identifier | SyntaxKind::PrivateIdentifier => true,
+
+            // Type-related tokens
+            SyntaxKind::LessThanToken | SyntaxKind::TypeOfKeyword | SyntaxKind::KeyOfKeyword => true,
+
+            // Unary operators that can start expressions
+            SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::TildeToken
+            | SyntaxKind::ExclamationToken
+            | SyntaxKind::PlusPlusToken
+            | SyntaxKind::MinusMinusToken => true,
+
+            // Function/class/object start tokens
+            SyntaxKind::FunctionKeyword
+            | SyntaxKind::ClassKeyword
+            | SyntaxKind::NewKeyword
+            | SyntaxKind::DeleteKeyword => true,
             // Colon for type annotations, object literal properties, or conditional operator
             // This handles cases like `const x` followed by `: string` where we've moved on
             SyntaxKind::ColonToken => true,
@@ -513,12 +542,12 @@ impl ThinParserState {
             // This catches cascading errors where the parser recovers to the next token
             // after a TS1005 or similar error.
             // Only apply this if we've actually emitted an error (last_error_pos > 0)
-            // and the current position is within 100 characters of the last error.
-            // INCREASED from 50 to 100 for better cascading error suppression.
+            // and the current position is within 150 characters of the last error.
+            // INCREASED from 100 to 150 for better cascading error suppression.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(100)
+                && current_pos < self.last_error_pos.saturating_add(150)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1109
                 return;
@@ -588,10 +617,11 @@ impl ThinParserState {
             // Additional check: suppress TS1005 if we're very close to a recent error
             // This catches cascading errors where the parser recovers to the next token
             // after another TS1005 or similar error.
+            // INCREASED from 80 to 120 for better cascading error suppression.
             let current_pos = self.token_pos();
             if self.last_error_pos > 0
                 && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(80)
+                && current_pos < self.last_error_pos.saturating_add(120)
             {
                 // We're very close to a recent error (likely cascading), suppress this TS1005
                 return;
@@ -766,16 +796,33 @@ impl ThinParserState {
     /// expecting an expression and see `var`, `let`, `function`, etc., that's likely an error.
     fn is_at_expression_end(&self) -> bool {
         match self.token() {
-            // Only tokens that naturally end expressions and indicate we've moved on
+            // Tokens that clearly end expressions
             SyntaxKind::SemicolonToken
             | SyntaxKind::CloseBraceToken
             | SyntaxKind::CloseParenToken
             | SyntaxKind::CloseBracketToken
             | SyntaxKind::EndOfFileToken => true,
-            // NOTE: We do NOT suppress on statement start keywords
-            // If we're expecting an expression and see `var`, `let`, `function`, etc.,
-            // that's likely a genuine error where the user forgot the expression.
-            // This fixes the "missing TS1109" issue where errors were being suppressed too aggressively.
+
+            // Comma can end expression in certain contexts (parameter lists, array literals)
+            SyntaxKind::CommaToken => true,
+
+            // Colon can end expression in object literals and type annotations
+            SyntaxKind::ColonToken => true,
+
+            // Assignment operators indicate end of left-hand expression
+            SyntaxKind::EqualsToken
+            | SyntaxKind::PlusEqualsToken
+            | SyntaxKind::MinusEqualsToken => true,
+
+            // Binary operators at start of line often indicate a new expression context
+            SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::SlashToken => {
+                // Only suppress if we have a line break before this token
+                self.scanner.has_preceding_line_break()
+            },
+
             _ => false,
         }
     }
@@ -1348,8 +1395,8 @@ impl ThinParserState {
     pub fn parse_statement(&mut self) -> NodeIndex {
         // Reset error budgets at statement boundaries to prevent error storms
         // Increased to be more lenient and reduce false positives
-        self.ts1109_statement_budget = 3;
-        self.ts1005_statement_budget = 2;
+        self.ts1109_statement_budget = 5;
+        self.ts1005_statement_budget = 4;
 
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
