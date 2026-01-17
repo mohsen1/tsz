@@ -6859,15 +6859,22 @@ impl ThinParserState {
                     self.scanner.restore_state(snapshot);
                     self.current_token = current_token;
 
-                    let has_following_expression = !matches!(
+                    // Check if await is followed by tokens that suggest it's an incomplete await expression
+                    let definitely_incomplete = matches!(
                         next_token,
                         SyntaxKind::SemicolonToken
-                            | SyntaxKind::CloseBracketToken
                             | SyntaxKind::CommaToken
                             | SyntaxKind::ColonToken
                             | SyntaxKind::EqualsGreaterThanToken
                             | SyntaxKind::EndOfFileToken
                     );
+
+                    // Special case: CloseBracketToken after await
+                    // In non-async contexts: [await] should parse as identifier reference (no error)
+                    // In async contexts: [await] should emit TS1109 because await expects expression
+                    let bracket_incomplete = next_token == SyntaxKind::CloseBracketToken && self.in_async_context();
+
+                    let has_following_expression = !(definitely_incomplete || bracket_incomplete);
 
                     if !has_following_expression {
                         use crate::checker::types::diagnostics::diagnostic_codes;
@@ -10500,5 +10507,154 @@ impl ThinParserState {
             start_pos,
             end_pos,
         )
+    }
+
+    /// Parse JSX opening element, self-closing element, or fragment start
+    fn parse_jsx_opening_or_self_closing_or_fragment(&mut self, _in_expression_context: bool) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::LessThanToken);
+
+        // Check if this is a fragment (<>)
+        if self.is_token(SyntaxKind::GreaterThanToken) {
+            let end_pos = self.token_end();
+            self.next_token(); // consume >
+            return self.arena.add_token(
+                syntax_kind_ext::JSX_OPENING_FRAGMENT as u16,
+                start_pos,
+                end_pos,
+            );
+        }
+
+        // Parse tag name (identifier or member expression)
+        let tag_name = self.parse_jsx_tag_name_expression();
+
+        // Parse attributes
+        let attributes = self.parse_jsx_attributes();
+
+        // Check if self-closing (/>)
+        if self.is_token(SyntaxKind::SlashToken) {
+            self.next_token(); // consume /
+            self.parse_expected(SyntaxKind::GreaterThanToken);
+            let end_pos = self.token_end();
+
+            return self.arena.add_jsx_opening(
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                start_pos,
+                end_pos,
+                crate::parser::thin_node::JsxOpeningData {
+                    tag_name,
+                    type_arguments: None,
+                    attributes,
+                },
+            );
+        }
+
+        // Opening element
+        self.parse_expected(SyntaxKind::GreaterThanToken);
+        let end_pos = self.token_end();
+
+        self.arena.add_jsx_opening(
+            syntax_kind_ext::JSX_OPENING_ELEMENT,
+            start_pos,
+            end_pos,
+            crate::parser::thin_node::JsxOpeningData {
+                tag_name,
+                type_arguments: None,
+                attributes,
+            },
+        )
+    }
+
+    /// Parse JSX tag name (identifier or member expression)
+    fn parse_jsx_tag_name_expression(&mut self) -> NodeIndex {
+        if self.is_token(SyntaxKind::Identifier) {
+            self.parse_identifier()
+        } else {
+            // For simplicity, just return an empty node for now
+            NodeIndex::NONE
+        }
+    }
+
+    /// Parse JSX attributes
+    fn parse_jsx_attributes(&mut self) -> NodeIndex {
+        // For now, just return a placeholder node
+        // In a full implementation, this would parse all attributes into a list
+        while !self.is_token(SyntaxKind::GreaterThanToken)
+            && !self.is_token(SyntaxKind::SlashToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken) {
+
+            if self.is_token(SyntaxKind::Identifier) {
+                // Parse attribute name
+                let _name = self.parse_identifier();
+
+                // Parse optional value
+                if self.is_token(SyntaxKind::EqualsToken) {
+                    self.next_token(); // consume =
+                    if self.is_token(SyntaxKind::StringLiteral) {
+                        self.next_token(); // consume string value
+                    } else if self.is_token(SyntaxKind::OpenBraceToken) {
+                        // JSX expression
+                        self.next_token(); // consume {
+                        self.parse_expression();
+                        self.parse_expected(SyntaxKind::CloseBraceToken);
+                    }
+                }
+            } else {
+                // Skip unexpected token
+                self.next_token();
+            }
+        }
+
+        NodeIndex::NONE
+    }
+
+    /// Parse JSX children
+    fn parse_jsx_children(&mut self) -> crate::parser::NodeList {
+        let mut children = Vec::new();
+
+        while !self.is_token(SyntaxKind::LessThanToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken) {
+
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                // JSX expression
+                self.next_token(); // consume {
+                self.parse_expression();
+                self.parse_expected(SyntaxKind::CloseBraceToken);
+            } else {
+                // JSX text or other content - skip for now
+                self.next_token();
+            }
+        }
+
+        crate::parser::NodeList {
+            nodes: children,
+            pos: 0,
+            end: 0,
+            has_trailing_comma: false,
+        }
+    }
+
+    /// Parse JSX closing element
+    fn parse_jsx_closing_element(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::LessThanToken);
+        self.parse_expected(SyntaxKind::SlashToken);
+
+        // Parse tag name
+        let _tag_name = self.parse_jsx_tag_name_expression();
+
+        self.parse_expected(SyntaxKind::GreaterThanToken);
+        let end_pos = self.token_end();
+
+        self.arena.add_token(
+            syntax_kind_ext::JSX_CLOSING_ELEMENT as u16,
+            start_pos,
+            end_pos,
+        )
+    }
+
+    /// Extract arena and diagnostics from parser state
+    pub fn into_parts(self) -> (ThinNodeArena, Vec<ParseDiagnostic>) {
+        (self.arena, self.parse_diagnostics)
     }
 }
