@@ -17332,6 +17332,11 @@ impl<'a> ThinCheckerState<'a> {
             return false;
         }
 
+        // ERROR types also don't need initialization - these indicate parsing/binding errors
+        if prop_type == TypeId::ERROR {
+            return false;
+        }
+
         // For derived classes, be more strict about definite assignment
         // Properties in derived classes that redeclare base class properties need initialization
         // This catches cases like: class B extends A { property: any; } where A has property
