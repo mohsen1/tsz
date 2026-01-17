@@ -330,9 +330,20 @@ impl ThinParserState {
                 // at a clear statement boundary or EOF (reduces false-positive TS1005 errors)
                 let should_suppress = match kind {
                     SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
-                        // At EOF, clearly the file ended before this closing token
+                        // Special case for CloseParenToken: don't suppress if current token is OpenBraceToken
+                        // This handles cases like "function f( { }" where the { is the function body
+                        // and we should still report the missing )
+                        if kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken) {
+                            false
+                        }
+                        // For CloseParenToken, always emit the error - these are critical syntax errors
+                        // Missing ) is almost always a real syntax error that should be reported
+                        else if kind == SyntaxKind::CloseParenToken {
+                            false
+                        }
+                        // At EOF, for closing braces/brackets, suppress the error (for ASI compatibility)
                         // Don't emit an error - just recover
-                        if self.is_token(SyntaxKind::EndOfFileToken) {
+                        else if self.is_token(SyntaxKind::EndOfFileToken) {
                             true
                         }
                         // If next token starts a statement, the user has clearly moved on
@@ -587,7 +598,9 @@ impl ThinParserState {
             // If we're at a position that naturally ends expressions (closing brace, paren, bracket, EOF),
             // suppress the TS1005 error because we've clearly moved on to the next construct.
             // This was previously only used for TS1109 suppression but is also applicable to TS1005.
-            if self.is_at_expression_end() {
+            //
+            // EXCEPTION: Don't suppress for missing CloseParenToken - this is almost always a real syntax error
+            if self.is_at_expression_end() && token != ")" {
                 return;
             }
 
