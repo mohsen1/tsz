@@ -17169,10 +17169,25 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
             use crate::checker::types::diagnostics::format_message;
+
+            // Use TS2524 if there's a constructor (definite assignment analysis)
+            // Use TS2564 if no constructor (just missing initializer)
+            let (message, code) = if constructor_body.is_some() {
+                (
+                    diagnostic_messages::PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT,
+                    diagnostic_codes::PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT,
+                )
+            } else {
+                (
+                    diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER,
+                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER,
+                )
+            };
+
             self.error_at_node(
                 name_node,
-                &format_message(diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER, &[&name]),
-                diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER,
+                &format_message(message, &[&name]),
+                code,
             );
         }
 
