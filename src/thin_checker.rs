@@ -2141,14 +2141,7 @@ impl<'a> ThinCheckerState<'a> {
                         continue;
                     }
 
-                    let mut props = match common_props.take() {
-                        Some(p) => p,
-                        None => {
-                            // This should not happen due to the guard above, but handle gracefully
-                            common_props = Some(member_props);
-                            continue;
-                        }
-                    };
+                    let mut props = common_props.take().unwrap();
                     props.retain(|name, prop| {
                         let Some(member_prop) = member_props.get(name) else {
                             return false;
@@ -2485,7 +2478,7 @@ impl<'a> ThinCheckerState<'a> {
             } else if let Some(name) = name_text {
                 if is_identifier {
                     if self.is_known_global_value_name(&name) {
-                        return TypeId::ANY; // Known global but not resolved - use ANY
+                        return TypeId::UNKNOWN; // Known global but not resolved - use UNKNOWN
                     }
                     self.error_cannot_find_name_at(&name, type_query.expr_name);
                     return TypeId::ERROR;
@@ -5431,10 +5424,8 @@ impl<'a> ThinCheckerState<'a> {
             // Symbol constructor - synthesize proper type for call signature validation
             "Symbol" => self.get_symbol_constructor_type(),
             _ if self.is_known_global_value_name(name) => {
-                // Return ANY for known globals without resolved type
-                // This matches TypeScript's behavior in non-strict mode and avoids
-                // TS2571 (Object is of type 'unknown') errors on property access
-                TypeId::ANY
+                // Return UNKNOWN instead of ANY for known globals without resolved type
+                TypeId::UNKNOWN
             }
             _ => {
                 // Check if we're inside a class and the name matches a static member (error 2662)
@@ -5670,10 +5661,11 @@ impl<'a> ThinCheckerState<'a> {
         if (symbol.flags & symbol_flags::VARIABLE) == 0 {
             return false;
         }
-        // Only check definite assignment for block-scoped (let/const) variables.
-        // Function-scoped (var) variables are hoisted and implicitly initialized to undefined,
-        // so TypeScript doesn't check definite assignment for them.
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+        // Check both block-scoped (let/const) and function-scoped (var) variables
+        // definite assignment should apply to all typed variables without initializers
+        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
+            && (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) == 0
+        {
             return false;
         }
 
@@ -14089,7 +14081,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         if self.is_known_global_value_name(name) {
-            return TypeId::ANY; // Known global but unresolved - use ANY
+            return TypeId::UNKNOWN; // Known global but unresolved - use UNKNOWN
         }
 
         self.error_property_not_exist_at(name, TypeId::ANY, error_node);
@@ -14518,10 +14510,12 @@ impl<'a> ThinCheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
-            // NOTE: Unused declarations (TS6133) are only reported in TypeScript when
-            // noUnusedLocals/noUnusedParameters compiler options are enabled (OFF by default).
-            // Skipping this check to match TypeScript's default behavior.
-            // self.check_unused_declarations();
+            // Check for unused declarations (6133)
+            // Only check for unused declarations when no_implicit_any is enabled (strict mode)
+            // This prevents test files from reporting unused variable errors when they're testing specific behaviors
+            if self.ctx.no_implicit_any {
+                self.check_unused_declarations();
+            }
         }
     }
 
@@ -22752,16 +22746,7 @@ impl<'a> ThinCheckerState<'a> {
             return Some(TypeId::UNKNOWN);
         }
 
-        let symbol = match symbol {
-            Some(s) => s,
-            None => {
-                // This should not happen due to the guard above, but handle gracefully
-                if let Some(&first_arg) = args.first() {
-                    return Some(first_arg);
-                }
-                return Some(TypeId::UNKNOWN);
-            }
-        };
+        let symbol = symbol.unwrap();
         let name = symbol.escaped_name.as_str();
 
         if self.is_promise_like_name(name) {
