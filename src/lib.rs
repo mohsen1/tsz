@@ -1168,8 +1168,12 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let binder = self.binder.as_ref().ok_or_else(|| {
+            JsValue::from_str("Internal error: binder not available")
+        })?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| {
+            JsValue::from_str("Internal error: line map not available")
+        })?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1958,10 +1962,10 @@ pub fn normalize_slashes(path: &str) -> String {
 /// Determines whether a path has a trailing separator (`/` or `\\`).
 #[wasm_bindgen(js_name = hasTrailingDirectorySeparator)]
 pub fn has_trailing_directory_separator(path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    let last_char = path.chars().last().unwrap();
+    let last_char = match path.chars().last() {
+        Some(c) => c,
+        None => return false,
+    };
     last_char == DIRECTORY_SEPARATOR || last_char == ALT_DIRECTORY_SEPARATOR
 }
 

@@ -2844,8 +2844,16 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        while digits.len() > 1 && *digits.last().unwrap() == 0 {
-            digits.pop();
+        while digits.len() > 1 {
+            if let Some(&last) = digits.last() {
+                if last == 0 {
+                    digits.pop();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
 
         let mut out = String::with_capacity(digits.len());
