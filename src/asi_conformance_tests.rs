@@ -5,6 +5,7 @@
 
 use crate::checker::types::diagnostics::diagnostic_codes;
 use crate::thin_parser::ThinParserState;
+use crate::scanner::SyntaxKind;
 
 /// Test that throw with line break reports TS1109
 #[test]
@@ -213,7 +214,9 @@ fn test_asi_ts1005_token_expected_patterns() {
         let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
         parser.parse_source_file();
 
-        let has_errors = !parser.get_diagnostics().is_empty();
+        let diagnostics = parser.get_diagnostics();
+        let has_errors = !diagnostics.is_empty();
+
 
         if *should_have_errors && !has_errors {
             panic!("Test case {} ({}) expected errors but got none", i, description);
