@@ -14894,140 +14894,15 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Skip symbols that look like they might be used by external tools or in computed properties
-            // Common patterns: test globals, Symbol polyfills, computed property variables
-            let name_str = &symbol.escaped_name;
-
-            // Special handling for TypeScript conformance test files - they use many dynamic patterns
-            // that our static analysis doesn't detect (computed properties, Symbol access, etc.)
-            let is_test_file = self.ctx.file_name.contains("conformance")
-                || self.ctx.file_name.contains("test")
-                || self.ctx.file_name.contains("cases");
-
-            // Special case: completely suppress TS6133 for known problematic Symbol test files
-            // These files use dynamic Symbol access patterns that static analysis can't detect
-            if is_test_file && (
-                self.ctx.file_name.contains("Symbol")
-                || self.ctx.file_name.contains("ES5Symbol")
-                || self.ctx.file_name.contains("SymbolProperty")
-                || self.ctx.file_name.contains("symbolProperty")
-                || self.ctx.file_name.contains("Symbols/")
-                || (name_str.contains("Symbol") && self.ctx.file_name.contains("conformance"))
-            ) {
-                continue;
-            }
-
-            // Also suppress for async test files with complex arrow function contexts
-            // These often have legitimate computed property usage not detected by static analysis
-            if is_test_file && (
-                self.ctx.file_name.contains("asyncArrow")
-                || (self.ctx.file_name.contains("async") && name_str.contains("obj"))
-                || (self.ctx.file_name.contains("async") && name_str == "a")
-            ) {
-                continue;
-            }
-
-            // Suppress for ambient declaration files - these often have complex patterns
-            // that static analysis can't track (module merging, global augmentation, etc.)
-            if is_test_file && (
-                self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module")
-            ) {
-                continue;
-            }
-
-            // Enhanced detection for ambient declarations
-            // These files contain declare statements which create type-only bindings
-            // Variables in ambient declarations are often not "used" in the traditional sense
-            let is_ambient_file = self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module");
-
-            if is_ambient_file {
-                // In ambient files, be very lenient with unused variable warnings
-                // These files often contain type-only declarations and complex module patterns
-                if name_str.len() <= 3  // Short names like n, m, x, y, q, fn
-                    || name_str == "cls" || name_str == "fn1" || name_str == "fn2" // Common function names
-                    || name_str.starts_with("fn") || name_str.starts_with("E") // fn1-10, E1-3
-                    || name_str == "M1" || name_str == "Symbol" // Namespace/global names
-                    || name_str.chars().all(|c| c.is_uppercase()) // Constants like A, B, C
-                {
-                    continue;
-                }
-            }
-
-            // Also check if this variable is declared in an ambient context
+            // Check if this variable is declared in an ambient context
             // Use the symbol's first declaration node if available
             if !symbol.declarations.is_empty() && self.is_ambient_declaration(symbol.declarations[0]) {
-                continue;
-            }
-
-            // In test files, be much more lenient with unused variable warnings
-            if is_test_file && (
-                name_str.len() <= 2  // Very short names are likely used dynamically in tests
-                || name_str.chars().all(|c| c.is_uppercase())  // ALL_CAPS constants
-                || name_str.chars().next().map_or(false, |c| c.is_uppercase())  // PascalCase (types/classes)
-            ) {
-                continue;
-            }
-
-            // Comprehensive skip patterns for Symbol-related test variables
-            // Key insight: Symbol variables are used in computed properties like [Symbol.iterator]
-            // and property access like obj[Symbol.foo] which our dependency analysis doesn't track properly
-            if name_str == "Symbol"
-                || name_str == "obj"
-                || name_str == "symb"
-                || name_str == "iterator"
-                || name_str == "M"  // Common namespace variable in tests
-                || name_str == "foo" || name_str == "bar" || name_str == "baz"  // Used in Symbol.foo patterns
-                || name_str.starts_with("Symbol")
-                || (name_str.contains("Symbol") && name_str.contains("property"))
-                || name_str.ends_with("Symbol")  // catchSymbol, testSymbol, etc.
-                || name_str.ends_with("Constructor")  // SymbolConstructor interfaces
-                || name_str == "n" || name_str == "m"  // Very common in ambient declaration tests
-                || name_str == "s" || name_str == "t" // Often used in symbol/type tests
-                || (name_str.len() <= 3 && is_test_file) // Very short names in test contexts
-            {
-                continue;
-            }
-
-            // Additional Symbol-specific suppression for ES5 Symbol polyfill patterns
-            // In ES5SymbolProperty tests, `Symbol` is redefined and used in computed properties
-            if is_test_file && (
-                self.ctx.file_name.contains("ES5Symbol")
-                || self.ctx.file_name.contains("SymbolProperty")
-                || (self.ctx.file_name.contains("Symbol") && name_str == "Symbol")
-                || (name_str == "Symbol" && self.ctx.file_name.contains("ES5"))
-            ) {
-                continue;
-            }
-
-            // Skip short test variables that are likely used in computed properties
-            // Many TS conformance tests use short names that are referenced dynamically
-            if name_str.len() <= 6 && (name_str == "Op" || name_str == "Po") {
-                continue;
-            }
-
-            // Skip variables commonly used in async/generator tests that have dynamic references
-            // Also skip single-letter variables often used in computed properties and dynamic access
-            if name_str == "f" || name_str == "g" || name_str == "C" || name_str == "P"
-                || name_str == "T" || name_str == "U" || name_str == "V" || name_str == "x" || name_str == "y"
-                || name_str.starts_with("Test") || name_str.starts_with("Foo")
-                || name_str.starts_with("Class") || name_str.starts_with("Enum")
-                || name_str == "a" || name_str == "b" || name_str == "c"  // Often used in Symbol tests
-                || name_str == "i" || name_str == "j" || name_str == "k"  // Loop counters used dynamically
-                || name_str == "e" || name_str == "fn"  // Common parameter/function names in tests
-            {
                 continue;
             }
 
             // Skip module/namespace variables that are often accessed dynamically
             if (symbol.flags & symbol_flags::MODULE) != 0
                 || (symbol.flags & symbol_flags::NAMESPACE) != 0
-                || name_str.len() == 1  // Single letter variables are often used in computed contexts
             {
                 continue;
             }
@@ -19075,23 +18950,8 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
-
-        // Always validate in declaration files (.d.ts files are always strict)
-        if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
-            return true;
-        }
+        // Enhanced validation to catch more TS2705 cases
+        // Use proper AST analysis instead of file name heuristics
 
         // Validate class methods - class methods are typically strict
         if self.is_class_method(func_idx) {
@@ -19106,12 +18966,6 @@ impl<'a> ThinCheckerState<'a> {
         // Validate async functions in strict property initialization contexts
         // If we're doing strict property checking, likely need strict async too
         if self.ctx.strict_property_initialization {
-            return true;
-        }
-
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
             return true;
         }
 
@@ -24412,41 +24266,108 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
+    /// Also checks for interface methods and object literal methods based on AST structure
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        // Traverse parent chain to see if we're inside a class/interface/object literal
+        let mut current = func_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if this is a method declaration (class method)
+                if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    return true;
+                }
 
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+                // Check if this is a method signature (interface method)
+                if node.kind == syntax_kind_ext::METHOD_SIGNATURE {
+                    return true;
+                }
+
+                // Check if this is a property assignment in an object literal
+                // (function expression assigned to a property)
+                if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    return true;
+                }
+
+                // Check if parent is a class declaration or expression
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return true;
+                }
+
+                // Check if parent is an interface declaration
+                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                    return true;
+                }
+
+                // Check if parent is an object literal expression
+                if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    return true;
+                }
+
+                // Get parent from extended info
+                if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    current = ext.parent;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     /// Check if a function is within a namespace or module context
-    fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect namespace/module context
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain.
-
-        self.ctx.file_name.contains("namespace") ||
-        self.ctx.file_name.contains("module") ||
-        self.ctx.file_name.contains("Module") ||
-        self.ctx.file_name.contains("Namespace")
+    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+        // Traverse parent chain to see if we're inside a namespace/module
+        let mut current = func_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if this is inside a module declaration or module block
+                if node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    || node.kind == syntax_kind_ext::MODULE_BLOCK
+                {
+                    return true;
+                }
+                // Get parent from extended info
+                if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    current = ext.parent;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        // Check the node flags and modifiers for ambient context
+        use crate::parser::modifier_flags;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        let mut current = var_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if node has AMBIENT flag (note: ThinNode.flags is u16)
+                // AMBIENT flag value is 33554432 (0x02000000), which doesn't fit in u16
+                // So we need to check the extended info's modifier_flags instead
+
+                if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    // Check if node has AMBIENT modifier flag
+                    if (ext.modifier_flags & modifier_flags::AMBIENT) != 0 {
+                        return true;
+                    }
+                    current = ext.parent;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        false
     }
 }
