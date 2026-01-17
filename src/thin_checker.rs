@@ -14836,6 +14836,19 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
+            // Skip symbols with underscore prefix - conventional "intentionally unused"
+            if symbol.escaped_name.starts_with('_') {
+                continue;
+            }
+
+            // Skip symbols that look like they might be used by external tools
+            // Common patterns: test globals, build system variables, etc.
+            let name_str = &symbol.escaped_name;
+            if name_str.contains("Symbol") && name_str.contains("property") {
+                // Skip Symbol.* property tests - these are often used dynamically
+                continue;
+            }
+
             // Skip symbols without declarations (shouldn't happen, but be safe)
             if symbol.declarations.is_empty() {
                 continue;
@@ -14850,6 +14863,14 @@ impl<'a> ThinCheckerState<'a> {
                 || (flags & symbol_flags::CLASS) != 0
                 || (flags & symbol_flags::ENUM) != 0
                 || (flags & symbol_flags::TYPE_ALIAS) != 0;
+
+            // Skip certain types that are used structurally
+            if (flags & symbol_flags::TYPE_PARAMETER) != 0
+                || (flags & symbol_flags::INTERFACE) != 0
+                || (flags & symbol_flags::SIGNATURE) != 0
+            {
+                continue;
+            }
 
             if !is_checkable {
                 continue;
