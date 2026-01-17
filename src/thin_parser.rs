@@ -8639,6 +8639,16 @@ impl ThinParserState {
         }
 
         // Parse the callee expression - member access without call (we handle call ourselves)
+        // Special check for missing identifier: new () should emit TS1109
+        if self.is_token(SyntaxKind::OpenParenToken) {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Expression expected",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            // Continue parsing as if there was an identifier
+        }
+
         let expression = self.parse_member_expression_base();
         let mut end_pos = self
             .arena
