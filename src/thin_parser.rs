@@ -5580,6 +5580,18 @@ impl ThinParserState {
         let expression = if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
         } else {
+            // ASI applies - but check if there's an expression on the next line that
+            // the developer might have intended to return (emit TS1109 warning)
+            if self.scanner.has_preceding_line_break() && self.is_expression_start() {
+                // There's a line break after return AND the next token can start an expression
+                // This suggests the developer might have accidentally inserted a line break
+                // Emit TS1109 "Expression expected" to warn them
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Expression expected",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
             NodeIndex::NONE
         };
 
@@ -6891,9 +6903,20 @@ impl ThinParserState {
                 self.next_token();
 
                 // Check for missing operand (e.g., just "await" with nothing after it)
-                if self.can_parse_semicolon() || self.is_token(SyntaxKind::SemicolonToken) {
+                // Also handle cases like { [await]: foo } where : follows await
+                if self.can_parse_semicolon()
+                    || self.is_token(SyntaxKind::SemicolonToken) {
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.error_expression_expected();
+                } else if self.is_token(SyntaxKind::ColonToken)
+                    || self.is_token(SyntaxKind::CloseBracketToken) {
+                    // Special case for computed properties: { [await]: foo }
+                    // Emit TS1109 directly without global suppression logic
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Expression expected",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
                 }
 
                 let expression = self.parse_unary_expression();
@@ -6928,6 +6951,17 @@ impl ThinParserState {
                 {
                     self.parse_assignment_expression()
                 } else {
+                    // Check for line break + expression pattern (emit TS1109 warning)
+                    if self.scanner.has_preceding_line_break() && self.is_expression_start() {
+                        // There's a line break after yield AND the next token can start an expression
+                        // This suggests the developer might have accidentally inserted a line break
+                        // Emit TS1109 "Expression expected" to warn them
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Expression expected",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                    }
                     NodeIndex::NONE
                 };
 
