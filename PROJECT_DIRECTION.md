@@ -73,90 +73,16 @@ wasm-pack build --target web --out-dir pkg
 
 ---
 
-## Priority Issues
-Issues
+## Priority List
+- [ ] Make sure all code in source that is doing trailer made work to satisfy the test is removed. Source should not have any awareness of test 
+- [ ] Improve testing infrastructure to configure the environment before dunking the tests based on @ directives 
+- [ ] Before diving into more parser and checker enhancement lets review the code and make sure architecture is solid 
+- [ ] We should be able to use ts-tests directory how the original typescript repo use their tests to ensure parser and checker is working correctly. Testing infrastructure should be solid 
+- [ ] Study test results and write a new plan of attack for getting to 100% tsc compatibility 
+- [ ] Update agents.md to enforce good practices as mentioned above 
+- [ ] Work on getting to 100%
 
 
-
-
-
-### Tier 0: Quality & Stability Foundations
-
-**Goal:** Fix cross-cutting gaps that block correctness across all tiers.
-
-| Issue | Description |
-|-------|-------------|
-| Application type expansion | `TypeKey::Application` is not expanded, leading to incorrect diagnostics/assignability |
-| Readonly types | `readonly` arrays/tuples are currently treated as mutable |
-| AST child enumeration | `get_children` returns empty in parser arenas, breaking traversal-based features |
-| Solver test coverage | `infer/subtype/evaluate` tests are commented out due to API drift |
-| Panic hardening | Non-test paths still `panic!/unwrap` instead of recovering or re-parsing |
-| Definite assignment gaps | TS2565 not implemented; interface type parameters TODO |
-
-**Key Files:** `src/solver/evaluate.rs`, `src/solver/intern.rs`, `src/parser/arena.rs`, `src/parser/thin_node.rs`, `src/solver/subtype.rs`, `src/solver/infer.rs`, `src/cli/driver.rs`, `src/interner.rs`, `src/thin_checker.rs`
-
-### Tier 1: Parser Accuracy
-
-**Goal:** Parser should accept all valid TypeScript syntax without emitting false errors.
-
-| Issue | Description |
-|-------|-------------|
-| TS1109 extra | Parser emits "Expression expected" for valid syntax |
-| TS1005 extra | Parser emits "X expected" for valid constructs |
-| ASI handling | Automatic semicolon insertion edge cases |
-
-**Key Files:** `src/thin_parser.rs`
-
-### Tier 2: Type Checker Accuracy
-
-**Goal:** Checker should emit the same semantic errors as TSC.
-
-| Issue | Description |
-|-------|-------------|
-| TS2571 extra | "Object is of type 'unknown'" over-reported |
-| TS2683 missing | "'this' implicitly has type 'any'" not emitted |
-| TS2507 incomplete | Non-constructor extends not fully checked |
-| TS2348 extra | "Cannot invoke expression" over-reported |
-| TS2322 accuracy | Type assignability false positives |
-
-**Key Files:** `src/thin_checker.rs`, `src/solver/`
-
-### Tier 3: Symbol Resolution
-
-**Goal:** All symbols should resolve correctly, including globals and modules.
-
-| Issue | Description |
-|-------|-------------|
-| TS2304 gaps | "Cannot find name" for valid symbols |
-| TS2524 missing | Module member resolution failures |
-| Global merging | Interface/namespace merging across files |
-
-**Key Files:** `src/binder/`, `src/thin_checker.rs`
-
-### Tier 4: Implicit Any Checks
-
-**Goal:** Emit TS7006/TS7008 only when type cannot be inferred.
-
-| Issue | Description |
-|-------|-------------|
-| TS7006 extra | Parameter implicit any over-reported |
-| TS7005 extra | Variable implicit any over-reported |
-
-**Key Files:** `src/thin_checker.rs`
-
-### Tier 5: Async/Await
-
-**Goal:** Correct handling of async functions, generators, and await expressions.
-
-| Issue | Description |
-|-------|-------------|
-| TS2705 gaps | Async function return type checking |
-| TS1359 missing | 'await' reserved word detection |
-| Async generators | `AsyncGenerator` vs `Promise` return types |
-
-**Key Files:** `src/thin_checker.rs`
-
----
 
 ## File Reference
 
