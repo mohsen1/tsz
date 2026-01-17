@@ -590,7 +590,9 @@ impl ThinParserState {
             // Check if we can recover from this error
             // If we're at a position where parsing can reasonably continue, suppress the error
             // This reduces false-positive TS1005 errors in complex expressions
-            if self.can_recover_from_error() {
+            //
+            // EXCEPTION: Don't suppress for missing CloseParenToken - this is almost always a real syntax error
+            if self.can_recover_from_error() && token != ")" {
                 return;
             }
 
