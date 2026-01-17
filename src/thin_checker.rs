@@ -19132,7 +19132,7 @@ impl<'a> ThinCheckerState<'a> {
                         let receiver_class_idx =
                             self.resolve_receiver_class_for_access(object_expr, object_type);
                         receiver_class_idx
-                            .map(|receiver| self.is_class_derived_from(receiver, current_class_idx))
+                            .map(|receiver| receiver == current_class_idx || self.is_class_derived_from(receiver, current_class_idx))
                             .unwrap_or(false)
                     }
                 }
