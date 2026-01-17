@@ -261,13 +261,6 @@ impl NodeAccess for NodeArena {
             Node::Block(block) => {
                 add_list(&mut children, &block.statements);
             }
-            Node::FunctionDeclaration(func) => {
-                add_opt(&mut children, func.name);
-                add_opt_list(&mut children, &func.type_parameters);
-                add_list(&mut children, &func.parameters);
-                add_opt(&mut children, func.type_annotation);
-                add_opt(&mut children, func.body);
-            }
             Node::ReturnStatement(stmt) => {
                 add_opt(&mut children, stmt.expression);
             }
@@ -282,6 +275,64 @@ impl NodeAccess for NodeArena {
             Node::CatchClause(clause) => {
                 add_opt(&mut children, clause.variable_declaration);
                 add_opt(&mut children, clause.block);
+            }
+            // Declaration node types
+            Node::FunctionDeclaration(func) => {
+                add_opt_list(&mut children, &func.modifiers);
+                add_opt(&mut children, func.name);
+                add_opt_list(&mut children, &func.type_parameters);
+                add_list(&mut children, &func.parameters);
+                add_opt(&mut children, func.type_annotation);
+                add_opt(&mut children, func.body);
+            }
+            Node::ClassDeclaration(class) => {
+                add_opt_list(&mut children, &class.modifiers);
+                add_opt(&mut children, class.name);
+                add_opt_list(&mut children, &class.type_parameters);
+                add_opt_list(&mut children, &class.heritage_clauses);
+                add_list(&mut children, &class.members);
+            }
+            Node::InterfaceDeclaration(interface) => {
+                add_opt_list(&mut children, &interface.modifiers);
+                add_opt(&mut children, interface.name);
+                add_opt_list(&mut children, &interface.type_parameters);
+                add_opt_list(&mut children, &interface.heritage_clauses);
+                add_list(&mut children, &interface.members);
+            }
+            Node::TypeAliasDeclaration(alias) => {
+                add_opt_list(&mut children, &alias.modifiers);
+                add_opt(&mut children, alias.name);
+                add_opt_list(&mut children, &alias.type_parameters);
+                add_opt(&mut children, alias.type_node);
+            }
+            Node::PropertyDeclaration(prop) => {
+                add_opt_list(&mut children, &prop.modifiers);
+                add_opt(&mut children, prop.name);
+                add_opt(&mut children, prop.type_annotation);
+                add_opt(&mut children, prop.initializer);
+            }
+            Node::MethodDeclaration(method) => {
+                add_opt_list(&mut children, &method.modifiers);
+                add_opt(&mut children, method.name);
+                add_opt_list(&mut children, &method.type_parameters);
+                add_list(&mut children, &method.parameters);
+                add_opt(&mut children, method.type_annotation);
+                add_opt(&mut children, method.body);
+            }
+            Node::ConstructorDeclaration(ctor) => {
+                add_opt_list(&mut children, &ctor.modifiers);
+                add_list(&mut children, &ctor.parameters);
+                add_opt(&mut children, ctor.body);
+            }
+            Node::EnumDeclaration(enum_decl) => {
+                add_opt_list(&mut children, &enum_decl.modifiers);
+                add_opt(&mut children, enum_decl.name);
+                add_list(&mut children, &enum_decl.members);
+            }
+            Node::ModuleDeclaration(module) => {
+                add_opt_list(&mut children, &module.modifiers);
+                add_opt(&mut children, module.name);
+                add_opt(&mut children, module.body);
             }
             // Tokens and simple nodes typically have no children
             Node::Token(_) |

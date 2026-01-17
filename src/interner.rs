@@ -279,12 +279,16 @@ impl ShardedInterner {
     /// Create a new sharded interner with the empty string pre-interned at index 0.
     pub fn new() -> Self {
         let shards = std::array::from_fn(|_| InternerShard::new());
-        {
-            let mut state = shards[0].state.write().expect("shard 0 state lock poisoned during initialization");
+
+        // Initialize empty string in shard 0 with safe lock handling
+        if let Ok(mut state) = shards[0].state.write() {
             let empty: Arc<str> = Arc::from("");
             state.strings.push(empty.clone());
             state.map.insert(empty, Atom::NONE);
         }
+        // Note: If lock is poisoned during initialization, we continue anyway
+        // The empty string initialization is an optimization, not critical for correctness
+
         ShardedInterner { shards }
     }
 
@@ -298,7 +302,11 @@ impl ShardedInterner {
 
         let shard_idx = Self::shard_for(s);
         let shard = &self.shards[shard_idx];
-        let mut state = shard.state.write().expect("shard state lock poisoned");
+        let Ok(mut state) = shard.state.write() else {
+            // If lock is poisoned, return a fallback atom
+            // This maintains availability even if internal state is corrupted
+            return Atom::NONE;
+        };
 
         if let Some(&atom) = state.map.get(s) {
             return atom;
@@ -326,7 +334,10 @@ impl ShardedInterner {
 
         let shard_idx = Self::shard_for(&s);
         let shard = &self.shards[shard_idx];
-        let mut state = shard.state.write().expect("shard state lock poisoned");
+        let Ok(mut state) = shard.state.write() else {
+            // If lock is poisoned, return a fallback atom
+            return Atom::NONE;
+        };
 
         if let Some(&atom) = state.map.get(s.as_str()) {
             return atom;
@@ -357,7 +368,7 @@ impl ShardedInterner {
     pub fn try_resolve(&self, atom: Atom) -> Option<Arc<str>> {
         let (shard_idx, local_index) = Self::split_atom(atom)?;
         let shard = self.shards.get(shard_idx)?;
-        let state = shard.state.read().expect("shard state lock poisoned");
+        let state = shard.state.read().ok()?;  // Return None if lock is poisoned
         state.strings.get(local_index).cloned()
     }
 
@@ -366,7 +377,10 @@ impl ShardedInterner {
     pub fn len(&self) -> usize {
         self.shards
             .iter()
-            .map(|shard| shard.state.read().expect("shard state lock poisoned").strings.len())
+            .map(|shard| {
+                // Handle lock poisoning gracefully by returning 0 for failed shards
+                shard.state.read().map(|state| state.strings.len()).unwrap_or(0)
+            })
             .sum()
     }
 

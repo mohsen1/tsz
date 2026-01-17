@@ -104,10 +104,30 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
                         // Direct array access - return the element type
                         return element_type;
                     }
-                    crate::solver::TypeKey::Tuple(_tuple_list_id) => {
-                        // Tuple access - for now, return ANY as this is complex
-                        // TODO: Implement proper tuple element access with index checking
-                        return TypeId::ANY;
+                    crate::solver::TypeKey::Tuple(tuple_list_id) => {
+                        // Proper tuple element access with index checking
+                        let index_type = self.check(access_data.name_or_argument);
+                        if let Some(crate::solver::TypeKey::Literal(literal_value)) =
+                            self.ctx.types.lookup(index_type) {
+                            if let crate::solver::LiteralValue::Number(num) = literal_value {
+                                // Check if the numeric index is valid for this tuple
+                                let index = num.0 as usize;
+                                let tuple_list = self.ctx.types.tuple_list(tuple_list_id);
+                                if index < tuple_list.len() {
+                                    // Return the specific element type
+                                    return tuple_list[index].type_id;
+                                }
+                                // Index out of bounds - in TypeScript this is undefined
+                                return TypeId::UNDEFINED;
+                            }
+                        }
+                        // For non-literal indices or invalid cases, return union of all tuple elements
+                        let tuple_list = self.ctx.types.tuple_list(tuple_list_id);
+                        if tuple_list.is_empty() {
+                            return TypeId::NEVER;
+                        }
+                        let element_types: Vec<TypeId> = tuple_list.iter().map(|elem| elem.type_id).collect();
+                        return self.ctx.types.union(element_types);
                     }
                     _ => {
                         // Not an array or tuple - fall through to default behavior
