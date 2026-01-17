@@ -367,7 +367,8 @@ impl ThinParser {
 
         if let (Some(root_idx), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            let strict = false; // Default to non-strict; directives in source can enable specific checks
+            // Default to non-strict; directives in source can enable specific checks
+            let compiler_options = crate::cli::config::CheckerOptions::default();
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache(
                     self.parser.get_arena(),
@@ -375,7 +376,7 @@ impl ThinParser {
                     &self.type_interner,
                     file_name,
                     cache,
-                    strict,
+                    compiler_options,
                 )
             } else {
                 ThinCheckerState::new(
@@ -383,7 +384,7 @@ impl ThinParser {
                     binder,
                     &self.type_interner,
                     file_name,
-                    strict,
+                    compiler_options,
                 )
             };
 
@@ -436,7 +437,8 @@ impl ThinParser {
     pub fn get_type_of_node(&mut self, node_idx: u32) -> String {
         if let (Some(_), Some(binder)) = (self.source_file_idx, &self.binder) {
             let file_name = self.parser.get_file_name().to_string();
-            let strict = false; // Default to non-strict; directives in source can enable specific checks
+            // Default to non-strict; directives in source can enable specific checks
+            let compiler_options = crate::cli::config::CheckerOptions::default();
             let mut checker = if let Some(cache) = self.type_cache.take() {
                 ThinCheckerState::with_cache(
                     self.parser.get_arena(),
@@ -444,7 +446,7 @@ impl ThinParser {
                     &self.type_interner,
                     file_name,
                     cache,
-                    strict,
+                    compiler_options,
                 )
             } else {
                 ThinCheckerState::new(
@@ -452,7 +454,7 @@ impl ThinParser {
                     binder,
                     &self.type_interner,
                     file_name,
-                    strict,
+                    compiler_options,
                 )
             };
 
@@ -1347,7 +1349,8 @@ impl ThinParser {
         let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
-        let strict = false; // Default to non-strict; directives in source can enable specific checks
+        // Default to non-strict; directives in source can enable specific checks
+        let compiler_options = crate::cli::config::CheckerOptions::default();
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
             ThinCheckerState::with_cache(
@@ -1356,7 +1359,7 @@ impl ThinParser {
                 &self.type_interner,
                 file_name.clone(),
                 cache,
-                strict,
+                compiler_options,
             )
         } else {
             ThinCheckerState::new(
@@ -1364,7 +1367,7 @@ impl ThinParser {
                 binder,
                 &self.type_interner,
                 file_name.clone(),
-                strict,
+                compiler_options,
             )
         };
 
