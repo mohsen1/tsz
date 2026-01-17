@@ -15010,6 +15010,19 @@ impl<'a> ThinCheckerState<'a> {
                 || (flags & symbol_flags::ENUM) != 0
                 || (flags & symbol_flags::TYPE_ALIAS) != 0;
 
+            // Skip ambient declarations - they are type-only and don't need to be "used"
+            let is_ambient = symbol.declarations.iter().any(|&decl_idx| {
+                if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                    (decl_node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
+                } else {
+                    false
+                }
+            });
+
+            if is_ambient {
+                continue;
+            }
+
             // Skip certain types that are used structurally
             if (flags & symbol_flags::TYPE_PARAMETER) != 0
                 || (flags & symbol_flags::INTERFACE) != 0

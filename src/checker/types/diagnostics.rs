@@ -317,6 +317,7 @@ pub mod diagnostic_codes {
     pub const SUPER_ONLY_IN_DERIVED_CLASS: u32 = 2335;
     pub const THIS_CANNOT_BE_REFERENCED: u32 = 2332;
     pub const THIS_IMPLICITLY_HAS_TYPE_ANY: u32 = 2683; // 'this' implicitly has type 'any' because it does not have a type annotation.
+    pub const PROPERTY_HAS_NO_INITIALIZER_AND_NOT_DEFINITELY_ASSIGNED: u32 = 2524;
     pub const PROPERTY_HAS_NO_INITIALIZER: u32 = 2564;
     pub const PROPERTY_USED_BEFORE_BEING_ASSIGNED: u32 = 2565;
     pub const ABSTRACT_PROPERTY_IN_NON_ABSTRACT_CLASS: u32 = 2515;
