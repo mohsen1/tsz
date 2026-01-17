@@ -975,9 +975,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1005,9 +1005,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1035,9 +1035,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
 
@@ -1067,9 +1067,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
 
@@ -1103,9 +1103,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
 
@@ -1135,8 +1135,8 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
 
         let provider = DocumentSymbolProvider::new(self.parser.get_arena(), line_map, source_text);
@@ -1151,9 +1151,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let source_text = self.parser.get_source_text();
 
         let mut provider =
@@ -1197,9 +1197,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1236,9 +1236,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1303,9 +1303,9 @@ impl ThinParser {
                 .collect::<Result<Vec<_>, _>>()?
         };
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
 
@@ -1338,9 +1338,9 @@ impl ThinParser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let root = self.source_file_idx.unwrap();
-        let binder = self.binder.as_ref().unwrap();
-        let line_map = self.line_map.as_ref().unwrap();
+        let root = self.source_file_idx.ok_or_else(|| JsValue::from_str("Source file not available"))?;
+        let binder = self.binder.as_ref().ok_or_else(|| JsValue::from_str("Binder not available"))?;
+        let line_map = self.line_map.as_ref().ok_or_else(|| JsValue::from_str("Line map not available"))?;
         let file_name = self.parser.get_file_name().to_string();
         let source_text = self.parser.get_source_text();
         let strict = true; // Enable strict mode for conformance with tsc
