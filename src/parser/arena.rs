@@ -1,6 +1,6 @@
 //! Node arena for AST storage.
 
-use super::ast::{Node, NodeIndex, NodeList};
+use super::ast::{Node, NodeIndex};
 use super::thin_node::{NodeAccess, NodeInfo};
 use serde::Serialize;
 
@@ -116,12 +116,14 @@ impl NodeAccess for NodeArena {
     }
 
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex> {
+        if index.is_none() {
+            return Vec::new();
+        }
+
         let node = match self.get(index) {
             Some(n) => n,
             None => return Vec::new(),
         };
-
-        let mut children = Vec::new();
 
         // Helper to add optional NodeIndex (ignoring NONE)
         let add_opt = |children: &mut Vec<NodeIndex>, idx: NodeIndex| {
@@ -131,20 +133,21 @@ impl NodeAccess for NodeArena {
         };
 
         // Helper to add NodeList (expanding to individual nodes)
-        let add_list = |children: &mut Vec<NodeIndex>, list: &NodeList| {
+        let add_list = |children: &mut Vec<NodeIndex>, list: &super::ast::NodeList| {
             children.extend(list.nodes.iter().copied());
         };
 
         // Helper to add optional NodeList
-        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<NodeList>| {
+        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<super::ast::NodeList>| {
             if let Some(l) = list {
                 children.extend(l.nodes.iter().copied());
             }
         };
 
-        // Match on each node variant to extract its children
+        let mut children = Vec::new();
+
+        // Match on node variants and extract child NodeIndex fields
         match node {
-            // Names
             Node::QualifiedName { left, right, .. } => {
                 add_opt(&mut children, *left);
                 add_opt(&mut children, *right);
@@ -152,8 +155,6 @@ impl NodeAccess for NodeArena {
             Node::ComputedPropertyName { expression, .. } => {
                 add_opt(&mut children, *expression);
             }
-
-            // Expressions
             Node::BinaryExpression(expr) => {
                 add_opt(&mut children, expr.left);
                 add_opt(&mut children, expr.right);
@@ -188,14 +189,12 @@ impl NodeAccess for NodeArena {
                 add_opt(&mut children, expr.when_false);
             }
             Node::ArrowFunction(func) => {
-                add_opt_list(&mut children, &func.modifiers);
                 add_opt_list(&mut children, &func.type_parameters);
                 add_list(&mut children, &func.parameters);
                 add_opt(&mut children, func.type_annotation);
                 add_opt(&mut children, func.body);
             }
             Node::FunctionExpression(func) => {
-                add_opt_list(&mut children, &func.modifiers);
                 add_opt(&mut children, func.name);
                 add_opt_list(&mut children, &func.type_parameters);
                 add_list(&mut children, &func.parameters);
@@ -210,15 +209,6 @@ impl NodeAccess for NodeArena {
             }
             Node::ParenthesizedExpression(expr) => {
                 add_opt(&mut children, expr.expression);
-            }
-            Node::YieldExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-            }
-            Node::AwaitExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-            }
-            Node::SpreadElement(elem) => {
-                add_opt(&mut children, elem.expression);
             }
             Node::AsExpression(expr) => {
                 add_opt(&mut children, expr.expression);
@@ -235,10 +225,7 @@ impl NodeAccess for NodeArena {
                 add_opt(&mut children, expr.type_node);
                 add_opt(&mut children, expr.expression);
             }
-
-            // Statements
             Node::VariableStatement(stmt) => {
-                add_opt_list(&mut children, &stmt.modifiers);
                 add_opt(&mut children, stmt.declaration_list);
             }
             Node::VariableDeclarationList(list) => {
@@ -271,29 +258,15 @@ impl NodeAccess for NodeArena {
                 add_opt(&mut children, stmt.incrementor);
                 add_opt(&mut children, stmt.statement);
             }
-            Node::ForInStatement(stmt) => {
-                add_opt(&mut children, stmt.initializer);
-                add_opt(&mut children, stmt.expression);
-                add_opt(&mut children, stmt.statement);
+            Node::Block(block) => {
+                add_list(&mut children, &block.statements);
             }
-            Node::ForOfStatement(stmt) => {
-                add_opt(&mut children, stmt.initializer);
-                add_opt(&mut children, stmt.expression);
-                add_opt(&mut children, stmt.statement);
-            }
-            Node::SwitchStatement(stmt) => {
-                add_opt(&mut children, stmt.expression);
-                add_opt(&mut children, stmt.case_block);
-            }
-            Node::CaseBlock(block) => {
-                add_list(&mut children, &block.clauses);
-            }
-            Node::CaseClause(clause) => {
-                add_opt(&mut children, clause.expression);
-                add_list(&mut children, &clause.statements);
-            }
-            Node::DefaultClause(clause) => {
-                add_list(&mut children, &clause.statements);
+            Node::FunctionDeclaration(func) => {
+                add_opt(&mut children, func.name);
+                add_opt_list(&mut children, &func.type_parameters);
+                add_list(&mut children, &func.parameters);
+                add_opt(&mut children, func.type_annotation);
+                add_opt(&mut children, func.body);
             }
             Node::ReturnStatement(stmt) => {
                 add_opt(&mut children, stmt.expression);
@@ -310,86 +283,28 @@ impl NodeAccess for NodeArena {
                 add_opt(&mut children, clause.variable_declaration);
                 add_opt(&mut children, clause.block);
             }
-            Node::LabeledStatement(stmt) => {
-                add_opt(&mut children, stmt.label);
-                add_opt(&mut children, stmt.statement);
+            // Tokens and simple nodes typically have no children
+            Node::Token(_) |
+            Node::Identifier(_) |
+            Node::PrivateIdentifier(_) |
+            Node::StringLiteral(_) |
+            Node::NumericLiteral(_) |
+            Node::BigIntLiteral(_) |
+            Node::RegularExpressionLiteral(_) |
+            Node::NoSubstitutionTemplateLiteral(_) |
+            Node::TemplateHead(_) |
+            Node::TemplateMiddle(_) |
+            Node::TemplateTail(_) |
+            Node::EmptyStatement(_) |
+            Node::BreakStatement(_) |
+            Node::ContinueStatement(_) |
+            Node::DebuggerStatement(_) => {
+                // No children for these node types
             }
-            Node::BreakStatement(stmt) => {
-                add_opt(&mut children, stmt.label);
-            }
-            Node::ContinueStatement(stmt) => {
-                add_opt(&mut children, stmt.label);
-            }
-            Node::WithStatement(stmt) => {
-                add_opt(&mut children, stmt.expression);
-                add_opt(&mut children, stmt.statement);
-            }
-            Node::Block(block) => {
-                add_list(&mut children, &block.statements);
-            }
-
-            // Declarations
-            Node::FunctionDeclaration(func) => {
-                add_opt_list(&mut children, &func.modifiers);
-                add_opt(&mut children, func.name);
-                add_opt_list(&mut children, &func.type_parameters);
-                add_list(&mut children, &func.parameters);
-                add_opt(&mut children, func.type_annotation);
-                add_opt(&mut children, func.body);
-            }
-            Node::ClassDeclaration(class) => {
-                add_opt_list(&mut children, &class.modifiers);
-                add_opt(&mut children, class.name);
-                add_opt_list(&mut children, &class.type_parameters);
-                add_opt_list(&mut children, &class.heritage_clauses);
-                add_list(&mut children, &class.members);
-            }
-            Node::InterfaceDeclaration(interface) => {
-                add_opt_list(&mut children, &interface.modifiers);
-                add_opt(&mut children, interface.name);
-                add_opt_list(&mut children, &interface.type_parameters);
-                add_opt_list(&mut children, &interface.heritage_clauses);
-                add_list(&mut children, &interface.members);
-            }
-
-            // Type nodes
-            Node::TypeReference(type_ref) => {
-                add_opt(&mut children, type_ref.type_name);
-                add_opt_list(&mut children, &type_ref.type_arguments);
-            }
-            Node::ArrayType(arr_type) => {
-                add_opt(&mut children, arr_type.element_type);
-            }
-            Node::TupleType(tuple) => {
-                add_list(&mut children, &tuple.elements);
-            }
-            Node::UnionType(union) => {
-                add_list(&mut children, &union.types);
-            }
-            Node::IntersectionType(intersection) => {
-                add_list(&mut children, &intersection.types);
-            }
-            Node::ConditionalType(conditional) => {
-                add_opt(&mut children, conditional.check_type);
-                add_opt(&mut children, conditional.extends_type);
-                add_opt(&mut children, conditional.true_type);
-                add_opt(&mut children, conditional.false_type);
-            }
-            Node::ParenthesizedType(paren) => {
-                add_opt(&mut children, paren.type_node);
-            }
-            Node::TypeLiteral(type_lit) => {
-                add_list(&mut children, &type_lit.members);
-            }
-
-            // Source file
-            Node::SourceFile(source) => {
-                add_list(&mut children, &source.statements);
-            }
-
-            // Leaf nodes (no children) or unhandled cases
+            // For any unhandled node types, return empty children
+            // TODO: Add support for more node types as needed
             _ => {
-                // For any unhandled node types, return no children (safer than panicking)
+                // Fallback for unhandled node types
             }
         }
 
