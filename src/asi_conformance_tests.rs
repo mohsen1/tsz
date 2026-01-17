@@ -261,3 +261,100 @@ fn test_async_arrow_await_computed_property() {
     assert_eq!(ts1005_count, 0, "Should emit no TS1005 errors");
     assert_eq!(diagnostics.len(), 1, "Should emit exactly 1 diagnostic total");
 }
+
+/// Test exact conformance test files
+#[test]
+fn debug_exact_conformance_files() {
+    // Test asyncArrowFunction8_es2017.ts
+    let arrow_source = r#"// @target: es2017
+// @noEmitHelpers: true
+
+var foo = async (): Promise<void> => {
+  var v = { [await]: foo }
+}"#;
+
+    let mut parser = ThinParserState::new("asyncArrowFunction8_es2017.ts".to_string(), arrow_source.to_string());
+    parser.parse_source_file();
+    let arrow_diagnostics = parser.get_diagnostics();
+
+    // Test asyncFunctionDeclaration9_es2017.ts
+    let func_source = r#"// @target: es2017
+// @noEmitHelpers: true
+async function foo(): Promise<void> {
+  var v = { [await]: foo }
+}"#;
+
+    let mut parser = ThinParserState::new("asyncFunctionDeclaration9_es2017.ts".to_string(), func_source.to_string());
+    parser.parse_source_file();
+    let func_diagnostics = parser.get_diagnostics();
+
+    eprintln!("Arrow function diagnostics:");
+    for diag in arrow_diagnostics.iter() {
+        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+    }
+
+    eprintln!("Function declaration diagnostics:");
+    for diag in func_diagnostics.iter() {
+        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+    }
+}
+
+/// Test for other TS1109 patterns that might be missing
+#[test]
+fn test_missing_ts1109_patterns() {
+    // Pattern 1: throw with line break (should emit TS1109)
+    let throw_source = r#"
+function test() {
+    throw
+    new Error();
+}
+"#;
+
+    let mut parser = ThinParserState::new("throw_test.ts".to_string(), throw_source.to_string());
+    parser.parse_source_file();
+    let throw_diagnostics = parser.get_diagnostics();
+
+    // Pattern 2: return with line break (should emit TS1109)
+    let return_source = r#"
+function test() {
+    return
+    42;
+}
+"#;
+
+    let mut parser = ThinParserState::new("return_test.ts".to_string(), return_source.to_string());
+    parser.parse_source_file();
+    let return_diagnostics = parser.get_diagnostics();
+
+    eprintln!("Throw with line break diagnostics:");
+    for diag in throw_diagnostics.iter() {
+        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+    }
+
+    eprintln!("Return with line break diagnostics:");
+    for diag in return_diagnostics.iter() {
+        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+    }
+}
+
+/// Test yield with line break pattern
+#[test]
+fn test_yield_ts1109() {
+    let yield_source = r#"function* test() {
+    yield
+    42;
+}"#;
+
+    let mut parser = ThinParserState::new("yield_test.ts".to_string(), yield_source.to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+
+    eprintln!("Yield diagnostics:");
+    for diag in diagnostics.iter() {
+        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+    }
+
+    assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 for yield with line break");
+}
