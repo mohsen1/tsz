@@ -358,3 +358,36 @@ fn test_yield_ts1109() {
 
     assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 for yield with line break");
 }
+
+/// Test other ASI edge cases that might need TS1109
+#[test]
+fn test_asi_edge_cases_ts1109() {
+    // Pattern 1: Postfix increment with line break
+    let postfix_source = r#"let x = 5;
+x
+++;
+console.log(x);"#;
+
+    let mut parser = ThinParserState::new("postfix_test.ts".to_string(), postfix_source.to_string());
+    parser.parse_source_file();
+    let postfix_diagnostics = parser.get_diagnostics();
+
+    // Pattern 2: Array access with line break  
+    let array_source = r#"let arr = [1, 2, 3];
+let val = arr
+[0];"#;
+
+    let mut parser = ThinParserState::new("array_test.ts".to_string(), array_source.to_string());
+    parser.parse_source_file();
+    let array_diagnostics = parser.get_diagnostics();
+
+    eprintln!("Postfix increment diagnostics:");
+    for diag in postfix_diagnostics.iter() {
+        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+    }
+
+    eprintln!("Array access diagnostics:");
+    for diag in array_diagnostics.iter() {
+        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+    }
+}
