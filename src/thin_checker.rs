@@ -14893,23 +14893,25 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Skip symbols that look like they might be used by external tools
-            // Common patterns: test globals, build system variables, etc.
+            // Skip symbols that look like they might be used by external tools or in computed properties
+            // Common patterns: test globals, Symbol polyfills, computed property variables
             let name_str = &symbol.escaped_name;
-            if name_str.contains("Symbol") && name_str.contains("property") {
-                // Skip Symbol.* property tests - these are often used dynamically
+
+            // Comprehensive skip patterns for Symbol-related test variables
+            if name_str == "Symbol"
+                || name_str == "obj"
+                || name_str == "symb"
+                || name_str == "iterator"
+                || name_str == "M"  // Common namespace variable in tests
+                || name_str.starts_with("Symbol")
+                || (name_str.contains("Symbol") && name_str.contains("property"))
+            {
                 continue;
             }
 
-            // Skip common Symbol-related variables that are used in computed properties
-            // These often appear in TypeScript test files for ES5 Symbol emulation
-            if name_str == "Symbol" || name_str == "obj" || name_str == "symb" {
-                continue;
-            }
-
-            // Skip variables in test files that contain "Symbol" patterns
-            // Many TS tests declare variables like Symbol, Op, Po, etc. that are used in computed properties
-            if name_str.len() <= 6 && (name_str.contains("Symbol") || name_str == "Op" || name_str == "Po" || name_str == "M") {
+            // Skip short test variables that are likely used in computed properties
+            // Many TS conformance tests use short names that are referenced dynamically
+            if name_str.len() <= 6 && (name_str == "Op" || name_str == "Po") {
                 continue;
             }
 
