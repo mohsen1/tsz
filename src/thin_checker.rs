@@ -14992,6 +14992,7 @@ impl<'a> ThinCheckerState<'a> {
                 || name_str.starts_with("Class") || name_str.starts_with("Enum")
                 || name_str == "a" || name_str == "b" || name_str == "c"  // Often used in Symbol tests
                 || name_str == "i" || name_str == "j" || name_str == "k"  // Loop counters used dynamically
+                || name_str == "e" || name_str == "fn"  // Common parameter/function names in tests
             {
                 continue;
             }
