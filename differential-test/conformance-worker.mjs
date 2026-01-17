@@ -100,6 +100,18 @@ async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
   if (testOptions.strictnullchecks !== undefined) {
     compilerOptions.strictNullChecks = testOptions.strictnullchecks;
   }
+  if (testOptions.noimplicitreturns !== undefined) {
+    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
+  }
+  if (testOptions.noimplicitthis !== undefined) {
+    compilerOptions.noImplicitThis = testOptions.noimplicitthis;
+  }
+  if (testOptions.strictfunctiontypes !== undefined) {
+    compilerOptions.strictFunctionTypes = testOptions.strictfunctiontypes;
+  }
+  if (testOptions.strictpropertyinitialization !== undefined) {
+    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
+  }
 
   const sourceFile = ts.createSourceFile(fileName, code, ts.ScriptTarget.ES2020, true);
 
@@ -160,6 +172,18 @@ async function runTscMultiFile(files, testOptions = {}) {
   if (testOptions.strictnullchecks !== undefined) {
     compilerOptions.strictNullChecks = testOptions.strictnullchecks;
   }
+  if (testOptions.noimplicitreturns !== undefined) {
+    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
+  }
+  if (testOptions.noimplicitthis !== undefined) {
+    compilerOptions.noImplicitThis = testOptions.noimplicitthis;
+  }
+  if (testOptions.strictfunctiontypes !== undefined) {
+    compilerOptions.strictFunctionTypes = testOptions.strictfunctiontypes;
+  }
+  if (testOptions.strictpropertyinitialization !== undefined) {
+    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
+  }
 
   const sourceFiles = new Map();
   const fileNames = [];
@@ -205,6 +229,31 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
     const wasm = await import(join(wasmPkgPath, 'wasm.js'));
 
     const parser = new wasm.ThinParser(fileName, code);
+
+    // Set compiler options from test directives
+    const compilerOptions = {
+      strict: testOptions.strict,
+      noImplicitAny: testOptions.noimplicitany,
+      strictNullChecks: testOptions.strictnullchecks,
+      noImplicitReturns: testOptions.noimplicitreturns,
+      noImplicitThis: testOptions.noimplicitthis,
+      strictFunctionTypes: testOptions.strictfunctiontypes,
+      strictPropertyInitialization: testOptions.strictpropertyinitialization,
+      lib: testOptions.lib,
+      module: testOptions.module,
+      nolib: testOptions.nolib,
+    };
+
+    // Remove undefined values
+    Object.keys(compilerOptions).forEach(key =>
+      compilerOptions[key] === undefined && delete compilerOptions[key]
+    );
+
+    // Apply compiler options to WASM parser
+    if (Object.keys(compilerOptions).length > 0) {
+      parser.setCompilerOptions(JSON.stringify(compilerOptions));
+    }
+
     if (!testOptions.nolib) {
       parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
     }
