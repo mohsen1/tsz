@@ -574,3 +574,56 @@ fn test_get_code_actions_with_context_missing_import() {
 
     assert_eq!(new_text, "import { foo } from \"./a\";\n");
 }
+
+#[test]
+fn test_set_compiler_options() {
+    let mut parser = ThinParser::new("test.ts".to_string(), "const x = 1;".to_string());
+
+    // Test setting compiler options with valid JSON
+    let json = r#"{
+        "strict": true,
+        "noImplicitAny": true,
+        "strictNullChecks": false,
+        "strictFunctionTypes": true,
+        "target": "ES2015",
+        "module": "ESNext"
+    }"#;
+
+    let result = parser.set_compiler_options(json.to_string());
+    assert!(result.is_ok(), "Should successfully set compiler options");
+
+    // Verify the options were stored
+    assert!(parser.compiler_options.is_some());
+}
+
+#[test]
+fn test_set_compiler_options_invalid_json() {
+    let mut parser = ThinParser::new("test.ts".to_string(), "const x = 1;".to_string());
+
+    // Test setting compiler options with invalid JSON
+    let json = r#"{ invalid json }"#;
+
+    let result = parser.set_compiler_options(json.to_string());
+    assert!(result.is_err(), "Should fail with invalid JSON");
+}
+
+#[test]
+fn test_mark_as_lib_file() {
+    let mut parser = ThinParser::new("test.ts".to_string(), "const x = 1;".to_string());
+
+    // Mark a few files as lib files
+    parser.mark_as_lib_file(1);
+    parser.mark_as_lib_file(2);
+    parser.mark_as_lib_file(3);
+
+    // Verify they were added to the set
+    assert_eq!(parser.lib_file_ids.len(), 3);
+    assert!(parser.lib_file_ids.contains(&1));
+    assert!(parser.lib_file_ids.contains(&2));
+    assert!(parser.lib_file_ids.contains(&3));
+    assert!(!parser.lib_file_ids.contains(&4));
+
+    // Test adding the same file ID multiple times (should not duplicate)
+    parser.mark_as_lib_file(1);
+    assert_eq!(parser.lib_file_ids.len(), 3);
+}

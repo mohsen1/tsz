@@ -234,12 +234,13 @@ fn bench_type_check(c: &mut Criterion) {
                 let mut binder = ThinBinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 let types = TypeInterner::new();
+                let compiler_options = wasm::cli::config::CheckerOptions::default();
                 let mut checker = ThinCheckerState::new(
                     parser.get_arena(),
                     &binder,
                     &types,
                     "bench.ts".to_string(),
-                    false,
+                    compiler_options,
                 );
                 checker.check_source_file(root);
                 black_box(checker.ctx.diagnostics.len())

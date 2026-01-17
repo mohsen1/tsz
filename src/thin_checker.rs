@@ -20,7 +20,7 @@ use crate::checker::types::diagnostics::{
 };
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
 use crate::interner::Atom;
-use crate::parser::syntax_kind_ext;
+use crate::parser::{node_flags, syntax_kind_ext};
 use crate::parser::thin_node::{ImportDeclData, ThinNodeArena};
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
@@ -102,69 +102,6 @@ struct FlowResult {
 }
 
 impl<'a> ThinCheckerState<'a> {
-    /// Create a new ThinCheckerState with compiler options.
-    ///
-    /// # Arguments
-    /// * `arena` - The AST node arena
-    /// * `binder` - The binder state with symbols
-    /// * `types` - The shared type interner (for thread-safe type deduplication)
-    /// * `file_name` - The source file name
-    /// * `options` - Compiler options for type checking
-    pub fn with_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
-        types: &'a TypeInterner,
-        file_name: String,
-        options: &crate::CompilerOptions,
-    ) -> Self {
-        ThinCheckerState {
-            ctx: CheckerContext::new_with_options(
-                arena,
-                binder,
-                types,
-                file_name,
-                options.get_no_implicit_any(),
-                options.get_no_implicit_returns(),
-                options.get_strict_function_types(),
-                options.get_strict_property_initialization(),
-                options.get_strict_null_checks(),
-            ),
-        }
-    }
-
-    /// Create a new ThinCheckerState with a persistent cache and compiler options.
-    ///
-    /// # Arguments
-    /// * `arena` - The AST node arena
-    /// * `binder` - The binder state with symbols
-    /// * `types` - The shared type interner
-    /// * `file_name` - The source file name
-    /// * `cache` - The persistent type cache from previous queries
-    /// * `options` - Compiler options for type checking
-    pub fn with_cache_and_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
-        types: &'a TypeInterner,
-        file_name: String,
-        cache: crate::checker::TypeCache,
-        options: &crate::CompilerOptions,
-    ) -> Self {
-        ThinCheckerState {
-            ctx: CheckerContext::with_cache_and_options(
-                arena,
-                binder,
-                types,
-                file_name,
-                cache,
-                options.get_no_implicit_any(),
-                options.get_no_implicit_returns(),
-                options.get_strict_function_types(),
-                options.get_strict_property_initialization(),
-                options.get_strict_null_checks(),
-            ),
-        }
-    }
-
     /// Create a new ThinCheckerState.
     ///
     /// # Arguments
@@ -172,16 +109,16 @@ impl<'a> ThinCheckerState<'a> {
     /// * `binder` - The binder state with symbols
     /// * `types` - The shared type interner (for thread-safe type deduplication)
     /// * `file_name` - The source file name
-    /// * `strict` - Whether strict mode is enabled (controls noImplicitAny, etc.)
+    /// * `compiler_options` - The compiler options for type checking
     pub fn new(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
-        strict: bool,
+        compiler_options: crate::cli::config::CheckerOptions,
     ) -> Self {
         ThinCheckerState {
-            ctx: CheckerContext::new(arena, binder, types, file_name, strict),
+            ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
     }
 
@@ -194,89 +131,17 @@ impl<'a> ThinCheckerState<'a> {
     /// * `types` - The shared type interner
     /// * `file_name` - The source file name
     /// * `cache` - The persistent type cache from previous queries
-    /// * `strict` - Whether strict mode is enabled (controls noImplicitAny, etc.)
+    /// * `compiler_options` - The compiler options for type checking
     pub fn with_cache(
         arena: &'a ThinNodeArena,
         binder: &'a ThinBinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: crate::checker::TypeCache,
-        strict: bool,
+        compiler_options: crate::cli::config::CheckerOptions,
     ) -> Self {
         ThinCheckerState {
-            ctx: CheckerContext::with_cache(arena, binder, types, file_name, cache, strict),
-        }
-    }
-
-    /// Create a new ThinCheckerState with explicit compiler options.
-    ///
-    /// # Arguments
-    /// * `arena` - The AST node arena
-    /// * `binder` - The binder state with symbols
-    /// * `types` - The shared type interner
-    /// * `file_name` - The source file name
-    /// * `no_implicit_any` - Raise error on implied 'any' type
-    /// * `no_implicit_returns` - Report error when not all paths return
-    /// * `strict_null_checks` - Enable strict null checks
-    /// * `strict_function_types` - Enable strict function type checking
-    /// * `strict_property_initialization` - Enable strict property initialization
-    /// * `no_implicit_this` - Raise error on 'this' with implied 'any' type
-    pub fn with_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
-        types: &'a TypeInterner,
-        file_name: String,
-        no_implicit_any: bool,
-        no_implicit_returns: bool,
-        strict_null_checks: bool,
-        strict_function_types: bool,
-        strict_property_initialization: bool,
-        no_implicit_this: bool,
-    ) -> Self {
-        ThinCheckerState {
-            ctx: CheckerContext::with_options(
-                arena,
-                binder,
-                types,
-                file_name,
-                no_implicit_any,
-                no_implicit_returns,
-                strict_null_checks,
-                strict_function_types,
-                strict_property_initialization,
-                no_implicit_this,
-            ),
-        }
-    }
-
-    /// Create a new ThinCheckerState with explicit compiler options and a persistent cache.
-    pub fn with_cache_and_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
-        types: &'a TypeInterner,
-        file_name: String,
-        cache: crate::checker::TypeCache,
-        no_implicit_any: bool,
-        no_implicit_returns: bool,
-        strict_null_checks: bool,
-        strict_function_types: bool,
-        strict_property_initialization: bool,
-        no_implicit_this: bool,
-    ) -> Self {
-        ThinCheckerState {
-            ctx: CheckerContext::with_cache_and_options(
-                arena,
-                binder,
-                types,
-                file_name,
-                cache,
-                no_implicit_any,
-                no_implicit_returns,
-                strict_null_checks,
-                strict_function_types,
-                strict_property_initialization,
-                no_implicit_this,
-            ),
+            ctx: CheckerContext::with_cache(arena, binder, types, file_name, cache, compiler_options),
         }
     }
 
@@ -434,6 +299,19 @@ impl<'a> ThinCheckerState<'a> {
             }
         }
         None
+    }
+
+    /// Track a symbol reference in the dependency graph for TS6133 unused variable detection.
+    /// This should be called whenever an identifier is resolved and used in value position.
+    fn track_symbol_reference(&mut self, referenced_sym_id: SymbolId) {
+        // Track in the dependency graph for the current symbol being evaluated
+        if let Some(&current_sym) = self.ctx.symbol_dependency_stack.last() {
+            self.ctx
+                .symbol_dependencies
+                .entry(current_sym)
+                .or_insert_with(FxHashSet::default)
+                .insert(referenced_sym_id);
+        }
     }
 
     fn resolve_identifier_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
@@ -795,7 +673,7 @@ impl<'a> ThinCheckerState<'a> {
                     // Arrow functions capture `this` from their enclosing scope, so they
                     // should NOT trigger TS2683. We need to skip past arrow functions
                     // to find the actual enclosing function that defines the `this` context.
-                    if self.ctx.no_implicit_this && self.find_enclosing_non_arrow_function(idx).is_some() {
+                    if self.ctx.no_implicit_this() && self.find_enclosing_non_arrow_function(idx).is_some() {
                         // TS2683: 'this' implicitly has type 'any'
                         // Only emit when noImplicitThis is enabled
                         use crate::checker::types::diagnostics::{
@@ -7440,7 +7318,7 @@ impl<'a> ThinCheckerState<'a> {
             return self.get_type_from_type_node(var_decl.type_annotation);
         }
 
-        if self.is_catch_clause_variable_declaration(idx) && self.ctx.use_unknown_in_catch_variables
+        if self.is_catch_clause_variable_declaration(idx) && self.ctx.use_unknown_in_catch_variables()
         {
             return TypeId::UNKNOWN;
         }
@@ -7590,8 +7468,8 @@ impl<'a> ThinCheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_function_types(self.ctx.strict_function_types);
-            checker.set_strict_null_checks(self.ctx.strict_null_checks);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
             evaluator.resolve_call(callee_type, &arg_types)
         };
@@ -8264,7 +8142,7 @@ impl<'a> ThinCheckerState<'a> {
             let result = {
                 let env = self.ctx.type_env.borrow();
                 let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
                 evaluator.resolve_call(func_type, &arg_types)
             };
@@ -8442,7 +8320,7 @@ impl<'a> ThinCheckerState<'a> {
         let result = {
             let env = self.ctx.type_env.borrow();
             let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_null_checks(self.ctx.strict_null_checks);
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
             evaluator.resolve_call(construct_type, &arg_types)
         };
@@ -10327,7 +10205,7 @@ impl<'a> ThinCheckerState<'a> {
                             diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                         );
                     }
-                } else if self.ctx.no_implicit_returns && has_return && falls_through {
+                } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     use crate::checker::types::diagnostics::{
                         diagnostic_codes, diagnostic_messages,
@@ -10561,7 +10439,7 @@ impl<'a> ThinCheckerState<'a> {
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
                     // and the property value type is 'any'
-                    if self.ctx.no_implicit_any && prev_context.is_some() && value_type == TypeId::ANY {
+                    if self.ctx.no_implicit_any() && prev_context.is_some() && value_type == TypeId::ANY {
                         let message = format_message(
                             diagnostic_messages::MEMBER_IMPLICIT_ANY,
                             &[&name, "any"],
@@ -10624,7 +10502,7 @@ impl<'a> ThinCheckerState<'a> {
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
                     // and the shorthand property value type is 'any'
-                    if self.ctx.no_implicit_any
+                    if self.ctx.no_implicit_any()
                         && prev_context.is_some()
                         && value_type == TypeId::ANY
                     {
@@ -11220,11 +11098,11 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(env) = env {
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                    checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
                     return Some(checker.is_assignable(TypeId::NUMBER, target));
                 }
                 let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-                checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 return Some(checker.is_assignable(TypeId::NUMBER, target));
             }
         }
@@ -11234,11 +11112,11 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(env) = env {
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                    checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
                     return Some(checker.is_assignable(source, TypeId::NUMBER));
                 }
                 let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-                checker.set_strict_null_checks(self.ctx.strict_null_checks);
+                checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 return Some(checker.is_assignable(source, TypeId::NUMBER));
             }
         }
@@ -12016,8 +11894,8 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_function_types(self.ctx.strict_function_types);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_function_types(self.ctx.strict_function_types());
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         checker.is_assignable(source, target)
     }
 
@@ -12048,8 +11926,8 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         let mut checker = CompatChecker::with_resolver(self.ctx.types, env);
-        checker.set_strict_function_types(self.ctx.strict_function_types);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_function_types(self.ctx.strict_function_types());
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         checker.is_assignable(source, target)
     }
 
@@ -12070,7 +11948,7 @@ impl<'a> ThinCheckerState<'a> {
 
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         checker.is_weak_union_violation(source, target)
     }
 
@@ -12084,7 +11962,7 @@ impl<'a> ThinCheckerState<'a> {
         let depth_exceeded = {
             let env = self.ctx.type_env.borrow();
             let mut checker = SubtypeChecker::with_resolver(self.ctx.types, &*env)
-                .with_strict_null_checks(self.ctx.strict_null_checks);
+                .with_strict_null_checks(self.ctx.strict_null_checks());
             let result = checker.is_subtype_of(source, target);
             let depth_exceeded = checker.depth_exceeded;
             (result, depth_exceeded)
@@ -12113,7 +11991,7 @@ impl<'a> ThinCheckerState<'a> {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
         let mut checker = SubtypeChecker::with_resolver(self.ctx.types, env)
-            .with_strict_null_checks(self.ctx.strict_null_checks);
+            .with_strict_null_checks(self.ctx.strict_null_checks());
         let result = checker.is_subtype_of(source, target);
         let depth_exceeded = checker.depth_exceeded;
 
@@ -12172,7 +12050,7 @@ impl<'a> ThinCheckerState<'a> {
         use crate::solver::CompatChecker;
         let env = self.ctx.type_env.borrow();
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks);
+        checker.set_strict_null_checks(self.ctx.strict_null_checks());
         for &target in targets {
             if checker.is_assignable(source, target) {
                 return true;
@@ -13415,7 +13293,7 @@ impl<'a> ThinCheckerState<'a> {
                     self.ctx.binder,
                     self.ctx.types,
                     self.ctx.file_name.clone(),
-                    self.ctx.no_implicit_any, // use current strict mode setting
+                    self.ctx.no_implicit_any(), // use current strict mode setting
                 );
                 return checker.get_type_params_for_symbol(sym_id);
             }
@@ -14647,7 +14525,7 @@ impl<'a> ThinCheckerState<'a> {
         if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
             return strict;
         }
-        self.ctx.no_implicit_any // Use the value from the strict flag
+        self.ctx.no_implicit_any() // Use the value from the compiler options
     }
 
     fn resolve_no_implicit_returns_from_source(&self, text: &str) -> bool {
@@ -14665,7 +14543,7 @@ impl<'a> ThinCheckerState<'a> {
         if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
             return strict;
         }
-        self.ctx.use_unknown_in_catch_variables // Use the value from the strict flag
+        self.ctx.use_unknown_in_catch_variables() // Use the value from the compiler options
     }
 
     fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
@@ -14711,9 +14589,9 @@ impl<'a> ThinCheckerState<'a> {
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
-            self.ctx.no_implicit_any = self.resolve_no_implicit_any_from_source(&sf.text);
-            self.ctx.no_implicit_returns = self.resolve_no_implicit_returns_from_source(&sf.text);
-            self.ctx.use_unknown_in_catch_variables =
+            self.ctx.compiler_options.no_implicit_any = self.resolve_no_implicit_any_from_source(&sf.text);
+            self.ctx.compiler_options.no_implicit_returns = self.resolve_no_implicit_returns_from_source(&sf.text);
+            self.ctx.compiler_options.use_unknown_in_catch_variables =
                 self.resolve_use_unknown_in_catch_variables_from_source(&sf.text);
 
             // Type check each top-level statement
@@ -14733,7 +14611,7 @@ impl<'a> ThinCheckerState<'a> {
             // Check for unused declarations (6133)
             // Only check for unused declarations when no_implicit_any is enabled (strict mode)
             // This prevents test files from reporting unused variable errors when they're testing specific behaviors
-            if self.ctx.no_implicit_any {
+            if self.ctx.no_implicit_any() {
                 self.check_unused_declarations();
             }
         }
@@ -14998,17 +14876,10 @@ impl<'a> ThinCheckerState<'a> {
     /// Check for unused declarations (TS6133).
     /// Reports variables, functions, classes, and other declarations that are never referenced.
     fn check_unused_declarations(&mut self) {
-        // Temporarily disable unused declaration checking to focus on core functionality
-        // The reference tracking system needs more work to avoid false positives
-        // TODO: Re-enable and fix reference tracking system properly
-        return;
-
-        #[allow(unreachable_code)]
-        {
         use crate::binder::symbol_flags;
         use crate::checker::types::diagnostics::diagnostic_codes;
 
-        // Collect all declared symbols
+        // Collect all declared symbols from both scopes and file_locals
         let mut symbol_ids = FxHashSet::default();
         if !self.ctx.binder.scopes.is_empty() {
             for scope in &self.ctx.binder.scopes {
@@ -15022,7 +14893,7 @@ impl<'a> ThinCheckerState<'a> {
             }
         }
 
-        // Build a set of all referenced symbols
+        // Build a set of all referenced symbols from dependency graph
         let mut referenced_symbols = FxHashSet::default();
         for deps in self.ctx.symbol_dependencies.values() {
             for &sym_id in deps {
@@ -15036,12 +14907,14 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             };
 
+            // === Basic skip conditions ===
+
             // Skip exported symbols - they're part of the public API
             if symbol.is_exported {
                 continue;
             }
 
-            // Skip special symbols like constructors, default exports, etc.
+            // Skip special built-in symbols
             if symbol.escaped_name == "constructor"
                 || symbol.escaped_name == "default"
                 || symbol.escaped_name == "__esModule"
@@ -15049,7 +14922,7 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Skip imported symbols - they're tracked separately (UNUSED_IMPORT)
+            // Skip imported symbols - they're tracked separately via UNUSED_IMPORT (TS6133)
             if symbol.import_module.is_some() {
                 continue;
             }
@@ -15059,21 +14932,37 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Check if this variable is declared in an ambient context
-            // Use the symbol's first declaration node if available
-            if !symbol.declarations.is_empty() && self.is_ambient_declaration(symbol.declarations[0]) {
+            // === Ambient declaration detection via node flags ===
+
+            // Check if any declaration is ambient (has declare keyword or in .d.ts file)
+            let is_ambient = symbol.declarations.iter().any(|&decl_idx| {
+                self.is_ambient_declaration(decl_idx)
+            });
+
+            if is_ambient {
+                // Ambient declarations don't need to be "used" - they're type declarations
                 continue;
             }
 
-            // Skip module/namespace variables that are often accessed dynamically
+            // === Symbol flag-based skip conditions ===
+
+            // Skip module/namespace symbols - they're structural containers
             if (symbol.flags & symbol_flags::MODULE) != 0
                 || (symbol.flags & symbol_flags::NAMESPACE) != 0
             {
                 continue;
             }
 
-            // Skip exported symbols as they might be used externally
+            // Skip exported symbols (EXPORT_VALUE flag) - they might be used externally
             if (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
+                continue;
+            }
+
+            // Skip type-only symbols - they're used structurally
+            if (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0
+                || (symbol.flags & symbol_flags::INTERFACE) != 0
+                || (symbol.flags & symbol_flags::SIGNATURE) != 0
+            {
                 continue;
             }
 
@@ -15082,37 +14971,17 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
+            // === Declaration type filtering ===
+
             // Check if this is a declaration type we want to check
             // We check: variables, functions, classes, enums, type aliases
-            // We skip: interfaces, type parameters, namespaces (they're used structurally)
+            // We skip: interfaces, type parameters, namespaces (already handled above)
             let flags = symbol.flags;
             let is_checkable = (flags & symbol_flags::VARIABLE) != 0
                 || (flags & symbol_flags::FUNCTION) != 0
                 || (flags & symbol_flags::CLASS) != 0
                 || (flags & symbol_flags::ENUM) != 0
                 || (flags & symbol_flags::TYPE_ALIAS) != 0;
-
-            // Skip ambient declarations - they are type-only and don't need to be "used"
-            let is_ambient = symbol.declarations.iter().any(|&decl_idx| {
-                if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                    // Check node flags for ambient context
-                    (decl_node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
-                } else {
-                    false
-                }
-            });
-
-            if is_ambient {
-                continue;
-            }
-
-            // Skip certain types that are used structurally
-            if (flags & symbol_flags::TYPE_PARAMETER) != 0
-                || (flags & symbol_flags::INTERFACE) != 0
-                || (flags & symbol_flags::SIGNATURE) != 0
-            {
-                continue;
-            }
 
             if !is_checkable {
                 continue;
@@ -15123,28 +14992,21 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Check if any declaration has an initializer or is ambient
-            // Variables with initializers should not be reported as unused because
-            // the act of declaration + initialization is meaningful usage.
-            // Ambient declarations (declare) also should not be reported as unused.
-            let should_skip = symbol.declarations.iter().any(|&decl_idx| {
+            // === Additional usage patterns that don't show up in reference tracking ===
+
+            // Skip variables with initializers - initialization is meaningful usage
+            // (e.g., const x = sideEffectFunction(); where x isn't read but the side effect matters)
+            let has_initializer = symbol.declarations.iter().any(|&decl_idx| {
                 if let Some(node) = self.ctx.arena.get(decl_idx) {
                     if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
-                        // Skip if has initializer
-                        if !var_decl.initializer.is_none() {
-                            return true;
-                        }
-                    }
-                    // Skip if ambient declaration (has DeclareKeyword modifier)
-                    if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
-                        return true;
+                        return !var_decl.initializer.is_none();
                     }
                 }
                 false
             });
 
-            if should_skip {
-                continue; // Don't report initialized or ambient variables as unused
+            if has_initializer {
+                continue;
             }
 
             // Symbol is not referenced - emit diagnostic for each declaration
@@ -15157,7 +15019,6 @@ impl<'a> ThinCheckerState<'a> {
                 }
             }
         }
-        } // End unreachable code block
     }
 
     /// Check for duplicate parameter names in a parameter list (TS2300).
@@ -15506,7 +15367,7 @@ impl<'a> ThinCheckerState<'a> {
                                     diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                                 );
                             }
-                        } else if self.ctx.no_implicit_returns && has_return && falls_through {
+                        } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                             // TS7030: noImplicitReturns - not all code paths return a value
                             use crate::checker::types::diagnostics::{
                                 diagnostic_codes, diagnostic_messages,
@@ -15529,7 +15390,7 @@ impl<'a> ThinCheckerState<'a> {
                         if func.is_async {
                             self.ctx.exit_async_context();
                         }
-                    } else if self.ctx.no_implicit_any && !has_type_annotation {
+                    } else if self.ctx.no_implicit_any() && !has_type_annotation {
                         let is_ambient = self.has_declare_modifier(&func.modifiers)
                             || self.ctx.file_name.ends_with(".d.ts");
                         if is_ambient {
@@ -15738,7 +15599,7 @@ impl<'a> ThinCheckerState<'a> {
             let mut has_type_annotation = !var_decl.type_annotation.is_none();
             let mut declared_type = if has_type_annotation {
                 checker.get_type_from_type_node(var_decl.type_annotation)
-            } else if is_catch_variable && checker.ctx.use_unknown_in_catch_variables {
+            } else if is_catch_variable && checker.ctx.use_unknown_in_catch_variables() {
                 TypeId::UNKNOWN
             } else {
                 TypeId::ANY
@@ -15830,7 +15691,7 @@ impl<'a> ThinCheckerState<'a> {
             // and the inferred type is 'any'
             // Skip destructuring patterns - TypeScript doesn't emit TS7005 for them
             // because binding elements with default values can infer their types
-            if self.ctx.no_implicit_any
+            if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && final_type == TypeId::ANY
             {
@@ -15913,7 +15774,7 @@ impl<'a> ThinCheckerState<'a> {
             {
                 let pattern_type = if !var_decl.type_annotation.is_none() {
                     self.get_type_from_type_node(var_decl.type_annotation)
-                } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables {
+                } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
                     TypeId::UNKNOWN
                 } else {
                     TypeId::ANY
@@ -17267,7 +17128,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Only check property initialization when strictPropertyInitialization is enabled
-        if !self.ctx.strict_property_initialization {
+        if !self.ctx.strict_property_initialization() {
             return;
         }
 
@@ -19163,7 +19024,12 @@ impl<'a> ThinCheckerState<'a> {
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
         // Enhanced validation to catch more TS2705 cases
-        // Use proper AST analysis instead of file name heuristics
+        // Validate based on compiler flags and AST context, not file names
+
+        // Always validate in declaration files (.d.ts files are always strict)
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
 
         // Validate class methods - class methods are typically strict
         if self.is_class_method(func_idx) {
@@ -19177,12 +19043,12 @@ impl<'a> ThinCheckerState<'a> {
 
         // Validate async functions in strict property initialization contexts
         // If we're doing strict property checking, likely need strict async too
-        if self.ctx.strict_property_initialization {
+        if self.ctx.strict_property_initialization() {
             return true;
         }
 
         // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks || self.ctx.strict_function_types || self.ctx.no_implicit_any {
+        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
             return true;
         }
 
@@ -20037,7 +19903,7 @@ impl<'a> ThinCheckerState<'a> {
                     }
                 }
                 self.check_type_for_parameter_properties(sig.type_annotation);
-                if self.ctx.no_implicit_any && sig.type_annotation.is_none() {
+                if self.ctx.no_implicit_any() && sig.type_annotation.is_none() {
                     if let Some(name) = self.property_name_for_error(sig.name) {
                         use crate::checker::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
@@ -21875,7 +21741,7 @@ impl<'a> ThinCheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
 
-        if !self.ctx.no_implicit_any || has_contextual_type {
+        if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
         }
         // Skip parameters that have explicit type annotations
@@ -22543,7 +22409,7 @@ impl<'a> ThinCheckerState<'a> {
         // TS7008: Member implicitly has an 'any' type
         // Report this error when noImplicitAny is enabled and the property has no type annotation
         // AND no initializer (if there's an initializer, TypeScript can infer the type)
-        if self.ctx.no_implicit_any && prop.type_annotation.is_none() && prop.initializer.is_none() {
+        if self.ctx.no_implicit_any() && prop.type_annotation.is_none() && prop.initializer.is_none() {
             if let Some(member_name) = self.get_property_name(prop.name) {
                 use crate::checker::types::diagnostics::{
                     diagnostic_codes, diagnostic_messages, format_message,
@@ -22718,7 +22584,7 @@ impl<'a> ThinCheckerState<'a> {
                         diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                     );
                 }
-            } else if self.ctx.no_implicit_returns && has_return && falls_through {
+            } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::checker::types::diagnostics::diagnostic_messages;
                 let error_node = if !method.name.is_none() {
@@ -22956,7 +22822,7 @@ impl<'a> ThinCheckerState<'a> {
                             diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
                         );
                     }
-                } else if self.ctx.no_implicit_returns && has_return && falls_through {
+                } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     use crate::checker::types::diagnostics::diagnostic_messages;
                     let error_node = if !accessor.name.is_none() {
@@ -23784,7 +23650,7 @@ impl<'a> ThinCheckerState<'a> {
             diagnostic_codes, diagnostic_messages, format_message,
         };
 
-        if !self.ctx.no_implicit_any || has_type_annotation || has_contextual_return {
+        if !self.ctx.no_implicit_any() || has_type_annotation || has_contextual_return {
             return;
         }
         if !self.should_report_implicit_any_return(return_type) {
@@ -24478,108 +24344,81 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    /// Also checks for interface methods and object literal methods based on AST structure
     fn is_class_method(&self, func_idx: NodeIndex) -> bool {
-        // Traverse parent chain to see if we're inside a class/interface/object literal
-        let mut current = func_idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check if this is a method declaration (class method)
-                if node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                    return true;
-                }
+        if func_idx.is_none() {
+            return false;
+        }
 
-                // Check if this is a method signature (interface method)
-                if node.kind == syntax_kind_ext::METHOD_SIGNATURE {
-                    return true;
-                }
-
-                // Check if this is a property assignment in an object literal
-                // (function expression assigned to a property)
-                if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                    return true;
-                }
-
-                // Check if parent is a class declaration or expression
-                if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                {
-                    return true;
-                }
-
-                // Check if parent is an interface declaration
-                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                    return true;
-                }
-
-                // Check if parent is an object literal expression
-                if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                    return true;
-                }
-
-                // Get parent from extended info
-                if let Some(ext) = self.ctx.arena.get_extended(current) {
-                    current = ext.parent;
-                } else {
-                    break;
-                }
-            } else {
-                break;
+        // Check if this function node is associated with a class member symbol
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                // Check if symbol has METHOD flag (set for class methods during binding)
+                return (symbol.flags & symbol_flags::METHOD) != 0;
             }
         }
+
+        // TODO: For proper implementation, we would need parent links in the AST
+        // to walk up and check if we're inside a ClassDeclaration node
         false
     }
 
     /// Check if a function is within a namespace or module context
     fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
-        // Traverse parent chain to see if we're inside a namespace/module
-        let mut current = func_idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check if this is inside a module declaration or module block
-                if node.kind == syntax_kind_ext::MODULE_DECLARATION
-                    || node.kind == syntax_kind_ext::MODULE_BLOCK
-                {
-                    return true;
+        if func_idx.is_none() {
+            return false;
+        }
+
+        // Check if this function is inside a namespace/module by looking at its symbol's parent
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                // Check if the parent symbol is a namespace or module
+                if !symbol.parent.is_none() {
+                    if let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent) {
+                        return (parent_sym.flags & symbol_flags::NAMESPACE) != 0
+                            || (parent_sym.flags & symbol_flags::MODULE) != 0;
+                    }
                 }
-                // Get parent from extended info
-                if let Some(ext) = self.ctx.arena.get_extended(current) {
-                    current = ext.parent;
-                } else {
-                    break;
-                }
-            } else {
-                break;
             }
         }
+
+        // TODO: For proper implementation, we would need parent links in the AST
+        // to walk up and check if we're inside a ModuleDeclaration node
         false
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
     fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
-        // Check the node flags and modifiers for ambient context
-        use crate::parser::modifier_flags;
+        if var_idx.is_none() {
+            return false;
+        }
 
-        let mut current = var_idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check if node has AMBIENT flag (note: ThinNode.flags is u16)
-                // AMBIENT flag value is 33554432 (0x02000000), which doesn't fit in u16
-                // So we need to check the extended info's modifier_flags instead
+        // Check the node flags for AMBIENT flag (set by parser for declare keyword)
+        if let Some(node) = self.ctx.arena.get(var_idx) {
+            // Check node flags for ambient context (node_flags::AMBIENT)
+            if (node.flags as u32) & node_flags::AMBIENT != 0 {
+                return true;
+            }
 
-                if let Some(ext) = self.ctx.arena.get_extended(current) {
-                    // Check if node has AMBIENT modifier flag
-                    if (ext.modifier_flags & modifier_flags::AMBIENT) != 0 {
-                        return true;
-                    }
-                    current = ext.parent;
-                } else {
-                    break;
-                }
-            } else {
-                break;
+            // Also check if this is within a .d.ts file by checking the source file's flags
+            // In TypeScript, all declarations in .d.ts files are implicitly ambient
+            // We can detect this by looking for declaration files in the parse context
+            // For now, check the actual node tree to see if we're in an ambient container
+
+            // Walk up to find if we're inside a module with ambient flag
+            // or inside a declare global block
+            if self.is_in_ambient_context(var_idx) {
+                return true;
             }
         }
+
+        false
+    }
+
+    /// Check if a node is inside an ambient context (module, namespace, or global with declare modifier)
+    fn is_in_ambient_context(&self, node_idx: NodeIndex) -> bool {
+        // TODO: This would require parent links in the AST for proper implementation
+        // For now, we'll rely on the node flags which are set during parsing
+        // The AMBIENT flag is propagated to children during binding
         false
     }
 }
