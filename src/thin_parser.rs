@@ -2059,7 +2059,12 @@ impl ThinParserState {
                 self.error_expression_expected();
                 NodeIndex::NONE
             } else {
-                self.parse_assignment_expression()
+                let expr = self.parse_assignment_expression();
+                if expr.is_none() {
+                    // Emit TS1109 for missing variable initializer: let x = [missing]
+                    self.error_expression_expected();
+                }
+                expr
             }
         } else {
             NodeIndex::NONE
@@ -2411,6 +2416,10 @@ impl ThinParserState {
             // Also temporarily disable async context so 'await' is not treated as an await expression
             self.context_flags &= !CONTEXT_FLAG_ASYNC;
             let initializer = self.parse_assignment_expression();
+            if initializer.is_none() {
+                // Emit TS1109 for missing parameter default value: param = [missing]
+                self.error_expression_expected();
+            }
             self.context_flags = saved_flags;
             initializer
         } else {
