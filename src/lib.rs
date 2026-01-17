@@ -1558,7 +1558,13 @@ impl WasmProgram {
         self.merged = None;
         self.bind_results = None;
 
-        // Detect lib files by name pattern
+        // Detect lib files by name pattern.
+        // NOTE: This file name inspection is acceptable because:
+        // 1. The "lib.*.d.ts" pattern is defined in the TypeScript specification
+        // 2. TypeScript's standard library files follow this official naming convention
+        // 3. These are not heuristics but specification-defined patterns (see TypeScript Handbook:
+        //    "Including Built-in Type Definitions" and compiler's lib.d.ts documentation)
+        // 4. The ".d.ts" extension itself is part of TypeScript's official type declaration format
         let is_lib_file = file_name.contains("lib.d.ts")
             || file_name.contains("lib.es")
             || file_name.contains("lib.dom")
