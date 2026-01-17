@@ -6293,6 +6293,11 @@ impl ThinParserState {
         while self.is_token(SyntaxKind::CommaToken) {
             self.next_token(); // consume comma
             let right = self.parse_assignment_expression();
+            if right.is_none() {
+                // Emit TS1109 for trailing comma or missing expression: expr, [missing]
+                self.error_expression_expected();
+                break; // Exit loop to prevent cascading errors
+            }
             let end_pos = self.token_end();
 
             left = self.arena.add_binary_expr(
@@ -7128,6 +7133,10 @@ impl ThinParserState {
                 SyntaxKind::OpenBracketToken => {
                     self.next_token();
                     let argument = self.parse_expression();
+                    if argument.is_none() {
+                        // Emit TS1109 for empty brackets or invalid expression: obj[[missing]]
+                        self.error_expression_expected();
+                    }
                     let end_pos = self.token_end();
                     self.parse_expected(SyntaxKind::CloseBracketToken);
 
@@ -8134,6 +8143,10 @@ impl ThinParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenParenToken);
         let expression = self.parse_expression();
+        if expression.is_none() {
+            // Emit TS1109 for empty parentheses or invalid expression: ([missing])
+            self.error_expression_expected();
+        }
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::CloseParenToken);
 
@@ -8681,6 +8694,10 @@ impl ThinParserState {
                 self.next_token();
 
                 let expression = self.parse_expression();
+                if expression.is_none() {
+                    // Emit TS1109 for empty computed property: { [[missing]]: value }
+                    self.error_expression_expected();
+                }
                 self.parse_expected(SyntaxKind::CloseBracketToken);
                 let end_pos = self.token_end();
 
@@ -8825,6 +8842,10 @@ impl ThinParserState {
                 SyntaxKind::OpenBracketToken => {
                     self.next_token();
                     let argument = self.parse_expression();
+                    if argument.is_none() {
+                        // Emit TS1109 for empty brackets or invalid expression: obj[[missing]]
+                        self.error_expression_expected();
+                    }
                     let end_pos = self.token_end();
                     self.parse_expected(SyntaxKind::CloseBracketToken);
 
