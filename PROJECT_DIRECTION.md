@@ -65,7 +65,8 @@ Enforce these rules in agent instructions to prevent regression.
 **Before merging any branch:**
 1. `cargo build` must pass with no errors
 2. `cargo test` must pass with no failures
-3. Tests must run fast (< 30 seconds for unit tests)
+3. Tests must run fast (< 30 seconds for full test suite)
+4. Individual tests must complete in < 5 seconds (mark slow tests with `#[ignore]`)
 
 ---
 
