@@ -285,14 +285,23 @@ impl ThinParserState {
     fn check_illegal_binding_identifier(&mut self) -> bool {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
-        // In static blocks, 'await' cannot be used as a binding identifier
-        if self.in_static_block_context() {
-            // Check if current token is 'await' (either as keyword or identifier)
-            let is_await = self.is_token(SyntaxKind::AwaitKeyword)
-                || (self.is_token(SyntaxKind::Identifier)
-                    && self.scanner.get_token_value_ref() == "await");
+        // Check if current token is 'await' (either as keyword or identifier)
+        let is_await = self.is_token(SyntaxKind::AwaitKeyword)
+            || (self.is_token(SyntaxKind::Identifier)
+                && self.scanner.get_token_value_ref() == "await");
 
-            if is_await {
+        if is_await {
+            // In static blocks, 'await' cannot be used as a binding identifier
+            if self.in_static_block_context() {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                    diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
+                );
+                return true;
+            }
+
+            // In async contexts, 'await' cannot be used as a binding identifier
+            if self.in_async_context() {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
                     diagnostic_codes::AWAIT_IDENTIFIER_ILLEGAL,
