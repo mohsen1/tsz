@@ -14,11 +14,10 @@ We have time. No deadlines. Do it right.
 
 ## Workflow
 
-1. **Sync first**: `git fetch origin && git merge origin/main --no-edit`
-2. Run Conformance tests: `./differential-test/run-conformance.sh --all` and analyze the report.
-3. Write code, add tests, run `./test.sh`.
-4. Commit and push.
-5. Run Conformance tests again and compare to previous report.
+1. Sync first: Sync with main branch from origin.
+2. Write code, add tests, run `./test.sh`.
+3. Commit and push.
+4. Run Conformance tests again and compare to previous report.
 
 ## Commit Format
 ```
@@ -38,6 +37,8 @@ Commit frequently and atomically.
 | `ts-tests/` | TypeScript test cases |
 
 ## Running Tests
+
+Important: Tests must always run inside Docker to ensure environment consistency.
 
 ```bash
 # Rust unit tests (Docker)
