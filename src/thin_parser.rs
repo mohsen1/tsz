@@ -7327,6 +7327,11 @@ impl ThinParserState {
                 args.push(spread);
             } else {
                 let arg = self.parse_assignment_expression();
+                if arg.is_none() {
+                    // Emit TS1109 for missing function argument: func(a, , c)
+                    self.error_expression_expected();
+                    // Continue parsing for error recovery
+                }
                 args.push(arg);
             }
 
@@ -7916,6 +7921,12 @@ impl ThinParserState {
             // Parse expression in ${ }
             let expression = self.parse_expression();
 
+            // Check for missing expression in template literal: `prefix${}tail`
+            if expression.is_none() {
+                self.error_expression_expected();
+                // Continue parsing for error recovery
+            }
+
             if !self.is_token(SyntaxKind::CloseBraceToken) {
                 // Unterminated template expression - report and synthesize tail to avoid looping.
                 self.error_token_expected("}");
@@ -8103,6 +8114,11 @@ impl ThinParserState {
                 elements.push(spread);
             } else {
                 let elem = self.parse_assignment_expression();
+                if elem.is_none() {
+                    // Emit TS1109 for missing array element: [a, , ] vs [a, b]
+                    self.error_expression_expected();
+                    // Continue parsing with empty element for error recovery
+                }
                 elements.push(elem);
             }
 
@@ -8293,7 +8309,14 @@ impl ThinParserState {
         }
 
         let initializer = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_assignment_expression()
+            let expr = self.parse_assignment_expression();
+            if expr.is_none() {
+                // Emit TS1109 for missing property value: { prop: }
+                self.error_expression_expected();
+                name // Use property name as fallback for error recovery
+            } else {
+                expr
+            }
         } else {
             // Shorthand property
             name
