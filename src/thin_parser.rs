@@ -335,6 +335,13 @@ impl ThinParserState {
                         if self.is_token(SyntaxKind::EndOfFileToken) {
                             true
                         }
+                        // For missing CloseParenToken, be less aggressive about suppression
+                        // when the next token is OpenBraceToken, since that often indicates
+                        // the user wrote "function f( {" expecting the brace to be function body
+                        else if kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken) {
+                            // Don't suppress - this is likely a syntax error in function/method parameters
+                            false
+                        }
                         // If next token starts a statement, the user has clearly moved on
                         // Don't complain about missing closing token
                         else if self.is_statement_start() {
@@ -436,9 +443,15 @@ impl ThinParserState {
         // This handles cases like `a + (` where we're starting a parenthesized expression
         if self.is_token(SyntaxKind::OpenParenToken)
             || self.is_token(SyntaxKind::OpenBracketToken)
-            || self.is_token(SyntaxKind::OpenBraceToken)
         {
             return true;
+        }
+
+        // For OpenBraceToken, be more careful - don't recover if this could be a function body
+        // following missing close paren in function parameters
+        if self.is_token(SyntaxKind::OpenBraceToken) {
+            // Don't suppress the error - this is likely a structural issue like missing ) in function params
+            return false;
         }
 
         // If we're at a token that clearly starts a new statement, we can recover
@@ -5873,11 +5886,13 @@ impl ThinParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
-        // For restricted productions (throw), ASI applies immediately after line break
-        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // NOTE: The previous implementation incorrectly treated line break as a syntax error.
-        // According to JavaScript spec, ASI should apply: throw\nx parses as throw; x;
-        let expression = if !self.can_parse_semicolon_for_restricted_production() {
+        // For throw statements in TypeScript, emit TS1109 error if there's a line break
+        // after 'throw' keyword (unlike JavaScript which allows ASI here)
+        let expression = if self.scanner.has_preceding_line_break() {
+            // TypeScript requires expression after throw on same line
+            self.error_expression_expected();
+            NodeIndex::NONE
+        } else if !self.can_parse_semicolon_for_restricted_production() {
             self.parse_expression()
         } else {
             NodeIndex::NONE
