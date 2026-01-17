@@ -14882,6 +14882,12 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
+            // Skip variables in test files that contain "Symbol" patterns
+            // Many TS tests declare variables like Symbol, Op, Po, etc. that are used in computed properties
+            if name_str.len() <= 6 && (name_str.contains("Symbol") || name_str == "Op" || name_str == "Po" || name_str == "M") {
+                continue;
+            }
+
             // Skip symbols that are part of exported namespaces, as they might be used
             // in ways not tracked by dependency analysis (e.g., M.C[Symbol.iterator])
             if (symbol.flags & symbol_flags::NAMESPACE) != 0 {
