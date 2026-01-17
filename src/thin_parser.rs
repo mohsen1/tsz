@@ -6018,12 +6018,6 @@ impl ThinParserState {
                 let clause_start = self.token_pos();
                 self.next_token();
                 let clause_expr = self.parse_expression();
-
-                // Check for missing case expression: case : { }
-                if clause_expr == NodeIndex::NONE {
-                    self.error_expression_expected();
-                }
-
                 self.parse_expected(SyntaxKind::ColonToken);
 
                 let mut statements = Vec::new();
@@ -8664,30 +8658,6 @@ impl ThinParserState {
                 // Computed property name: { [expr]: value }
                 let start_pos = self.token_pos();
                 self.next_token();
-
-                // Special case for [await]: emit TS1005 instead of TS1109
-                // TypeScript emits TS1005 ('] expected') for patterns like { [await]: foo }
-                // rather than TS1109 (Expression expected)
-                if self.is_token(SyntaxKind::AwaitKeyword) {
-                    // Look ahead to see if await is immediately followed by ]
-                    let snapshot = self.scanner.save_state();
-                    let current_token = self.current_token;
-                    self.next_token(); // consume 'await'
-                    let next_token = self.token();
-                    self.scanner.restore_state(snapshot);
-                    self.current_token = current_token;
-
-                    if next_token == SyntaxKind::CloseBracketToken {
-                        // Emit TS1005: '] expected' for [await] pattern
-                        use crate::checker::types::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
-                            "']' expected",
-                            diagnostic_codes::TOKEN_EXPECTED,
-                        );
-                        // Skip the await token and continue parsing
-                        self.next_token();
-                    }
-                }
 
                 let expression = self.parse_expression();
                 self.parse_expected(SyntaxKind::CloseBracketToken);
