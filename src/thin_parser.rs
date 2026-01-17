@@ -6879,6 +6879,19 @@ impl ThinParserState {
                     if !has_following_expression {
                         use crate::checker::types::diagnostics::diagnostic_codes;
                         self.error_expression_expected();
+                        // Consume the await token to prevent further errors
+                        self.next_token();
+                        // Return a placeholder identifier for error recovery
+                        return self.arena.add_identifier(
+                            SyntaxKind::Identifier as u16,
+                            self.token_pos(),
+                            self.token_pos(),
+                            crate::parser::thin_node::IdentifierData {
+                                escaped_text: String::from("await"),
+                                original_text: None,
+                                type_arguments: None,
+                            },
+                        );
                     }
 
                     // Fall through to parse as identifier/postfix expression
