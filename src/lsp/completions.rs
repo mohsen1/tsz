@@ -435,7 +435,16 @@ impl<'a> Completions<'a> {
         let file_name = self.file_name.as_ref()?;
 
         let mut cache_ref = type_cache;
-        let strict = self.strict;
+        let compiler_options = crate::cli::config::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+        };
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
                 ThinCheckerState::with_cache(
@@ -444,13 +453,13 @@ impl<'a> Completions<'a> {
                     interner,
                     file_name.clone(),
                     cache_value,
-                    strict,
+                    compiler_options.clone(),
                 )
             } else {
-                ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), strict)
+                ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options.clone())
             }
         } else {
-            ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), strict)
+            ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options)
         };
 
         let type_id = checker.get_type_of_node(expr_idx);
@@ -618,7 +627,16 @@ impl<'a> Completions<'a> {
 
         // 2. Determine the contextual type (expected type)
         let mut cache_ref = type_cache;
-        let strict = self.strict;
+        let compiler_options = crate::cli::config::CheckerOptions {
+            strict: self.strict,
+            no_implicit_any: self.strict,
+            no_implicit_returns: false,
+            no_implicit_this: self.strict,
+            strict_null_checks: self.strict,
+            strict_function_types: self.strict,
+            strict_property_initialization: self.strict,
+            use_unknown_in_catch_variables: self.strict,
+        };
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
                 ThinCheckerState::with_cache(
@@ -627,13 +645,13 @@ impl<'a> Completions<'a> {
                     interner,
                     file_name.clone(),
                     cache_value,
-                    strict,
+                    compiler_options.clone(),
                 )
             } else {
-                ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), strict)
+                ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options.clone())
             }
         } else {
-            ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), strict)
+            ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options)
         };
 
         let context_type = self.get_contextual_type(object_literal_idx, &mut checker)?;

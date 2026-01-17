@@ -152,7 +152,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Check property initialization if strictPropertyInitialization is enabled
-        if self.ctx.strict_property_initialization {
+        if self.ctx.strict_property_initialization() {
             self.check_property_initialization(class_idx, class_decl);
         }
 
