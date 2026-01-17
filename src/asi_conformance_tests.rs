@@ -391,3 +391,81 @@ let val = arr
         eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
     }
 }
+
+/// Debug exact conformance file content with all context
+#[test]
+fn debug_exact_file_content() {
+    // Copy exact content from asyncArrowFunction8_es2017.ts including comments
+    let source = r#"// @target: es2017
+// @noEmitHelpers: true
+
+var foo = async (): Promise<void> => {
+  var v = { [await]: foo }
+}"#;
+
+    let mut parser = ThinParserState::new("asyncArrowFunction8_es2017.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    eprintln!("=== EXACT FILE CONTENT TEST ===");
+    eprintln!("Total diagnostics: {}", diagnostics.len());
+    for (i, diag) in diagnostics.iter().enumerate() {
+        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
+                  i, diag.code, diag.message, diag.start, diag.length);
+    }
+
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED).count();
+
+    eprintln!("TS1109 count: {}", ts1109_count);
+    eprintln!("TS1005 count: {}", ts1005_count);
+}
+
+/// Test incomplete expression patterns that should emit TS1109
+#[test]
+fn test_incomplete_expressions_ts1109() {
+    let switch_source = r#"switch (e) {
+    case 1:
+       1 + 
+    case 2:
+       1 + 
+    default:
+}"#;
+
+    let mut parser = ThinParserState::new("switch_test.ts".to_string(), switch_source.to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    eprintln!("=== INCOMPLETE EXPRESSIONS TEST ===");
+    eprintln!("Total diagnostics: {}", diagnostics.len());
+    for (i, diag) in diagnostics.iter().enumerate() {
+        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
+                  i, diag.code, diag.message, diag.start, diag.length);
+    }
+
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    eprintln!("TS1109 count: {}", ts1109_count);
+}
+
+/// Test new expression without identifier
+#[test]
+fn test_new_missing_identifier_ts1109() {
+    let source = r#"var x = new ();"#;
+
+    let mut parser = ThinParserState::new("newMissingIdentifier.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    eprintln!("=== NEW MISSING IDENTIFIER TEST ===");
+    eprintln!("Total diagnostics: {}", diagnostics.len());
+    for (i, diag) in diagnostics.iter().enumerate() {
+        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
+                  i, diag.code, diag.message, diag.start, diag.length);
+    }
+
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    eprintln!("TS1109 count: {}", ts1109_count);
+    
+    // Should have exactly 1 TS1109 error
+    assert!(ts1109_count >= 1, "Should emit at least 1 TS1109 for missing identifier after new");
+}
