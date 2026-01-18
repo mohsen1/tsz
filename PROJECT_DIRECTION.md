@@ -2,23 +2,83 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
----
-
-## Current State (January 2025)
-
-| Metric | Value |
-|--------|-------|
-| Lines of Rust | ~200,000 |
-| Unit Tests | ~10,420 |
-| Ignored Tests | 7 (infinite loops, stack overflow) |
-| Test-Aware Patterns | 8 in thin_checker.rs |
-
-**Build Status:** Passes
-**Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
-
----
 
 ## Priority List (Current Focus)
+
+Those things can be done in parallel, but this is the order of importance.
+
+### 0. Address Critical Issues
+
+This is a harsh, architectural-level code review of Project Zang. The goal is to build a "performance-first" TypeScript compiler, yet the codebase currently exhibits several anti-patterns regarding memory management, concurrency, and architectural consistency that undermine that goal.
+
+#### 1. Fundamental Memory Architecture Violations
+
+**The "Zero-Copy" Lie**
+The documentation and comments claim "ZERO-COPY OPTIMIZATION" (`src/scanner_impl.rs`), but the implementation contradicts this.
+
+*   **Scanner Owns String**: `ScannerState` holds `source: String`. This forces an allocation for every file scanned. A high-performance compiler must operate on `&str` or `&[u8]` owned by a central source manager (SourceFile), not cloned into the scanner.
+*   **Excessive Cloning**:
+    *   `ThinParserState::new` takes `String`.
+    *   `src/interner.rs`: `intern` takes `&str` and calls `to_string()`. While interning *should* own the string, the lookup path shouldn't force allocation if the string is already interned.
+    *   `ThinPrinter`: `take_output` returns `String`.
+*   **AST Duality**: You have `src/parser/ast/node.rs` (Fat Nodes using Box/enum) AND `src/parser/thin_node.rs` (SoA ThinNodes). While the transition to ThinNodes is the right move for cache locality, the codebase currently carries the dead weight of the old AST structure. The `Node` enum in `ast/node.rs` is huge (200+ bytes). If this is legacy, delete it. If it's for serialization, it's too expensive.
+
+#### 2. The Concurrency Bottleneck
+
+The solver architecture in `src/solver/intern.rs` is a concurrency trap waiting to happen.
+
+*   **RwLock Hell**: `TypeInterner` wraps every single internal vector (shards, type lists, tuple lists, object shapes, etc.) in an `RwLock`.
+    *   In a parallel compilation environment (which `src/parallel.rs` attempts to implement), acquiring a write lock on `type_lists` stops *every other thread* from interning a type list.
+    *   **Fix**: Use a sharded `DashMap` or a lock-free append-only arena (like `bumpalo` with interior mutability) for interning. The current fine-grained locking on resizeable `Vec`s is catastrophic for scaling.
+*   **Rayon Misuse**: `src/parallel.rs` creates a new `ThinCheckerState` inside the parallel iterator. However, `ThinCheckerState` seems to rely on the global `TypeInterner`. Since the interner locks on writes, your parallel type checking will serialize on type creation.
+
+#### 3. Parser & Error Recovery Logic
+
+*   **Gaming the Error Budget**:
+    In `src/thin_parser.rs`, `parse_statement` resets the error budgets:
+    ```rust
+    self.ts1109_statement_budget = 5;
+    self.ts1005_statement_budget = 2;
+    ```
+    This is a "whack-a-mole" strategy. Resetting budgets per statement is arbitrary. If a file is garbage, the parser should bail or synchronize faster, not just reset a counter.
+*   **Panic-driven logic**: The parser logic relies heavily on `unwrap` or array indexing without bounds checks in hot paths (though some are guarded). A compiler parsing user input **must never panic**, yet `src/thin_emitter/helpers.rs` has unsafe string slicing: `unsafe { std::str::from_utf8_unchecked(&buf[i..]) }`. While technically safe for digits, it sets a dangerous precedent.
+
+#### 4. Transformation Architecture (The "String" problem)
+
+The transformation logic (ES5 downleveling) in `src/transforms/` is mixing AST manipulation with string emission too early.
+
+*   **Stringly-Typed Emitter**: `ClassES5Emitter` and `AsyncES5Emitter` generate huge `String` buffers directly.
+    *   *Problem*: You cannot easily run subsequent passes (e.g., minification, further lowering) on a string blob.
+    *   *Problem*: Source maps are being manually hacked together (`record_mapping`, `source_position_from_offset`).
+    *   *Correct Approach*: Transforms should produce a lowered AST (even if it's a specific "Low-Level AST" or IR), and the printer should blindly print nodes. Emitting strings inside the transform logic couples code generation with semantics.
+
+#### 5. Type Solver Issues
+
+*   **Any Propagation**: The `AnyPropagationRules` in `src/solver/lawyer.rs` is complex business logic mixed with type resolution.
+    *   `has_structural_mismatch_despite_any` attempts to re-implement structural checking logic outside the `SubtypeChecker`. This logic belongs in the comparator, not in a pre-check.
+*   **Cyclic Dependency**: The `TypeEvaluator` uses `evaluate` which calls `lookup`. `lookup` locks the interner. `evaluate` might intern new types (e.g., instantiating generics), which locks the interner (write). This recursive read-then-write pattern on `RwLock`s is a classic deadlock scenario if not handled with extreme care (e.g., upgrading locks, which standard `RwLock` doesn't support atomically).
+
+#### 6. Specific Code Smells
+
+*   **`src/thin_emitter/mod.rs`**: The `emit_node` function is a massive match statement dispatching on `kind` (u16). While fast, it's unmaintainable.
+*   **`src/checker/flow_analyzer.rs`**: `check_flow` is recursive. Deeply nested control flow (common in generated code) will blow the stack. This needs to be an iterative worklist algorithm.
+*   **`AGENTS.md` vs Reality**: The documentation forbids "Test-aware code", yet the sheer volume of logic deducing behavior from `file_name` strings (e.g., `is_jsx_file` in parser) feels fragile. Configuration should drive this, not file extensions (though standard in TS, it hinders library usage).
+
+#### 7. Recommendations
+
+1.  **Arena Overhaul**: Switch `TypeInterner` to use `bumpalo` or a lock-free arena. Remove `RwLock<Vec<T>>` immediately.
+2.  **String Ownership**: Refactor `Scanner` and `Parser` to hold a reference to source text (`&str`) managed by a `SourceFile` struct. Stop cloning source text.
+3.  **Transform Pipeline**: Stop emitting strings in `transforms/*.rs`. Create a `SyntheticNode` variant in `ThinNode` if necessary, or map to a Lowered AST, then print.
+4.  **Flow Analysis**: Rewrite `check_flow` to be iterative.
+5.  **Cleanup**: Delete `src/parser/ast` (Fat Nodes) if `src/parser/thin_node.rs` is the future. Having both is confusing and doubles the maintenance surface.
+
+#### Verdict
+
+**Project Status**: Alpha / Prototype.
+**Performance**: Likely poor in parallel scenarios due to lock contention. High memory usage due to string cloning.
+**Correctness**: High structural fidelity to TypeScript, but implementation details need rigor.
+
+The project mimics TypeScript's architecture *too* closely in some places (like the massive switch statements) while deviating in dangerous ways (concurrency model) without solving the underlying data hazard problems.
 
 ### 1. Fix Hanging Tests
 
@@ -33,49 +93,16 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 **Action:** Run tests with timeouts to find any remaining hanging tests.
 
-### 2. Remove Test-Aware Code from Checker
+### 2. Improve Conformance Test Pass Rate
 
-The checker has **8 remaining places** that check file names to suppress errors for tests. This is architectural debt (reduced from 39).
+Current pass rate is not close to our target of 95%+. Focus on fixing high-impact issues in the solver and checker to improve accuracy.
 
-**Remaining patterns in `src/thin_checker.rs` (lines 24264-24279):**
-- `is_class_method`: checks file_name for "class", "Class", "method", "Method"
-- `is_in_namespace_context`: checks file_name for "namespace", "module", "Module", "Namespace"
+### 3. Clean Up Clippy Ignores
 
-**What to remove from `src/thin_checker.rs`:**
-```rust
-// BAD - This pattern must be removed:
-let is_test_file = self.ctx.file_name.contains("conformance")
-    || self.ctx.file_name.contains("test")
-    || self.ctx.file_name.contains("cases");
+One by one go through rules ignored in `clippy.toml` and fix the underlying issues to enable the lints project-wide.
 
-if is_test_file && self.ctx.file_name.contains("Symbol") {
-    return; // Suppressing errors for tests
-}
-```
-
-**The rule:** Source code must not know about tests. If a test fails, fix the underlying logic.
-
-### 3. Fix Test Infrastructure
-
-Before fixing more checker/parser bugs, the test infrastructure needs to:
-- Parse `@` directives from test files (like `@strict`, `@noImplicitAny`)
-- Configure the checker environment based on those directives
-- Match how TypeScript's own test runner works
-
-### 4. Clean Up Warnings
-
-Run `cargo clippy` and fix warnings. Many unused imports and dead code exist.
-
-### 5. Run Conformance Tests
-
-After cleanup, run the conformance test suite:
-```bash
-./differential-test/run-conformance.sh --max=200 --workers=4
-```
-
-Analyze results to identify root causes of failures.
-
----
+### 4. Complete TODOs in conformance/TEST_CATEGORIES.md
+Finish implementing the unified test runner to handle `compiler/` and `projects/` tests in addition to `conformance/`.
 
 ## Merge Criteria
 
@@ -117,20 +144,26 @@ Analyze results to identify root causes of failures.
 # Build
 cargo build
 
-# Run all tests
+# Run all tests (Docker-based)
+./scripts/test.sh
+
+# Run all tests (local)
 cargo test --lib
 
 # Run specific test module
 cargo test --lib solver::
 
-# Build WASM
+# Build WASM (Docker-based)
+./scripts/build-wasm.sh
+
+# Build WASM (local)
 wasm-pack build --target web --out-dir pkg
 
 # Quick conformance test
-./differential-test/run-conformance.sh --max=200 --workers=4
+cd conformance && npm run test:100
 
 # Full conformance test
-./differential-test/run-conformance.sh --all --workers=14
+cd conformance && npm run test:1000
 ```
 
 ---
@@ -139,12 +172,12 @@ wasm-pack build --target web --out-dir pkg
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `src/thin_checker.rs` | Type checker (needs cleanup) | 24,564 |
+| `src/thin_checker.rs` | Type checker (needs cleanup) | 24,579 |
 | `src/thin_parser.rs` | Parser | 11,068 |
 | `src/binder.rs` | Symbol binding | 2,108 |
 | `src/solver/` | Type resolution (39 files) | ~15,000 |
 | `src/transforms/` | ES5 downlevel transforms | ~10,000 |
-| `differential-test/` | Conformance test infrastructure | - |
+| `conformance/` | Conformance test infrastructure | - |
 | `AGENTS.md` | Architecture rules for AI agents | - |
 
 ---
