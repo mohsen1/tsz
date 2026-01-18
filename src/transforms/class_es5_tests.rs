@@ -22067,7 +22067,7 @@ class DataProcessor {
 // ============================================================================
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - suspected issue in LoweringPass or ThinPrinter emit chain for module.exports patterns with multiple classes and template literals. Passes if simpler patterns used individually."]
 fn test_class_es5_commonjs_class_exports() {
     // Test CommonJS module pattern with class exports
     let source = r#"
