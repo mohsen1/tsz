@@ -7,6 +7,7 @@ import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join, basename } from 'path';
 import { readFileSync, existsSync } from 'fs';
+import { parseTestDirectives, mapToCompilerOptions, mapToWasmCompilerOptions } from './directive-parser.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -96,129 +97,27 @@ function loadLibFile(libName, loaded = new Set()) {
   }
 }
 
-/**
- * Parse TypeScript test directives from source code.
- *
- * Supported directives:
- * - @strict: boolean - enable all strict type checking options
- * - @noImplicitAny: boolean - raise error on implied 'any' type
- * - @strictNullChecks: boolean - enable strict null checks
- * - @target: string - ECMAScript target version (es5, es2015, es2020, esnext, etc.)
- * - @module: string - module code generation (commonjs, esnext, etc.)
- * - @lib: string - comma-separated list of lib files (e.g., es2020,dom)
- * - @declaration: boolean - emit declaration files
- * - @noEmit: boolean - do not emit output
- * - @experimentalDecorators: boolean - enable experimental decorators
- * - @allowSyntheticDefaultImports: boolean - allow default imports from modules with no default export
- * - @esModuleInterop: boolean - enable ES module interoperability
- * - @skipLibCheck: boolean - skip type checking of declaration files
- * - @skipDefaultLibCheck: boolean - skip type checking of default library declaration files
- * - @moduleResolution: string - module resolution strategy (node, classic, bundler, node16, nodenext)
- * - @allowJs: boolean - allow JavaScript files to be compiled
- * - @checkJs: boolean - report errors in JavaScript files
- * - @jsx: string - JSX code generation (preserve, react, react-native, react-jsx, react-jsxdev)
- * - @isolatedModules: boolean - ensure each file can be safely transpiled without relying on other imports
- * - @traceResolution: boolean - enable tracing of module resolution process
- * - @filename: string - marks multi-file test boundaries (special directive)
- *
- * @param {string} code - Source code with test directives
- * @returns {{options: Object, isMultiFile: boolean, cleanCode: string, files: Array}} Parsed directives and cleaned code
- */
-function parseTestDirectives(code) {
-  const lines = code.split('\n');
-  const options = {};
-  let isMultiFile = false;
-  const cleanLines = [];
-  const files = [];
-
-  let currentFileName = null;
-  let currentFileLines = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/);
-    if (filenameMatch) {
-      isMultiFile = true;
-      if (currentFileName) {
-        files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-      }
-      currentFileName = filenameMatch[1].trim();
-      currentFileLines = [];
-      continue;
-    }
-
-    const match = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
-    if (match) {
-      const [, key, value] = match;
-      const normalizedKey = key.toLowerCase();
-
-      // Special handling for @lib directive - parse as comma-separated list and accumulate
-      if (normalizedKey === 'lib') {
-        if (!options[normalizedKey]) {
-          options[normalizedKey] = [];
-        }
-        const libs = value.split(',').map(lib => lib.trim()).filter(lib => lib.length > 0);
-        options[normalizedKey].push(...libs);
-      } else if (value === 'true') {
-        options[normalizedKey] = true;
-      } else if (value === 'false') {
-        options[normalizedKey] = false;
-      } else if (!isNaN(Number(value))) {
-        options[normalizedKey] = Number(value);
-      } else {
-        options[normalizedKey] = value;
-      }
-      continue;
-    }
-
-    if (isMultiFile && currentFileName) {
-      currentFileLines.push(line);
-    } else {
-      cleanLines.push(line);
-    }
-  }
-
-  if (isMultiFile && currentFileName) {
-    files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-  }
-
-  return { options, isMultiFile, cleanCode: cleanLines.join('\n'), files };
-}
+// parseTestDirectives is imported from directive-parser.mjs
 
 async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
   const ts = require('typescript');
 
+  // Build compiler options from test directives using the centralized mapper
+  const mappedOptions = mapToCompilerOptions(testOptions, ts);
+
+  // Set defaults and merge with mapped options
   const compilerOptions = {
-    strict: testOptions.strict === true,  // Only enable strict if explicitly set
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.ESNext,
     noEmit: true,
     skipLibCheck: true,
+    ...mappedOptions,
   };
 
-  if (testOptions.target) {
-    const targetMap = {
-      'es5': ts.ScriptTarget.ES5,
-      'es6': ts.ScriptTarget.ES2015,
-      'es2015': ts.ScriptTarget.ES2015,
-      'es2016': ts.ScriptTarget.ES2016,
-      'es2017': ts.ScriptTarget.ES2017,
-      'es2018': ts.ScriptTarget.ES2018,
-      'es2019': ts.ScriptTarget.ES2019,
-      'es2020': ts.ScriptTarget.ES2020,
-      'es2021': ts.ScriptTarget.ES2021,
-      'es2022': ts.ScriptTarget.ES2022,
-      'esnext': ts.ScriptTarget.ESNext,
-    };
-    compilerOptions.target = targetMap[testOptions.target.toLowerCase()] || ts.ScriptTarget.ES2020;
-  }
-
-  if (testOptions.noimplicitany !== undefined) {
-    compilerOptions.noImplicitAny = testOptions.noimplicitany;
-  }
-  if (testOptions.strictnullchecks !== undefined) {
-    compilerOptions.strictNullChecks = testOptions.strictnullchecks;
+  // Handle strict mode default: if strict is not explicitly set, default to false
+  // to match TSC test runner behavior (tests must opt-in to strict mode)
+  if (testOptions.strict === undefined) {
+    compilerOptions.strict = false;
   }
 
   const sourceFile = ts.createSourceFile(fileName, code, ts.ScriptTarget.ES2020, true);
@@ -276,21 +175,17 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
       }
     }
 
-    // Build compiler options from test directives
-    const compilerOptions = {};
-    if (testOptions.strict !== undefined) {
-      compilerOptions.strict = testOptions.strict;
-    }
-    if (testOptions.noimplicitany !== undefined) {
-      compilerOptions.noImplicitAny = testOptions.noimplicitany;
-    }
-    if (testOptions.strictnullchecks !== undefined) {
-      compilerOptions.strictNullChecks = testOptions.strictnullchecks;
+    // Build compiler options from test directives using the centralized mapper
+    const wasmOptions = mapToWasmCompilerOptions(testOptions);
+
+    // Handle strict mode default: if strict is not explicitly set, default to false
+    if (testOptions.strict === undefined) {
+      wasmOptions.strict = false;
     }
 
     // Apply compiler options to the parser
-    if (Object.keys(compilerOptions).length > 0) {
-      parser.setCompilerOptions(JSON.stringify(compilerOptions));
+    if (Object.keys(wasmOptions).length > 0) {
+      parser.setCompilerOptions(JSON.stringify(wasmOptions));
     }
 
     parser.parseSourceFile();

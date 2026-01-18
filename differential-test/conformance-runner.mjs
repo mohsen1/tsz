@@ -7,6 +7,7 @@ import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve, basename } from 'path';
 import { readFileSync, readdirSync, statSync } from 'fs';
+import { parseTestDirectives, mapToCompilerOptions, mapToWasmCompilerOptions } from './directive-parser.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -61,68 +62,7 @@ function getTestFiles(dir, maxFiles = 500) {
   return files;
 }
 
-/**
- * Parse test directives from source code.
- * Returns { options: Object, isMultiFile: boolean, cleanCode: string, files: Array<{name, content}> }
- */
-function parseTestDirectives(code) {
-  const lines = code.split('\n');
-  const options = {};
-  let isMultiFile = false;
-  const cleanLines = [];
-  const files = []; // For multi-file tests: [{name: "a.ts", content: "..."}, ...]
-
-  // First pass: extract options and detect multi-file
-  let currentFileName = null;
-  let currentFileLines = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Check for @filename directive (multi-file test)
-    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/);
-    if (filenameMatch) {
-      isMultiFile = true;
-      // Save previous file if any
-      if (currentFileName) {
-        files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-      }
-      currentFileName = filenameMatch[1].trim();
-      currentFileLines = [];
-      continue;
-    }
-
-    // Parse compiler options like // @strict: true
-    const match = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
-    if (match) {
-      const [, key, value] = match;
-      // Parse boolean/number values
-      if (value === 'true') options[key.toLowerCase()] = true;
-      else if (value === 'false') options[key.toLowerCase()] = false;
-      else if (!isNaN(Number(value))) options[key.toLowerCase()] = Number(value);
-      else options[key.toLowerCase()] = value;
-      continue; // Don't include directive in clean code
-    }
-
-    if (isMultiFile && currentFileName) {
-      currentFileLines.push(line);
-    } else {
-      cleanLines.push(line);
-    }
-  }
-
-  // Save the last file for multi-file tests
-  if (isMultiFile && currentFileName) {
-    files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-  }
-
-  return {
-    options,
-    isMultiFile,
-    cleanCode: cleanLines.join('\n'),
-    files,
-  };
-}
+// parseTestDirectives is imported from directive-parser.mjs
 
 /**
  * Run tsc on a single file
@@ -130,50 +70,22 @@ function parseTestDirectives(code) {
 async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
   const ts = require('typescript');
 
-  // Build compiler options from test directives
+  // Build compiler options from test directives using the centralized mapper
+  const mappedOptions = mapToCompilerOptions(testOptions, ts);
+
+  // Set defaults and merge with mapped options
   const compilerOptions = {
-    strict: testOptions.strict !== false, // default true
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.ESNext,
     noEmit: true,
     skipLibCheck: true,
+    ...mappedOptions,
   };
 
-  // Apply test-specific options
-  if (testOptions.target) {
-    const targetMap = {
-      'es5': ts.ScriptTarget.ES5,
-      'es6': ts.ScriptTarget.ES2015,
-      'es2015': ts.ScriptTarget.ES2015,
-      'es2016': ts.ScriptTarget.ES2016,
-      'es2017': ts.ScriptTarget.ES2017,
-      'es2018': ts.ScriptTarget.ES2018,
-      'es2019': ts.ScriptTarget.ES2019,
-      'es2020': ts.ScriptTarget.ES2020,
-      'es2021': ts.ScriptTarget.ES2021,
-      'es2022': ts.ScriptTarget.ES2022,
-      'esnext': ts.ScriptTarget.ESNext,
-    };
-    compilerOptions.target = targetMap[testOptions.target.toLowerCase()] || ts.ScriptTarget.ES2020;
-  }
-
-  if (testOptions.noimplicitany !== undefined) {
-    compilerOptions.noImplicitAny = testOptions.noimplicitany;
-  }
-  if (testOptions.strictnullchecks !== undefined) {
-    compilerOptions.strictNullChecks = testOptions.strictnullchecks;
-  }
-  if (testOptions.noimplicitreturns !== undefined) {
-    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
-  }
-  if (testOptions.noimplicitthis !== undefined) {
-    compilerOptions.noImplicitThis = testOptions.noimplicitthis;
-  }
-  if (testOptions.strictfunctiontypes !== undefined) {
-    compilerOptions.strictFunctionTypes = testOptions.strictfunctiontypes;
-  }
-  if (testOptions.strictpropertyinitialization !== undefined) {
-    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
+  // Handle strict mode default: if strict is not explicitly set, default to false
+  // to match TSC test runner behavior (tests must opt-in to strict mode)
+  if (testOptions.strict === undefined) {
+    compilerOptions.strict = false;
   }
 
   const sourceFile = ts.createSourceFile(
@@ -214,50 +126,21 @@ async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
 async function runTscMultiFile(files, testOptions = {}) {
   const ts = require('typescript');
 
-  // Build compiler options from test directives
+  // Build compiler options from test directives using the centralized mapper
+  const mappedOptions = mapToCompilerOptions(testOptions, ts);
+
+  // Set defaults and merge with mapped options
   const compilerOptions = {
-    strict: testOptions.strict !== false,
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.ESNext,
     noEmit: true,
     skipLibCheck: true,
+    ...mappedOptions,
   };
 
-  // Apply test-specific options
-  if (testOptions.target) {
-    const targetMap = {
-      'es5': ts.ScriptTarget.ES5,
-      'es6': ts.ScriptTarget.ES2015,
-      'es2015': ts.ScriptTarget.ES2015,
-      'es2016': ts.ScriptTarget.ES2016,
-      'es2017': ts.ScriptTarget.ES2017,
-      'es2018': ts.ScriptTarget.ES2018,
-      'es2019': ts.ScriptTarget.ES2019,
-      'es2020': ts.ScriptTarget.ES2020,
-      'es2021': ts.ScriptTarget.ES2021,
-      'es2022': ts.ScriptTarget.ES2022,
-      'esnext': ts.ScriptTarget.ESNext,
-    };
-    compilerOptions.target = targetMap[testOptions.target.toLowerCase()] || ts.ScriptTarget.ES2020;
-  }
-
-  if (testOptions.noimplicitany !== undefined) {
-    compilerOptions.noImplicitAny = testOptions.noimplicitany;
-  }
-  if (testOptions.strictnullchecks !== undefined) {
-    compilerOptions.strictNullChecks = testOptions.strictnullchecks;
-  }
-  if (testOptions.noimplicitreturns !== undefined) {
-    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
-  }
-  if (testOptions.noimplicitthis !== undefined) {
-    compilerOptions.noImplicitThis = testOptions.noimplicitthis;
-  }
-  if (testOptions.strictfunctiontypes !== undefined) {
-    compilerOptions.strictFunctionTypes = testOptions.strictfunctiontypes;
-  }
-  if (testOptions.strictpropertyinitialization !== undefined) {
-    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
+  // Handle strict mode default: if strict is not explicitly set, default to false
+  if (testOptions.strict === undefined) {
+    compilerOptions.strict = false;
   }
 
   // Create source files for all files
@@ -311,6 +194,20 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
 
     // WASM module auto-initializes when built with --target nodejs
     const parser = new wasmModule.ThinParser(fileName, code);
+
+    // Build compiler options from test directives using the centralized mapper
+    const wasmOptions = mapToWasmCompilerOptions(testOptions);
+
+    // Handle strict mode default: if strict is not explicitly set, default to false
+    if (testOptions.strict === undefined) {
+      wasmOptions.strict = false;
+    }
+
+    // Apply compiler options to the WASM parser
+    if (Object.keys(wasmOptions).length > 0) {
+      parser.setCompilerOptions(JSON.stringify(wasmOptions));
+    }
+
     if (!testOptions.nolib) {
       parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
     }
@@ -363,6 +260,19 @@ async function runWasmMultiFile(files, testOptions = {}) {
     // WASM module auto-initializes when built with --target nodejs
     // Use the new WasmProgram API for multi-file support
     const program = new wasmModule.WasmProgram();
+
+    // Build compiler options from test directives using the centralized mapper
+    const wasmOptions = mapToWasmCompilerOptions(testOptions);
+
+    // Handle strict mode default: if strict is not explicitly set, default to false
+    if (testOptions.strict === undefined) {
+      wasmOptions.strict = false;
+    }
+
+    // Apply compiler options to the program if the method exists
+    if (Object.keys(wasmOptions).length > 0 && typeof program.setCompilerOptions === 'function') {
+      program.setCompilerOptions(JSON.stringify(wasmOptions));
+    }
 
     if (!testOptions.nolib) {
       program.addFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);

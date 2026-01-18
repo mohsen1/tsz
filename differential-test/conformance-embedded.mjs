@@ -8,6 +8,7 @@ import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve, basename } from 'path';
 import { readFileSync, readdirSync, statSync } from 'fs';
+import { parseTestDirectives, mapToCompilerOptions, mapToWasmCompilerOptions } from './directive-parser.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -49,60 +50,7 @@ function getTestFiles(dir, maxFiles = 500) {
   return files;
 }
 
-/**
- * Parse test directives from source code
- */
-function parseTestDirectives(code) {
-  const lines = code.split('\n');
-  const options = {};
-  let isMultiFile = false;
-  const cleanLines = [];
-  const files = [];
-  let currentFileName = null;
-  let currentFileLines = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/);
-    if (filenameMatch) {
-      isMultiFile = true;
-      if (currentFileName) {
-        files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-      }
-      currentFileName = filenameMatch[1].trim();
-      currentFileLines = [];
-      continue;
-    }
-
-    const match = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
-    if (match) {
-      const [, key, value] = match;
-      if (value === 'true') options[key.toLowerCase()] = true;
-      else if (value === 'false') options[key.toLowerCase()] = false;
-      else if (!isNaN(Number(value))) options[key.toLowerCase()] = Number(value);
-      else options[key.toLowerCase()] = value;
-      continue;
-    }
-
-    if (isMultiFile && currentFileName) {
-      currentFileLines.push(line);
-    } else {
-      cleanLines.push(line);
-    }
-  }
-
-  if (isMultiFile && currentFileName) {
-    files.push({ name: currentFileName, content: currentFileLines.join('\n') });
-  }
-
-  return {
-    options,
-    isMultiFile,
-    cleanCode: cleanLines.join('\n'),
-    files,
-  };
-}
+// parseTestDirectives is imported from directive-parser.mjs
 
 /**
  * Run tsc on a single file
@@ -110,36 +58,21 @@ function parseTestDirectives(code) {
 async function runTsc(code, fileName = 'test.ts', testOptions = {}) {
   const ts = require('typescript');
 
+  // Build compiler options from test directives using the centralized mapper
+  const mappedOptions = mapToCompilerOptions(testOptions, ts);
+
+  // Set defaults and merge with mapped options
   const compilerOptions = {
-    strict: testOptions.strict !== false,
     target: ts.ScriptTarget.ES2020,
     module: ts.ModuleKind.ESNext,
     noEmit: true,
     skipLibCheck: true,
+    ...mappedOptions,
   };
 
-  if (testOptions.target) {
-    const targetMap = {
-      'es5': ts.ScriptTarget.ES5,
-      'es6': ts.ScriptTarget.ES2015,
-      'es2015': ts.ScriptTarget.ES2015,
-      'es2016': ts.ScriptTarget.ES2016,
-      'es2017': ts.ScriptTarget.ES2017,
-      'es2018': ts.ScriptTarget.ES2018,
-      'es2019': ts.ScriptTarget.ES2019,
-      'es2020': ts.ScriptTarget.ES2020,
-      'es2021': ts.ScriptTarget.ES2021,
-      'es2022': ts.ScriptTarget.ES2022,
-      'esnext': ts.ScriptTarget.ESNext,
-    };
-    compilerOptions.target = targetMap[testOptions.target.toLowerCase()] || ts.ScriptTarget.ES2020;
-  }
-
-  if (testOptions.noimplicitany !== undefined) {
-    compilerOptions.noImplicitAny = testOptions.noimplicitany;
-  }
-  if (testOptions.strictnullchecks !== undefined) {
-    compilerOptions.strictNullChecks = testOptions.strictnullchecks;
+  // Handle strict mode default: if strict is not explicitly set, default to false
+  if (testOptions.strict === undefined) {
+    compilerOptions.strict = false;
   }
 
   const sourceFile = ts.createSourceFile(fileName, code, ts.ScriptTarget.ES2020, true);
@@ -177,6 +110,20 @@ async function runWasm(code, fileName = 'test.ts', testOptions = {}) {
     const wasm = await import(join(CONFIG.wasmPkgPath, 'wasm.js'));
 
     const parser = new wasm.ThinParser(fileName, code);
+
+    // Build compiler options from test directives using the centralized mapper
+    const wasmOptions = mapToWasmCompilerOptions(testOptions);
+
+    // Handle strict mode default: if strict is not explicitly set, default to false
+    if (testOptions.strict === undefined) {
+      wasmOptions.strict = false;
+    }
+
+    // Apply compiler options to the WASM parser
+    if (Object.keys(wasmOptions).length > 0) {
+      parser.setCompilerOptions(JSON.stringify(wasmOptions));
+    }
+
     if (!testOptions.nolib) {
       parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
     }
