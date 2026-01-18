@@ -26243,3 +26243,180 @@ fn test_tier_2_type_checker_accuracy_fixes() {
     println!("- TS2571 unknown type over-reporting reduction: Infrastructure ✓");
     println!("- TS2348 invoke expression over-reporting reduction: Infrastructure ✓");
 }
+
+#[test]
+fn test_is_in_namespace_context_ast_traversal() {
+    use crate::parser::syntax_kind_ext;
+    use crate::thin_parser::ThinParserState;
+
+    // Test 1: Function inside a namespace should be detected
+    let source_with_namespace = r#"
+namespace MyNamespace {
+    export function innerFunc() {
+        return 42;
+    }
+}
+"#;
+
+    let mut parser = ThinParserState::new("test.ts".to_string(), source_with_namespace.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = ThinBinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    // Find the namespace node
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let namespace_idx = source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&idx| {
+            arena.get(idx).map_or(false, |node| {
+                node.kind == syntax_kind_ext::MODULE_DECLARATION
+            })
+        })
+        .expect("namespace declaration");
+
+    // Find the function inside the namespace
+    let ns_node = arena.get(namespace_idx).expect("namespace node");
+    let ns_data = arena.get_module(ns_node).expect("module data");
+    let body_node = arena.get(ns_data.body).expect("module body");
+    let block_data = arena.get_module_block(body_node).expect("module block");
+    let statements = block_data.statements.as_ref().expect("module block statements");
+    let func_idx = statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&idx| {
+            arena.get(idx).map_or(false, |node| {
+                node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            })
+        })
+        .expect("function declaration inside namespace");
+
+    // The function inside namespace should be detected as in namespace context
+    assert!(
+        checker.is_in_namespace_context(func_idx),
+        "Function inside namespace should be detected by AST traversal"
+    );
+
+    // Test 2: Top-level function should NOT be detected
+    let source_without_namespace = r#"
+function topLevelFunc() {
+    return 42;
+}
+"#;
+
+    let mut parser2 = ThinParserState::new("test2.ts".to_string(), source_without_namespace.to_string());
+    let root2 = parser2.parse_source_file();
+    let arena2 = parser2.get_arena();
+
+    let mut binder2 = ThinBinderState::new();
+    binder2.bind_source_file(arena2, root2);
+
+    let types2 = TypeInterner::new();
+    let checker2 = ThinCheckerState::new(
+        arena2,
+        &binder2,
+        &types2,
+        "test2.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    let root_node2 = arena2.get(root2).expect("root node");
+    let source_file2 = arena2.get_source_file(root_node2).expect("source file");
+    let top_func_idx = source_file2
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&idx| {
+            arena2.get(idx).map_or(false, |node| {
+                node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            })
+        })
+        .expect("top-level function declaration");
+
+    // The top-level function should NOT be detected as in namespace context
+    assert!(
+        !checker2.is_in_namespace_context(top_func_idx),
+        "Top-level function should NOT be detected as in namespace context"
+    );
+
+    // Test 3: Function inside a module (using module keyword) should also be detected
+    let source_with_module = r#"
+module MyModule {
+    export function moduleFunc() {
+        return 42;
+    }
+}
+"#;
+
+    let mut parser3 = ThinParserState::new("test3.ts".to_string(), source_with_module.to_string());
+    let root3 = parser3.parse_source_file();
+    let arena3 = parser3.get_arena();
+
+    let mut binder3 = ThinBinderState::new();
+    binder3.bind_source_file(arena3, root3);
+
+    let types3 = TypeInterner::new();
+    let checker3 = ThinCheckerState::new(
+        arena3,
+        &binder3,
+        &types3,
+        "test3.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    let root_node3 = arena3.get(root3).expect("root node");
+    let source_file3 = arena3.get_source_file(root_node3).expect("source file");
+    let module_idx = source_file3
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&idx| {
+            arena3.get(idx).map_or(false, |node| {
+                node.kind == syntax_kind_ext::MODULE_DECLARATION
+            })
+        })
+        .expect("module declaration");
+
+    let mod_node = arena3.get(module_idx).expect("module node");
+    let mod_data = arena3.get_module(mod_node).expect("module data");
+    let mod_body_node = arena3.get(mod_data.body).expect("module body");
+    let mod_block_data = arena3.get_module_block(mod_body_node).expect("module block");
+    let mod_statements = mod_block_data.statements.as_ref().expect("module block statements");
+    let mod_func_idx = mod_statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&idx| {
+            arena3.get(idx).map_or(false, |node| {
+                node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            })
+        })
+        .expect("function declaration inside module");
+
+    assert!(
+        checker3.is_in_namespace_context(mod_func_idx),
+        "Function inside module should be detected by AST traversal"
+    );
+
+    println!("✅ is_in_namespace_context AST traversal tests passed:");
+    println!("  - Function inside namespace: correctly detected ✓");
+    println!("  - Top-level function: correctly not detected ✓");
+    println!("  - Function inside module: correctly detected ✓");
+}
