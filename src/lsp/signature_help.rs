@@ -590,9 +590,9 @@ impl<'a> SignatureHelpProvider<'a> {
                 sig.total_params
             };
             let score = if desired < min_params {
-                min_params - desired
+                min_params.saturating_sub(desired)
             } else if desired > max_params {
-                desired - max_params
+                desired.saturating_sub(max_params)
             } else {
                 0
             };
