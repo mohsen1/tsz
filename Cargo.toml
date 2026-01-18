@@ -59,6 +59,10 @@ harness = false
 name = "cfa_bench"
 harness = false
 
+[[bench]]
+name = "parallel_bench"
+harness = false
+
 [lints.rust]
 unsafe_code = "warn"
 rust_2024_compatibility = { level = "warn", priority = -1 }
