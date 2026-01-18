@@ -444,6 +444,7 @@ impl ProjectFile {
             strict_function_types: self.strict,
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
+            isolated_modules: false,
         };
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
