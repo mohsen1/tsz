@@ -24550,15 +24550,33 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function is within a namespace or module context
-    fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect namespace/module context
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain.
+    /// Uses AST-based scope traversal to detect ModuleDeclaration ancestors.
+    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+        // Find the enclosing scope for the function
+        let Some(mut scope_id) = self.find_enclosing_scope(func_idx) else {
+            return false;
+        };
 
-        self.ctx.file_name.contains("namespace") ||
-        self.ctx.file_name.contains("module") ||
-        self.ctx.file_name.contains("Module") ||
-        self.ctx.file_name.contains("Namespace")
+        // Walk up the scope chain looking for a Module scope
+        while !scope_id.is_none() {
+            if let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) {
+                // Check if this scope is a Module (namespace) scope
+                if scope.kind == ContainerKind::Module {
+                    // Also verify the container node is a MODULE_DECLARATION
+                    // (not just a SourceFile which might also be ContainerKind::Module)
+                    if let Some(container_node) = self.ctx.arena.get(scope.container_node) {
+                        if container_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            return true;
+                        }
+                    }
+                }
+                scope_id = scope.parent;
+            } else {
+                break;
+            }
+        }
+
+        false
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
