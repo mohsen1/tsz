@@ -104,6 +104,16 @@ One by one go through rules ignored in `clippy.toml` and fix the underlying issu
 ### 4. Complete TODOs in conformance/TEST_CATEGORIES.md
 Finish implementing the unified test runner to handle `compiler/` and `projects/` tests in addition to `conformance/`.
 
+
+### 5. Improve code hygiene
+
+- Move all scripts to `scripts/` directory. no scripts in root. Including test.sh, build-wasm.sh, etc.
+- Update AGENTS.md so agents do not produce .md files for results of their work.
+- Update .gitignore to not allow any new files in root.
+- Revisit scripts/ and conformance/ scripts and clean up as needed.
+- Move docker files to scripts/docker/ or similar.
+
+
 ## Merge Criteria
 
 **Before merging any branch:**
