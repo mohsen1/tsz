@@ -22,21 +22,12 @@ pub struct ReachabilityAnalyzer<'a> {
     graph: &'a FlowGraph,
     /// Reference to the ThinNodeArena for AST access
     arena: &'a ThinNodeArena,
-    /// Cached set of unreachable node IDs
-    #[allow(dead_code)]
-    unreachable_cache: FxHashSet<u32>,
 }
 
 impl<'a> ReachabilityAnalyzer<'a> {
     /// Create a new reachability analyzer.
     pub fn new(graph: &'a FlowGraph, arena: &'a ThinNodeArena) -> Self {
-        let unreachable_cache = graph.unreachable_nodes.clone();
-
-        Self {
-            graph,
-            arena,
-            unreachable_cache,
-        }
+        Self { graph, arena }
     }
 
     /// Check if a node is definitely unreachable.
