@@ -11,10 +11,12 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
 | Ignored Tests | 6 (infinite loops) |
-| Test-Aware Patterns | 39 in thin_checker.rs |
+| Test-Aware Patterns | **0 in thin_checker.rs** (GOAL ACHIEVED) |
 
 **Build Status:** Passes
 **Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
+
+> **Note:** `src/lib.rs` has 5 `file_name.contains` patterns for TypeScript library file detection (lib.d.ts, lib.es*, lib.dom*, etc.). These are NOT test-aware code - they are legitimate runtime configuration for loading standard library type definitions.
 
 ---
 
