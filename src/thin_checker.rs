@@ -24174,16 +24174,31 @@ impl<'a> ThinCheckerState<'a> {
         self.find_containing_class(func_idx).is_some()
     }
 
-    /// Check if a function is within a namespace or module context
-    fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect namespace/module context
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain.
+    /// Find the containing namespace/module for a node by walking up the parent chain
+    fn find_containing_namespace(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if we've reached a module/namespace declaration
+                if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    return Some(current);
+                }
+            }
+            // Get parent and continue traversal
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
+    }
 
-        self.ctx.file_name.contains("namespace") ||
-        self.ctx.file_name.contains("module") ||
-        self.ctx.file_name.contains("Module") ||
-        self.ctx.file_name.contains("Namespace")
+    /// Check if a function is within a namespace or module context
+    /// Uses AST parent chain traversal to detect if the function is within a namespace
+    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+        // Walk up the parent chain to find if we're inside a namespace/module
+        self.find_containing_namespace(func_idx).is_some()
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
