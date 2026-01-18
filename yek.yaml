@@ -1,0 +1,74 @@
+# Yek configuration for tsz (TypeScript compiler in Rust)
+# This focuses on important source code files, excluding tests
+
+# Token limit for LLM context
+tokens: "900k"
+
+# Ignore patterns (extends .gitignore)
+ignore_patterns:
+  - "**/tests/**"
+  - "**/*_tests.rs"
+  - "**/benches/**"
+  - "TypeScript/**"
+  - "node_modules/**"
+  - "target/**"
+  - "specs/**"
+  - ".github/**"
+  - "scripts/**"
+  - "pkg/**"
+  - "conformance/**"
+  - "*.wasm"
+  - "*.lock"
+
+# Priority rules - higher scores are prioritized (appear later in output)
+priority_rules:
+  # Core type checking and solving (most important)
+  - score: 100
+    pattern: "^src/(thin_checker|thin_binder|binder|lowering_pass)\\.rs$"
+  - score: 95
+    pattern: "^src/(checker|solver)/"
+
+  # Parser and scanner
+  - score: 90
+    pattern: "^src/(thin_parser|scanner|parser|lib)\\.rs$"
+  - score: 85
+    pattern: "^src/(parser|scanner)/"
+
+  # Emitter and code generation
+  - score: 80
+    pattern: "^src/(thin_emitter|declaration_emitter|source_writer|source_map|emit_context)\\.rs$"
+  - score: 75
+    pattern: "^src/thin_emitter/"
+  - score: 70
+    pattern: "^src/transforms/"
+
+  # LSP and CLI
+  - score: 60
+    pattern: "^src/(lsp|cli)/"
+
+  # Core infrastructure
+  - score: 50
+    pattern: "^src/(interner|comments|char_codes|lib_loader|parallel|transform_context)\\.rs$"
+
+  # Documentation
+  - score: 40
+    pattern: "^PROJECT_DIRECTION\\.md$"
+  - score: 30
+    pattern: "^\\.(md|txt)$"
+
+# Binary extensions to ignore (in addition to built-in list)
+binary_extensions:
+  - ".wasm"
+  - ".png"
+  - ".jpg"
+  - ".jpeg"
+  - ".gif"
+  - ".ico"
+  - ".pdf"
+
+# Git history priority boost (lower = less emphasis on git recency)
+git_boost_max: 30
+
+# Output options
+line_numbers: true
+tree_header: true
