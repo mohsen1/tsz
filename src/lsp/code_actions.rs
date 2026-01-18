@@ -167,7 +167,7 @@ impl<'a> CodeActionProvider<'a> {
         let request_quickfix = context
             .only
             .as_ref()
-            .map_or(true, |kinds| kinds.contains(&CodeActionKind::QuickFix));
+            .is_none_or(|kinds| kinds.contains(&CodeActionKind::QuickFix));
         if request_quickfix {
             for diag in &context.diagnostics {
                 if let Some(action) = self.unused_import_quickfix(diag) {
@@ -188,7 +188,7 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // Source Actions (file-level)
-        let request_organize = context.only.as_ref().map_or(true, |kinds| {
+        let request_organize = context.only.as_ref().is_none_or(|kinds| {
             kinds.contains(&CodeActionKind::SourceOrganizeImports)
         });
         if request_organize {
@@ -565,7 +565,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     fn is_import_declaration(&self, node_idx: NodeIndex) -> bool {
-        self.arena.get(node_idx).map_or(false, |node| {
+        self.arena.get(node_idx).is_some_and(|node| {
             node.kind == syntax_kind_ext::IMPORT_DECLARATION
         })
     }

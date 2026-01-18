@@ -136,11 +136,7 @@ impl<'a> DocumentHighlightProvider<'a> {
             .position_to_offset(range.end, self.source_text)?;
 
         // Look at a small window before the identifier to detect assignment
-        let context_start = if start_offset > 20 {
-            start_offset - 20
-        } else {
-            0
-        };
+        let context_start = start_offset.saturating_sub(20);
         let context_end = if end_offset + 20 < self.source_text.len() as u32 {
             end_offset + 20
         } else {
