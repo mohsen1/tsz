@@ -5253,9 +5253,14 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[tuple_arg]);
-    // NOTE: Returns ERROR because tuple with rest element doesn't satisfy array constraint any[].
-    // KNOWN LIMITATION: Tuple-to-array assignability not implemented (tuples should be assignable to arrays).
-    assert_eq!(result, TypeId::ERROR);
+    // T should be inferred as the tuple containing the rest element: [...string[]]
+    let expected = interner.tuple(vec![TupleElement {
+        type_id: string_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    assert_eq!(result, expected);
 }
 
 #[test]
