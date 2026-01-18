@@ -22569,7 +22569,7 @@ class Child extends Parent {
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - ES5 class transform with complex decorator patterns (class, method, property, parameter decorators combined) causes unbounded recursion in ClassES5Emitter."]
 fn test_source_map_decorator_combined_advanced() {
     // Test combined advanced decorator patterns
     let source = r#"function controller(path: string) {
@@ -44377,7 +44377,7 @@ console.log(getMetadata("column", service, "name"));"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - ES5 class transform with multiple parameter decorators on constructor and methods causes unbounded recursion in ClassES5Emitter."]
 fn test_source_map_decorator_metadata_es5_parameter_decorators() {
     let source = r#"const paramMetadata = new Map<string, Map<number, any>>();
 
@@ -54745,7 +54745,7 @@ console.log(getMetadata("author", Component));"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - ES5 class transform with chained parameter decorators on method parameters causes unbounded recursion in ClassES5Emitter."]
 fn test_source_map_decorator_composition_es5_method_params() {
     let source = r#"const paramMetadata = new Map<any, Map<string, any[]>>();
 
@@ -55319,7 +55319,7 @@ admin.save();"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - ES5 class transform with complex decorator patterns causes unbounded recursion in ClassES5Emitter. Issue involves async methods with parameter decorators and accessor decorators with observable patterns. Likely in emit_expression/emit_statement mutual recursion path."]
 fn test_source_map_decorator_composition_es5_comprehensive() {
     let source = r#"// Comprehensive decorator composition patterns for ES5 transform testing
 

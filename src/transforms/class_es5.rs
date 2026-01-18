@@ -69,6 +69,9 @@ struct TemplateParts {
     expressions: Vec<NodeIndex>,
 }
 
+/// Maximum recursion depth for emit_expression/emit_statement to prevent stack overflow
+const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
+
 /// ES5 class emitter - emits ES5 IIFE pattern for classes
 pub struct ClassES5Emitter<'a> {
     arena: &'a ThinNodeArena,
@@ -93,6 +96,8 @@ pub struct ClassES5Emitter<'a> {
     private_accessors: Vec<PrivateAccessorInfo>,
     /// Current class name (for private field WeakMap names)
     class_name: String,
+    /// Current recursion depth for emit_expression/emit_statement
+    recursion_depth: u32,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -113,6 +118,7 @@ impl<'a> ClassES5Emitter<'a> {
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
             class_name: String::new(),
+            recursion_depth: 0,
         }
     }
 
@@ -2302,7 +2308,15 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_statement(&mut self, stmt_idx: NodeIndex) {
+        // Guard against infinite recursion
+        if self.recursion_depth >= MAX_EMIT_RECURSION_DEPTH {
+            self.write("/* recursion limit reached */");
+            return;
+        }
+        self.recursion_depth += 1;
+
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            self.recursion_depth -= 1;
             return;
         };
 
@@ -2380,6 +2394,7 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write(";");
             }
         }
+        self.recursion_depth -= 1;
     }
 
     fn emit_variable_statement(&mut self, stmt_idx: NodeIndex) {
@@ -3324,7 +3339,15 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_expression(&mut self, expr_idx: NodeIndex) {
+        // Guard against infinite recursion
+        if self.recursion_depth >= MAX_EMIT_RECURSION_DEPTH {
+            self.write("/* recursion limit reached */");
+            return;
+        }
+        self.recursion_depth += 1;
+
         let Some(expr_node) = self.arena.get(expr_idx) else {
+            self.recursion_depth -= 1;
             return;
         };
 
@@ -3677,6 +3700,7 @@ impl<'a> ClassES5Emitter<'a> {
                 // Unknown expression - try to get text from source
             }
         }
+        self.recursion_depth -= 1;
     }
 
     fn emit_string_literal_text(&mut self, text: &str) {
