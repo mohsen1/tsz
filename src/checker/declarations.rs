@@ -28,6 +28,7 @@ enum PropertyKey {
 
 /// Computed property key.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[allow(dead_code)]
 enum ComputedKey {
     Ident(String),
     String(String),
