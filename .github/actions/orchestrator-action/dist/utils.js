@@ -91,10 +91,13 @@ async function dispatchWorkflow({ role, goal, parent_branch, scope_path, task_co
     const octokit = getOctokit();
     const context = github.context;
     const ref = branch_ref || parent_branch || context.ref?.replace('refs/heads/', '') || 'main';
+    // Use the workflow filename, not the display name
+    // context.workflow might be "AI Orchestrator" but we need "orchestrator.yml"
+    const workflowId = 'orchestrator.yml';
     const payload = {
         owner: context.repo.owner,
         repo: context.repo.repo,
-        workflow_id: context.workflow || 'orchestrator.yml',
+        workflow_id: workflowId,
         ref,
         inputs: { role, goal, parent_branch, scope_path, task_context },
     };
