@@ -941,7 +941,7 @@ impl<'a> ThinCheckerState<'a> {
         let has_type_args = type_ref
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         // Check if type_name is a qualified name (A.B)
         if let Some(name_node) = self.ctx.arena.get(type_name_idx) {
@@ -1225,7 +1225,7 @@ impl<'a> ThinCheckerState<'a> {
                 if arg_ref
                     .type_arguments
                     .as_ref()
-                    .map_or(false, |list| !list.nodes.is_empty())
+                    .is_some_and(|list| !list.nodes.is_empty())
                 {
                     return false;
                 }
@@ -1651,7 +1651,7 @@ impl<'a> ThinCheckerState<'a> {
         if symbol.flags & symbol_flags::ALIAS == 0 {
             return Some(sym_id);
         }
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -2254,7 +2254,7 @@ impl<'a> ThinCheckerState<'a> {
                         _ => None,
                     };
 
-                    if common_props.as_ref().map_or(true, |props| props.is_empty())
+                    if common_props.as_ref().is_none_or(|props| props.is_empty())
                         && common_string_index.is_none()
                         && common_number_index.is_none()
                     {
@@ -2508,7 +2508,7 @@ impl<'a> ThinCheckerState<'a> {
         let has_type_args = type_query
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         let base =
             if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
@@ -2703,7 +2703,7 @@ impl<'a> ThinCheckerState<'a> {
         let has_type_args = type_ref
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         if let Some(name_node) = self.ctx.arena.get(type_name_idx) {
             if name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
@@ -3137,6 +3137,7 @@ impl<'a> ThinCheckerState<'a> {
         self.ctx.types.object(properties)
     }
 
+    #[allow(dead_code)]
     fn lower_type_parameter_info(
         &mut self,
         idx: NodeIndex,
@@ -3224,7 +3225,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Second pass: Now resolve constraints and defaults with all type parameters in scope
-        for (_idx, &param_idx) in param_indices.iter().enumerate() {
+        for &param_idx in param_indices.iter() {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -11789,6 +11790,7 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn is_concrete_constructor_target(
         &self,
         type_id: TypeId,
@@ -11798,6 +11800,7 @@ impl<'a> ThinCheckerState<'a> {
         self.is_concrete_constructor_target_inner(type_id, env, &mut visited)
     }
 
+    #[allow(dead_code)]
     fn is_concrete_constructor_target_inner(
         &self,
         type_id: TypeId,
@@ -12442,13 +12445,6 @@ impl<'a> ThinCheckerState<'a> {
             }
             TypeKey::ReadonlyType(inner) => {
                 self.resolve_type_for_property_access_inner(inner, visited)
-            }
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                if let Some(constraint) = info.constraint {
-                    self.resolve_type_for_property_access_inner(constraint, visited)
-                } else {
-                    type_id
-                }
             }
             TypeKey::Function(_) | TypeKey::Callable(_) => {
                 let expanded = self.apply_function_interface_for_property_access(type_id);
@@ -13897,6 +13893,7 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check if two symbol declarations can merge (for TS2403 checking).
     /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
+    #[allow(dead_code)]
     fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
         // Interface can merge with interface
         if (existing_flags & symbol_flags::INTERFACE) != 0
@@ -14108,7 +14105,6 @@ impl<'a> ThinCheckerState<'a> {
                 | "navigator"
                 | "location"
                 | "history"
-                | "exports"
         )
     }
 
@@ -15039,7 +15035,7 @@ impl<'a> ThinCheckerState<'a> {
             if is_test_file && (
                 name_str.len() <= 2  // Very short names are likely used dynamically in tests
                 || name_str.chars().all(|c| c.is_uppercase())  // ALL_CAPS constants
-                || name_str.chars().next().map_or(false, |c| c.is_uppercase())  // PascalCase (types/classes)
+                || name_str.chars().next().is_some_and(|c| c.is_uppercase())  // PascalCase (types/classes)
             ) {
                 continue;
             }
@@ -15866,7 +15862,7 @@ impl<'a> ThinCheckerState<'a> {
             {
                 // Check if the variable name is a destructuring pattern
                 let is_destructuring_pattern = self.ctx.arena.get(var_decl.name)
-                    .map_or(false, |name_node| {
+                    .is_some_and(|name_node| {
                         name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                     });
@@ -17523,7 +17519,7 @@ impl<'a> ThinCheckerState<'a> {
         };
 
         let members = self.ctx.types.type_list(members);
-        members.iter().any(|&member| member == TypeId::UNDEFINED)
+        members.contains(&TypeId::UNDEFINED)
     }
 
     fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
@@ -23232,7 +23228,7 @@ impl<'a> ThinCheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::solver::TypeKey;
 
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -23319,7 +23315,7 @@ impl<'a> ThinCheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -23487,11 +23483,13 @@ impl<'a> ThinCheckerState<'a> {
         false
     }
 
+    #[allow(dead_code)]
     fn type_contains_any(&self, type_id: TypeId) -> bool {
         let mut visited = Vec::new();
         self.type_contains_any_inner(type_id, &mut visited)
     }
 
+    #[allow(dead_code)]
     fn type_contains_any_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
         use crate::solver::{TemplateSpan, TypeKey};
 
@@ -24493,6 +24491,7 @@ impl<'a> ThinCheckerState<'a> {
 
 
     /// Check if a property in a derived class is redeclaring a base class property
+    #[allow(dead_code)]
     fn is_derived_property_redeclaration(&self, member_idx: NodeIndex, _property_name: &str) -> bool {
         // Find the containing class for this member
         if let Some(class_idx) = self.find_containing_class(member_idx) {
@@ -24512,6 +24511,7 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Find the containing class for a member node by walking up the parent chain
+    #[allow(dead_code)]
     fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
         // Check if this member is directly in a class
         // Since we don't have parent pointers, we need to search through classes
