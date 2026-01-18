@@ -507,7 +507,7 @@ impl<'a> InferenceContext<'a> {
         targets: &[Atom],
         visited: &mut FxHashSet<Atom>,
     ) -> bool {
-        if targets.iter().any(|target| *target == name) {
+        if targets.contains(&name) {
             return true;
         }
         if !visited.insert(name) {
@@ -1557,8 +1557,8 @@ impl<'a> InferenceContext<'a> {
             return false;
         }
 
-        let target_has_rest = target_params.last().map_or(false, |p| p.rest);
-        let source_has_rest = source_params.last().map_or(false, |p| p.rest);
+        let target_has_rest = target_params.last().is_some_and(|p| p.rest);
+        let source_has_rest = source_params.last().is_some_and(|p| p.rest);
         let target_fixed = if target_has_rest {
             target_params.len().saturating_sub(1)
         } else {
