@@ -10,8 +10,8 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 |--------|-------|
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
-| Ignored Tests | 7 (infinite loops, stack overflow) |
-| Test-Aware Patterns | 8 in thin_checker.rs |
+| Ignored Tests | 7 total (5 infinite loops, 1 stack overflow, 1 utility) |
+| Test-Aware Patterns | 32 in thin_checker.rs (reduced from 39; remaining are in dead code after early return) |
 
 **Build Status:** Passes
 **Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
@@ -24,26 +24,36 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 Several tests have infinite loops and hang forever. These must be identified and marked with `#[ignore]` before any other work.
 
-**Currently Ignored (infinite loops):**
-- `test_class_es5_commonjs_class_exports` (transforms/class_es5_tests.rs)
+**Currently Ignored:**
+
+*Infinite Loops (5 tests):*
+- `test_class_es5_commonjs_debug_querybuilder` (transforms/class_es5_tests.rs)
 - `test_source_map_decorator_combined_advanced` (source_map_tests.rs)
 - `test_source_map_decorator_composition_es5_comprehensive` (source_map_tests.rs)
 - `test_source_map_decorator_composition_es5_method_params` (source_map_tests.rs)
 - `test_source_map_decorator_metadata_es5_parameter_decorators` (source_map_tests.rs)
 
+*Stack Overflow (1 test):*
+- `test_deep_binary_expression_type_check` (thin_checker_tests.rs) - needs iterative implementation
+
+*Utility (1 test):*
+- `test_print_type_sizes` (lib_tests.rs) - intentionally ignored, run manually with `--ignored`
+
 **Action:** Run tests with timeouts to find any remaining hanging tests.
 
 ### 2. Remove Test-Aware Code from Checker
 
-The checker has **8 remaining places** that check file names to suppress errors for tests. This is architectural debt (reduced from 39).
+The checker has **32 places** (down from 39) that check file names to suppress errors for tests. This is architectural debt.
 
-**Remaining patterns in `src/thin_checker.rs` (lines 24264-24279):**
-- `is_class_method`: checks file_name for "class", "Class", "method", "Method"
-- `is_in_namespace_context`: checks file_name for "namespace", "module", "Module", "Namespace"
+**Status:** 7 patterns removed via AST-based detection:
+- `is_in_namespace_context`: Replaced 4 file_name heuristics with AST parent chain traversal
+- `should_validate_async_function_context`: Replaced 3 file_name heuristics with `is_es_module_file()` and `is_async_function()` helpers
+
+Remaining 32 patterns are in dead code, located after an early return in `check_unused_declarations`. The entire block is scheduled for removal.
 
 **What to remove from `src/thin_checker.rs`:**
 ```rust
-// BAD - This pattern must be removed:
+// BAD - This pattern appears 32 times and must be removed:
 let is_test_file = self.ctx.file_name.contains("conformance")
     || self.ctx.file_name.contains("test")
     || self.ctx.file_name.contains("cases");

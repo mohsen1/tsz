@@ -19191,21 +19191,15 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
+        // Validate async functions in strict contexts based on compiler options and AST
 
         // Always validate in declaration files (.d.ts files are always strict)
         if self.ctx.file_name.ends_with(".d.ts") {
             return true;
         }
 
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
+        // Validate if this is an ES module file (has import/export declarations)
+        if self.is_es_module_file() {
             return true;
         }
 
@@ -19225,9 +19219,8 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
+        // Validate if the function itself is async - async functions should be validated
+        if self.is_async_function(func_idx) {
             return true;
         }
 
@@ -24547,6 +24540,53 @@ impl<'a> ThinCheckerState<'a> {
         self.ctx.file_name.contains("module") ||
         self.ctx.file_name.contains("Module") ||
         self.ctx.file_name.contains("Namespace")
+    }
+
+    /// Check if the source file is an ES module (has import or export declarations)
+    /// by walking the top-level statements of the source file
+    fn is_es_module_file(&self) -> bool {
+        // Get the root node (index 0 is typically the SourceFile)
+        let root_idx = NodeIndex(0);
+        let Some(root_node) = self.ctx.arena.get(root_idx) else {
+            return false;
+        };
+        let Some(sf) = self.ctx.arena.get_source_file(root_node) else {
+            return false;
+        };
+
+        // Check top-level statements for imports/exports
+        for &stmt_idx in &sf.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+            // Also check for export modifier on declarations
+            if self.has_export_modifier(stmt_idx) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a function node has the async modifier
+    fn is_async_function(&self, func_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        if let Some(func) = self.ctx.arena.get_function(node) {
+            return func.is_async;
+        }
+        false
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
