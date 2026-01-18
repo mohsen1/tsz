@@ -39,6 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.run = run;
 const core = __importStar(require("@actions/core"));
 const github = __importStar(require("@actions/github"));
+const exec = __importStar(require("@actions/exec"));
 const fs_extra_1 = __importDefault(require("fs-extra"));
 const path_1 = __importDefault(require("path"));
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
@@ -93,6 +94,8 @@ module.exports = app;`;
 console.log('placeholder');`;
     }
     await writeFilesFromResponse(files, responseText);
+    // Commit the files to git
+    await commitFiles(branchName, goal);
     await openPullRequest({
         goal,
         parentBranch,
@@ -112,6 +115,38 @@ async function writeFilesFromResponse(files, responseText) {
         await fs_extra_1.default.ensureDir(path_1.default.dirname(targetPath));
         await fs_extra_1.default.writeFile(targetPath, content.trim() + '\n');
         console.log(`Wrote file ${targetPath}`);
+    }
+}
+async function commitFiles(branchName, goal) {
+    try {
+        // Configure git
+        await exec.exec('git', ['config', 'user.name', 'github-actions[bot]']);
+        await exec.exec('git', ['config', 'user.email', 'github-actions[bot]@users.noreply.github.com']);
+        // Check if there are any changes to commit
+        let statusOutput = '';
+        await exec.exec('git', ['status', '--porcelain'], {
+            listeners: {
+                stdout: (data) => {
+                    statusOutput += data.toString();
+                },
+            },
+        });
+        if (!statusOutput.trim()) {
+            console.log('No changes to commit');
+            return;
+        }
+        // Add all changes
+        await exec.exec('git', ['add', '-A']);
+        // Commit with the goal as the message
+        const commitMessage = `AI: ${goal}`;
+        await exec.exec('git', ['commit', '-m', commitMessage]);
+        // Push the branch
+        await exec.exec('git', ['push', '-u', 'origin', branchName]);
+        console.log(`Committed and pushed changes to ${branchName}`);
+    }
+    catch (error) {
+        console.error(`Error committing files: ${error}`);
+        throw error;
     }
 }
 function extractFileContents(text) {
