@@ -22957,7 +22957,7 @@ class Child extends Parent {
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - Root cause: Decorators on class members (@prop field decorator, @inject parameter decorator) are not properly transformed to ES5. The ThinPrinter still emits decorator syntax (@) in ES5 mode, which then causes infinite recursion when ClassES5Emitter tries to process the decorator expressions. Decorators need to be stripped or transformed during the ES5 lowering pass."]
 fn test_source_map_decorator_combined_advanced() {
     // Test combined advanced decorator patterns
     let source = r#"function controller(path: string) {
@@ -55707,7 +55707,7 @@ admin.save();"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - Root cause: Similar to test_source_map_decorator_combined_advanced - decorators (@log, @sealed, @validate) on class methods and properties are not transformed for ES5. The decorator expressions contain complex call chains that cause infinite recursion when ClassES5Emitter::emit_expression processes them. Need to either (1) strip decorators entirely in ES5 mode, or (2) transform them to decorator application calls."]
 fn test_source_map_decorator_composition_es5_comprehensive() {
     let source = r#"// Comprehensive decorator composition patterns for ES5 transform testing
 
