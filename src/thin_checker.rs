@@ -19191,21 +19191,22 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
+        // Enhanced validation to catch more TS2705 cases
+        // Uses compiler options and AST inspection instead of file name heuristics
 
         // Always validate in declaration files (.d.ts files are always strict)
-        if self.ctx.file_name.ends_with(".d.ts") {
+        // Check the source file's is_declaration_file flag from AST
+        if self.is_declaration_file() {
             return true;
         }
 
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
+        // Always validate for isolatedModules mode (explicit compiler option)
+        if self.ctx.isolated_modules() {
             return true;
         }
 
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
+        // Validate if this is a module file (has import/export statements in AST)
+        if self.is_module_file() {
             return true;
         }
 
@@ -19225,9 +19226,8 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
+        // Validate if the function itself has an async modifier (AST-based check)
+        if self.function_has_async_modifier(func_idx) {
             return true;
         }
 
@@ -19236,6 +19236,64 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
+        false
+    }
+
+    /// Check if the current file is a declaration file (.d.ts) via AST inspection.
+    fn is_declaration_file(&self) -> bool {
+        // Get the source file node (typically the first node in the arena)
+        if let Some(root_node) = self.ctx.arena.nodes.first() {
+            if let Some(sf) = self.ctx.arena.get_source_file(root_node) {
+                return sf.is_declaration_file;
+            }
+        }
+        // Fallback to file extension check
+        self.ctx.file_name.ends_with(".d.ts")
+    }
+
+    /// Check if the current file is a module (has import/export statements) via AST inspection.
+    fn is_module_file(&self) -> bool {
+        use crate::parser::syntax_kind_ext::{
+            EXPORT_ASSIGNMENT, EXPORT_DECLARATION, IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION,
+        };
+
+        // Get the source file node (typically the first node in the arena)
+        if let Some(root_node) = self.ctx.arena.nodes.first() {
+            if let Some(sf) = self.ctx.arena.get_source_file(root_node) {
+                // Check top-level statements for import/export declarations
+                for &stmt_idx in &sf.statements.nodes {
+                    if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                        let kind = stmt_node.kind;
+                        if kind == IMPORT_DECLARATION
+                            || kind == IMPORT_EQUALS_DECLARATION
+                            || kind == EXPORT_DECLARATION
+                            || kind == EXPORT_ASSIGNMENT
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a function node has the async modifier via AST inspection.
+    fn function_has_async_modifier(&self, func_idx: NodeIndex) -> bool {
+        if let Some(func_node) = self.ctx.arena.get(func_idx) {
+            // Try to get modifiers from function data
+            if let Some(func_data) = self.ctx.arena.get_function(func_node) {
+                return self.has_async_modifier(&func_data.modifiers);
+            }
+            // Try method declaration
+            if let Some(method_data) = self.ctx.arena.get_method_decl(func_node) {
+                return self.has_async_modifier(&method_data.modifiers);
+            }
+            // Try accessor
+            if let Some(accessor_data) = self.ctx.arena.get_accessor(func_node) {
+                return self.has_async_modifier(&accessor_data.modifiers);
+            }
+        }
         false
     }
 
@@ -24523,30 +24581,43 @@ impl<'a> ThinCheckerState<'a> {
         None  // Simplified implementation - could be enhanced with full parent tracking
     }
 
-    /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
+    /// Check if a function node is a class method (instance or static) via AST inspection.
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext::{CONSTRUCTOR, GET_ACCESSOR, METHOD_DECLARATION, SET_ACCESSOR};
 
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+        // Check if the node kind indicates a class member
+        if let Some(func_node) = self.ctx.arena.get(func_idx) {
+            let kind = func_node.kind;
+            if kind == METHOD_DECLARATION
+                || kind == CONSTRUCTOR
+                || kind == GET_ACCESSOR
+                || kind == SET_ACCESSOR
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
-    /// Check if a function is within a namespace or module context
+    /// Check if a function is within a namespace or module context via AST inspection.
     fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect namespace/module context
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain.
+        use crate::parser::syntax_kind_ext::MODULE_DECLARATION;
 
-        self.ctx.file_name.contains("namespace") ||
-        self.ctx.file_name.contains("module") ||
-        self.ctx.file_name.contains("Module") ||
-        self.ctx.file_name.contains("Namespace")
+        // Check if any top-level statements include a module/namespace declaration
+        if let Some(root_node) = self.ctx.arena.nodes.first() {
+            if let Some(sf) = self.ctx.arena.get_source_file(root_node) {
+                for &stmt_idx in &sf.statements.nodes {
+                    if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                        if stmt_node.kind == MODULE_DECLARATION {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)

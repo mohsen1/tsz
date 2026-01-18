@@ -263,6 +263,7 @@ impl CompilerOptions {
             strict_property_initialization: self.get_strict_property_initialization(),
             no_implicit_this: self.get_no_implicit_this(),
             use_unknown_in_catch_variables: strict_null_checks,
+            isolated_modules: false, // Default to false, can be set from tsconfig
         }
     }
 }
