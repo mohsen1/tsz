@@ -77,6 +77,7 @@ async function run() {
     ${files.join('\n')}
 
     Provide full file contents for the files above. If multiple files are needed, prefix each section with "FILE: <path>".
+    IMPORTANT: Output ONLY the file contents. Do NOT wrap output in markdown code blocks (\`\`\`). Do NOT include any explanatory text before or after the file contents.
   `;
     let responseText;
     if (process.env.NODE_ENV === 'test') {
