@@ -36,6 +36,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.run = run;
 const core = __importStar(require("@actions/core"));
 const utils_1 = require("./utils");
+function sanitizeBranchName(name) {
+    return name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '');
+}
 async function run() {
     const goal = core.getInput('goal');
     const prompt = `
@@ -57,7 +63,8 @@ async function run() {
     if (!plan?.subsystems)
         return;
     for (const system of plan.subsystems) {
-        const branchName = `feature/${system.name}`;
+        const sanitizedName = sanitizeBranchName(system.name);
+        const branchName = `feature/${sanitizedName}`;
         console.log(`Creating subsystem branch: ${branchName}`);
         await (0, utils_1.createBranch)(branchName, 'main');
         console.log(`Hiring Architect for: ${system.name}`);
