@@ -1,0 +1,25 @@
+name: 'Claude Recursive Swarm'
+description: 'Director -> Architect -> Worker hierarchical coding swarm'
+inputs:
+  anthropic_key:
+    required: true
+  github_token:
+    required: true
+  role:
+    description: 'Current role: director, architect, worker, or reviewer'
+    default: 'director'
+  goal:
+    description: 'The task description'
+    required: true
+  parent_branch:
+    description: 'The branch this agent should report to'
+    default: 'main'
+  scope_path:
+    description: 'The directory this agent is responsible for (e.g. "src/backend")'
+    default: '.'
+  task_context:
+    description: 'Optional task context passed down the chain'
+    required: false
+runs:
+  using: 'node20'
+  main: 'dist/main.js'
