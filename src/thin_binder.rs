@@ -4169,6 +4169,12 @@ impl ThinBinderState {
         self.validate_symbol_table().is_empty()
     }
 
+    /// Check if the current source file is an external module.
+    /// A file is an external module if it has top-level import/export declarations.
+    pub fn is_external_module(&self) -> bool {
+        self.is_external_module
+    }
+
     // ========================================================================
     // Lib Symbol Validation (P0 Task - Improve Test Runner Lib Injection)
     // ========================================================================

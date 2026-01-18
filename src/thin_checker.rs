@@ -19180,21 +19180,17 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
+        // Enhanced validation to catch more TS2705 cases
+        // Uses proper AST/compiler-option checks instead of file name heuristics
 
         // Always validate in declaration files (.d.ts files are always strict)
         if self.ctx.file_name.ends_with(".d.ts") {
             return true;
         }
 
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
+        // Validate if this is a module file (has import/export declarations)
+        // This properly detects ES module syntax via the binder's analysis
+        if self.ctx.binder.is_external_module() {
             return true;
         }
 
@@ -19214,15 +19210,18 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
+        // Validate if any strict mode features are enabled
+        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
             return true;
         }
 
-        // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
-            return true;
+        // Check if the function has an async keyword (actual async function)
+        if let Some(func_node) = self.ctx.arena.get(func_idx) {
+            if let Some(func) = self.ctx.arena.get_function(func_node) {
+                if func.is_async {
+                    return true;
+                }
+            }
         }
 
         false
