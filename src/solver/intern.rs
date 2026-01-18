@@ -1265,3 +1265,7 @@ impl Default for TypeInterner {
 #[cfg(test)]
 #[path = "intern_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "concurrent_tests.rs"]
+mod concurrent_tests;
