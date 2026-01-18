@@ -1,3 +1,0 @@
-namespace M {
-    export = A;
-}

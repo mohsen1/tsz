@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const TEST_FILE = process.argv[2] || '/Users/mohsenazimi/code/orchestrator-config/tsz-workspace/worktrees/em-3/ts-tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator_not_strict.ts';
+const TEST_FILE = process.argv[2] || 'TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator_not_strict.ts';
 
 async function main() {
   console.log('Testing file:', TEST_FILE);

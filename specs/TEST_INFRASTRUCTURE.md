@@ -493,10 +493,10 @@ function foo(x) {
 
 ---
 
-## 6. The ts-tests/ Directory Structure
+## 6. The TypeScript/tests/ Directory Structure
 
 ```
-ts-tests/
+TypeScript/tests/
 ├── cases/
 │   ├── conformance/           # TypeScript conformance test suite
 │   │   ├── types/             # Type system tests

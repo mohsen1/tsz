@@ -110,16 +110,8 @@ jobs:
 
       - name: Fetch TypeScript conformance tests
         run: |
-          # Clone TypeScript repo with sparse checkout (only tests/cases/conformance)
-          git clone --depth 1 --filter=blob:none --sparse https://github.com/microsoft/TypeScript.git ts-repo
-          cd ts-repo
-          git sparse-checkout set tests/cases/conformance tests/lib
-          cd ..
-          # Copy tests to expected location (ts-tests to avoid conflict with Rust tests)
-          mkdir -p ts-tests/cases
-          cp -r ts-repo/tests/cases/conformance ts-tests/cases/
-          cp -r ts-repo/tests/lib ts-tests/
-          rm -rf ts-repo
+          # Initialize and update submodule (sparse: tests/ only)
+          git submodule update --init --depth 1 -- TypeScript
 
       - name: Run conformance tests (quick)
         run: |

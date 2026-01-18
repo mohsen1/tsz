@@ -1,2 +1,0 @@
-namespace number.a {
-}

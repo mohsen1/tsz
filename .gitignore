@@ -30,16 +30,16 @@ pkg/
 target/
 
 # Tests
-ts-tests/baselines/local/*
-ts-tests/baselines/local.old/*
-ts-tests/baselines/prototyping/local/*
-ts-tests/baselines/rwc/*
-ts-tests/baselines/symlinks/*
-ts-tests/cases/perf/*
-ts-tests/cases/rwc/*
-!ts-tests/baselines/reference/project/nodeModules*/**/*
-!ts-tests/cases/projects/NodeModulesSearch/**/*
-!ts-tests/cases/projects/projectOption/**/node_modules
+TypeScript/tests/baselines/local/*
+TypeScript/tests/baselines/local.old/*
+TypeScript/tests/baselines/prototyping/local/*
+TypeScript/tests/baselines/rwc/*
+TypeScript/tests/baselines/symlinks/*
+TypeScript/tests/cases/perf/*
+TypeScript/tests/cases/rwc/*
+!TypeScript/tests/baselines/reference/project/nodeModules*/**/*
+!TypeScript/tests/cases/projects/NodeModulesSearch/**/*
+!TypeScript/tests/cases/projects/projectOption/**/node_modules
 
 # Misc
 .env.local
