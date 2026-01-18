@@ -18910,21 +18910,13 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
-
         // Always validate in declaration files (.d.ts files are always strict)
         if self.ctx.file_name.ends_with(".d.ts") {
             return true;
         }
 
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
+        // Validate if this is an ES module (has top-level import/export)
+        if self.ctx.binder.is_external_module() {
             return true;
         }
 
@@ -18944,13 +18936,21 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
-            return true;
+        // Validate if the function itself is async (check the async modifier on the node)
+        if let Some(node) = self.ctx.arena.get(func_idx) {
+            if let Some(func) = self.ctx.arena.get_function(node) {
+                // Covers function declarations, function expressions, and arrow functions
+                if func.is_async {
+                    return true;
+                }
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                if self.has_async_modifier(&method.modifiers) {
+                    return true;
+                }
+            }
         }
 
-        // More liberal fallback: validate if any strict mode features are enabled
+        // Validate if any strict mode features are enabled
         if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
             return true;
         }

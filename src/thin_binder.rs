@@ -3708,6 +3708,11 @@ impl ThinBinderState {
         self.switch_clause_to_switch.get(&clause.0).copied()
     }
 
+    /// Check if the source file is an external module (has top-level import/export).
+    pub fn is_external_module(&self) -> bool {
+        self.is_external_module
+    }
+
     /// Record the current flow node for an AST node.
     /// Called during binding to track flow position for identifiers and other expressions.
     fn record_flow(&mut self, node: NodeIndex) {
