@@ -99,7 +99,7 @@ pub struct FlowGraphBuilder<'a> {
     generator_depth: u32,
 }
 
-/// Context for nested flow constructs (loops, switches, async functions, etc.)
+/// Context for nested flow constructs (loops, switches, try statements, etc.)
 #[derive(Clone, Copy)]
 struct FlowContext {
     /// Label for breaking out of this construct
@@ -110,8 +110,14 @@ struct FlowContext {
     context_type: FlowContextType,
     /// Finally block to execute on exit (for try statements)
     finally_block: NodeIndex,
+    // TODO: These fields are set when building try/finally statements but the
+    // logic to read them for routing control flow through finally blocks is not
+    // yet implemented. They will be used in build_break_statement and
+    // build_continue_statement to properly handle finally execution.
+    #[allow(dead_code)]
     /// Flow state before entering finally (for routing exits through finally)
     pre_finally_flow: FlowNodeId,
+    #[allow(dead_code)]
     /// Flow state after exiting finally (for routing exits through finally)
     post_finally_flow: FlowNodeId,
 }
@@ -121,7 +127,6 @@ enum FlowContextType {
     Loop,
     Switch,
     Try,
-    AsyncFunction,
 }
 
 impl<'a> FlowGraphBuilder<'a> {
@@ -1014,84 +1019,6 @@ impl<'a> FlowGraphBuilder<'a> {
     /// Check if currently inside a generator function.
     fn in_generator_function(&self) -> bool {
         self.generator_depth > 0
-    }
-
-    // =============================================================================
-    // Block Identification Helpers
-    // =============================================================================
-
-    /// Check if a node kind represents a block boundary.
-    ///
-    /// Block boundaries are statements that create new control flow scopes:
-    /// - Block statements ({ ... })
-    /// - Conditional statements (if/else)
-    /// - Loop statements (while, do-while, for, for-in, for-of)
-    /// - Switch statements
-    /// - Try/catch/finally statements
-    ///
-    /// # Returns
-    /// true if the node kind creates a new control flow block
-    fn is_block_boundary(kind: u16) -> bool {
-        kind == syntax_kind_ext::BLOCK
-            || kind == syntax_kind_ext::IF_STATEMENT
-            || kind == syntax_kind_ext::WHILE_STATEMENT
-            || kind == syntax_kind_ext::DO_STATEMENT
-            || kind == syntax_kind_ext::FOR_STATEMENT
-            || kind == syntax_kind_ext::FOR_IN_STATEMENT
-            || kind == syntax_kind_ext::FOR_OF_STATEMENT
-            || kind == syntax_kind_ext::SWITCH_STATEMENT
-            || kind == syntax_kind_ext::TRY_STATEMENT
-    }
-
-    /// Check if a node kind represents a loop statement.
-    ///
-    /// Loop statements create back-edges in the control flow graph:
-    /// - while, do-while, for, for-in, for-of
-    ///
-    /// # Returns
-    /// true if the node kind is a loop statement
-    fn is_loop_statement(kind: u16) -> bool {
-        kind == syntax_kind_ext::WHILE_STATEMENT
-            || kind == syntax_kind_ext::DO_STATEMENT
-            || kind == syntax_kind_ext::FOR_STATEMENT
-            || kind == syntax_kind_ext::FOR_IN_STATEMENT
-            || kind == syntax_kind_ext::FOR_OF_STATEMENT
-    }
-
-    /// Check if a node kind represents a conditional statement.
-    ///
-    /// Conditional statements create branches in the control flow graph:
-    /// - if/else, switch/case
-    ///
-    /// # Returns
-    /// true if the node kind is a conditional statement
-    fn is_conditional_statement(kind: u16) -> bool {
-        kind == syntax_kind_ext::IF_STATEMENT || kind == syntax_kind_ext::SWITCH_STATEMENT
-    }
-
-    /// Check if a node kind represents a variable declaration.
-    ///
-    /// Variable declarations introduce new variables that may need
-    /// definite assignment tracking.
-    ///
-    /// # Returns
-    /// true if the node kind is a variable declaration
-    fn is_variable_declaration(kind: u16) -> bool {
-        kind == syntax_kind_ext::VARIABLE_DECLARATION
-            || kind == syntax_kind_ext::VARIABLE_STATEMENT
-            || kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-    }
-
-    /// Check if a node kind represents an assignment.
-    ///
-    /// Assignments affect variable state for definite assignment analysis.
-    ///
-    /// # Returns
-    /// true if the node kind is an assignment expression
-    fn is_assignment(kind: u16) -> bool {
-        kind == syntax_kind_ext::BINARY_EXPRESSION
-            || kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            || kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
     }
 
     // =============================================================================
