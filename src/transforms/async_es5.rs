@@ -68,6 +68,9 @@ use crate::transforms::emit_utils;
 use crate::transforms::private_fields_es5::{get_private_field_name, is_private_identifier};
 use memchr;
 
+/// Maximum recursion depth for emit_expression to prevent infinite loops
+const MAX_RECURSION_DEPTH: u32 = 1000;
+
 /// State for tracking async function transformation
 #[derive(Debug, Default)]
 pub struct AsyncTransformState {
@@ -113,6 +116,8 @@ pub struct AsyncES5Emitter<'a> {
     this_capture_depth: u32,
     /// Class name for private field access (e.g., "Foo" for _Foo_field)
     class_name: Option<String>,
+    /// Recursion depth counter for emit_expression
+    recursion_depth: u32,
 }
 
 impl<'a> AsyncES5Emitter<'a> {
@@ -129,6 +134,7 @@ impl<'a> AsyncES5Emitter<'a> {
             state: AsyncTransformState::new(),
             this_capture_depth: 0,
             class_name: None,
+            recursion_depth: 0,
         }
     }
 
@@ -896,7 +902,16 @@ impl<'a> AsyncES5Emitter<'a> {
     }
 
     fn emit_expression(&mut self, idx: NodeIndex) {
+        // Recursion depth check to prevent infinite loops
+        self.recursion_depth += 1;
+        if self.recursion_depth > MAX_RECURSION_DEPTH {
+            self.write("/* recursion limit exceeded */");
+            self.recursion_depth -= 1;
+            return;
+        }
+
         let Some(node) = self.arena.get(idx) else {
+            self.recursion_depth -= 1;
             return;
         };
 
@@ -1043,6 +1058,8 @@ impl<'a> AsyncES5Emitter<'a> {
                 self.write("void 0");
             }
         }
+
+        self.recursion_depth -= 1;
     }
 
     fn is_super_method_call(&self, expr_idx: NodeIndex) -> bool {
