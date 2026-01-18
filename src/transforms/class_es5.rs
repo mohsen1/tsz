@@ -93,6 +93,10 @@ pub struct ClassES5Emitter<'a> {
     private_accessors: Vec<PrivateAccessorInfo>,
     /// Current class name (for private field WeakMap names)
     class_name: String,
+    /// Recursion depth counter to prevent infinite loops
+    recursion_depth: u32,
+    /// Maximum allowed recursion depth
+    max_recursion_depth: u32,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -113,6 +117,8 @@ impl<'a> ClassES5Emitter<'a> {
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
             class_name: String::new(),
+            recursion_depth: 0,
+            max_recursion_depth: 1000, // Reasonable limit for nested expressions
         }
     }
 
@@ -2302,7 +2308,16 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_statement(&mut self, stmt_idx: NodeIndex) {
+        // Guard against infinite recursion
+        self.recursion_depth += 1;
+        if self.recursion_depth > self.max_recursion_depth {
+            self.write("/* MAX RECURSION IN STATEMENT */");
+            self.recursion_depth -= 1;
+            return;
+        }
+
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            self.recursion_depth -= 1;
             return;
         };
 
@@ -2380,6 +2395,7 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write(";");
             }
         }
+        self.recursion_depth -= 1;
     }
 
     fn emit_variable_statement(&mut self, stmt_idx: NodeIndex) {
@@ -3324,7 +3340,16 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_expression(&mut self, expr_idx: NodeIndex) {
+        // Guard against infinite recursion
+        self.recursion_depth += 1;
+        if self.recursion_depth > self.max_recursion_depth {
+            self.write("/* MAX RECURSION DEPTH EXCEEDED */");
+            self.recursion_depth -= 1;
+            return;
+        }
+
         let Some(expr_node) = self.arena.get(expr_idx) else {
+            self.recursion_depth -= 1;
             return;
         };
 
@@ -3677,6 +3702,7 @@ impl<'a> ClassES5Emitter<'a> {
                 // Unknown expression - try to get text from source
             }
         }
+        self.recursion_depth -= 1;
     }
 
     fn emit_string_literal_text(&mut self, text: &str) {
