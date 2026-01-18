@@ -73,8 +73,12 @@ async function getClaudePlan(prompt) {
         messages: [{ role: 'user', content: prompt }],
     });
     const text = res?.content?.[0]?.text;
-    if (text)
-        return JSON.parse(text);
+    if (text) {
+        // Extract JSON from markdown code blocks if present
+        const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/\{[\s\S]*\}/);
+        const jsonText = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+        return JSON.parse(jsonText.trim());
+    }
     if (prompt.includes('Analyze the request')) {
         return { subsystems: [{ name: 'backend', goal: 'Setup API', path: 'src/api' }] };
     }
