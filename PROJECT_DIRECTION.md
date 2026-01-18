@@ -10,11 +10,13 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 |--------|-------|
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
-| Ignored Tests | 6 (infinite loops) |
-| Test-Aware Patterns | 39 in thin_checker.rs |
+| Ignored Tests | 2 (stack overflow, wasm) |
+| Test-Aware Patterns | 0 active in thin_checker.rs |
 
 **Build Status:** Passes
-**Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
+**Test Status:** Most pass, some pre-existing failures unrelated to test-aware patterns
+
+**Note:** `lib.rs` has 5 `file_name.contains` patterns for TypeScript library detection (`lib.d.ts`, `lib.es`, etc.) - these are legitimate runtime checks, NOT test-aware code.
 
 ---
 
@@ -33,21 +35,19 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 **Action:** Run tests with timeouts to find any remaining hanging tests.
 
-### 2. Remove Test-Aware Code from Checker
+### 2. Remove Test-Aware Code from Checker ✅ COMPLETE
 
-The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
+~~The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.~~
 
-**What to remove from `src/thin_checker.rs`:**
-```rust
-// BAD - This pattern appears 39 times and must be removed:
-let is_test_file = self.ctx.file_name.contains("conformance")
-    || self.ctx.file_name.contains("test")
-    || self.ctx.file_name.contains("cases");
+**STATUS: COMPLETE** - All test-aware `file_name.contains` patterns have been removed from `thin_checker.rs`:
+- `should_validate_async_function_context` - function removed (was dead code)
+- `check_unused_declarations` - ~282 lines of unreachable dead code removed
+- `is_class_method` - now uses proper AST parent chain traversal
+- `is_in_namespace_context` - now uses proper AST parent chain traversal
+- `find_containing_class` - now properly walks parent chain for CLASS_DECLARATION/CLASS_EXPRESSION
+- `find_containing_namespace` - added to walk parent chain for MODULE_DECLARATION
 
-if is_test_file && self.ctx.file_name.contains("Symbol") {
-    return; // Suppressing errors for tests
-}
-```
+**Remaining dead code:** `is_ambient_declaration` still has 4 file_name patterns but is never called - can be removed in future cleanup.
 
 **The rule:** Source code must not know about tests. If a test fails, fix the underlying logic.
 
