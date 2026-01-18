@@ -74,7 +74,7 @@ pub struct CompilerOptions {
 // Re-export CheckerOptions from checker::context for unified API
 pub use crate::checker::context::CheckerOptions;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ResolvedCompilerOptions {
     pub printer: PrinterOptions,
     pub checker: CheckerOptions,
@@ -163,33 +163,6 @@ impl ResolvedCompilerOptions {
     }
 }
 
-impl Default for ResolvedCompilerOptions {
-    fn default() -> Self {
-        ResolvedCompilerOptions {
-            printer: PrinterOptions::default(),
-            checker: CheckerOptions::default(),
-            jsx: None,
-            lib_files: Vec::new(),
-            module_resolution: None,
-            types_versions_compiler_version: None,
-            types: None,
-            type_roots: None,
-            base_url: None,
-            paths: None,
-            root_dir: None,
-            out_dir: None,
-            out_file: None,
-            declaration_dir: None,
-            emit_declarations: false,
-            source_map: false,
-            declaration_map: false,
-            ts_build_info_file: None,
-            incremental: false,
-            no_emit: false,
-            no_emit_on_error: false,
-        }
-    }
-}
 
 pub fn resolve_compiler_options(
     options: Option<&CompilerOptions>,
@@ -262,10 +235,8 @@ pub fn resolve_compiler_options(
     }
 
     let base_url = options.base_url.as_deref().map(str::trim);
-    if let Some(base_url) = base_url {
-        if !base_url.is_empty() {
-            resolved.base_url = Some(PathBuf::from(base_url));
-        }
+    if let Some(base_url) = base_url.filter(|s| !s.is_empty()) {
+        resolved.base_url = Some(PathBuf::from(base_url));
     }
 
     if let Some(paths) = options.paths.as_ref() {
@@ -282,28 +253,20 @@ pub fn resolve_compiler_options(
         }
     }
 
-    if let Some(root_dir) = options.root_dir.as_deref() {
-        if !root_dir.is_empty() {
-            resolved.root_dir = Some(PathBuf::from(root_dir));
-        }
+    if let Some(root_dir) = options.root_dir.as_deref().filter(|s| !s.is_empty()) {
+        resolved.root_dir = Some(PathBuf::from(root_dir));
     }
 
-    if let Some(out_dir) = options.out_dir.as_deref() {
-        if !out_dir.is_empty() {
-            resolved.out_dir = Some(PathBuf::from(out_dir));
-        }
+    if let Some(out_dir) = options.out_dir.as_deref().filter(|s| !s.is_empty()) {
+        resolved.out_dir = Some(PathBuf::from(out_dir));
     }
 
-    if let Some(out_file) = options.out_file.as_deref() {
-        if !out_file.is_empty() {
-            resolved.out_file = Some(PathBuf::from(out_file));
-        }
+    if let Some(out_file) = options.out_file.as_deref().filter(|s| !s.is_empty()) {
+        resolved.out_file = Some(PathBuf::from(out_file));
     }
 
-    if let Some(declaration_dir) = options.declaration_dir.as_deref() {
-        if !declaration_dir.is_empty() {
-            resolved.declaration_dir = Some(PathBuf::from(declaration_dir));
-        }
+    if let Some(declaration_dir) = options.declaration_dir.as_deref().filter(|s| !s.is_empty()) {
+        resolved.declaration_dir = Some(PathBuf::from(declaration_dir));
     }
 
     if let Some(declaration) = options.declaration {
@@ -318,10 +281,8 @@ pub fn resolve_compiler_options(
         resolved.declaration_map = declaration_map;
     }
 
-    if let Some(ts_build_info_file) = options.ts_build_info_file.as_deref() {
-        if !ts_build_info_file.is_empty() {
-            resolved.ts_build_info_file = Some(PathBuf::from(ts_build_info_file));
-        }
+    if let Some(ts_build_info_file) = options.ts_build_info_file.as_deref().filter(|s| !s.is_empty()) {
+        resolved.ts_build_info_file = Some(PathBuf::from(ts_build_info_file));
     }
 
     if let Some(incremental) = options.incremental {
@@ -735,19 +696,15 @@ fn strip_jsonc(input: &str) -> String {
             continue;
         }
 
-        if ch == '/' {
-            if let Some(&next) = chars.peek() {
-                if next == '/' {
-                    chars.next();
-                    in_line_comment = true;
-                    continue;
-                }
-                if next == '*' {
-                    chars.next();
-                    in_block_comment = true;
-                    continue;
-                }
-            }
+        if ch == '/' && chars.peek() == Some(&'/') {
+            chars.next();
+            in_line_comment = true;
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            in_block_comment = true;
+            continue;
         }
 
         out.push(ch);
@@ -794,10 +751,8 @@ fn remove_trailing_commas(input: &str) -> String {
                 break;
             }
 
-            if let Some(next) = lookahead.peek().copied() {
-                if next == '}' || next == ']' {
-                    continue;
-                }
+            if lookahead.peek().copied().is_some_and(|next| next == '}' || next == ']') {
+                continue;
             }
         }
 
