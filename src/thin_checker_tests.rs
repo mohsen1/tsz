@@ -1,10 +1,23 @@
 //! Tests for ThinChecker - Type checker using ThinNodeArena and Solver
+//!
+//! This module contains comprehensive type checking tests organized into categories:
+//! - Basic type checking (creation, intrinsic types, type interning)
+//! - Type compatibility and assignability
+//! - Excess property checking
+//! - Function overloads and call resolution
+//! - Generic types and type inference
+//! - Control flow analysis
+//! - Error diagnostics
 
 use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::{TypeId, TypeInterner};
 use crate::thin_binder::ThinBinderState;
 use crate::thin_checker::ThinCheckerState;
 use crate::thin_parser::ThinParserState;
+
+// =============================================================================
+// Basic Type Checker Tests
+// =============================================================================
 
 #[test]
 fn test_thin_checker_creation() {

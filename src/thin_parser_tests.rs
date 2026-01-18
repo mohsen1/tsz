@@ -1,12 +1,20 @@
 //! Tests for ThinParser - Cache-optimized parser using ThinNodeArena.
 //!
-//! Separated from thin_parser.rs as per project conventions.
+//! This module contains tests organized into sections:
+//! - Basic parsing (expressions, statements, functions)
+//! - Syntax constructs (classes, interfaces, generics, JSX)
+//! - Error recovery and diagnostics
+//! - Edge cases and performance
 
 use crate::checker::types::diagnostics::diagnostic_codes;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::thin_parser::ThinParserState;
 use std::mem::size_of;
+
+// =============================================================================
+// Basic Parsing Tests
+// =============================================================================
 
 #[test]
 fn test_thin_parser_simple_expression() {
