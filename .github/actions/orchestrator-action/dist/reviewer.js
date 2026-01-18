@@ -89,7 +89,11 @@ async function run() {
             messages: [{ role: 'user', content: prompt }],
         });
         try {
-            review = JSON.parse(msg?.content?.[0]?.text || '{}');
+            const text = msg?.content?.[0]?.text || '{}';
+            // Extract JSON from markdown code blocks if present
+            const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || text.match(/\{[\s\S]*\}/);
+            const jsonText = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+            review = JSON.parse(jsonText.trim());
         }
         catch {
             review = { approved: false, comment: 'Unable to parse review response.' };
