@@ -5,6 +5,9 @@ inputs:
     required: true
   github_token:
     required: true
+  base_url:
+    description: 'Optional base URL for Anthropic API (e.g., for z.ai)'
+    required: false
   role:
     description: 'Current role: director, architect, worker, or reviewer'
     default: 'director'

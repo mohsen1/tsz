@@ -59,7 +59,13 @@ async function run() {
     const branchName = `worker-${taskId}-${timestamp}`;
     console.log(`Creating worker branch: ${branchName}`);
     await (0, utils_1.createBranch)(branchName, parentBranch);
-    const anthropic = new sdk_1.default({ apiKey: core.getInput('anthropic_key') });
+    const apiKey = core.getInput('anthropic_key');
+    const baseUrl = core.getInput('base_url');
+    const anthropicOptions = { apiKey };
+    if (baseUrl) {
+        anthropicOptions.baseURL = baseUrl;
+    }
+    const anthropic = new sdk_1.default(anthropicOptions);
     const prompt = `
     You are a code worker.
     GOAL: ${goal}
