@@ -8,11 +8,10 @@
 //!
 //! - Uses ThinNodeArena instead of NodeArena
 //! - Each node is 16 bytes (vs 208 bytes for fat Node enum)
-
-// Allow dead code for parser infrastructure methods that will be used in future phases
-#![allow(dead_code)]
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
+
+#![allow(dead_code)]
 
 use crate::parser::{
     NodeIndex, NodeList, node_flags, syntax_kind_ext,

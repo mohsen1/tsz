@@ -23,7 +23,7 @@ if is_test_file && self.ctx.file_name.contains("Symbol") {
 }
 ```
 
-This pattern has appeared in the checker code and represents a fundamental architectural violation. The checker had approximately 40 instances of this pattern that needed removal.
+This pattern has appeared in the checker code and represents a fundamental architectural violation. The checker currently has 39 instances of this pattern that need removal.
 
 #### Why This Is Wrong
 
@@ -120,8 +120,8 @@ parser.set_compiler_options(r#"{
     "noImplicitAny": true
 }"#);
 
-// Mark library files explicitly:
-parser.mark_as_lib_file(true);
+// Add library files for global type resolution:
+parser.add_lib_file("lib.es5.d.ts".to_string(), lib_source.to_string());
 ```
 
 #### API Methods
@@ -131,8 +131,8 @@ parser.mark_as_lib_file(true);
 #[wasm_bindgen(js_name = setCompilerOptions)]
 pub fn set_compiler_options(&mut self, json: &str) -> Result<(), JsValue>
 
-#[wasm_bindgen(js_name = markAsLibFile)]
-pub fn mark_as_lib_file(&mut self, is_lib: bool)
+#[wasm_bindgen(js_name = addLibFile)]
+pub fn add_lib_file(&mut self, file_name: String, source_text: String)
 ```
 
 ### 2.3 Root Cause Fixes
@@ -324,18 +324,19 @@ let is_lib_file = file_name.contains("lib.d.ts")
     || file_name.contains("lib.scripthost");
 ```
 
-### 4.6 Good Example: Explicit Lib File Marking
+### 4.6 Good Example: Explicit Lib File Loading
 
 ```rust
 // GOOD - Explicit configuration:
-let mut parser = ThinParser::new();
+let mut parser = ThinParser::new("file.ts".to_string(), source.to_string());
 
-// Configure as library file explicitly
-parser.mark_as_lib_file(true);
+// Add library files for global type resolution:
+parser.add_lib_file("lib.es5.d.ts".to_string(), lib_source.to_string());
 
 // Or from test infrastructure:
 if is_lib_declaration_file(&file_path) {
-    parser.mark_as_lib_file(true);
+    let lib_content = std::fs::read_to_string(&file_path).unwrap();
+    parser.add_lib_file(file_path.clone(), lib_content);
 }
 ```
 
@@ -359,11 +360,11 @@ if is_lib_declaration_file(&file_path) {
 ### 5.3 Key Implementation Files
 
 - **src/lib.rs**: Public API including `CompilerOptions` struct
-  - Lines 164-183: `CompilerOptions` definition
-  - Lines 332-336: `setCompilerOptions()` method
-  - Lines 337-339: `markAsLibFile()` method
+  - Lines 172-208: `CompilerOptions` definition
+  - Lines 372-386: `setCompilerOptions()` method
+  - Lines 391-409: `addLibFile()` method
 - **src/thin_parser.rs**: Parser implementation
-- **src/thin_checker.rs**: Type checker (previous location of anti-patterns)
+- **src/thin_checker.rs**: Type checker (current location of test-aware anti-patterns)
 - **src/binder/**: Symbol binding and scope management
 
 ### 5.4 Related Commands
