@@ -733,6 +733,9 @@ impl ThinBinderState {
             // Process hoisted function declarations first
             self.process_hoisted_functions(arena);
 
+            // Process hoisted var declarations
+            self.process_hoisted_vars();
+
             // Second pass: bind each statement
             for &stmt_idx in &sf.statements.nodes {
                 self.bind_node(arena, stmt_idx);
@@ -924,6 +927,7 @@ impl ThinBinderState {
 
         self.collect_hoisted_declarations(arena, &new_suffix_list);
         self.process_hoisted_functions(arena);
+        self.process_hoisted_vars();
 
         for &stmt_idx in new_suffix_statements {
             self.bind_node(arena, stmt_idx);
@@ -1064,6 +1068,24 @@ impl ThinBinderState {
                 // Also add to persistent scope
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
             }
+        }
+    }
+
+    /// Process hoisted var declarations.
+    /// Var declarations are hoisted to the enclosing function or file scope.
+    fn process_hoisted_vars(&mut self) {
+        let vars = std::mem::take(&mut self.hoisted_vars);
+        for (name, decl_idx) in vars {
+            // Declare the var in the current scope (function or file level)
+            let sym_id = self.declare_symbol(
+                &name,
+                symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                decl_idx,
+                false, // hoisted vars are not exported
+            );
+
+            // Also add to persistent scope
+            self.declare_in_persistent_scope(name, sym_id);
         }
     }
 
@@ -2146,6 +2168,22 @@ impl ThinBinderState {
         false
     }
 
+    /// Check if modifiers list contains the 'const' keyword.
+    fn has_const_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ConstKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Check if a node is exported.
     /// Handles walking up the tree for VariableDeclaration -> VariableStatement.
     fn is_node_exported(&self, arena: &ThinNodeArena, idx: NodeIndex) -> bool {
@@ -2858,9 +2896,15 @@ impl ThinBinderState {
             if let Some(name) = self.get_identifier_name(arena, enum_decl.name) {
                 // Check if exported BEFORE allocating symbol
                 let is_exported = self.has_export_modifier(arena, &enum_decl.modifiers);
+                // Check if this is a const enum
+                let is_const = self.has_const_modifier(arena, &enum_decl.modifiers);
+                let enum_flags = if is_const {
+                    symbol_flags::CONST_ENUM
+                } else {
+                    symbol_flags::REGULAR_ENUM
+                };
 
-                let enum_sym_id =
-                    self.declare_symbol(name, symbol_flags::REGULAR_ENUM, idx, is_exported);
+                let enum_sym_id = self.declare_symbol(name, enum_flags, idx, is_exported);
 
                 // Get existing exports (for namespace merging)
                 let mut exports = SymbolTable::new();
@@ -2968,16 +3012,11 @@ impl ThinBinderState {
             return true;
         };
 
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::BREAK_STATEMENT
-                || k == syntax_kind_ext::RETURN_STATEMENT
-                || k == syntax_kind_ext::THROW_STATEMENT
-                || k == syntax_kind_ext::CONTINUE_STATEMENT =>
-            {
-                false
-            }
-            _ => true,
-        }
+        let kind = stmt_node.kind;
+        !(kind == syntax_kind_ext::BREAK_STATEMENT
+            || kind == syntax_kind_ext::RETURN_STATEMENT
+            || kind == syntax_kind_ext::THROW_STATEMENT
+            || kind == syntax_kind_ext::CONTINUE_STATEMENT)
     }
 
     fn bind_try_statement(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
@@ -3278,8 +3317,38 @@ impl ThinBinderState {
 
                                 // Now apply the mutable borrow to insert the mappings
                                 let file_reexports = self.reexports.entry(current_file).or_default();
-                                for (exported, original) in export_mappings {
-                                    file_reexports.insert(exported, (source_module.clone(), original));
+                                for (exported, original) in &export_mappings {
+                                    file_reexports.insert(exported.clone(), (source_module.clone(), original.clone()));
+                                }
+
+                                // Also create alias symbols for re-exported names in file_locals
+                                // This makes them accessible in the current module's scope
+                                for &spec_idx in &named.elements.nodes {
+                                    if let Some(spec_node) = arena.get(spec_idx) {
+                                        if let Some(spec) = arena.get_specifier(spec_node) {
+                                            // Get the local name (what this module exports as)
+                                            let exported_name = if !spec.name.is_none() {
+                                                self.get_identifier_name(arena, spec.name)
+                                            } else if !spec.property_name.is_none() {
+                                                self.get_identifier_name(arena, spec.property_name)
+                                            } else {
+                                                None
+                                            };
+
+                                            if let Some(name) = exported_name {
+                                                let spec_type_only = export_type_only || spec.is_type_only;
+                                                let sym_id = self.declare_symbol(
+                                                    name,
+                                                    symbol_flags::ALIAS,
+                                                    spec_idx,
+                                                    true, // re-exports are always exported
+                                                );
+                                                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                                                    sym.is_type_only = spec_type_only;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         } else {
@@ -3515,31 +3584,31 @@ impl ThinBinderState {
                     syntax_kind_ext::VARIABLE_STATEMENT => arena
                         .get_variable(stmt_node)
                         .and_then(|v| v.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::FUNCTION_DECLARATION => arena
                         .get_function(stmt_node)
                         .and_then(|f| f.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::CLASS_DECLARATION => arena
                         .get_class(stmt_node)
                         .and_then(|c| c.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::INTERFACE_DECLARATION => arena
                         .get_interface(stmt_node)
                         .and_then(|i| i.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
                         .get_type_alias(stmt_node)
                         .and_then(|t| t.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::ENUM_DECLARATION => arena
                         .get_enum(stmt_node)
                         .and_then(|e| e.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::MODULE_DECLARATION => arena
                         .get_module(stmt_node)
                         .and_then(|m| m.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::EXPORT_DECLARATION => true, // export { x }
                     _ => false,
                 };
@@ -4266,7 +4335,7 @@ impl ThinBinderState {
 
         report.push_str(&format!("Expected symbols present: {}/{}\n", present.len(), Self::EXPECTED_GLOBAL_SYMBOLS.len()));
         if !missing.is_empty() {
-            report.push_str(&format!("\nMissing symbols:\n"));
+            report.push_str("\nMissing symbols:\n");
             for name in &missing {
                 report.push_str(&format!("  - {}\n", name));
             }

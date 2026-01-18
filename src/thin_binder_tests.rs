@@ -1935,13 +1935,12 @@ fn test_var_hoisting() {
     use crate::thin_parser::ThinParserState;
     use crate::binder::symbol_flags;
 
+    // Test var hoisting at file level - var declarations in blocks are hoisted to file scope
     let source = r#"
-function test() {
-    {
-        var x = "hoisted";
-    }
-    return x;
+{
+    var x = "hoisted";
 }
+console.log(x);
 "#;
 
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
@@ -1951,7 +1950,8 @@ function test() {
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(arena, root);
 
-    assert!(binder.file_locals.has("x"));
+    // x should be hoisted to file scope since it's a var declaration in a block at file level
+    assert!(binder.file_locals.has("x"), "x should be hoisted to file scope");
 
     let x_sym_id = binder.file_locals.get("x").expect("x should exist");
     let x_symbol = binder.get_symbol(x_sym_id).expect("x symbol should exist");
