@@ -1,0 +1,96 @@
+name: CCO (Claude Code Orchestrator)
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for running CCO'
+        required: false
+        default: 'Scheduled orchestration run'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  NODE_VERSION: '22'
+  CCO_TIMEOUT_MINUTES: 360  # 6 hours (GitHub max for public repos)
+
+jobs:
+  cco:
+    name: Run CCO Orchestration
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ env.CCO_TIMEOUT_MINUTES }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 100  # Match orchestrator config cloneDepth
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install CCO
+        run: npm install -g @mohsen/claude-code-orchestrator
+
+      - name: Verify CCO installation
+        run: cco --version
+
+      - name: Create config directory
+        run: mkdir -p ~/cco-config
+
+      - name: Write api-keys.json
+        run: echo '${{ secrets.API_KEYS_JSON }}' > ~/cco-config/api-keys.json
+
+      - name: Write orchestrator.json
+        run: |
+          cat > ~/cco-config/orchestrator.json << 'EOF'
+          {
+            "repositoryUrl": "git@github.com:mohsen1/tsz.git",
+            "branch": "main",
+            "model": "opus",
+            "workerCount": 8,
+            "engineerManagerGroupSize": 4,
+            "cloneDepth": 100,
+            "maxRunDurationMinutes": ${{ env.CCO_TIMEOUT_MINUTES }},
+            "authMode": "api-keys-first",
+            "useRunBranch": false
+          }
+          EOF
+
+      - name: Verify config files
+        run: |
+          echo "=== api-keys.json ==="
+          cat ~/cco-config/api-keys.json
+          echo ""
+          echo "=== orchestrator.json ==="
+          cat ~/cco-config/orchestrator.json
+
+      - name: Set up git credentials
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add SSH key for git push
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GIT_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Run CCO
+        run: |
+          cco start --config ~/cco-config
+        env:
+          # Pass through any environment variables needed by API keys
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+
+      - name: Upload CCO logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cco-logs
+          path: ~/cco-config/logs/
+          retention-days: 7
