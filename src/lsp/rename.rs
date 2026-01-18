@@ -50,7 +50,7 @@ impl WorkspaceEdit {
     pub fn add_edit(&mut self, file_path: String, edit: TextEdit) {
         self.changes
             .entry(file_path)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(edit);
     }
 }

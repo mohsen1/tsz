@@ -8,8 +8,10 @@
 //! - Generic parameter hints where inferred
 
 use crate::lsp::position::{LineMap, Position, Range};
+use crate::parser::syntax_kind_ext;
+use crate::parser::thin_node::{NodeAccess, ThinNodeArena};
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::scanner::SyntaxKind;
 use crate::thin_binder::ThinBinderState;
 use serde::{Deserialize, Serialize};
 
@@ -104,15 +106,177 @@ impl<'a> InlayHintsProvider<'a> {
     }
 
     /// Provide inlay hints for the given range.
-    pub fn provide_inlay_hints(&self, _root: NodeIndex, _range: Range) -> Vec<InlayHint> {
-        let hints = Vec::new();
+    pub fn provide_inlay_hints(&self, root: NodeIndex, range: Range) -> Vec<InlayHint> {
+        let mut hints = Vec::new();
 
-        // For now, return empty hints
-        // Full implementation will traverse the AST and collect hints
-        // TODO: Implement parameter name hints
-        // TODO: Implement type hints
+        // Convert range to byte offsets for filtering
+        let range_start = self
+            .line_map
+            .position_to_offset(range.start, self.source)
+            .unwrap_or(0);
+        let range_end = self
+            .line_map
+            .position_to_offset(range.end, self.source)
+            .unwrap_or(self.source.len() as u32);
+
+        // Traverse AST and collect hints
+        self.collect_hints(root, range_start, range_end, &mut hints);
 
         hints
+    }
+
+    /// Recursively collect inlay hints from the AST.
+    fn collect_hints(
+        &self,
+        node_idx: NodeIndex,
+        range_start: u32,
+        range_end: u32,
+        hints: &mut Vec<InlayHint>,
+    ) {
+        let Some(node) = self.arena.get(node_idx) else {
+            return;
+        };
+
+        // Skip nodes outside the requested range
+        if node.end < range_start || node.pos > range_end {
+            return;
+        }
+
+        // Collect parameter name hints for call expressions
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            self.collect_parameter_hints(node_idx, hints);
+        }
+
+        // Collect type hints for variable declarations without explicit types
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            self.collect_type_hints(node_idx, hints);
+        }
+
+        // Recurse into children
+        for child_idx in self.arena.get_children(node_idx) {
+            self.collect_hints(child_idx, range_start, range_end, hints);
+        }
+    }
+
+    /// Collect parameter name hints for a call expression.
+    fn collect_parameter_hints(&self, call_idx: NodeIndex, hints: &mut Vec<InlayHint>) {
+        let Some(node) = self.arena.get(call_idx) else {
+            return;
+        };
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        // Get the function being called and resolve its symbol
+        let Some(symbol_id) = self.binder.resolve_identifier(self.arena, call.expression) else {
+            return;
+        };
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return;
+        };
+
+        // Get the function declaration to extract parameter names
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            symbol.declarations.first().copied().unwrap_or(NodeIndex::NONE)
+        };
+
+        if decl_idx.is_none() {
+            return;
+        }
+
+        let param_names = self.get_parameter_names(decl_idx);
+
+        // Match arguments to parameters
+        if let Some(args) = &call.arguments {
+            for (i, &arg_idx) in args.nodes.iter().enumerate() {
+                if i >= param_names.len() {
+                    break;
+                }
+                if let Some(param_name) = &param_names[i] {
+                    // Skip if argument is already a named literal or identifier with same name
+                    if self.should_skip_parameter_hint(arg_idx, param_name) {
+                        continue;
+                    }
+
+                    if let Some(arg_node) = self.arena.get(arg_idx) {
+                        let pos = self.line_map.offset_to_position(arg_node.pos, self.source);
+                        hints.push(InlayHint::new(
+                            pos,
+                            format!("{}: ", param_name),
+                            InlayHintKind::Parameter,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get parameter names from a function declaration.
+    fn get_parameter_names(&self, decl_idx: NodeIndex) -> Vec<Option<String>> {
+        let Some(node) = self.arena.get(decl_idx) else {
+            return Vec::new();
+        };
+
+        // get_function handles FunctionDeclaration, FunctionExpression, and ArrowFunction
+        let params = if let Some(func) = self.arena.get_function(node) {
+            Some(&func.parameters)
+        } else if let Some(method) = self.arena.get_method_decl(node) {
+            Some(&method.parameters)
+        } else {
+            return Vec::new();
+        };
+
+        let Some(params) = params else {
+            return Vec::new();
+        };
+
+        params
+            .nodes
+            .iter()
+            .map(|&param_idx| {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    return None;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    return None;
+                };
+                self.arena
+                    .get_identifier_text(param.name)
+                    .map(|s| s.to_string())
+            })
+            .collect()
+    }
+
+    /// Check if we should skip showing a parameter hint for this argument.
+    fn should_skip_parameter_hint(&self, arg_idx: NodeIndex, param_name: &str) -> bool {
+        let Some(arg_node) = self.arena.get(arg_idx) else {
+            return false;
+        };
+
+        // Skip if the argument is an identifier with the same name as the parameter
+        if arg_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(text) = self.arena.get_identifier_text(arg_idx) {
+                if text == param_name {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Collect type hints for variable declarations without explicit type annotations.
+    fn collect_type_hints(&self, _decl_idx: NodeIndex, _hints: &mut Vec<InlayHint>) {
+        // Type hints require type inference which needs the TypeInterner.
+        // For now, this is a placeholder. Full implementation would:
+        // 1. Check if the variable declaration has no type annotation
+        // 2. Get the inferred type from the checker
+        // 3. Add a hint showing the inferred type
+        //
+        // This requires access to the TypeInterner and ThinCheckerState,
+        // which would need to be added to InlayHintsProvider.
     }
 }
 

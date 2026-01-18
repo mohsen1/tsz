@@ -84,20 +84,15 @@ pub fn jsdoc_for_node(
     }
 
     let leading_comments = get_leading_comments_from_cache(comments, target_pos, source_text);
-    for comment in leading_comments.iter().rev() {
+    if let Some(comment) = leading_comments.last() {
         let end = comment.end as usize;
         let check = target_pos as usize;
-        if end <= check {
-            let gap = &source_text[end..check];
-            if gap.chars().any(|c| !c.is_whitespace()) {
-                break;
-            }
-        }
+        let gap_is_whitespace = end <= check
+            && source_text[end..check].chars().all(|c| c.is_whitespace());
 
-        if is_jsdoc_comment(comment, source_text) {
+        if gap_is_whitespace && is_jsdoc_comment(comment, source_text) {
             return get_jsdoc_content(comment, source_text);
         }
-        break;
     }
 
     String::new()

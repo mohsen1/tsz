@@ -867,27 +867,27 @@ impl ProjectFile {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => arena
                 .get_function(node)
                 .and_then(|func| arena.get_identifier_text(func.name))
-                .map_or(false, |name| name == export_name),
+                == Some(export_name),
             k if k == syntax_kind_ext::CLASS_DECLARATION => arena
                 .get_class(node)
                 .and_then(|class| arena.get_identifier_text(class.name))
-                .map_or(false, |name| name == export_name),
+                == Some(export_name),
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => arena
                 .get_interface(node)
                 .and_then(|iface| arena.get_identifier_text(iface.name))
-                .map_or(false, |name| name == export_name),
+                == Some(export_name),
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
                 .get_type_alias(node)
                 .and_then(|alias| arena.get_identifier_text(alias.name))
-                .map_or(false, |name| name == export_name),
+                == Some(export_name),
             k if k == syntax_kind_ext::ENUM_DECLARATION => arena
                 .get_enum(node)
                 .and_then(|enm| arena.get_identifier_text(enm.name))
-                .map_or(false, |name| name == export_name),
+                == Some(export_name),
             k if k == syntax_kind_ext::MODULE_DECLARATION => arena
                 .get_module(node)
                 .and_then(|module| arena.get_identifier_text(module.name))
-                .map_or(false, |name| name == export_name),
+                == Some(export_name),
             k if k == syntax_kind_ext::VARIABLE_STATEMENT
                 || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                 || k == syntax_kind_ext::VARIABLE_DECLARATION =>
@@ -901,7 +901,7 @@ impl ProjectFile {
                     arena
                         .get_variable_declaration(decl_node)
                         .and_then(|decl| arena.get_identifier_text(decl.name))
-                        .map_or(false, |name| name == export_name)
+                        == Some(export_name)
                 })
             }
             _ => false,
@@ -1865,13 +1865,9 @@ impl Project {
 
             let member_idx = access.name_or_argument;
             let matches = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                arena
-                    .get_identifier_text(member_idx)
-                    .map_or(false, |name| name == export_name)
+                arena.get_identifier_text(member_idx) == Some(export_name)
             } else {
-                arena
-                    .get_literal_text(member_idx)
-                    .map_or(false, |name| name == export_name)
+                arena.get_literal_text(member_idx) == Some(export_name)
             };
 
             if !matches {
