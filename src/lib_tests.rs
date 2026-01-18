@@ -366,10 +366,13 @@ fn test_type_sizes() {
     assert!(type_size <= 256, "Type enum too large: {} bytes", type_size);
 }
 
-/// Run this test to print the size analysis:
+/// Diagnostic utility test for printing memory layout of Node and Type enums.
+/// This test is ignored by default because it's a debugging tool that only prints
+/// information (no assertions). Run it manually to analyze type sizes:
+///
 /// cargo test test_print_type_sizes -- --nocapture --ignored
 #[test]
-#[ignore]
+#[ignore = "diagnostic utility - run manually with --nocapture to view size analysis"]
 fn test_print_type_sizes() {
     use crate::checker::types::type_def as types;
     use crate::parser::ast::*;
