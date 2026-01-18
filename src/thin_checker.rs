@@ -24146,29 +24146,32 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Find the containing class for a member node by walking up the parent chain
-    fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
-        // Check if this member is directly in a class
-        // Since we don't have parent pointers, we need to search through classes
-        // This is a simplified approach - in a full implementation we'd maintain parent links
-
-        // For now, assume the member is in a class context if we're checking properties
-        // The actual class detection would require traversing the full AST
-        // This is sufficient for the TS2524 definite assignment checking we need
-        None  // Simplified implementation - could be enhanced with full parent tracking
+    fn find_containing_class(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = member_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if we've reached a class declaration or expression
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return Some(current);
+                }
+            }
+            // Get parent and continue traversal
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
     }
 
     /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
-
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+    /// Uses AST parent chain traversal to detect if the function is within a class
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        // Walk up the parent chain to find if we're inside a class
+        self.find_containing_class(func_idx).is_some()
     }
 
     /// Check if a function is within a namespace or module context
