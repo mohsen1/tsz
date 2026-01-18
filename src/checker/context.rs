@@ -25,6 +25,7 @@ pub struct CheckerOptions {
     pub strict_property_initialization: bool,
     pub no_implicit_this: bool,
     pub use_unknown_in_catch_variables: bool,
+    pub isolated_modules: bool,
 }
 use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
@@ -686,5 +687,10 @@ impl<'a> CheckerContext<'a> {
     /// Check if useUnknownInCatchVariables is enabled.
     pub fn use_unknown_in_catch_variables(&self) -> bool {
         self.compiler_options.use_unknown_in_catch_variables
+    }
+
+    /// Check if isolatedModules is enabled.
+    pub fn isolated_modules(&self) -> bool {
+        self.compiler_options.isolated_modules
     }
 }
