@@ -24279,17 +24279,4 @@ impl<'a> ThinCheckerState<'a> {
         self.ctx.file_name.contains("Module") ||
         self.ctx.file_name.contains("Namespace")
     }
-
-    /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
-
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
-    }
 }
