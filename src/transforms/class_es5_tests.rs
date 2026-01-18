@@ -22067,7 +22067,7 @@ class DataProcessor {
 // ============================================================================
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "INFINITE LOOP - Root cause: Complex class with private fields + async methods + module.exports pattern causes infinite recursion in ClassES5Emitter::emit_expression when processing property access expressions. The recursion limit (MAX_RECURSION_DEPTH=1000) prevents stack overflow but doesn't identify the cycle. Need to add cycle detection for property access chains."]
 fn test_class_es5_commonjs_class_exports() {
     // Test CommonJS module pattern with class exports
     let source = r#"
