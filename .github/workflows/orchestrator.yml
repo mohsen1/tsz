@@ -69,7 +69,7 @@ jobs:
         id: swarm
         uses: ./.github/actions/orchestrator-action
         with:
-          anthropic_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_key: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           github_token: ${{ github.token }}
           role: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}
           goal: ${{ inputs.goal }}

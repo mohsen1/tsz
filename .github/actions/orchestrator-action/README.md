@@ -17,7 +17,7 @@ The action implements a recursive swarm of agents:
 
 Add the following secret to your GitHub repository settings:
 
-- `ANTHROPIC_API_KEY`: Your Anthropic API key for Claude access
+- `ANTHROPIC_AUTH_TOKEN`: Your Anthropic API key for Claude access
 
 ### Required Permissions
 
