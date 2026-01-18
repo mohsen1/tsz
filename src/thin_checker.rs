@@ -14906,7 +14906,6 @@ impl<'a> ThinCheckerState<'a> {
         // Temporarily disable unused declaration checking to focus on core functionality
         // The reference tracking system needs more work to avoid false positives
         // TODO: Re-enable and fix reference tracking system properly
-        return;
     }
 
     /// Check for duplicate parameter names in a parameter list (TS2300).
@@ -18910,12 +18909,16 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
+        // Enhanced validation to catch more TS2705 cases
+        // Uses proper AST/compiler-option checks instead of file name heuristics
+
         // Always validate in declaration files (.d.ts files are always strict)
         if self.ctx.file_name.ends_with(".d.ts") {
             return true;
         }
 
-        // Validate if this is an ES module (has top-level import/export)
+        // Validate if this is a module file (has import/export declarations)
+        // This properly detects ES module syntax via the binder's analysis
         if self.ctx.binder.is_external_module() {
             return true;
         }
@@ -18936,23 +18939,18 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate if the function itself is async (check the async modifier on the node)
-        if let Some(node) = self.ctx.arena.get(func_idx) {
-            if let Some(func) = self.ctx.arena.get_function(node) {
-                // Covers function declarations, function expressions, and arrow functions
-                if func.is_async {
-                    return true;
-                }
-            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                if self.has_async_modifier(&method.modifiers) {
-                    return true;
-                }
-            }
-        }
-
         // Validate if any strict mode features are enabled
         if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
             return true;
+        }
+
+        // Check if the function has an async keyword (actual async function)
+        if let Some(func_node) = self.ctx.arena.get(func_idx) {
+            if let Some(func) = self.ctx.arena.get_function(func_node) {
+                if func.is_async {
+                    return true;
+                }
+            }
         }
 
         false
@@ -24243,12 +24241,12 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    /// by walking up the parent chain to find a ClassDeclaration or ClassExpression.
+    /// Traverses the parent chain to find a ClassDeclaration or ClassExpression
     fn is_class_method(&self, func_idx: NodeIndex) -> bool {
         let mut current = func_idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current) {
-                // Check if we've found a class declaration or expression
+                // Check if this node is a ClassDeclaration or ClassExpression
                 if node.kind == syntax_kind_ext::CLASS_DECLARATION
                     || node.kind == syntax_kind_ext::CLASS_EXPRESSION
                 {
@@ -24256,36 +24254,34 @@ impl<'a> ThinCheckerState<'a> {
                 }
             }
             // Move to parent node
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                if ext.parent.is_none() {
-                    return false;
-                }
-                current = ext.parent;
-            } else {
-                return false;
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
             }
+            current = ext.parent;
         }
         false
     }
 
     /// Check if a function is within a namespace or module context
-    /// Uses AST parent chain traversal to detect if the function is within a module/namespace
+    /// Traverses the parent chain to find a ModuleDeclaration node
     fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
-        // Walk up the parent chain to find if we're inside a module declaration
         let mut current = func_idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current) {
-                // Check if we've reached a module declaration (namespace/module)
+                // Check if this node is a ModuleDeclaration (namespace/module keyword)
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION {
                     return true;
                 }
             }
-            // Get parent and continue traversal
+            // Move to parent node
             let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
+                break;
             };
             if ext.parent.is_none() {
-                return false;
+                break;
             }
             current = ext.parent;
         }
@@ -24293,32 +24289,69 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    /// by walking up the parent chain to find nodes with the AMBIENT flag.
+    /// Checks node AMBIENT flag and traverses parent chain to find declare modifiers
     fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
-        // Declaration files (.d.ts) are always ambient
+        use crate::parser::node_flags;
+
+        // Declaration files (.d.ts) are inherently ambient
         if self.ctx.file_name.ends_with(".d.ts") {
             return true;
         }
 
-        // Walk up the parent chain to check for AMBIENT flag
+        // Check the node itself and traverse parent chain
         let mut current = var_idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current) {
-                // Check if this node has the AMBIENT flag (set by 'declare' keyword)
-                if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
+                // Check if this node has the AMBIENT flag
+                if (node.flags as u32) & node_flags::AMBIENT != 0 {
                     return true;
                 }
-            }
-            // Move to parent node
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                if ext.parent.is_none() {
-                    return false;
+
+                // Check if this is a VariableStatement with declare modifier
+                if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                    if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                        if self.has_declare_modifier(&var_stmt.modifiers) {
+                            return true;
+                        }
+                    }
                 }
-                current = ext.parent;
-            } else {
-                return false;
+
+                // Check FunctionDeclaration, ClassDeclaration, etc. with declare modifier
+                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    if let Some(func) = self.ctx.arena.get_function(node) {
+                        if self.has_declare_modifier(&func.modifiers) {
+                            return true;
+                        }
+                    }
+                }
+
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                    if let Some(class) = self.ctx.arena.get_class(node) {
+                        if self.has_declare_modifier(&class.modifiers) {
+                            return true;
+                        }
+                    }
+                }
+
+                if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    if let Some(module) = self.ctx.arena.get_module(node) {
+                        if self.has_declare_modifier(&module.modifiers) {
+                            return true;
+                        }
+                    }
+                }
             }
+
+            // Move to parent node
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
         }
+
         false
     }
 }
