@@ -24550,15 +24550,74 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    ///
+    /// This uses proper AST-based detection by:
+    /// 1. Checking the node's flags for the AMBIENT flag
+    /// 2. Walking up the parent chain to find if enclosed in an ambient context
+    /// 3. Checking modifiers on declaration nodes for DeclareKeyword
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        use crate::parser::node_flags;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        let mut current = var_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if this node has the AMBIENT flag set
+                if (node.flags as u32) & node_flags::AMBIENT != 0 {
+                    return true;
+                }
+
+                // Check modifiers on various declaration types for DeclareKeyword
+                // Variable statements
+                if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                    if self.has_declare_modifier(&var_stmt.modifiers) {
+                        return true;
+                    }
+                }
+                // Function declarations
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    if self.has_declare_modifier(&func.modifiers) {
+                        return true;
+                    }
+                }
+                // Class declarations
+                if let Some(class) = self.ctx.arena.get_class(node) {
+                    if self.has_declare_modifier(&class.modifiers) {
+                        return true;
+                    }
+                }
+                // Enum declarations
+                if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+                    if self.has_declare_modifier(&enum_decl.modifiers) {
+                        return true;
+                    }
+                }
+                // Interface declarations (interfaces are implicitly ambient)
+                if self.ctx.arena.get_interface(node).is_some() {
+                    return true;
+                }
+                // Type alias declarations (type aliases are implicitly ambient)
+                if self.ctx.arena.get_type_alias(node).is_some() {
+                    return true;
+                }
+                // Module/namespace declarations
+                if let Some(module) = self.ctx.arena.get_module(node) {
+                    if self.has_declare_modifier(&module.modifiers) {
+                        return true;
+                    }
+                }
+            }
+
+            // Move to parent node
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+
+        false
     }
 }
