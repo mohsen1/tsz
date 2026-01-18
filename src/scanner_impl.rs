@@ -6,7 +6,9 @@
 //! IMPORTANT: All positions are character-based (like JavaScript's string indexing),
 //! NOT byte-based. This ensures compatibility with TypeScript's scanner positions.
 
-// Allow dead code for scanner infrastructure methods that will be used in future phases
+// Scanner infrastructure includes snapshot/restore methods and token flags that are
+// part of the TypeScript-compatible API but may not all be exercised in current code paths.
+// These are intentionally kept for API completeness and future parser features.
 #![allow(dead_code)]
 
 use crate::char_codes::CharacterCodes;
