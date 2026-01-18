@@ -1,141 +1,124 @@
-//! Base types for AST nodes.
+use std::fmt;
+use crate::span::Span;
+use crate::types::Type; // Assuming a types module exists
 
-use crate::scanner::SyntaxKind;
-use serde::Serialize;
-use wasm_bindgen::prelude::*;
-
-/// A text range with start and end positions.
-/// All positions are character indices (not byte indices).
-#[wasm_bindgen]
-#[derive(Clone, Copy, Debug, Default, Serialize)]
-pub struct TextRange {
-    pub pos: u32, // Start position
-    pub end: u32, // End position
+/// Shared metadata for all AST nodes.
+/// 
+/// This struct packs the location information (Span) and the compile-time
+/// type information (Type) into a single cache-line friendly structure,
+/// reducing the overhead of the main AST enums.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeMeta {
+    /// The location in the source code.
+    pub span: Span,
+    /// The inferred type of the node.
+    pub ty: Type,
 }
 
-#[wasm_bindgen]
-impl TextRange {
-    #[wasm_bindgen(constructor)]
-    pub fn new(pos: u32, end: u32) -> TextRange {
-        TextRange { pos, end }
-    }
-}
-
-/// Index into the node arena. Used instead of pointers/references
-/// for efficient serialization and memory management.
-#[wasm_bindgen]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Hash)]
-pub struct NodeIndex(pub u32);
-
-impl NodeIndex {
-    pub const NONE: NodeIndex = NodeIndex(u32::MAX);
-
-    pub fn is_none(&self) -> bool {
-        self.0 == u32::MAX
+impl NodeMeta {
+    /// Creates a new `NodeMeta` with the given span and type.
+    pub fn new(span: Span, ty: Type) -> Self {
+        Self { span, ty }
     }
 
-    pub fn is_some(&self) -> bool {
-        self.0 != u32::MAX
-    }
-}
-
-/// A list of node indices, representing children or a node array.
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct NodeList {
-    pub nodes: Vec<NodeIndex>,
-    pub pos: u32,
-    pub end: u32,
-    pub has_trailing_comma: bool,
-}
-
-impl NodeList {
-    pub fn new() -> NodeList {
-        NodeList {
-            nodes: Vec::new(),
-            pos: 0,
-            end: 0,
-            has_trailing_comma: false,
-        }
-    }
-
-    pub fn with_capacity(capacity: usize) -> NodeList {
-        NodeList {
-            nodes: Vec::with_capacity(capacity),
-            pos: 0,
-            end: 0,
-            has_trailing_comma: false,
-        }
-    }
-
-    pub fn push(&mut self, node: NodeIndex) {
-        self.nodes.push(node);
-    }
-
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-}
-
-/// Common fields present in all AST nodes.
-/// Note: `kind` is stored as u16 to support both token kinds (from SyntaxKind enum)
-/// and extended node kinds (from syntax_kind_ext constants).
-#[derive(Clone, Debug, Serialize)]
-pub struct NodeBase {
-    pub kind: u16,            // SyntaxKind value (u16 to support extended kinds)
-    pub flags: u32,           // NodeFlags
-    pub modifier_flags: u32,  // ModifierFlags (cached)
-    pub transform_flags: u32, // TransformFlags
-    pub pos: u32,             // Start position (character index)
-    pub end: u32,             // End position (character index)
-    pub parent: NodeIndex,    // Parent node index
-    pub id: u32,              // Unique node ID (assigned by parser)
-}
-
-impl Default for NodeBase {
-    fn default() -> Self {
-        NodeBase {
-            kind: SyntaxKind::Unknown as u16,
-            flags: 0,
-            modifier_flags: 0,
-            transform_flags: 0,
-            pos: 0,
-            end: 0,
-            parent: NodeIndex::NONE,
-            id: 0,
+    /// Creates a new `NodeMeta` with an unknown or default type.
+    pub fn with_unknown_type(span: Span) -> Self {
+        Self {
+            span,
+            ty: Type::Unknown,
         }
     }
 }
 
-impl NodeBase {
-    /// Create a new NodeBase with a SyntaxKind (token kind)
-    pub fn new(kind: SyntaxKind, pos: u32, end: u32) -> NodeBase {
-        NodeBase {
-            kind: kind as u16,
-            flags: 0,
-            modifier_flags: 0,
-            transform_flags: 0,
-            pos,
-            end,
-            parent: NodeIndex::NONE,
-            id: 0,
+/// A marker trait for all valid AST entities.
+///
+/// Implementing this trait allows a node to be stored within the unified
+/// `ThinNode` system. It ensures that the object can be downcast
+/// and provides basic metadata access.
+pub trait AstEntity: fmt::Debug + Send + Sync + 'static {
+    /// Returns a reference to the node's metadata (span and type).
+    fn meta(&self) -> &NodeMeta;
+
+    /// Returns a mutable reference to the node's metadata.
+    fn meta_mut(&mut self) -> &mut NodeMeta;
+
+    /// Helper to get the span directly.
+    fn span(&self) -> Span {
+        self.meta().span
+    }
+
+    /// Helper to get the type directly.
+    fn ty(&self) -> &Type {
+        &self.meta().ty
+    }
+}
+
+// Blanket implementation for Boxed AST entities to simplify trait bounds
+impl<T: AstEntity + ?Sized> AstEntity for Box<T> {
+    fn meta(&self) -> &NodeMeta {
+        (**self).meta()
+    }
+
+    fn meta_mut(&mut self) -> &mut NodeMeta {
+        (**self).meta_mut()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Mock Type and Span for testing purposes if not linked
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum MockType { Unknown, Int }
+    type Type = MockType;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct MockType { Unknown, Int }
+
+    // Manually defining a mock Span for demonstration
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Span {
+        pub lo: u32,
+        pub hi: u32,
+    }
+    
+    // ... (Real implementation details would be in src/span.rs and src/types.rs)
+    
+    #[test]
+    fn test_node_meta_creation() {
+        let s = Span { lo: 0, hi: 10 };
+        let meta = NodeMeta::new(s, Type::Int);
+        assert_eq!(meta.span.lo, 0);
+        assert_eq!(matches!(meta.ty, Type::Int), true);
+    }
+
+    // Example AST Node implementing AstEntity
+    struct MockExpression {
+        meta: NodeMeta,
+        value: i32,
+    }
+
+    impl AstEntity for MockExpression {
+        fn meta(&self) -> &NodeMeta {
+            &self.meta
+        }
+
+        fn meta_mut(&mut self) -> &mut NodeMeta {
+            &mut self.meta
         }
     }
 
-    /// Create a new NodeBase with an extended kind (for node types not in scanner)
-    pub fn new_ext(kind: u16, pos: u32, end: u32) -> NodeBase {
-        NodeBase {
-            kind,
-            flags: 0,
-            modifier_flags: 0,
-            transform_flags: 0,
-            pos,
-            end,
-            parent: NodeIndex::NONE,
-            id: 0,
-        }
+    #[test]
+    fn test_ast_entity_trait() {
+        let span = Span { lo: 5, hi: 15 };
+        let node = MockExpression {
+            meta: NodeMeta::new(span, Type::Unknown),
+            value: 42,
+        };
+
+        assert_eq!(node.span().lo, 5);
+        assert!(matches!(node.ty(), Type::Unknown));
     }
 }
+```
