@@ -1,8 +1,10 @@
 //! Character codes matching TypeScript's CharacterCodes enum.
 //!
 //! This module provides character code constants used by the scanner.
+//! Not all constants are currently used, but they are kept for TypeScript
+//! compatibility and future scanner extensions.
 
-#![allow(dead_code)]
+#![allow(dead_code)] // Character code tables are intentionally complete for TypeScript compatibility
 
 /// Character codes used throughout the scanner.
 pub struct CharacterCodes;
