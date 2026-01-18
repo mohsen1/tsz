@@ -27,14 +27,12 @@ enum PropertyKey {
 }
 
 /// Computed property key.
+/// Note: thin_checker.rs has additional variants (Qualified, Symbol) for more complex cases.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum ComputedKey {
     Ident(String),
     String(String),
     Number(String),
-    Qualified(String),
-    /// Symbol call like Symbol("key") or Symbol() - stores optional description
-    Symbol(Option<String>),
 }
 
 /// Result of control flow analysis for property assignments.
