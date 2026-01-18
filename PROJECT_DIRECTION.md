@@ -10,11 +10,11 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 |--------|-------|
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
-| Ignored Tests | 6 (infinite loops) |
+| Ignored Tests | 2 (stack overflow / infinite recursion) |
 | Test-Aware Patterns | **0 in thin_checker.rs** (GOAL ACHIEVED) |
 
 **Build Status:** Passes
-**Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
+**Test Status:** Stable - most tests pass, 2 tests ignored for deep recursion issues
 
 > **Note:** `src/lib.rs` has 5 `file_name.contains` patterns for TypeScript library file detection (lib.d.ts, lib.es*, lib.dom*, etc.). These are NOT test-aware code - they are legitimate runtime configuration for loading standard library type definitions.
 
@@ -22,18 +22,15 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 ## Priority List (Current Focus)
 
-### 1. Fix Hanging Tests
+### 1. ~~Fix Hanging Tests~~ **COMPLETED**
 
-Several tests have infinite loops and hang forever. These must be identified and marked with `#[ignore]` before any other work.
+Most hanging tests have been fixed. Only 2 tests remain ignored due to deep recursion/stack overflow issues.
 
-**Currently Ignored (infinite loops):**
-- `test_class_es5_commonjs_class_exports` (transforms/class_es5_tests.rs)
-- `test_source_map_decorator_combined_advanced` (source_map_tests.rs)
-- `test_source_map_decorator_composition_es5_comprehensive` (source_map_tests.rs)
-- `test_source_map_decorator_composition_es5_method_params` (source_map_tests.rs)
-- `test_source_map_decorator_metadata_es5_parameter_decorators` (source_map_tests.rs)
+**Currently Ignored:**
+- `test_ultra_deep_nesting` (lib_tests.rs:372) - Stack overflow in very deep nesting
+- `test_very_deep_type_instantiation_recursion` (thin_checker_tests.rs:11923) - Deep type recursion
 
-**Action:** Run tests with timeouts to find any remaining hanging tests.
+**Action:** These require iterative implementations to replace recursive algorithms.
 
 ### 2. Remove Test-Aware Code from Checker
 
