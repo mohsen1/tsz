@@ -1,174 +1,159 @@
-//! Type node AST nodes.
+use std::sync::Arc;
 
-use super::base::{NodeBase, NodeIndex, NodeList};
-use serde::Serialize;
+// Assuming these imports exist based on the project context
+// If base::AstEntity is in a different module, ensure the path is correct.
+use crate::parser::ast::base::AstEntity;
+use crate::parser::ast::jsx::JsxAttributeValue;
+use crate::parser::ast::ThinNode; // Assuming Arc<Node> is aliased here or in mod.rs
+use crate::parser::token::TokenType;
 
-/// A type reference (Foo, Foo<T>).
-#[derive(Clone, Debug, Serialize)]
-pub struct TypeReference {
-    pub base: NodeBase,
-    pub type_name: NodeIndex, // Identifier or QualifiedName
-    pub type_arguments: Option<NodeList>,
+/// Represents a TypeScript or JavaScript type annotation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsType {
+    pub span: (usize, usize),
+    pub kind: TsTypeKind,
 }
 
-/// A function type ((x: number) => string).
-#[derive(Clone, Debug, Serialize)]
-pub struct FunctionType {
-    pub base: NodeBase,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_node: NodeIndex, // Return type
+#[derive(Debug, Clone, PartialEq)]
+pub enum TsTypeKind {
+    // Basic types
+    Any,
+    Unknown,
+    Void,
+    Never,
+    Null,
+    Undefined,
+    Boolean,
+    Number,
+    String,
+    Symbol,
+    Object,
+
+    // Complex types
+    Array(ThinNode<TsType>),
+    Tuple(Vec<ThinNode<TsType>>),
+    Union(Vec<ThinNode<TsType>>),
+    Intersection(Vec<ThinNode<TsType>>),
+    Function(TsFunctionSignature),
+    TypeLiteral(ThinNode<TsTypeLiteral>),
+    TypeRef {
+        type_name: String,
+        type_params: Vec<ThinNode<TsType>>,
+    },
 }
 
-/// A constructor type (new (x: number) => Foo).
-#[derive(Clone, Debug, Serialize)]
-pub struct ConstructorType {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_node: NodeIndex,
+impl AstEntity for TsType {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
 
-/// A type query (typeof x).
-#[derive(Clone, Debug, Serialize)]
-pub struct TypeQuery {
-    pub base: NodeBase,
-    pub expr_name: NodeIndex,
-    pub type_arguments: Option<NodeList>,
+/// Represents a function signature in a type context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsFunctionSignature {
+    pub span: (usize, usize),
+    pub params: Vec<ThinNode<TsTypeParameter>>,
+    pub return_type: ThinNode<TsType>,
+    pub type_params: Option<Vec<ThinNode<TsTypeParameter>>>,
 }
 
-/// A type literal ({ x: number }).
-#[derive(Clone, Debug, Serialize)]
-pub struct TypeLiteral {
-    pub base: NodeBase,
-    pub members: NodeList,
+impl AstEntity for TsFunctionSignature {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
 
-/// An array type (number[]).
-#[derive(Clone, Debug, Serialize)]
-pub struct ArrayType {
-    pub base: NodeBase,
-    pub element_type: NodeIndex,
+/// Represents a generic type parameter (e.g., `T extends string`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsTypeParameter {
+    pub span: (usize, usize),
+    pub name: String,
+    pub constraint: Option<ThinNode<TsType>>,
+    pub default: Option<ThinNode<TsType>>,
 }
 
-/// A tuple type ([number, string]).
-#[derive(Clone, Debug, Serialize)]
-pub struct TupleType {
-    pub base: NodeBase,
-    pub elements: NodeList,
+impl AstEntity for TsTypeParameter {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
 
-/// An optional type (T?).
-#[derive(Clone, Debug, Serialize)]
-pub struct OptionalType {
-    pub base: NodeBase,
-    pub type_node: NodeIndex,
+/// Represents an object literal type (e.g., `{ a: string }`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsTypeLiteral {
+    pub span: (usize, usize),
+    pub members: Vec<ThinNode<TsTypeElement>>,
 }
 
-/// A rest type (...T).
-#[derive(Clone, Debug, Serialize)]
-pub struct RestType {
-    pub base: NodeBase,
-    pub type_node: NodeIndex,
+impl AstEntity for TsTypeLiteral {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
 
-/// A union type (A | B).
-#[derive(Clone, Debug, Serialize)]
-pub struct UnionType {
-    pub base: NodeBase,
-    pub types: NodeList,
+/// Elements inside a TypeLiteral or Interface.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TsTypeElement {
+    Property(TsPropertySignature),
+    Method(TsMethodSignature),
+    Index(TsIndexSignature),
 }
 
-/// An intersection type (A & B).
-#[derive(Clone, Debug, Serialize)]
-pub struct IntersectionType {
-    pub base: NodeBase,
-    pub types: NodeList,
+impl AstEntity for TsTypeElement {
+    fn span(&self) -> (usize, usize) {
+        match self {
+            TsTypeElement::Property(p) => p.span,
+            TsTypeElement::Method(m) => m.span,
+            TsTypeElement::Index(i) => i.span,
+        }
+    }
 }
 
-/// A conditional type (T extends U ? X : Y).
-#[derive(Clone, Debug, Serialize)]
-pub struct ConditionalType {
-    pub base: NodeBase,
-    pub check_type: NodeIndex,
-    pub extends_type: NodeIndex,
-    pub true_type: NodeIndex,
-    pub false_type: NodeIndex,
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsPropertySignature {
+    pub span: (usize, usize),
+    pub name: String,
+    pub readonly: bool,
+    pub optional: bool,
+    pub type_ann: Option<ThinNode<TsType>>,
 }
 
-/// An infer type (infer T).
-#[derive(Clone, Debug, Serialize)]
-pub struct InferType {
-    pub base: NodeBase,
-    pub type_parameter: NodeIndex,
+impl AstEntity for TsPropertySignature {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
 
-/// A parenthesized type ((T)).
-#[derive(Clone, Debug, Serialize)]
-pub struct ParenthesizedType {
-    pub base: NodeBase,
-    pub type_node: NodeIndex,
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsMethodSignature {
+    pub span: (usize, usize),
+    pub name: String,
+    pub optional: bool,
+    pub signature: ThinNode<TsFunctionSignature>,
 }
 
-/// A type operator (keyof T, unique symbol, readonly T).
-#[derive(Clone, Debug, Serialize)]
-pub struct TypeOperator {
-    pub base: NodeBase,
-    pub operator: u16, // KeyOfKeyword, UniqueKeyword, ReadonlyKeyword
-    pub type_node: NodeIndex,
+impl AstEntity for TsMethodSignature {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
 
-/// An indexed access type (T[K]).
-#[derive(Clone, Debug, Serialize)]
-pub struct IndexedAccessType {
-    pub base: NodeBase,
-    pub object_type: NodeIndex,
-    pub index_type: NodeIndex,
+#[derive(Debug, Clone, PartialEq)]
+pub struct TsIndexSignature {
+    pub span: (usize, usize),
+    pub key: ThinNode<TsType>,
+    pub value: ThinNode<TsType>,
+    pub readonly: bool,
 }
 
-/// A mapped type ({ [K in T]: U }).
-#[derive(Clone, Debug, Serialize)]
-pub struct MappedType {
-    pub base: NodeBase,
-    pub readonly_token: Option<u16>, // ReadonlyKeyword, PlusToken, MinusToken
-    pub type_parameter: NodeIndex,
-    pub name_type: NodeIndex, // Optional
-    pub question_token: Option<u16>,
-    pub type_node: NodeIndex, // Optional
-    pub members: Option<NodeList>,
+impl AstEntity for TsIndexSignature {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
+```
 
-/// A literal type ("foo", 42, true).
-#[derive(Clone, Debug, Serialize)]
-pub struct LiteralType {
-    pub base: NodeBase,
-    pub literal: NodeIndex,
-}
+### File 2: src/parser/ast/jsx.rs
 
-/// A template literal type (`${T}`).
-#[derive(Clone, Debug, Serialize)]
-pub struct TemplateLiteralType {
-    pub base: NodeBase,
-    pub head: NodeIndex,
-    pub template_spans: NodeList,
-}
-
-/// A named tuple member (name: Type or name?: Type).
-#[derive(Clone, Debug, Serialize)]
-pub struct NamedTupleMember {
-    pub base: NodeBase,
-    pub dot_dot_dot_token: bool,
-    pub name: NodeIndex,
-    pub question_token: bool,
-    pub type_node: NodeIndex,
-}
-
-/// A type predicate (x is T, asserts x, asserts x is T).
-#[derive(Clone, Debug, Serialize)]
-pub struct TypePredicate {
-    pub base: NodeBase,
-    pub asserts_modifier: bool,    // true if `asserts` keyword present
-    pub parameter_name: NodeIndex, // Identifier or ThisKeyword token
-    pub type_node: NodeIndex,      // The type after 'is' (optional, NONE for just `asserts x`)
-}
+```rust
+//

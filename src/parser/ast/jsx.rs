@@ -1,105 +1,121 @@
-//! JSX AST nodes.
+use std::sync::Arc;
 
-use super::base::{NodeBase, NodeIndex, NodeList};
-use serde::Serialize;
+use crate::parser::ast::base::AstEntity;
+use crate::parser::ast::expression::Expression; // Assuming Expression exists and implements AstEntity
+use crate::parser::ast::ThinNode; // Type alias for Arc<Node>
 
-/// A JSX element (<Foo>children</Foo>).
-#[derive(Clone, Debug, Serialize)]
+/// Represents a JSX element (e.g., `<div>...</div>`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct JsxElement {
-    pub base: NodeBase,
-    pub opening_element: NodeIndex, // JsxOpeningElement
-    pub children: NodeList,         // JsxChild[]
-    pub closing_element: NodeIndex, // JsxClosingElement
+    pub span: (usize, usize),
+    pub opening: ThinNode<JsxOpeningElement>,
+    pub children: Vec<ThinNode<JsxChild>>,
+    pub closing: Option<ThinNode<JsxClosingElement>>,
 }
 
-/// A JSX self-closing element (<Foo />).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxSelfClosingElement {
-    pub base: NodeBase,
-    pub tag_name: NodeIndex, // JsxTagNameExpression
-    pub type_arguments: Option<NodeList>,
-    pub attributes: NodeIndex, // JsxAttributes
+impl AstEntity for JsxElement {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
 }
 
-/// A JSX opening element (<Foo attr="value">).
-#[derive(Clone, Debug, Serialize)]
+/// Represents the opening part of a JSX tag (e.g., `<div className="foo">`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct JsxOpeningElement {
-    pub base: NodeBase,
-    pub tag_name: NodeIndex, // JsxTagNameExpression
-    pub type_arguments: Option<NodeList>,
-    pub attributes: NodeIndex, // JsxAttributes
+    pub span: (usize, usize),
+    pub name: ThinNode<JsxTagName>,
+    pub attributes: Vec<ThinNode<JsxAttributeOrSpread>>,
+    pub self_closing: bool,
 }
 
-/// A JSX closing element (</Foo>).
-#[derive(Clone, Debug, Serialize)]
+impl AstEntity for JsxOpeningElement {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
+}
+
+/// Represents the closing part of a JSX tag (e.g., `</div>`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct JsxClosingElement {
-    pub base: NodeBase,
-    pub tag_name: NodeIndex, // JsxTagNameExpression
+    pub span: (usize, usize),
+    pub name: ThinNode<JsxTagName>,
 }
 
-/// A JSX fragment (<>children</>).
-#[derive(Clone, Debug, Serialize)]
+impl AstEntity for JsxClosingElement {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
+}
+
+/// Valid names for JSX tags.
+#[derive(Debug, Clone, PartialEq)]
+pub enum JsxTagName {
+    Identifier(String),
+    MemberExpr(ThinNode<Expression>), // e.g. Foo.Bar
+    // Namespaced names like ns:tag are usually handled as Identifier in loose parsers, 
+    // but could be strict here if needed.
+}
+
+impl AstEntity for JsxTagName {
+    fn span(&self) -> (usize, usize) {
+        match self {
+            JsxTagName::Identifier(_) => (0, 0), // Span should be stored separately or calculated
+            JsxTagName::MemberExpr(e) => e.span(),
+        }
+    }
+}
+
+/// Represents a child node inside a JSX element.
+#[derive(Debug, Clone, PartialEq)]
+pub enum JsxChild {
+    Element(ThinNode<JsxElement>),
+    Fragment(ThinNode<JsxFragment>),
+    Text(String),
+    Expression(ThinNode<JsxExpressionContainer>),
+    Spread(ThinNode<JsxSpreadChild>),
+}
+
+impl AstEntity for JsxChild {
+    fn span(&self) -> (usize, usize) {
+        match self {
+            JsxChild::Element(el) => el.span(),
+            JsxChild::Fragment(frag) => frag.span(),
+            JsxChild::Text(_) => (0, 0), // Text span tracking depends on lexer implementation
+            JsxChild::Expression(expr) => expr.span(),
+            JsxChild::Spread(spread) => spread.span(),
+        }
+    }
+}
+
+/// Represents a container for a JavaScript expression inside JSX (e.g., `{foo}`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsxExpressionContainer {
+    pub span: (usize, usize),
+    pub expression: ThinNode<Expression>,
+}
+
+impl AstEntity for JsxExpressionContainer {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
+}
+
+/// Represents a spread child inside JSX (e.g., `{...props}`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct JsxSpreadChild {
+    pub span: (usize, usize),
+    pub expression: ThinNode<Expression>,
+}
+
+impl AstEntity for JsxSpreadChild {
+    fn span(&self) -> (usize, usize) {
+        self.span
+    }
+}
+
+/// Represents a JSX Fragment (`<>...</>`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct JsxFragment {
-    pub base: NodeBase,
-    pub opening_fragment: NodeIndex, // JsxOpeningFragment
-    pub children: NodeList,          // JsxChild[]
-    pub closing_fragment: NodeIndex, // JsxClosingFragment
-}
-
-/// A JSX opening fragment (<>).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxOpeningFragment {
-    pub base: NodeBase,
-}
-
-/// A JSX closing fragment (</>).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxClosingFragment {
-    pub base: NodeBase,
-}
-
-/// JSX attributes container ({ className: "foo" }).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxAttributes {
-    pub base: NodeBase,
-    pub properties: NodeList, // JsxAttributeLike[]
-}
-
-/// A JSX attribute (name="value" or name={expr}).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxAttribute {
-    pub base: NodeBase,
-    pub name: NodeIndex,        // Identifier or JsxNamespacedName
-    pub initializer: NodeIndex, // StringLiteral or JsxExpression (optional)
-}
-
-/// A JSX spread attribute ({...props}).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxSpreadAttribute {
-    pub base: NodeBase,
-    pub expression: NodeIndex,
-}
-
-/// A JSX expression container ({expression}).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxExpression {
-    pub base: NodeBase,
-    pub dot_dot_dot_token: bool, // For spread in expression position
-    pub expression: NodeIndex,   // Expression (optional)
-}
-
-/// A JSX text node (plain text between tags).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxText {
-    pub base: NodeBase,
-    pub text: String,
-    pub contains_only_trivia_white_spaces: bool,
-}
-
-/// A JSX namespaced name (ns:name).
-#[derive(Clone, Debug, Serialize)]
-pub struct JsxNamespacedName {
-    pub base: NodeBase,
-    pub namespace: NodeIndex, // Identifier
-    pub name: NodeIndex,      // Identifier
-}
+    pub span: (usize, usize),
+    pub opening: ThinNode<JsxOpeningFragment>,
+    pub
