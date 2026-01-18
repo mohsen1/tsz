@@ -25,6 +25,8 @@ if is_test_file && self.ctx.file_name.contains("Symbol") {
 
 This pattern has appeared in the checker code and represents a fundamental architectural violation. The checker currently has 39 instances of this pattern that need removal.
 
+> **Cleanup in Progress:** Multiple workers are actively refactoring these patterns. The count is expected to decrease as AST-based detection replaces file name heuristics. Run `grep -c 'file_name\.contains' src/thin_checker.rs` to verify the current count.
+
 #### Why This Is Wrong
 
 1. **Breaks separation of concerns**: Production code should not know about test infrastructure

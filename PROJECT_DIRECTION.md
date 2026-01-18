@@ -37,6 +37,8 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
 
+> **Cleanup in Progress:** Workers are actively refactoring these patterns using AST-based detection instead of file name heuristics. Verify current count with: `grep -c 'file_name\.contains' src/thin_checker.rs`
+
 **What to remove from `src/thin_checker.rs`:**
 ```rust
 // BAD - This pattern appears 39 times and must be removed:
