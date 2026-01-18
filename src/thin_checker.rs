@@ -3137,6 +3137,9 @@ impl<'a> ThinCheckerState<'a> {
         self.ctx.types.object(properties)
     }
 
+    // Infrastructure for direct type parameter info extraction. Currently
+    // push_type_parameters is used instead for handling self-referential constraints.
+    #[allow(dead_code)]
     fn lower_type_parameter_info(
         &mut self,
         idx: NodeIndex,
@@ -11789,6 +11792,10 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    // Infrastructure for checking if a type can be instantiated with `new`.
+    // Complements is_abstract_constructor_type for concrete class instantiation checks.
+    // Will be used when implementing full TS2511 (cannot create instance of abstract class).
+    #[allow(dead_code)]
     fn is_concrete_constructor_target(
         &self,
         type_id: TypeId,
@@ -11798,6 +11805,7 @@ impl<'a> ThinCheckerState<'a> {
         self.is_concrete_constructor_target_inner(type_id, env, &mut visited)
     }
 
+    #[allow(dead_code)]
     fn is_concrete_constructor_target_inner(
         &self,
         type_id: TypeId,
@@ -13897,6 +13905,9 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check if two symbol declarations can merge (for TS2403 checking).
     /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
+    /// Infrastructure for declaration merging validation. TypeScript allows merging
+    /// of interfaces, namespaces with classes/functions/enums, and function overloads.
+    #[allow(dead_code)]
     fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
         // Interface can merge with interface
         if (existing_flags & symbol_flags::INTERFACE) != 0
@@ -23378,11 +23389,15 @@ impl<'a> ThinCheckerState<'a> {
         false
     }
 
+    // Infrastructure for detecting if a type contains `any` anywhere in its structure.
+    // Used for implementing stricter type checking modes that disallow implicit any.
+    #[allow(dead_code)]
     fn type_contains_any(&self, type_id: TypeId) -> bool {
         let mut visited = Vec::new();
         self.type_contains_any_inner(type_id, &mut visited)
     }
 
+    #[allow(dead_code)]
     fn type_contains_any_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
         use crate::solver::{TemplateSpan, TypeKey};
 
@@ -24383,7 +24398,10 @@ impl<'a> ThinCheckerState<'a> {
     }
 
 
-    /// Check if a property in a derived class is redeclaring a base class property
+    /// Check if a property in a derived class is redeclaring a base class property.
+    /// Infrastructure for TS2612 (Property redeclares itself) and related class
+    /// property inheritance checks in derived classes.
+    #[allow(dead_code)]
     fn is_derived_property_redeclaration(&self, member_idx: NodeIndex, _property_name: &str) -> bool {
         // Find the containing class for this member
         if let Some(class_idx) = self.find_containing_class(member_idx) {
@@ -24402,7 +24420,10 @@ impl<'a> ThinCheckerState<'a> {
         false
     }
 
-    /// Find the containing class for a member node by walking up the parent chain
+    /// Find the containing class for a member node by walking up the parent chain.
+    /// Infrastructure helper for is_derived_property_redeclaration. Simplified
+    /// implementation that returns None; would need full parent tracking for complete support.
+    #[allow(dead_code)]
     fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
         // Check if this member is directly in a class
         // Since we don't have parent pointers, we need to search through classes
