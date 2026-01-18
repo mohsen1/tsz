@@ -10,38 +10,48 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 |--------|-------|
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
-| Ignored Tests | 2 (stack overflow / infinite recursion) |
-| Test-Aware Patterns | **0 in thin_checker.rs** (GOAL ACHIEVED) |
+| Ignored Tests | 7 (infinite loops, stack overflow) |
+| Test-Aware Patterns | 8 in thin_checker.rs |
 
 **Build Status:** Passes
-**Test Status:** Stable - most tests pass, 2 tests ignored for deep recursion issues
-
-> **Note:** `src/lib.rs` has 5 `file_name.contains` patterns for TypeScript library file detection (lib.d.ts, lib.es*, lib.dom*, etc.). These are NOT test-aware code - they are legitimate runtime configuration for loading standard library type definitions.
+**Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
 
 ---
 
 ## Priority List (Current Focus)
 
-### 1. ~~Fix Hanging Tests~~ **COMPLETED**
+### 1. Fix Hanging Tests
 
-Most hanging tests have been fixed. Only 2 tests remain ignored due to deep recursion/stack overflow issues.
+Several tests have infinite loops and hang forever. These must be identified and marked with `#[ignore]` before any other work.
 
-**Currently Ignored:**
-- `test_ultra_deep_nesting` (lib_tests.rs:372) - Stack overflow in very deep nesting
-- `test_very_deep_type_instantiation_recursion` (thin_checker_tests.rs:11923) - Deep type recursion
+**Currently Ignored (infinite loops):**
+- `test_class_es5_commonjs_class_exports` (transforms/class_es5_tests.rs)
+- `test_source_map_decorator_combined_advanced` (source_map_tests.rs)
+- `test_source_map_decorator_composition_es5_comprehensive` (source_map_tests.rs)
+- `test_source_map_decorator_composition_es5_method_params` (source_map_tests.rs)
+- `test_source_map_decorator_metadata_es5_parameter_decorators` (source_map_tests.rs)
 
-**Action:** These require iterative implementations to replace recursive algorithms.
+**Action:** Run tests with timeouts to find any remaining hanging tests.
 
 ### 2. Remove Test-Aware Code from Checker
 
-~~The checker has **24 places** that check file names to suppress errors for tests.~~ **COMPLETED**
+The checker has **8 remaining places** that check file names to suppress errors for tests. This is architectural debt (reduced from 39).
 
-> **Status: RESOLVED**
-> All `file_name.contains` patterns have been removed from `src/thin_checker.rs`.
-> - Active code: Replaced with AST-based detection using parent traversal
-> - Dead code: Removed entirely by cleaning up disabled `check_unused_declarations()`
->
-> Verify: `grep -c 'file_name\.contains' src/thin_checker.rs` (should return 0)
+**Remaining patterns in `src/thin_checker.rs` (lines 24264-24279):**
+- `is_class_method`: checks file_name for "class", "Class", "method", "Method"
+- `is_in_namespace_context`: checks file_name for "namespace", "module", "Module", "Namespace"
+
+**What to remove from `src/thin_checker.rs`:**
+```rust
+// BAD - This pattern must be removed:
+let is_test_file = self.ctx.file_name.contains("conformance")
+    || self.ctx.file_name.contains("test")
+    || self.ctx.file_name.contains("cases");
+
+if is_test_file && self.ctx.file_name.contains("Symbol") {
+    return; // Suppressing errors for tests
+}
+```
 
 **The rule:** Source code must not know about tests. If a test fails, fix the underlying logic.
 
