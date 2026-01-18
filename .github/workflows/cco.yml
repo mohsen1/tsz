@@ -24,7 +24,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 100  # Match orchestrator config cloneDepth
+          fetch-depth: 0  # Need full history for branch cleanup
+
+      - name: Clean up old worker branches
+        run: |
+          git fetch origin
+          # Delete old worker branches
+          git branch -r | grep "origin/worker-[0-9]" | sed 's/origin\///' | xargs -I {} git push origin --delete {} 2>/dev/null || true
+          git branch -r | grep "origin/em-[0-9]" | sed 's/origin\///' | xargs -I {} git push origin --delete {} 2>/dev/null || true
+          git branch -r | grep "origin/run-" | sed 's/origin\///' | xargs -I {} git push origin --delete {} 2>/dev/null || true
+          echo "Old branches cleaned up"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,8 +49,8 @@ jobs:
       - name: Create config directory
         run: mkdir -p ~/cco-config
 
-      - name: Write api-keys.json
-        run: echo '${{ secrets.API_KEYS_JSON }}' > ~/cco-config/api-keys.json
+      - name: Write api-keys.json (z.ai format)
+        run: echo '${{ secrets.API_KEYS_JSON_RAW }}' > ~/cco-config/api-keys.json
 
       - name: Write orchestrator.json
         run: |
@@ -83,13 +92,14 @@ jobs:
         run: |
           cco start --config ~/cco-config
         env:
-          # Pass through any environment variables needed by API keys
+          # z.ai API configuration
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          API_TIMEOUT_MS: "3000000"
 
       - name: Upload CCO logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cco-logs
+          name: cco-logs-{{ github.run_id }}
           path: ~/cco-config/logs/
           retention-days: 7
