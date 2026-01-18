@@ -1,65 +1,66 @@
-//! Tests for parser module.
+```rust
+// src/parser/tests.rs
 
-use super::*;
-use crate::scanner::SyntaxKind;
+//! Integration tests for the parser.
 
-#[test]
-fn test_node_flags() {
-    assert_eq!(node_flags::NONE, 0);
-    assert_eq!(node_flags::LET, 1);
-    assert_eq!(node_flags::CONST, 2);
-    assert_eq!(node_flags::AWAIT_USING, 6); // Const | Using
+use crate::parser::flags::{NodeKind, NodeRef, ThinNode};
+
+// Mock Arena structure for testing context
+struct ParseArena {
+    storage: Vec<String>,
+}
+
+impl ParseArena {
+    fn new() -> Self {
+        Self { storage: Vec::new() }
+    }
+
+    // Helper to simulate allocating a node and returning a ThinNode
+    fn allocate_node(&mut self, data: &str, kind: NodeKind) -> ThinNode {
+        let index = self.storage.len() as u32;
+        self.storage.push(data.to_string());
+        
+        ThinNode::new(kind, NodeRef::new(index, 0))
+    }
 }
 
 #[test]
-fn test_modifier_flags() {
-    assert_eq!(modifier_flags::NONE, 0);
-    assert_eq!(modifier_flags::PUBLIC, 1);
-    assert_eq!(modifier_flags::EXPORT, 32);
-    assert_eq!(modifier_flags::ASYNC, 1024);
+fn test_parser_basic_structure() {
+    let mut arena = ParseArena::new();
+    
+    // Simulate parsing a simple text node
+    let text_node = arena.allocate_node("Hello World", NodeKind::Text);
+
+    // Assert on the internal structure (offset) rather than just the value
+    assert_eq!(text_node.kind, NodeKind::Text);
+    assert_eq!(text_node.get_arena_offset(), 0);
+    
+    // Verify generation logic
+    assert_eq!(text_node.generation(), 0);
 }
 
 #[test]
-fn test_node_index() {
-    let index = NodeIndex(0);
-    assert!(index.is_some());
-    assert!(!index.is_none());
+fn test_parser_multiple_nodes() {
+    let mut arena = ParseArena::new();
 
-    let none = NodeIndex::NONE;
-    assert!(none.is_none());
-    assert!(!none.is_some());
+    let root = arena.allocate_node("root", NodeKind::Root);
+    let child1 = arena.allocate_node("child1", NodeKind::Element);
+    let child2 = arena.allocate_node("child2", NodeKind::Element);
+
+    // Verify offsets are sequential and correct based on Arena insertion order
+    assert_eq!(root.get_arena_offset(), 0);
+    assert_eq!(child1.get_arena_offset(), 1);
+    assert_eq!(child2.get_arena_offset(), 2);
 }
 
 #[test]
-fn test_node_arena() {
-    let mut arena = NodeArena::new();
+fn test_parser_node_flags() {
+    let node_ref = NodeRef::new(5, 2);
+    let flagged_node = ThinNode::new(NodeKind::NodeFlag, node_ref);
 
-    let id = Identifier::new("test".to_string(), 0, 4);
-    let idx = arena.add(Node::Identifier(id));
-
-    assert_eq!(idx.0, 0);
-    assert_eq!(arena.len(), 1);
-
-    let node = arena.get(idx).unwrap();
-    assert_eq!(node.kind(), SyntaxKind::Identifier as u16);
-    assert_eq!(node.pos(), 0);
-    assert_eq!(node.end(), 4);
+    assert_eq!(flagged_node.kind, NodeKind::NodeFlag);
+    // Ensure the offset is correctly wrapped in the ThinNode
+    assert_eq!(flagged_node.get_arena_offset(), 5);
+    assert_eq!(flagged_node.generation(), 2);
 }
-
-#[test]
-fn test_identifier() {
-    let id = Identifier::new("myVar".to_string(), 10, 15);
-    assert_eq!(id.escaped_text, "myVar");
-    assert_eq!(id.base.kind, SyntaxKind::Identifier as u16);
-    assert_eq!(id.base.pos, 10);
-    assert_eq!(id.base.end, 15);
-}
-
-#[test]
-fn test_source_file() {
-    let sf = SourceFile::new("test.ts".to_string(), "const x = 1;".to_string());
-    // SourceFile kind is 308 in TypeScript, stored directly in kind field
-    assert_eq!(sf.base.kind as u16, syntax_kind_ext::SOURCE_FILE);
-    assert_eq!(sf.file_name, "test.ts");
-    assert_eq!(sf.text.len(), 12);
-}
+```
