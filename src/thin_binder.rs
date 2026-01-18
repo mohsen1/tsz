@@ -3769,6 +3769,12 @@ impl ThinBinderState {
         &self.symbols
     }
 
+    /// Check if the current source file is an external module (has top-level import/export).
+    /// This is used by the checker to determine if ES module semantics apply.
+    pub fn is_external_module(&self) -> bool {
+        self.is_external_module
+    }
+
     /// Get the flow node that was active at a given AST node.
     /// Used by the checker for control flow analysis.
     pub fn get_node_flow(&self, node: NodeIndex) -> Option<FlowNodeId> {
