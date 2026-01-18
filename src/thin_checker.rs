@@ -18918,13 +18918,13 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
+        // Always validate for isolatedModules mode (compiler option for strict validation)
+        if self.ctx.isolated_modules() {
             return true;
         }
 
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
+        // Validate if this is an ES module file (has top-level import/export declarations)
+        if self.ctx.binder.is_external_module() {
             return true;
         }
 
@@ -18944,10 +18944,21 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
-            return true;
+        // Validate if the function itself is async (check actual AST node)
+        // get_function handles FunctionDeclaration, FunctionExpression, and ArrowFunction
+        if let Some(node) = self.ctx.arena.get(func_idx) {
+            let is_async = if let Some(func) = self.ctx.arena.get_function(node) {
+                func.is_async
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                self.has_async_modifier(&method.modifiers)
+            } else {
+                false
+            };
+
+            // If the function is explicitly marked async, validate it
+            if is_async {
+                return true;
+            }
         }
 
         // More liberal fallback: validate if any strict mode features are enabled
