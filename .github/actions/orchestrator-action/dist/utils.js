@@ -60,7 +60,13 @@ async function getClaudePlan(prompt) {
             return { tasks: [{ id: 'task_1', description: 'Create server', files: ['src/api/server.js'] }] };
         }
     }
-    const anthropic = new sdk_1.default({ apiKey: core.getInput('anthropic_key') });
+    const apiKey = core.getInput('anthropic_key');
+    const baseUrl = core.getInput('base_url');
+    const anthropicOptions = { apiKey };
+    if (baseUrl) {
+        anthropicOptions.baseURL = baseUrl;
+    }
+    const anthropic = new sdk_1.default(anthropicOptions);
     const res = await anthropic.messages.create({
         model: 'claude-sonnet-4-5-20250514',
         max_tokens: 1024,

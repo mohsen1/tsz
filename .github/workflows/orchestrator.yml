@@ -71,6 +71,7 @@ jobs:
         with:
           anthropic_key: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           github_token: ${{ github.token }}
+          base_url: ${{ secrets.ANTHROPIC_BASE_URL }}
           role: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}
           goal: ${{ inputs.goal }}
           parent_branch: ${{ inputs.parent_branch }}

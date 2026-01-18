@@ -64,7 +64,12 @@ async function run() {
         review = { approved: true, comment: 'Looks good.' };
     }
     else {
-        const anthropic = new sdk_1.default({ apiKey: anthropicKey });
+        const baseUrl = core.getInput('base_url');
+        const anthropicOptions = { apiKey: anthropicKey };
+        if (baseUrl) {
+            anthropicOptions.baseURL = baseUrl;
+        }
+        const anthropic = new sdk_1.default(anthropicOptions);
         const prompt = `
       You are a Code Reviewer.
       Review this diff. Does it accomplish the goal in the title?
