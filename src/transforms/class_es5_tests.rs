@@ -22155,6 +22155,41 @@ module.exports.QueryBuilder = QueryBuilder;
     );
 }
 
+// Debug test: minimal version of the commonjs test to bisect the issue
+#[test]
+fn test_class_es5_commonjs_debug_querybuilder() {
+    // Minimal test case - module.exports without object literal
+    let source = r#"
+var A = 1;
+module.exports = A;
+"#;
+    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut options = PrinterOptions::default();
+    options.target = ScriptTarget::ES5;
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = ThinPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("function QueryBuilder"),
+        "Expected QueryBuilder function: {}",
+        output
+    );
+    assert!(
+        output.contains("QueryBuilder.prototype.select")
+            && output.contains("QueryBuilder.prototype.from"),
+        "Expected QueryBuilder methods on prototype: {}",
+        output
+    );
+}
+
 #[test]
 fn test_class_es5_esm_default_class() {
     // Test ESM default export with class

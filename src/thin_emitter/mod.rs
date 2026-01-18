@@ -22,18 +22,7 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access ThinPrinter internals.
 
-// Allow dead code for:
-// - Comment helpers (emit_leading_comments, emit_comments_in_gap, last_processed_pos): Infrastructure
-//   for fine-grained comment emission that is partially implemented. Currently source file level
-//   comment emission is done in emit_source_file, but node-level comment tracking is prepared.
-// - TypeScript declaration emitters (emit_interface_declaration, emit_type_alias_declaration):
-//   These emit .d.ts content and are intentionally skipped when emitting JavaScript output.
-//   Kept for future declaration file generation support.
-// - ES5 transform helpers (function_parameters_need_es5_transform, emit_extends_helper):
-//   Infrastructure functions for ES5 downleveling. emit_extends_helper is replaced by
-//   crate::transforms::helpers::emit_helpers() but kept as reference implementation.
-// - Module emission helpers (emit_commonjs_preamble): Refactored into emit_source_file but
-//   kept as standalone helper for potential future use.
+// Allow dead code for emitter infrastructure methods that will be used in future phases
 #![allow(dead_code)]
 
 use crate::emit_context::EmitContext;
@@ -232,14 +221,14 @@ enum EmitDirective {
 // ThinPrinter
 // =============================================================================
 
+/// Maximum recursion depth for emit to prevent infinite loops
+const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
+
 /// Printer that works with ThinNodeArena.
 ///
 /// Uses SourceWriter for output generation (enables source map support).
 /// Uses EmitContext for transform-specific state management.
 /// Uses TransformContext for directive-based transforms (Phase 2 architecture).
-/// Maximum recursion depth for emit operations to prevent infinite loops
-const MAX_EMIT_DEPTH: u32 = 200;
-
 pub struct ThinPrinter<'a> {
     /// The ThinNodeArena containing the AST.
     pub(super) arena: &'a ThinNodeArena,
@@ -268,8 +257,8 @@ pub struct ThinPrinter<'a> {
     /// Pending source position for mapping the next write.
     pub(super) pending_source_pos: Option<SourcePosition>,
 
-    /// Recursion depth counter to prevent infinite loops from malformed AST
-    pub(super) emit_depth: u32,
+    /// Recursion depth counter to prevent infinite loops
+    emit_recursion_depth: u32,
 }
 
 impl<'a> ThinPrinter<'a> {
@@ -311,7 +300,7 @@ impl<'a> ThinPrinter<'a> {
             source_map_text: None,
             last_processed_pos: 0,
             pending_source_pos: None,
-            emit_depth: 0,
+            emit_recursion_depth: 0,
         }
     }
 
@@ -336,19 +325,15 @@ impl<'a> ThinPrinter<'a> {
 
     /// Create a new ThinPrinter targeting ES5.
     pub fn new_es5(arena: &'a ThinNodeArena) -> Self {
-        let options = PrinterOptions {
-            target: ScriptTarget::ES5,
-            ..Default::default()
-        };
+        let mut options = PrinterOptions::default();
+        options.target = ScriptTarget::ES5;
         Self::with_options(arena, options)
     }
 
     /// Create a new ThinPrinter targeting ES6+.
     pub fn new_es6(arena: &'a ThinNodeArena) -> Self {
-        let options = PrinterOptions {
-            target: ScriptTarget::ES2015,
-            ..Default::default()
-        };
+        let mut options = PrinterOptions::default();
+        options.target = ScriptTarget::ES2015;
         Self::with_options(arena, options)
     }
 
@@ -1100,11 +1085,11 @@ impl<'a> ThinPrinter<'a> {
 
     /// Emit a node.
     fn emit_node(&mut self, node: &ThinNode, idx: NodeIndex) {
-        // Guard against infinite recursion from malformed AST
-        self.emit_depth += 1;
-        if self.emit_depth > MAX_EMIT_DEPTH {
-            self.emit_depth -= 1;
-            self.write("/* MAX_EMIT_DEPTH exceeded */");
+        // Recursion depth check to prevent infinite loops
+        self.emit_recursion_depth += 1;
+        if self.emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH {
+            self.write("/* emit recursion limit exceeded */");
+            self.emit_recursion_depth -= 1;
             return;
         }
 
@@ -1123,7 +1108,7 @@ impl<'a> ThinPrinter<'a> {
         }
 
         self.pending_source_pos = previous_pending;
-        self.emit_depth -= 1;
+        self.emit_recursion_depth -= 1;
     }
 
     fn kind_may_have_transform(kind: u16) -> bool {

@@ -69,6 +69,9 @@ struct TemplateParts {
     expressions: Vec<NodeIndex>,
 }
 
+/// Maximum recursion depth for emit_expression to prevent infinite loops
+const MAX_RECURSION_DEPTH: u32 = 1000;
+
 /// ES5 class emitter - emits ES5 IIFE pattern for classes
 pub struct ClassES5Emitter<'a> {
     arena: &'a ThinNodeArena,
@@ -93,10 +96,8 @@ pub struct ClassES5Emitter<'a> {
     private_accessors: Vec<PrivateAccessorInfo>,
     /// Current class name (for private field WeakMap names)
     class_name: String,
-    /// Recursion depth counter to prevent infinite loops
+    /// Recursion depth counter for emit_expression
     recursion_depth: u32,
-    /// Maximum allowed recursion depth
-    max_recursion_depth: u32,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -118,7 +119,6 @@ impl<'a> ClassES5Emitter<'a> {
             private_accessors: Vec::new(),
             class_name: String::new(),
             recursion_depth: 0,
-            max_recursion_depth: 1000, // Reasonable limit for nested expressions
         }
     }
 
@@ -2308,10 +2308,10 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_statement(&mut self, stmt_idx: NodeIndex) {
-        // Guard against infinite recursion
+        // Recursion depth check to prevent infinite loops
         self.recursion_depth += 1;
-        if self.recursion_depth > self.max_recursion_depth {
-            self.write("/* MAX RECURSION IN STATEMENT */");
+        if self.recursion_depth > MAX_RECURSION_DEPTH {
+            self.write("/* recursion limit exceeded */;");
             self.recursion_depth -= 1;
             return;
         }
@@ -2395,6 +2395,7 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write(";");
             }
         }
+
         self.recursion_depth -= 1;
     }
 
@@ -3340,10 +3341,10 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_expression(&mut self, expr_idx: NodeIndex) {
-        // Guard against infinite recursion
+        // Recursion depth check to prevent infinite loops
         self.recursion_depth += 1;
-        if self.recursion_depth > self.max_recursion_depth {
-            self.write("/* MAX RECURSION DEPTH EXCEEDED */");
+        if self.recursion_depth > MAX_RECURSION_DEPTH {
+            self.write("/* recursion limit exceeded */");
             self.recursion_depth -= 1;
             return;
         }
@@ -3702,6 +3703,7 @@ impl<'a> ClassES5Emitter<'a> {
                 // Unknown expression - try to get text from source
             }
         }
+
         self.recursion_depth -= 1;
     }
 
