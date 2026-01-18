@@ -157,7 +157,14 @@ function extractFileContents(text) {
     const regex = /FILE:\s*([^\n]+)\n([\s\S]*?)(?=FILE:|$)/g;
     let match;
     while ((match = regex.exec(text)) !== null) {
-        result[match[1].trim()] = match[2].trim();
+        let content = match[2].trim();
+        // Remove markdown code fence wrappers if present
+        content = content.replace(/^```\w*\n?([\s\S]*?)\n?```$/m, '$1');
+        // Remove trailing ``` if present
+        content = content.replace(/```$/g, '');
+        // Remove leading ```language if present at the start
+        content = content.replace(/^```\w*\n?/, '');
+        result[match[1].trim()] = content.trim();
     }
     return result;
 }
