@@ -245,7 +245,7 @@ impl SymbolTable {
 // =============================================================================
 
 /// Arena allocator for symbols.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct SymbolArena {
     symbols: Vec<Symbol>,
     /// Base offset for symbol IDs (0 for binder, high value for checker-local symbols)
@@ -301,15 +301,6 @@ impl NodeSymbolMap {
     /// Iterate over all mappings.
     pub fn iter(&self) -> impl Iterator<Item = (&u32, &SymbolId)> {
         self.map.iter()
-    }
-}
-
-impl Default for SymbolArena {
-    fn default() -> Self {
-        SymbolArena {
-            symbols: Vec::new(),
-            base_offset: 0,
-        }
     }
 }
 
@@ -705,18 +696,16 @@ impl BinderState {
         let start_flow = self.flow_nodes.alloc(flow_flags::START);
         self.current_flow = start_flow;
 
-        if let Some(node) = arena.get(root) {
-            if let Node::SourceFile(sf) = node {
-                // First pass: collect hoisted declarations
-                self.collect_hoisted_declarations(arena, &sf.statements.nodes);
+        if let Some(Node::SourceFile(sf)) = arena.get(root) {
+            // First pass: collect hoisted declarations
+            self.collect_hoisted_declarations(arena, &sf.statements.nodes);
 
-                // Process hoisted function declarations first
-                self.process_hoisted_functions(arena);
+            // Process hoisted function declarations first
+            self.process_hoisted_functions(arena);
 
-                // Second pass: bind each statement
-                for &stmt_idx in &sf.statements.nodes {
-                    self.bind_node(arena, stmt_idx);
-                }
+            // Second pass: bind each statement
+            for &stmt_idx in &sf.statements.nodes {
+                self.bind_node(arena, stmt_idx);
             }
         }
 
@@ -744,12 +733,10 @@ impl BinderState {
                                 for &decl_idx in &list.declarations.nodes {
                                     if let Some(Node::VariableDeclaration(decl)) =
                                         arena.get(decl_idx)
-                                    {
-                                        if let Some(name) =
+                                        && let Some(name) =
                                             self.get_identifier_name(arena, decl.name)
-                                        {
-                                            self.add_hoisted_var(name.to_string(), decl_idx);
-                                        }
+                                    {
+                                        self.add_hoisted_var(name.to_string(), decl_idx);
                                     }
                                 }
                             }
@@ -769,10 +756,10 @@ impl BinderState {
                         if let Some(Node::Block(block)) = arena.get(if_stmt.then_statement) {
                             self.collect_hoisted_declarations(arena, &block.statements.nodes);
                         }
-                        if !if_stmt.else_statement.is_none() {
-                            if let Some(Node::Block(block)) = arena.get(if_stmt.else_statement) {
-                                self.collect_hoisted_declarations(arena, &block.statements.nodes);
-                            }
+                        if !if_stmt.else_statement.is_none()
+                            && let Some(Node::Block(block)) = arena.get(if_stmt.else_statement)
+                        {
+                            self.collect_hoisted_declarations(arena, &block.statements.nodes);
                         }
                     }
                     Node::WhileStatement(while_stmt) => {
@@ -838,10 +825,10 @@ impl BinderState {
     /// Exit the current scope
     fn exit_scope(&mut self) {
         // Pop from scope chain
-        if let Some(scope) = self.scope_chain.get(self.current_scope_idx) {
-            if let Some(parent_idx) = scope.parent_idx {
-                self.current_scope_idx = parent_idx;
-            }
+        if let Some(scope) = self.scope_chain.get(self.current_scope_idx)
+            && let Some(parent_idx) = scope.parent_idx
+        {
+            self.current_scope_idx = parent_idx;
         }
 
         // Pop from legacy scope stack
@@ -914,12 +901,12 @@ impl BinderState {
 
     /// Add an antecedent to a branch label.
     fn add_antecedent(&mut self, label: FlowNodeId, antecedent: FlowNodeId) {
-        if !antecedent.is_none() && antecedent != self.unreachable_flow {
-            if let Some(flow) = self.flow_nodes.get_mut(label) {
-                if !flow.antecedent.contains(&antecedent) {
-                    flow.antecedent.push(antecedent);
-                }
-            }
+        if !antecedent.is_none()
+            && antecedent != self.unreachable_flow
+            && let Some(flow) = self.flow_nodes.get_mut(label)
+            && !flow.antecedent.contains(&antecedent)
+        {
+            flow.antecedent.push(antecedent);
         }
     }
 
@@ -1106,13 +1093,12 @@ impl BinderState {
 
                     // Update value_declaration for merged class/enum/function + namespace symbols
                     // When a class/enum/function merges with a namespace, value_declaration should point to the class/enum/function
-                    if (flags & symbol_flags::CLASS) != 0
+                    let is_primary_value_kind = (flags & symbol_flags::CLASS) != 0
                         || (flags & symbol_flags::FUNCTION) != 0
-                        || (flags & symbol_flags::REGULAR_ENUM) != 0
-                    {
-                        sym.value_declaration = declaration;
-                    } else if sym.value_declaration.is_none() && (flags & symbol_flags::VALUE) != 0
-                    {
+                        || (flags & symbol_flags::REGULAR_ENUM) != 0;
+                    let needs_value_decl = sym.value_declaration.is_none()
+                        && (flags & symbol_flags::VALUE) != 0;
+                    if is_primary_value_kind || needs_value_decl {
                         sym.value_declaration = declaration;
                     }
                 } else {
@@ -1169,20 +1155,18 @@ impl BinderState {
         }
 
         // Namespace can merge with class, function, or enum
-        if (existing_flags & symbol_flags::MODULE) != 0 {
-            if (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
+        if (existing_flags & symbol_flags::MODULE) != 0
+            && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
                 != 0
-            {
-                return true;
-            }
+        {
+            return true;
         }
-        if (new_flags & symbol_flags::MODULE) != 0 {
-            if (existing_flags
+        if (new_flags & symbol_flags::MODULE) != 0
+            && (existing_flags
                 & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
                 != 0
-            {
-                return true;
-            }
+        {
+            return true;
         }
 
         // Function overloads
@@ -1316,14 +1300,14 @@ impl BinderState {
 
             // Bind parameters first (they're in function scope)
             for &param_idx in &func.parameters.nodes {
-                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx) {
-                    if let Some(name) = self.get_identifier_name(arena, param.name) {
-                        self.declare_symbol(
-                            name.to_string(),
-                            symbol_flags::FUNCTION_SCOPED_VARIABLE,
-                            param_idx,
-                        );
-                    }
+                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx)
+                    && let Some(name) = self.get_identifier_name(arena, param.name)
+                {
+                    self.declare_symbol(
+                        name.to_string(),
+                        symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                        param_idx,
+                    );
                 }
             }
 
@@ -1355,14 +1339,14 @@ impl BinderState {
 
             // Bind parameters first (they're in function scope)
             for &param_idx in &method.parameters.nodes {
-                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx) {
-                    if let Some(name) = self.get_identifier_name(arena, param.name) {
-                        self.declare_symbol(
-                            name.to_string(),
-                            symbol_flags::FUNCTION_SCOPED_VARIABLE,
-                            param_idx,
-                        );
-                    }
+                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx)
+                    && let Some(name) = self.get_identifier_name(arena, param.name)
+                {
+                    self.declare_symbol(
+                        name.to_string(),
+                        symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                        param_idx,
+                    );
                 }
             }
 
@@ -1398,14 +1382,14 @@ impl BinderState {
 
             // Bind parameters first (they're in function scope)
             for &param_idx in &func.parameters.nodes {
-                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx) {
-                    if let Some(name) = self.get_identifier_name(arena, param.name) {
-                        self.declare_symbol(
-                            name.to_string(),
-                            symbol_flags::FUNCTION_SCOPED_VARIABLE,
-                            param_idx,
-                        );
-                    }
+                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx)
+                    && let Some(name) = self.get_identifier_name(arena, param.name)
+                {
+                    self.declare_symbol(
+                        name.to_string(),
+                        symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                        param_idx,
+                    );
                 }
             }
 
@@ -1435,14 +1419,14 @@ impl BinderState {
 
             // Bind parameters first (they're in function scope)
             for &param_idx in &arrow.parameters.nodes {
-                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx) {
-                    if let Some(name) = self.get_identifier_name(arena, param.name) {
-                        self.declare_symbol(
-                            name.to_string(),
-                            symbol_flags::FUNCTION_SCOPED_VARIABLE,
-                            param_idx,
-                        );
-                    }
+                if let Some(Node::ParameterDeclaration(param)) = arena.get(param_idx)
+                    && let Some(name) = self.get_identifier_name(arena, param.name)
+                {
+                    self.declare_symbol(
+                        name.to_string(),
+                        symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                        param_idx,
+                    );
                 }
             }
 
@@ -1567,10 +1551,10 @@ impl BinderState {
     ) {
         // Create a loop label for the loop entry
         let loop_label = self.flow_nodes.alloc(flow_flags::LOOP_LABEL);
-        if let Some(flow) = self.flow_nodes.get_mut(loop_label) {
-            if !self.current_flow.is_none() {
-                flow.antecedent.push(self.current_flow);
-            }
+        if let Some(flow) = self.flow_nodes.get_mut(loop_label)
+            && !self.current_flow.is_none()
+        {
+            flow.antecedent.push(self.current_flow);
         }
 
         self.current_flow = loop_label;
@@ -1633,10 +1617,10 @@ impl BinderState {
 
         // Bind enum members
         for &member_idx in &enum_decl.members.nodes {
-            if let Some(Node::EnumMember(member)) = arena.get(member_idx) {
-                if let Some(name) = self.get_identifier_name(arena, member.name) {
-                    self.declare_symbol(name.to_string(), symbol_flags::ENUM_MEMBER, member_idx);
-                }
+            if let Some(Node::EnumMember(member)) = arena.get(member_idx)
+                && let Some(name) = self.get_identifier_name(arena, member.name)
+            {
+                self.declare_symbol(name.to_string(), symbol_flags::ENUM_MEMBER, member_idx);
             }
         }
     }
@@ -1651,48 +1635,48 @@ impl BinderState {
             let clause_type_only = clause.is_type_only;
 
             // Default import: import Foo from './module'
-            if !clause.name.is_none() {
-                if let Some(name) = self.get_identifier_name(arena, clause.name) {
-                    let sym_id =
-                        self.declare_symbol(name.to_string(), symbol_flags::ALIAS, clause.name);
-                    // Mark as type-only if import clause is type-only
-                    if let Some(sym) = self.symbols.get_mut(sym_id) {
-                        sym.is_type_only = clause_type_only;
-                    }
+            if !clause.name.is_none()
+                && let Some(name) = self.get_identifier_name(arena, clause.name)
+            {
+                let sym_id =
+                    self.declare_symbol(name.to_string(), symbol_flags::ALIAS, clause.name);
+                // Mark as type-only if import clause is type-only
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.is_type_only = clause_type_only;
                 }
             }
 
             // Named imports: import { Foo, Bar as Baz } from './module'
             if let Some(Node::NamedImports(named)) = arena.get(clause.named_bindings) {
                 for &spec_idx in &named.elements.nodes {
-                    if let Some(Node::ImportSpecifier(spec)) = arena.get(spec_idx) {
+                    if let Some(Node::ImportSpecifier(spec)) = arena.get(spec_idx)
+                        && let Some(name) = self.get_identifier_name(arena, spec.name)
+                    {
                         // Individual specifier can be type-only: import { type Foo, bar } from 'mod'
                         let spec_type_only = clause_type_only || spec.is_type_only;
-                        if let Some(name) = self.get_identifier_name(arena, spec.name) {
-                            let sym_id = self.declare_symbol(
-                                name.to_string(),
-                                symbol_flags::ALIAS,
-                                spec_idx,
-                            );
-                            if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                sym.is_type_only = spec_type_only;
-                            }
+                        let sym_id = self.declare_symbol(
+                            name.to_string(),
+                            symbol_flags::ALIAS,
+                            spec_idx,
+                        );
+                        if let Some(sym) = self.symbols.get_mut(sym_id) {
+                            sym.is_type_only = spec_type_only;
                         }
                     }
                 }
             }
 
             // Namespace import: import * as ns from './module'
-            if let Some(Node::NamespaceImport(ns_import)) = arena.get(clause.named_bindings) {
-                if let Some(name) = self.get_identifier_name(arena, ns_import.name) {
-                    let sym_id = self.declare_symbol(
-                        name.to_string(),
-                        symbol_flags::ALIAS,
-                        clause.named_bindings,
-                    );
-                    if let Some(sym) = self.symbols.get_mut(sym_id) {
-                        sym.is_type_only = clause_type_only;
-                    }
+            if let Some(Node::NamespaceImport(ns_import)) = arena.get(clause.named_bindings)
+                && let Some(name) = self.get_identifier_name(arena, ns_import.name)
+            {
+                let sym_id = self.declare_symbol(
+                    name.to_string(),
+                    symbol_flags::ALIAS,
+                    clause.named_bindings,
+                );
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.is_type_only = clause_type_only;
                 }
             }
         }
@@ -1740,17 +1724,17 @@ impl BinderState {
                 }
             }
             // Handle namespace export: export * as ns from 'mod'
-            else if let Some(Node::NamespaceExport(ns_export)) = arena.get(export.export_clause) {
-                if let Some(name) = self.get_identifier_name(arena, ns_export.name) {
-                    let sym_id = self.declare_symbol(
-                        name.to_string(),
-                        symbol_flags::ALIAS,
-                        export.export_clause,
-                    );
-                    if let Some(sym) = self.symbols.get_mut(sym_id) {
-                        sym.is_exported = true;
-                        sym.is_type_only = export.is_type_only;
-                    }
+            else if let Some(Node::NamespaceExport(ns_export)) = arena.get(export.export_clause)
+                && let Some(name) = self.get_identifier_name(arena, ns_export.name)
+            {
+                let sym_id = self.declare_symbol(
+                    name.to_string(),
+                    symbol_flags::ALIAS,
+                    export.export_clause,
+                );
+                if let Some(sym) = self.symbols.get_mut(sym_id) {
+                    sym.is_exported = true;
+                    sym.is_type_only = export.is_type_only;
                 }
             }
         }
@@ -1800,10 +1784,10 @@ impl BinderState {
     ) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(Node::Token(base)) = arena.get(mod_idx) {
-                    if base.kind == SyntaxKind::ExportKeyword as u16 {
-                        return true;
-                    }
+                if let Some(Node::Token(base)) = arena.get(mod_idx)
+                    && base.kind == SyntaxKind::ExportKeyword as u16
+                {
+                    return true;
                 }
             }
         }
@@ -1861,12 +1845,10 @@ impl BinderState {
                                 for &decl_idx in &list.declarations.nodes {
                                     if let Some(Node::VariableDeclaration(decl)) =
                                         arena.get(decl_idx)
-                                    {
-                                        if let Some(name) =
+                                        && let Some(name) =
                                             self.get_identifier_name(arena, decl.name)
-                                        {
-                                            exported_names.push(name.to_string());
-                                        }
+                                    {
+                                        exported_names.push(name.to_string());
                                     }
                                 }
                             }
@@ -2010,33 +1992,31 @@ impl BinderState {
         let post_try_flow = self.current_flow;
 
         // Bind catch clause if present
-        if !try_stmt.catch_clause.is_none() {
-            if let Some(Node::CatchClause(catch)) = arena.get(try_stmt.catch_clause) {
-                // Catch clause has its own scope
-                self.enter_scope(ContainerKind::Block, try_stmt.catch_clause);
+        if !try_stmt.catch_clause.is_none()
+            && let Some(Node::CatchClause(catch)) = arena.get(try_stmt.catch_clause)
+        {
+            // Catch clause has its own scope
+            self.enter_scope(ContainerKind::Block, try_stmt.catch_clause);
 
-                // Bind catch variable if present
-                if !catch.variable_declaration.is_none() {
-                    if let Some(Node::VariableDeclaration(decl)) =
-                        arena.get(catch.variable_declaration)
-                    {
-                        if let Some(name) = self.get_identifier_name(arena, decl.name) {
-                            self.declare_symbol(
-                                name.to_string(),
-                                symbol_flags::BLOCK_SCOPED_VARIABLE,
-                                catch.variable_declaration,
-                            );
-                        }
-                    }
-                }
-
-                // Reset flow - catch can be entered from any point in try
-                self.current_flow = pre_try_flow;
-                self.bind_node(arena, catch.block);
-                self.add_antecedent(end_label, self.current_flow);
-
-                self.exit_scope();
+            // Bind catch variable if present
+            if !catch.variable_declaration.is_none()
+                && let Some(Node::VariableDeclaration(decl)) =
+                    arena.get(catch.variable_declaration)
+                && let Some(name) = self.get_identifier_name(arena, decl.name)
+            {
+                self.declare_symbol(
+                    name.to_string(),
+                    symbol_flags::BLOCK_SCOPED_VARIABLE,
+                    catch.variable_declaration,
+                );
             }
+
+            // Reset flow - catch can be entered from any point in try
+            self.current_flow = pre_try_flow;
+            self.bind_node(arena, catch.block);
+            self.add_antecedent(end_label, self.current_flow);
+
+            self.exit_scope();
         }
 
         // Add post-try flow to end label
@@ -2092,10 +2072,10 @@ impl BinderState {
     /// Get a symbol by name from file locals.
     #[wasm_bindgen(js_name = getSymbolByName)]
     pub fn get_symbol_by_name(&self, name: &str) -> Option<String> {
-        if let Some(id) = self.file_locals.get(name) {
-            if let Some(sym) = self.symbols.get(id) {
-                return serde_json::to_string(sym).ok();
-            }
+        if let Some(id) = self.file_locals.get(name)
+            && let Some(sym) = self.symbols.get(id)
+        {
+            return serde_json::to_string(sym).ok();
         }
         None
     }
