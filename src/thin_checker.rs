@@ -19200,7 +19200,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
+        if self.ctx.isolated_modules() {
             return true;
         }
 
