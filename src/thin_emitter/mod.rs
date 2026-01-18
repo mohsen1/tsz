@@ -318,15 +318,19 @@ impl<'a> ThinPrinter<'a> {
 
     /// Create a new ThinPrinter targeting ES5.
     pub fn new_es5(arena: &'a ThinNodeArena) -> Self {
-        let mut options = PrinterOptions::default();
-        options.target = ScriptTarget::ES5;
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
         Self::with_options(arena, options)
     }
 
     /// Create a new ThinPrinter targeting ES6+.
     pub fn new_es6(arena: &'a ThinNodeArena) -> Self {
-        let mut options = PrinterOptions::default();
-        options.target = ScriptTarget::ES2015;
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
         Self::with_options(arena, options)
     }
 

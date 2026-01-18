@@ -378,41 +378,6 @@ pub mod vlq {
     }
 }
 
-/// VLQ (Variable-Length Quantity) encoding for source maps
-const VLQ_BASE_SHIFT: i32 = 5;
-const VLQ_BASE: i32 = 1 << VLQ_BASE_SHIFT;
-const VLQ_BASE_MASK: i32 = VLQ_BASE - 1;
-const VLQ_CONTINUATION_BIT: i32 = VLQ_BASE;
-
-const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-fn vlq_encode(value: i32) -> String {
-    let mut result = String::new();
-
-    // Convert to unsigned with sign in LSB
-    let mut vlq = if value < 0 {
-        ((-value) << 1) + 1
-    } else {
-        value << 1
-    };
-
-    loop {
-        let mut digit = vlq & VLQ_BASE_MASK;
-        vlq >>= VLQ_BASE_SHIFT;
-
-        if vlq > 0 {
-            digit |= VLQ_CONTINUATION_BIT;
-        }
-
-        result.push(BASE64_CHARS[digit as usize] as char);
-
-        if vlq == 0 {
-            break;
-        }
-    }
-
-    result
-}
 
 /// Escape a string for JSON output
 /// SIMD-optimized JSON string escaping
@@ -561,12 +526,12 @@ mod tests {
 
     #[test]
     fn test_vlq_encode() {
-        assert_eq!(vlq_encode(0), "A");
-        assert_eq!(vlq_encode(1), "C");
-        assert_eq!(vlq_encode(-1), "D");
-        assert_eq!(vlq_encode(15), "e");
-        assert_eq!(vlq_encode(16), "gB");
-        assert_eq!(vlq_encode(-16), "hB");
+        assert_eq!(vlq::encode(0), "A");
+        assert_eq!(vlq::encode(1), "C");
+        assert_eq!(vlq::encode(-1), "D");
+        assert_eq!(vlq::encode(15), "e");
+        assert_eq!(vlq::encode(16), "gB");
+        assert_eq!(vlq::encode(-16), "hB");
     }
 
     #[test]
