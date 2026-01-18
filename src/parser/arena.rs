@@ -1,364 +1,244 @@
-//! Node arena for AST storage.
+```rust
+// src/parser/arena.rs
 
-use super::ast::{Node, NodeIndex};
-use super::thin_node::{NodeAccess, NodeInfo};
-use serde::Serialize;
+//! A fast, bump-pointer allocator arena designed for zero-copy parsing.
+//!
+//! This module provides an `Arena` that grows by allocating large chunks of memory
+//! (pages) and serving allocations out of them using a bump pointer. This strategy
+//! is highly efficient for AST construction and string interning where objects
+//! have similar lifetimes.
 
-/// Arena-based storage for AST nodes.
-/// Nodes are stored contiguously and referenced by index.
-#[derive(Debug, Default, Serialize)]
-pub struct NodeArena {
-    pub nodes: Vec<Node>,
+use std::alloc::{self, Layout};
+use std::ptr::NonNull;
+use std::marker::PhantomData;
+use std::mem;
+use std::slice;
+
+/// Configuration for the Arena growth strategy.
+const DEFAULT_PAGE_SIZE: usize = 4 * 1024; // 4 KB
+
+/// An error that can occur during allocation.
+#[derive(Debug)]
+pub enum ArenaError {
+    /// Allocation failed due to layout constraints or OOM.
+    AllocationFailed,
+    /// Requested alignment exceeds supported maximum.
+    BadAlignment,
 }
 
-impl NodeArena {
-    pub fn new() -> NodeArena {
-        NodeArena { nodes: Vec::new() }
-    }
+/// A specialized bump-allocator arena optimized for zero-copy parsing.
+///
+/// # Safety
+/// The returned references are bound to the lifetime of the Arena itself.
+/// The Arena must not be moved or dropped while references are active.
+pub struct Arena {
+    /// List of allocated chunks. We keep these to deallocate them later.
+    /// Chunks are stored in reverse order of allocation (newest first) for convenience,
+    /// though logically order doesn't strictly matter for the bump strategy within a chunk.
+    chunks: Vec<Chunk>,
+    
+    /// Pointer to the start of the current allocation region.
+    /// If `None`, no memory is currently allocated.
+    current_start: Option<NonNull<u8>>,
+    
+    /// Pointer to the next byte to be allocated.
+    current_end: NonNull<u8>, // Points to the byte *after* the last valid byte (capacity limit)
+    current_ptr: NonNull<u8>, // Points to the next free byte
+}
 
-    pub fn with_capacity(capacity: usize) -> NodeArena {
-        NodeArena {
-            nodes: Vec::with_capacity(capacity),
-        }
-    }
+/// Represents a single contiguous block of memory allocated from the system.
+struct Chunk {
+    ptr: NonNull<u8>,
+    size: usize,
+}
 
-    /// Add a node to the arena and return its index
-    pub fn add(&mut self, node: Node) -> NodeIndex {
-        let index = self.nodes.len() as u32;
-        self.nodes.push(node);
-        NodeIndex(index)
-    }
-
-    /// Get a node by index
-    pub fn get(&self, index: NodeIndex) -> Option<&Node> {
-        if index.is_none() {
-            None
-        } else {
-            self.nodes.get(index.0 as usize)
-        }
-    }
-
-    /// Get a mutable node by index
-    pub fn get_mut(&mut self, index: NodeIndex) -> Option<&mut Node> {
-        if index.is_none() {
-            None
-        } else {
-            self.nodes.get_mut(index.0 as usize)
-        }
-    }
-
-    /// Replace a node at the given index
-    /// Returns the old node if successful
-    pub fn replace(&mut self, index: NodeIndex, new_node: Node) -> Option<Node> {
-        if index.is_none() {
-            None
-        } else {
-            self.nodes
-                .get_mut(index.0 as usize)
-                .map(|old| std::mem::replace(old, new_node))
-        }
-    }
-
-    /// Get the number of nodes
-    pub fn len(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// Check if the arena is empty
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+impl Drop for Chunk {
+    fn drop(&mut self) {
+        // SAFETY: `ptr` was allocated via `alloc::alloc` with the layout matching `size`.
+        // We must use the size to reconstruct the layout for deallocation.
+        let layout = unsafe { Layout::from_size_align_unchecked(self.size, 1) };
+        unsafe { alloc::dealloc(self.ptr.as_ptr(), layout) };
     }
 }
 
-/// Implementation of NodeAccess for NodeArena
-impl NodeAccess for NodeArena {
-    fn node_info(&self, index: NodeIndex) -> Option<NodeInfo> {
-        let node = self.get(index)?;
-        let base = node.base();
-        Some(NodeInfo {
-            kind: base.kind,
-            flags: base.flags,
-            modifier_flags: base.modifier_flags,
-            pos: base.pos,
-            end: base.end,
-            parent: base.parent,
-            id: base.id,
-        })
-    }
-
-    fn kind(&self, index: NodeIndex) -> Option<u16> {
-        self.get(index).map(|n| n.base().kind)
-    }
-
-    fn pos_end(&self, index: NodeIndex) -> Option<(u32, u32)> {
-        self.get(index).map(|n| (n.base().pos, n.base().end))
-    }
-
-    fn get_identifier_text(&self, index: NodeIndex) -> Option<&str> {
-        match self.get(index)? {
-            Node::Identifier(ident) | Node::PrivateIdentifier(ident) => Some(&ident.escaped_text),
-            _ => None,
+impl Arena {
+    /// Creates a new, empty Arena.
+    pub fn new() -> Self {
+        Arena {
+            chunks: Vec::new(),
+            current_start: None,
+            // Initialize pointers to a dummy null address; they will be valid
+            // once the first allocation happens or `ensure_capacity` is called.
+            current_end: NonNull::dangling(),
+            current_ptr: NonNull::dangling(),
         }
     }
 
-    fn get_literal_text(&self, index: NodeIndex) -> Option<&str> {
-        match self.get(index)? {
-            Node::StringLiteral(lit)
-            | Node::NoSubstitutionTemplateLiteral(lit)
-            | Node::TemplateHead(lit)
-            | Node::TemplateMiddle(lit)
-            | Node::TemplateTail(lit) => Some(&lit.text),
-            Node::NumericLiteral(lit) => Some(&lit.text),
-            Node::BigIntLiteral(lit) => Some(&lit.text),
-            Node::RegularExpressionLiteral(lit) => Some(&lit.text),
-            _ => None,
+    /// Allocates a new chunk of memory and makes it the current active chunk.
+    ///
+    /// # Arguments
+    /// * `min_size`: The minimum size required for the new chunk.
+    fn grow(&mut self, min_size: usize) {
+        // Calculate a good size for the next chunk. We double the size of the previous chunk
+        // or start at DEFAULT_PAGE_SIZE, ensuring we cover `min_size`.
+        let new_size = (DEFAULT_PAGE_SIZE).max(min_size).next_power_of_two();
+        
+        let layout = match Layout::from_size_align(new_size, 1) {
+            Ok(l) => l,
+            Err(_) => return, // Handle size overflow gracefully by doing nothing (will fail on alloc)
+        };
+
+        let ptr = unsafe { alloc::alloc(layout) };
+        
+        if ptr.is_null() {
+            // OOM handling: In a standard library context, we might panic or abort.
+            // Here we rely on the caller checking null pointers or the allocator panic.
+            // Since `alloc` technically returns null on OOM, we check here.
+            // Note: Standard Rust allocators usually abort on OOM, but custom ones might return null.
+            // For robustness, we assume the system allocator panics, but we check anyway.
+            panic!("Arena OOM: Failed to allocate {} bytes", new_size);
+        }
+
+        let nn_ptr = NonNull::new(ptr).expect("Allocation pointer should not be null");
+        
+        self.chunks.push(Chunk { ptr: nn_ptr, size: new_size });
+        
+        self.current_start = Some(nn_ptr);
+        self.current_ptr = nn_ptr;
+        // Safety: `ptr.add(new_size)` is within the same allocated object.
+        self.current_end = unsafe { NonNull::new_unchecked(ptr.add(new_size)) };
+    }
+
+    /// Ensures that the current chunk has at least `size` bytes available.
+    /// If not, allocates a new chunk.
+    #[inline]
+    fn ensure_capacity(&mut self, size: usize) {
+        // Check if we have space in the current chunk.
+        // `current_ptr` is the start of free space, `current_end` is the end of the chunk.
+        let available = self.current_end.as_ptr() as usize - self.current_ptr.as_ptr() as usize;
+        
+        if available < size {
+            self.grow(size);
         }
     }
 
-    fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex> {
-        if index.is_none() {
-            return Vec::new();
+    /// Allocates space for an item of type `T` and returns a mutable reference to it.
+    ///
+    /// # Safety
+    /// The returned reference is valid for the lifetime of the Arena.
+    /// The memory is zero-initialized.
+    #[inline]
+    pub fn alloc<T>(&mut self) -> &'static mut T 
+    where
+        T: Default, // Using Default to ensure initialization logic is simple, or handle raw
+    {
+        let size = mem::size_of::<T>();
+        let align = mem::align_of::<T>();
+
+        // Calculate padding needed to satisfy alignment
+        let offset = self.offset_for_alignment(align);
+        let total_size = offset + size;
+
+        self.ensure_capacity(total_size);
+
+        // Advance pointer by padding
+        let aligned_ptr = unsafe { self.current_ptr.as_ptr().add(offset) };
+        
+        // Update bump pointer
+        // Safety: `ensure_capacity` guarantees `total_size` fits.
+        self.current_ptr = unsafe { NonNull::new_unchecked(aligned_ptr.add(size)) };
+
+        // Write default value
+        let ptr = aligned_ptr as *mut T;
+        unsafe {
+            ptr.write(T::default());
+            &mut *ptr
         }
+    }
 
-        let node = match self.get(index) {
-            Some(n) => n,
-            None => return Vec::new(),
-        };
+    /// Allocates a raw byte slice of a specific length.
+    /// The memory is uninitialized.
+    ///
+    /// This is useful for copying strings into the arena directly.
+    #[inline]
+    pub fn alloc_bytes(&mut self, len: usize) -> &'static mut [u8] {
+        self.ensure_capacity(len);
+        
+        let ptr = self.current_ptr.as_ptr();
+        self.current_ptr = unsafe { NonNull::new_unchecked(ptr.add(len)) };
+        
+        unsafe { slice::from_raw_parts_mut(ptr, len) }
+    }
 
-        // Helper to add optional NodeIndex (ignoring NONE)
-        let add_opt = |children: &mut Vec<NodeIndex>, idx: NodeIndex| {
-            if idx.is_some() {
-                children.push(idx);
-            }
-        };
+    /// Allocates space for a `T` with a specific byte length.
+    /// This is often used for DST (Dynamically Sized Types) or fat pointers like `str`.
+    /// For `str`, `T` would be `str` (size 0) but we actually need the slice data.
+    /// This specialized helper allocates the backing store for a `str` and ensures alignment.
+    #[inline]
+    pub fn alloc_str_bytes(&mut self, len: usize) -> *mut u8 {
+        // Strings don't need specific alignment > 1, usually, but let's respect general alignment rules.
+        let align = 1;
+        let offset = self.offset_for_alignment(align);
+        let total_size = offset + len;
 
-        // Helper to add NodeList (expanding to individual nodes)
-        let add_list = |children: &mut Vec<NodeIndex>, list: &super::ast::NodeList| {
-            children.extend(list.nodes.iter().copied());
-        };
+        self.ensure_capacity(total_size);
+        
+        let base = self.current_ptr.as_ptr();
+        let aligned_ptr = unsafe { base.add(offset) };
+        
+        self.current_ptr = unsafe { NonNull::new_unchecked(aligned_ptr.add(len)) };
+        
+        aligned_ptr
+    }
 
-        // Helper to add optional NodeList
-        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<super::ast::NodeList>| {
-            if let Some(l) = list {
-                children.extend(l.nodes.iter().copied());
-            }
-        };
+    /// Calculates the number of bytes needed to bump the pointer to satisfy `alignment`.
+    #[inline]
+    fn offset_for_alignment(&self, alignment: usize) -> usize {
+        // Current pointer address
+        let addr = self.current_ptr.as_ptr() as usize;
+        // Calculate misalignment
+        let misalignment = addr % alignment;
+        // If aligned, 0. Else, (alignment - misalignment)
+        if misalignment == 0 { 0 } else { alignment - misalignment }
+    }
 
-        let mut children = Vec::new();
-
-        // Match on node variants and extract child NodeIndex fields
-        match node {
-            Node::QualifiedName { left, right, .. } => {
-                add_opt(&mut children, *left);
-                add_opt(&mut children, *right);
-            }
-            Node::ComputedPropertyName { expression, .. } => {
-                add_opt(&mut children, *expression);
-            }
-            Node::BinaryExpression(expr) => {
-                add_opt(&mut children, expr.left);
-                add_opt(&mut children, expr.right);
-            }
-            Node::PrefixUnaryExpression(expr) => {
-                add_opt(&mut children, expr.operand);
-            }
-            Node::PostfixUnaryExpression(expr) => {
-                add_opt(&mut children, expr.operand);
-            }
-            Node::CallExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-                add_opt_list(&mut children, &expr.type_arguments);
-                add_list(&mut children, &expr.arguments);
-            }
-            Node::NewExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-                add_opt_list(&mut children, &expr.type_arguments);
-                add_opt_list(&mut children, &expr.arguments);
-            }
-            Node::PropertyAccessExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-                add_opt(&mut children, expr.name);
-            }
-            Node::ElementAccessExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-                add_opt(&mut children, expr.argument_expression);
-            }
-            Node::ConditionalExpression(expr) => {
-                add_opt(&mut children, expr.condition);
-                add_opt(&mut children, expr.when_true);
-                add_opt(&mut children, expr.when_false);
-            }
-            Node::ArrowFunction(func) => {
-                add_opt_list(&mut children, &func.type_parameters);
-                add_list(&mut children, &func.parameters);
-                add_opt(&mut children, func.type_annotation);
-                add_opt(&mut children, func.body);
-            }
-            Node::FunctionExpression(func) => {
-                add_opt(&mut children, func.name);
-                add_opt_list(&mut children, &func.type_parameters);
-                add_list(&mut children, &func.parameters);
-                add_opt(&mut children, func.type_annotation);
-                add_opt(&mut children, func.body);
-            }
-            Node::ObjectLiteralExpression(obj) => {
-                add_list(&mut children, &obj.properties);
-            }
-            Node::ArrayLiteralExpression(arr) => {
-                add_list(&mut children, &arr.elements);
-            }
-            Node::ParenthesizedExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-            }
-            Node::AsExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-                add_opt(&mut children, expr.type_node);
-            }
-            Node::SatisfiesExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-                add_opt(&mut children, expr.type_node);
-            }
-            Node::NonNullExpression(expr) => {
-                add_opt(&mut children, expr.expression);
-            }
-            Node::TypeAssertion(expr) => {
-                add_opt(&mut children, expr.type_node);
-                add_opt(&mut children, expr.expression);
-            }
-            Node::VariableStatement(stmt) => {
-                add_opt(&mut children, stmt.declaration_list);
-            }
-            Node::VariableDeclarationList(list) => {
-                add_list(&mut children, &list.declarations);
-            }
-            Node::VariableDeclaration(decl) => {
-                add_opt(&mut children, decl.name);
-                add_opt(&mut children, decl.type_annotation);
-                add_opt(&mut children, decl.initializer);
-            }
-            Node::ExpressionStatement(stmt) => {
-                add_opt(&mut children, stmt.expression);
-            }
-            Node::IfStatement(stmt) => {
-                add_opt(&mut children, stmt.expression);
-                add_opt(&mut children, stmt.then_statement);
-                add_opt(&mut children, stmt.else_statement);
-            }
-            Node::WhileStatement(stmt) => {
-                add_opt(&mut children, stmt.expression);
-                add_opt(&mut children, stmt.statement);
-            }
-            Node::DoStatement(stmt) => {
-                add_opt(&mut children, stmt.statement);
-                add_opt(&mut children, stmt.expression);
-            }
-            Node::ForStatement(stmt) => {
-                add_opt(&mut children, stmt.initializer);
-                add_opt(&mut children, stmt.condition);
-                add_opt(&mut children, stmt.incrementor);
-                add_opt(&mut children, stmt.statement);
-            }
-            Node::Block(block) => {
-                add_list(&mut children, &block.statements);
-            }
-            Node::ReturnStatement(stmt) => {
-                add_opt(&mut children, stmt.expression);
-            }
-            Node::ThrowStatement(stmt) => {
-                add_opt(&mut children, stmt.expression);
-            }
-            Node::TryStatement(stmt) => {
-                add_opt(&mut children, stmt.try_block);
-                add_opt(&mut children, stmt.catch_clause);
-                add_opt(&mut children, stmt.finally_block);
-            }
-            Node::CatchClause(clause) => {
-                add_opt(&mut children, clause.variable_declaration);
-                add_opt(&mut children, clause.block);
-            }
-            // Declaration node types
-            Node::FunctionDeclaration(func) => {
-                add_opt_list(&mut children, &func.modifiers);
-                add_opt(&mut children, func.name);
-                add_opt_list(&mut children, &func.type_parameters);
-                add_list(&mut children, &func.parameters);
-                add_opt(&mut children, func.type_annotation);
-                add_opt(&mut children, func.body);
-            }
-            Node::ClassDeclaration(class) => {
-                add_opt_list(&mut children, &class.modifiers);
-                add_opt(&mut children, class.name);
-                add_opt_list(&mut children, &class.type_parameters);
-                add_opt_list(&mut children, &class.heritage_clauses);
-                add_list(&mut children, &class.members);
-            }
-            Node::InterfaceDeclaration(interface) => {
-                add_opt_list(&mut children, &interface.modifiers);
-                add_opt(&mut children, interface.name);
-                add_opt_list(&mut children, &interface.type_parameters);
-                add_opt_list(&mut children, &interface.heritage_clauses);
-                add_list(&mut children, &interface.members);
-            }
-            Node::TypeAliasDeclaration(alias) => {
-                add_opt_list(&mut children, &alias.modifiers);
-                add_opt(&mut children, alias.name);
-                add_opt_list(&mut children, &alias.type_parameters);
-                add_opt(&mut children, alias.type_node);
-            }
-            Node::PropertyDeclaration(prop) => {
-                add_opt_list(&mut children, &prop.modifiers);
-                add_opt(&mut children, prop.name);
-                add_opt(&mut children, prop.type_annotation);
-                add_opt(&mut children, prop.initializer);
-            }
-            Node::MethodDeclaration(method) => {
-                add_opt_list(&mut children, &method.modifiers);
-                add_opt(&mut children, method.name);
-                add_opt_list(&mut children, &method.type_parameters);
-                add_list(&mut children, &method.parameters);
-                add_opt(&mut children, method.type_annotation);
-                add_opt(&mut children, method.body);
-            }
-            Node::ConstructorDeclaration(ctor) => {
-                add_opt_list(&mut children, &ctor.modifiers);
-                add_list(&mut children, &ctor.parameters);
-                add_opt(&mut children, ctor.body);
-            }
-            Node::EnumDeclaration(enum_decl) => {
-                add_opt_list(&mut children, &enum_decl.modifiers);
-                add_opt(&mut children, enum_decl.name);
-                add_list(&mut children, &enum_decl.members);
-            }
-            Node::ModuleDeclaration(module) => {
-                add_opt_list(&mut children, &module.modifiers);
-                add_opt(&mut children, module.name);
-                add_opt(&mut children, module.body);
-            }
-            // Tokens and simple nodes typically have no children
-            Node::Token(_) |
-            Node::Identifier(_) |
-            Node::PrivateIdentifier(_) |
-            Node::StringLiteral(_) |
-            Node::NumericLiteral(_) |
-            Node::BigIntLiteral(_) |
-            Node::RegularExpressionLiteral(_) |
-            Node::NoSubstitutionTemplateLiteral(_) |
-            Node::TemplateHead(_) |
-            Node::TemplateMiddle(_) |
-            Node::TemplateTail(_) |
-            Node::EmptyStatement(_) |
-            Node::BreakStatement(_) |
-            Node::ContinueStatement(_) |
-            Node::DebuggerStatement(_) => {
-                // No children for these node types
-            }
-            // For any unhandled node types, return empty children
-            // TODO: Add support for more node types as needed
-            _ => {
-                // Fallback for unhandled node types
-            }
+    /// Clears the arena, resetting all bump pointers but keeping the allocated memory chunks.
+    ///
+    /// This is a very fast operation as it does not deallocate system memory.
+    /// All previously allocated references are invalidated.
+    pub fn reset(&mut self) {
+        if let Some(start) = self.current_start {
+            self.current_ptr = start;
+        } else {
+            // No memory, nothing to reset.
         }
-
-        children
     }
 }
+
+impl Default for Arena {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A helper struct to manage contiguous string storage and facilitate scanning.
+///
+/// It holds the raw pointer and length of a string stored within the Arena.
+#[repr(C)]
+pub struct StrLayout {
+    /// Pointer to the start of the string data in the arena.
+    pub ptr: *const u8,
+    /// Length of the string in bytes.
+    pub len: usize,
+}
+
+unsafe impl Send for StrLayout {}
+unsafe impl Sync for StrLayout {}
+
+impl StrLayout {
+    /// Creates a new `StrLayout` from a pointer and length.
+    ///
+    /// # Safety
+    /// `ptr` must be valid for reads of `len` bytes.
+    #[inline]
+    pub unsafe fn new(ptr
