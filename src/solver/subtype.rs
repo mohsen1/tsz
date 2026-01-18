@@ -2355,8 +2355,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let is_method = source.is_method || target.is_method;
 
         // Check if target has a rest parameter
-        let target_has_rest = target.params.last().map_or(false, |p| p.rest);
-        let source_has_rest = source.params.last().map_or(false, |p| p.rest);
+        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
+        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {
             target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
@@ -2601,8 +2601,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check if target has a rest parameter
-        let target_has_rest = target.params.last().map_or(false, |p| p.rest);
-        let source_has_rest = source.params.last().map_or(false, |p| p.rest);
+        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
+        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {
             target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
@@ -2719,8 +2719,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check if target has a rest parameter
-        let target_has_rest = target.params.last().map_or(false, |p| p.rest);
-        let source_has_rest = source.params.last().map_or(false, |p| p.rest);
+        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
+        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {
             target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
@@ -2837,8 +2837,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check if target has a rest parameter
-        let target_has_rest = target.params.last().map_or(false, |p| p.rest);
-        let source_has_rest = source.params.last().map_or(false, |p| p.rest);
+        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
+        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {
             target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
@@ -3668,10 +3668,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &FunctionShape,
     ) -> Option<SubtypeFailureReason> {
         // Check return type
-        if !(self.allow_void_return && target.return_type == TypeId::VOID)
-            && !self
-                .check_subtype(source.return_type, target.return_type)
-                .is_true()
+        if !(self
+            .check_subtype(source.return_type, target.return_type)
+            .is_true()
+            || self.allow_void_return && target.return_type == TypeId::VOID)
         {
             let nested = self.explain_failure(source.return_type, target.return_type);
             return Some(SubtypeFailureReason::ReturnTypeMismatch {
@@ -3682,7 +3682,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check parameter count
-        let target_has_rest = target.params.last().map_or(false, |p| p.rest);
+        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {
             target.params.last().map(|param| self.get_array_element_type(param.type_id))
         } else {
@@ -3711,7 +3711,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check parameter types
-        let source_has_rest = source.params.last().map_or(false, |p| p.rest);
+        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
         let target_fixed_count = if target_has_rest {
             target.params.len().saturating_sub(1)
         } else {
