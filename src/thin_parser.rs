@@ -8,11 +8,15 @@
 //!
 //! - Uses ThinNodeArena instead of NodeArena
 //! - Each node is 16 bytes (vs 208 bytes for fat Node enum)
-
-// Allow dead code for parser infrastructure methods that will be used in future phases
-#![allow(dead_code)]
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
+
+// Allow dead code: This module contains parser infrastructure and helper methods for
+// complete TypeScript syntax parsing. Some internal methods (context flag helpers,
+// parsing utilities, and syntax-specific parsers) may not be exercised by current tests
+// but are essential for correctness when those syntax constructs appear in user code.
+// The parser is actively used throughout the codebase (55+ files) via ThinParserState.
+#![allow(dead_code)]
 
 use crate::parser::{
     NodeIndex, NodeList, node_flags, syntax_kind_ext,

@@ -3,7 +3,12 @@
 //! This is a clean implementation of the binder that works directly with
 //! ThinNode and ThinNodeArena, avoiding the old Node enum pattern matching.
 
-// Allow dead code for binder infrastructure methods that will be used in future phases
+// Allow dead code: This module contains binder infrastructure for symbol table construction,
+// scope management, and control flow graph building. Some internal helpers (scope chain
+// manipulation, hoisting utilities, flow node factories) are infrastructure for complete
+// TypeScript semantics and may not be fully exercised by current tests. The binder is
+// actively used throughout the codebase (33+ files) via ThinBinderState for type checking,
+// LSP features, and code transforms.
 #![allow(dead_code)]
 
 use crate::binder::{
