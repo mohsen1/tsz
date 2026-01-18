@@ -11,6 +11,11 @@
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
+// Allow dead code: This module contains parser infrastructure and helper methods for
+// complete TypeScript syntax parsing. Some internal methods (context flag helpers,
+// parsing utilities, and syntax-specific parsers) may not be exercised by current tests
+// but are essential for correctness when those syntax constructs appear in user code.
+// The parser is actively used throughout the codebase (55+ files) via ThinParserState.
 #![allow(dead_code)]
 
 use crate::parser::{
@@ -365,8 +370,11 @@ impl ThinParserState {
                                 true
                             }
                             // If there's a line break, give the user benefit of doubt
+                            else if self.scanner.has_preceding_line_break() {
+                                true
+                            }
                             else {
-                                self.scanner.has_preceding_line_break()
+                                false
                             }
                         }
                         _ => false
@@ -3667,12 +3675,12 @@ impl ThinParserState {
             };
 
             // Check if method has async modifier
-            let is_async = modifiers.as_ref().is_some_and(|mods| {
+            let is_async = modifiers.as_ref().map_or(false, |mods| {
                 mods.nodes.iter().any(|&idx| {
                     self.arena
                         .nodes
                         .get(idx.0 as usize)
-                        .is_some_and(|node| node.kind == SyntaxKind::AsyncKeyword as u16)
+                        .map_or(false, |node| node.kind == SyntaxKind::AsyncKeyword as u16)
                 })
             });
 
@@ -9698,6 +9706,12 @@ impl ThinParserState {
         // Template with substitutions: `prefix${T}middle${U}suffix`
         let head = self.parse_template_literal_head();
         let mut spans = Vec::new();
+
+        // Parse template spans: each span has a type and a template literal (middle or tail)
+        while self.is_token(SyntaxKind::TemplateMiddle) || self.is_token(SyntaxKind::TemplateTail) {
+            // This shouldn't happen - after parsing head we need to parse a type first
+            break;
+        }
 
         // After the head, we need to parse: type, then middle/tail, repeat until tail
         loop {

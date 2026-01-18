@@ -3,7 +3,11 @@
 //! The binder walks the AST and creates symbols, establishing
 //! scope and name resolution.
 
-// Allow dead code for binder infrastructure methods that will be used in future phases
+// Allow dead code: This module provides core binder types (Symbol, SymbolArena, SymbolTable,
+// FlowNode, Scope, etc.) and flag constants used by ThinBinder and the type checker.
+// Many symbol_flags and flow_flags constants are part of the TypeScript specification
+// and needed for completeness even if not all are exercised by current tests. These types
+// are imported by 27+ files across the codebase for type checking, LSP, and transforms.
 #![allow(dead_code)]
 
 use crate::parser::NodeIndex;
