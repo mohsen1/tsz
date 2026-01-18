@@ -376,7 +376,7 @@ rg "conformance|cases" src/ --type rust
 
 # Build and test:
 wasm-pack build --target web --out-dir pkg
-./differential-test/run-conformance.sh --max=200 --workers=4
+./conformance/run-conformance.sh --max=200 --workers=4
 ```
 
 ---

@@ -666,7 +666,7 @@ let mut checker = ThinCheckerState::new(
 **CORRECT: Test Infrastructure**
 
 ```javascript
-// In differential-test/conformance-runner.mjs
+// In conformance/conformance-runner.mjs
 
 function parseTestDirectives(code) {
   // Extract @strict, @noImplicitAny, @target, etc.
@@ -842,7 +842,7 @@ greet({ name: "Bob" });  // TS2345: Missing 'age' property
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │                   Test Infrastructure Layer                    │
-│                  (differential-test/*.mjs)                     │
+│                  (conformance/*.mjs)                     │
 ├───────────────────────────────────────────────────────────────┤
 │                                                                │
 │  Responsibilities:                                             │

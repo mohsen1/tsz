@@ -13,7 +13,7 @@
 #   ./test.sh --bench      # Run benchmarks
 #
 # For TypeScript test suite conformance testing, use:
-#   ./differential-test/run-conformance.sh
+#   ./conformance/run-conformance.sh
 #
 # Source code is always mounted fresh (not baked into image), so file changes
 # are immediately visible without needing to rebuild the Docker image.

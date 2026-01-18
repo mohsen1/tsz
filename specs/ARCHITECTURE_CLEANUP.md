@@ -580,7 +580,7 @@ The same file without `// @strict` would not produce an error, because `options.
 **Steps**:
 1. Run full conformance test suite:
    ```bash
-   ./differential-test/run-conformance.sh --all --workers=14
+   ./conformance/run-conformance.sh --all --workers=14
    ```
 
 2. Record metrics:
@@ -646,7 +646,7 @@ After all test-aware code is removed:
 
 1. **Run Conformance Tests**:
    ```bash
-   ./differential-test/run-conformance.sh --all --workers=14
+   ./conformance/run-conformance.sh --all --workers=14
    ```
 
 2. **Analyze Failures**:
@@ -719,13 +719,13 @@ Track progress:
 
 ```bash
 # Before cleanup:
-./differential-test/run-conformance.sh --all --workers=14 > baseline.txt
+./conformance/run-conformance.sh --all --workers=14 > baseline.txt
 
 # After cleanup:
-./differential-test/run-conformance.sh --all --workers=14 > post-cleanup.txt
+./conformance/run-conformance.sh --all --workers=14 > post-cleanup.txt
 
 # After fixes:
-./differential-test/run-conformance.sh --all --workers=14 > final.txt
+./conformance/run-conformance.sh --all --workers=14 > final.txt
 
 # Compare accuracy trends
 ```
@@ -983,11 +983,11 @@ fn is_ambient_declaration(&self, node_idx: NodeIndex) -> bool {
 - `src/solver/` - Type resolution (verify test-agnostic)
 
 ### 13.2 Test Infrastructure
-- `differential-test/run-conformance.sh` - Test runner script
-- `differential-test/conformance-runner.mjs` - Main test orchestrator
-- `differential-test/conformance-worker.mjs` - Worker process for tests
-- `differential-test/parallel-conformance.mjs` - Parallel test execution
-- `differential-test/metrics-tracker.mjs` - Accuracy tracking
+- `conformance/run-conformance.sh` - Test runner script
+- `conformance/conformance-runner.mjs` - Main test orchestrator
+- `conformance/conformance-worker.mjs` - Worker process for tests
+- `conformance/parallel-conformance.mjs` - Parallel test execution
+- `conformance/metrics-tracker.mjs` - Accuracy tracking
 
 ### 13.3 Configuration
 - `src/compiler_options.rs` - Compiler options structure

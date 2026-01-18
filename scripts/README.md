@@ -33,7 +33,7 @@ node wasm/scripts/compare-baselines.mjs 50 compiler
 
 For comprehensive testing, use the main conformance runner:
 ```bash
-./wasm/differential-test/run-conformance.sh --max=1000
+./conformance/run-conformance.sh --max=1000
 ```
 
 See [../TESTING.md](../TESTING.md) for complete testing guide.

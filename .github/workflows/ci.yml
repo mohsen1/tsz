@@ -115,5 +115,5 @@ jobs:
 
       - name: Run conformance tests (quick)
         run: |
-          cd differential-test
+          cd conformance
           bash run-conformance.sh --max=500 --workers=4

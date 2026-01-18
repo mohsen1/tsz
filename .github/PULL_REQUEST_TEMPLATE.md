@@ -16,7 +16,7 @@
 ### Tests Run
 <!-- Describe what tests were run -->
 - [ ] Unit tests: `./test.sh`
-- [ ] Conformance tests: `./differential-test/run-conformance.sh`
+- [ ] Conformance tests: `./conformance/run-conformance.sh`
 
 ### Conformance Test Results
 <!--

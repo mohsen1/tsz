@@ -15,17 +15,17 @@ const commands = {
   },
   
   "TypeScript Conformance": {
-    "Quick conformance check": "./differential-test/run-conformance.sh --max=1000",
-    "Full conformance suite": "./differential-test/run-conformance.sh --all",
-    "Test compiler category": "./differential-test/run-conformance.sh --category=compiler",
-    "Test conformance category": "./differential-test/run-conformance.sh --category=conformance"
+    "Quick conformance check": "./conformance/run-conformance.sh --max=1000",
+    "Full conformance suite": "./conformance/run-conformance.sh --all",
+    "Test compiler category": "./conformance/run-conformance.sh --category=compiler",
+    "Test conformance category": "./conformance/run-conformance.sh --category=conformance"
   },
   
   "Error Analysis": {
-    "Find TS2454 (used before assigned)": "node differential-test/find-ts2454.mjs",
-    "Find TS2322 (not assignable)": "node differential-test/find-ts2322.mjs", 
-    "Find TS2339 (property doesn't exist)": "node differential-test/find-ts2339.mjs",
-    "Find TS2564 (property not initialized)": "node differential-test/find-ts2564.mjs"
+    "Find TS2454 (used before assigned)": "node conformance/find-ts2454.mjs",
+    "Find TS2322 (not assignable)": "node conformance/find-ts2322.mjs", 
+    "Find TS2339 (property doesn't exist)": "node conformance/find-ts2339.mjs",
+    "Find TS2564 (property not initialized)": "node conformance/find-ts2564.mjs"
   },
   
   "Individual Testing": {
@@ -51,5 +51,5 @@ Object.entries(commands).forEach(([category, cmds]) => {
 });
 
 console.log("📖 For detailed testing guide, see: TESTING.md");
-console.log("📊 For conformance metrics, run: ./differential-test/run-conformance.sh --max=1000");
+console.log("📊 For conformance metrics, run: ./conformance/run-conformance.sh --max=1000");
 console.log("");
