@@ -22,7 +22,18 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access ThinPrinter internals.
 
-// Allow dead code for emitter infrastructure methods that will be used in future phases
+// Allow dead code for:
+// - Comment helpers (emit_leading_comments, emit_comments_in_gap, last_processed_pos): Infrastructure
+//   for fine-grained comment emission that is partially implemented. Currently source file level
+//   comment emission is done in emit_source_file, but node-level comment tracking is prepared.
+// - TypeScript declaration emitters (emit_interface_declaration, emit_type_alias_declaration):
+//   These emit .d.ts content and are intentionally skipped when emitting JavaScript output.
+//   Kept for future declaration file generation support.
+// - ES5 transform helpers (function_parameters_need_es5_transform, emit_extends_helper):
+//   Infrastructure functions for ES5 downleveling. emit_extends_helper is replaced by
+//   crate::transforms::helpers::emit_helpers() but kept as reference implementation.
+// - Module emission helpers (emit_commonjs_preamble): Refactored into emit_source_file but
+//   kept as standalone helper for potential future use.
 #![allow(dead_code)]
 
 use crate::emit_context::EmitContext;
