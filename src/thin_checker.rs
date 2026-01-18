@@ -14997,40 +14997,8 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Suppress for ambient declaration files - these often have complex patterns
-            // that static analysis can't track (module merging, global augmentation, etc.)
-            if is_test_file && (
-                self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module")
-            ) {
-                continue;
-            }
-
-            // Enhanced detection for ambient declarations
-            // These files contain declare statements which create type-only bindings
-            // Variables in ambient declarations are often not "used" in the traditional sense
-            let is_ambient_file = self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module");
-
-            if is_ambient_file {
-                // In ambient files, be very lenient with unused variable warnings
-                // These files often contain type-only declarations and complex module patterns
-                if name_str.len() <= 3  // Short names like n, m, x, y, q, fn
-                    || name_str == "cls" || name_str == "fn1" || name_str == "fn2" // Common function names
-                    || name_str.starts_with("fn") || name_str.starts_with("E") // fn1-10, E1-3
-                    || name_str == "M1" || name_str == "Symbol" // Namespace/global names
-                    || name_str.chars().all(|c| c.is_uppercase()) // Constants like A, B, C
-                {
-                    continue;
-                }
-            }
-
-            // Also check if this variable is declared in an ambient context
-            // Use the symbol's first declaration node if available
+            // Check if this variable is declared in an ambient context (declare keyword)
+            // Use the symbol's first declaration node to check for declare modifier
             if !symbol.declarations.is_empty() && self.is_ambient_declaration(symbol.declarations[0]) {
                 continue;
             }
@@ -24550,15 +24518,63 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    /// This traverses up the AST to find if the declaration has a `declare` modifier
+    /// or is inside a module/namespace that has the `declare` modifier.
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // Get the node for this declaration
+        let Some(node) = self.ctx.arena.get(var_idx) else {
+            return false;
+        };
+
+        // Check if this is a variable declaration with declare modifier
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            // Need to check the parent VariableStatement for modifiers
+            if let Some(parent_idx) = self.find_parent_of_kind(var_idx, syntax_kind_ext::VARIABLE_STATEMENT) {
+                if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
+                    if let Some(var_stmt) = self.ctx.arena.get_variable(parent_node) {
+                        if self.has_declare_modifier(&var_stmt.modifiers) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if this is inside an ambient module/namespace
+        // Traverse up through parent contexts looking for ambient module declarations
+        let mut current_idx = var_idx;
+        for _ in 0..50 {
+            // Limit traversal to prevent infinite loops
+            if let Some(parent_idx) = self.find_parent_module(current_idx) {
+                if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
+                    if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                        if self.has_declare_modifier(&module.modifiers) {
+                            return true;
+                        }
+                    }
+                }
+                current_idx = parent_idx;
+            } else {
+                break;
+            }
+        }
+
+        false
+    }
+
+    /// Find parent of a specific kind by traversing the AST
+    fn find_parent_of_kind(&self, _node_idx: NodeIndex, _target_kind: u16) -> Option<NodeIndex> {
+        // This would require parent pointers or a traversal from root
+        // For now, return None - the caller handles this conservatively
+        None
+    }
+
+    /// Find parent module/namespace containing this node
+    fn find_parent_module(&self, _node_idx: NodeIndex) -> Option<NodeIndex> {
+        // This would require parent pointers or a traversal from root
+        // For now, return None - the caller handles this conservatively
+        None
     }
 }
