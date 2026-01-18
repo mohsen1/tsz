@@ -42,12 +42,18 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.head_ref || (github.event.inputs.parent_branch || 'main') }}
 
       - name: Display event information
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ROLE: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}
+          GOAL_TRUNC: ${{ inputs.goal }}
+          PARENT_BRANCH: ${{ inputs.parent_branch || 'main' }}
+          SCOPE_PATH: ${{ inputs.scope_path || '.' }}
         run: |
-          echo "Event name: ${{ github.event_name }}"
-          echo "Role: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}"
-          echo "Goal: ${{ inputs.goal }}"
-          echo "Parent branch: ${{ inputs.parent_branch || 'main' }}"
-          echo "Scope path: ${{ inputs.scope_path || '.' }}"
+          echo "Event name: $EVENT_NAME"
+          echo "Role: $ROLE"
+          echo "Goal length: ${#GOAL_TRUNC} chars"
+          echo "Parent branch: $PARENT_BRANCH"
+          echo "Scope path: $SCOPE_PATH"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
