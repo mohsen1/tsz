@@ -35,25 +35,14 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 ### 2. Remove Test-Aware Code from Checker
 
-The checker has **24 places** that check file names to suppress errors for tests. This is architectural debt.
+~~The checker has **24 places** that check file names to suppress errors for tests.~~ **COMPLETED**
 
-> **Pattern Breakdown:**
-> - **24 patterns in dead code**: All remaining patterns are in `check_unused_declarations()` - function disabled with early `return;`
-> - **0 patterns in active code**: All active patterns replaced with AST-based detection
+> **Status: RESOLVED**
+> All `file_name.contains` patterns have been removed from `src/thin_checker.rs`.
+> - Active code: Replaced with AST-based detection using parent traversal
+> - Dead code: Removed entirely by cleaning up disabled `check_unused_declarations()`
 >
-> Verify count: `grep -c 'file_name\.contains' src/thin_checker.rs`
-
-**What to remove from `src/thin_checker.rs`:**
-```rust
-// BAD - This pattern appears 24 times and must be removed:
-let is_test_file = self.ctx.file_name.contains("conformance")
-    || self.ctx.file_name.contains("test")
-    || self.ctx.file_name.contains("cases");
-
-if is_test_file && self.ctx.file_name.contains("Symbol") {
-    return; // Suppressing errors for tests
-}
-```
+> Verify: `grep -c 'file_name\.contains' src/thin_checker.rs` (should return 0)
 
 **The rule:** Source code must not know about tests. If a test fails, fix the underlying logic.
 

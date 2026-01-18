@@ -9,10 +9,6 @@
 //! - Uses ThinBinderState for symbol information
 //! - Uses Solver's TypeInterner for structural type equality (O(1) comparison)
 //! - Uses solver::lower::TypeLower for AST-to-type conversion
-//!
-//! # Status
-//!
-//! Phase 7.5 integration - using solver type system for type checking.
 
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::types::diagnostics::{
@@ -941,7 +937,7 @@ impl<'a> ThinCheckerState<'a> {
         let has_type_args = type_ref
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         // Check if type_name is a qualified name (A.B)
         if let Some(name_node) = self.ctx.arena.get(type_name_idx) {
@@ -1225,7 +1221,7 @@ impl<'a> ThinCheckerState<'a> {
                 if arg_ref
                     .type_arguments
                     .as_ref()
-                    .map_or(false, |list| !list.nodes.is_empty())
+                    .is_some_and(|list| !list.nodes.is_empty())
                 {
                     return false;
                 }
@@ -1651,7 +1647,7 @@ impl<'a> ThinCheckerState<'a> {
         if symbol.flags & symbol_flags::ALIAS == 0 {
             return Some(sym_id);
         }
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -2254,7 +2250,7 @@ impl<'a> ThinCheckerState<'a> {
                         _ => None,
                     };
 
-                    if common_props.as_ref().map_or(true, |props| props.is_empty())
+                    if common_props.as_ref().is_none_or(|props| props.is_empty())
                         && common_string_index.is_none()
                         && common_number_index.is_none()
                     {
@@ -2508,7 +2504,7 @@ impl<'a> ThinCheckerState<'a> {
         let has_type_args = type_query
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         let base =
             if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
@@ -2703,7 +2699,7 @@ impl<'a> ThinCheckerState<'a> {
         let has_type_args = type_ref
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         if let Some(name_node) = self.ctx.arena.get(type_name_idx) {
             if name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
@@ -3137,6 +3133,7 @@ impl<'a> ThinCheckerState<'a> {
         self.ctx.types.object(properties)
     }
 
+    #[allow(dead_code)]
     fn lower_type_parameter_info(
         &mut self,
         idx: NodeIndex,
@@ -3224,7 +3221,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Second pass: Now resolve constraints and defaults with all type parameters in scope
-        for (_idx, &param_idx) in param_indices.iter().enumerate() {
+        for &param_idx in param_indices.iter() {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -11789,6 +11786,7 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn is_concrete_constructor_target(
         &self,
         type_id: TypeId,
@@ -11798,6 +11796,7 @@ impl<'a> ThinCheckerState<'a> {
         self.is_concrete_constructor_target_inner(type_id, env, &mut visited)
     }
 
+    #[allow(dead_code)]
     fn is_concrete_constructor_target_inner(
         &self,
         type_id: TypeId,
@@ -12442,13 +12441,6 @@ impl<'a> ThinCheckerState<'a> {
             }
             TypeKey::ReadonlyType(inner) => {
                 self.resolve_type_for_property_access_inner(inner, visited)
-            }
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                if let Some(constraint) = info.constraint {
-                    self.resolve_type_for_property_access_inner(constraint, visited)
-                } else {
-                    type_id
-                }
             }
             TypeKey::Function(_) | TypeKey::Callable(_) => {
                 let expanded = self.apply_function_interface_for_property_access(type_id);
@@ -13897,6 +13889,7 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check if two symbol declarations can merge (for TS2403 checking).
     /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
+    #[allow(dead_code)]
     fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
         // Interface can merge with interface
         if (existing_flags & symbol_flags::INTERFACE) != 0
@@ -14108,7 +14101,6 @@ impl<'a> ThinCheckerState<'a> {
                 | "navigator"
                 | "location"
                 | "history"
-                | "exports"
         )
     }
 
@@ -14902,10 +14894,14 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check for unused declarations (TS6133).
     /// Reports variables, functions, classes, and other declarations that are never referenced.
+    ///
+    /// Currently disabled - the reference tracking system needs more work to avoid false positives.
+    /// TODO: Re-enable after fixing reference tracking to properly handle:
+    /// - Computed property access (obj[Symbol.iterator])
+    /// - Dynamic property access patterns
+    /// - Ambient declarations and module merging
     fn check_unused_declarations(&mut self) {
-        // Temporarily disable unused declaration checking to focus on core functionality
-        // The reference tracking system needs more work to avoid false positives
-        // TODO: Re-enable and fix reference tracking system properly
+        // Temporarily disabled to focus on core functionality
     }
 
     /// Check for duplicate parameter names in a parameter list (TS2300).
@@ -15584,7 +15580,7 @@ impl<'a> ThinCheckerState<'a> {
             {
                 // Check if the variable name is a destructuring pattern
                 let is_destructuring_pattern = self.ctx.arena.get(var_decl.name)
-                    .map_or(false, |name_node| {
+                    .is_some_and(|name_node| {
                         name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                             || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                     });
@@ -17241,7 +17237,7 @@ impl<'a> ThinCheckerState<'a> {
         };
 
         let members = self.ctx.types.type_list(members);
-        members.iter().any(|&member| member == TypeId::UNDEFINED)
+        members.contains(&TypeId::UNDEFINED)
     }
 
     fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
@@ -18909,21 +18905,11 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
+        // Validate based on compiler options and AST context, not file names.
+        // This ensures consistent behavior regardless of file path.
 
         // Always validate in declaration files (.d.ts files are always strict)
         if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
             return true;
         }
 
@@ -18937,24 +18923,24 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in strict property initialization contexts
-        // If we're doing strict property checking, likely need strict async too
-        if self.ctx.strict_property_initialization() {
+        // Validate when any strict mode features are enabled via compiler options
+        // These options indicate the code should be validated strictly
+        if self.ctx.strict_property_initialization()
+            || self.ctx.strict_null_checks()
+            || self.ctx.strict_function_types()
+            || self.ctx.no_implicit_any()
+        {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
+        // Check if we're in an ambient context - ambient declarations are always validated
+        if self.is_ambient_declaration(func_idx) {
             return true;
         }
 
-        // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
-            return true;
-        }
-
-        false
+        // Default: validate async functions to catch TS2705 errors
+        // This is more conservative but ensures we don't miss validation
+        true
     }
 
     /// Check if a node has the `abstract` modifier.
@@ -22950,7 +22936,7 @@ impl<'a> ThinCheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::solver::TypeKey;
 
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -23037,7 +23023,7 @@ impl<'a> ThinCheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -23205,11 +23191,13 @@ impl<'a> ThinCheckerState<'a> {
         false
     }
 
+    #[allow(dead_code)]
     fn type_contains_any(&self, type_id: TypeId) -> bool {
         let mut visited = Vec::new();
         self.type_contains_any_inner(type_id, &mut visited)
     }
 
+    #[allow(dead_code)]
     fn type_contains_any_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
         use crate::solver::{TemplateSpan, TypeKey};
 
@@ -24211,6 +24199,7 @@ impl<'a> ThinCheckerState<'a> {
 
 
     /// Check if a property in a derived class is redeclaring a base class property
+    #[allow(dead_code)]
     fn is_derived_property_redeclaration(&self, member_idx: NodeIndex, _property_name: &str) -> bool {
         // Find the containing class for this member
         if let Some(class_idx) = self.find_containing_class(member_idx) {
@@ -24230,6 +24219,7 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Find the containing class for a member node by walking up the parent chain
+    #[allow(dead_code)]
     fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
         // Check if this member is directly in a class
         // Since we don't have parent pointers, we need to search through classes
@@ -24242,55 +24232,129 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
-
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
-    }
-
-    /// Check if a function is within a namespace or module context
-    /// by traversing the parent chain to find a ModuleDeclaration node
-    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+    /// Uses AST parent traversal to detect class context.
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
         use crate::parser::syntax_kind_ext;
 
-        let mut current = func_idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check if current node is a MODULE_DECLARATION (namespace/module)
-                if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    return true;
-                }
+        // Check if the node itself is a method declaration
+        if let Some(node) = self.ctx.arena.get(func_idx) {
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                return true;
             }
-            // Move to parent
+        }
+
+        // Traverse parent chain to find class context
+        let mut current = func_idx;
+        let mut depth = 0;
+        while !current.is_none() && depth < 20 {
             if let Some(ext) = self.ctx.arena.get_extended(current) {
                 if ext.parent.is_none() {
                     break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    {
+                        return true;
+                    }
                 }
                 current = ext.parent;
             } else {
                 break;
             }
+            depth += 1;
         }
+
         false
     }
 
-    /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    /// Check if a function is within a namespace or module context
+    /// Uses AST parent traversal to detect namespace/module declarations.
+    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // Traverse parent chain to find namespace/module context
+        let mut current = func_idx;
+        let mut depth = 0;
+        while !current.is_none() && depth < 20 {
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        return true;
+                    }
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+
+        false
+    }
+
+    /// Check if a node is declared in an ambient context (has 'declare' modifier)
+    /// Uses AST inspection to check for DeclareKeyword in modifiers.
+    fn is_ambient_declaration(&self, node_idx: NodeIndex) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        // Check the node's modifiers for 'declare' keyword
+        if let Some(node) = self.ctx.arena.get(node_idx) {
+            // Get modifiers based on node kind
+            let modifiers: Option<crate::parser::NodeList> = if let Some(func) = self.ctx.arena.get_function(node) {
+                func.modifiers.clone()
+            } else if let Some(class) = self.ctx.arena.get_class(node) {
+                class.modifiers.clone()
+            } else {
+                None
+            };
+
+            if let Some(mods) = modifiers {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                        if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check if we're inside an ambient module (declare module { ... })
+        let mut current = node_idx;
+        let mut depth = 0;
+        while !current.is_none() && depth < 20 {
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    // Check for ambient module block
+                    if parent_node.kind == crate::parser::syntax_kind_ext::MODULE_DECLARATION {
+                        // Check if the module declaration has 'declare' modifier
+                        if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                            if let Some(mods) = &module.modifiers {
+                                for &mod_idx in &mods.nodes {
+                                    if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                                        if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+
+        false
     }
 }
