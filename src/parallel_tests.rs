@@ -728,5 +728,45 @@ fn test_check_exported_functions() {
         .iter()
         .map(|r| r.function_results.len())
         .sum();
-    assert!(total_functions >= 2, "Should find exported functions");
+
+    assert_eq!(total_functions, 2);
+}
+
+#[test]
+fn test_parallel_type_interner_concurrent_access() {
+    use std::sync::Arc;
+    use std::thread;
+
+    // Test that the new lock-free TypeInterner supports concurrent access
+    let interner = Arc::new(TypeInterner::new());
+
+    let mut handles = vec![];
+
+    // Spawn multiple threads that all intern types concurrently
+    for i in 0..10 {
+        let interner_clone = Arc::clone(&interner);
+        let handle = thread::spawn(move || {
+            // Each thread interns various types
+            for j in 0..100 {
+                let _ = interner_clone.literal_number(j as f64);
+                let _ = interner_clone.literal_string(&format!("str_{}_{}", i, j));
+                let _ = interner_clone.union(vec![
+                    interner_clone.literal_number((j % 10) as f64),
+                    interner_clone.literal_number(((j + 1) % 10) as f64),
+                ]);
+            }
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all threads to complete
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Verify the interner has the expected number of types
+    // (exact count depends on deduplication, but should be reasonable)
+    let len = interner.len();
+    assert!(len > 100, "Expected at least 100 types, got {}", len);
+    assert!(len < 2000, "Expected fewer than 2000 types, got {}", len);
 }
