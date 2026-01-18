@@ -60,6 +60,9 @@ async function run() {
     const branchName = `worker-${taskId}-${timestamp}`;
     console.log(`Creating worker branch: ${branchName}`);
     await (0, utils_1.createBranch)(branchName, parentBranch);
+    // Checkout the local branch
+    await exec.exec('git', ['fetch', 'origin']);
+    await exec.exec('git', ['checkout', '-B', branchName, `origin/${parentBranch}`]);
     const apiKey = core.getInput('anthropic_key');
     const baseUrl = core.getInput('base_url');
     const anthropicOptions = { apiKey };
@@ -146,7 +149,7 @@ async function commitFiles(branchName, goal) {
     }
     catch (error) {
         console.error(`Error committing files: ${error}`);
-        throw error;
+        // Don't throw - allow PR creation attempt even if commit fails
     }
 }
 function extractFileContents(text) {
