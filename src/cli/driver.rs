@@ -1949,7 +1949,7 @@ fn select_types_versions_paths_for_version(
             None => true,
             Some(best) => {
                 score > best
-                    || (score == best && best_key.map_or(true, |best_key| key.as_str() < best_key))
+                    || (score == best && best_key.is_none_or(|best_key| key.as_str() < best_key))
             }
         };
 
@@ -2022,7 +2022,7 @@ fn match_types_versions_range(range: &str, compiler_version: SemVer) -> Option<R
         else {
             continue;
         };
-        if best.map_or(true, |current| score > current) {
+        if best.is_none_or(|current| score > current) {
             best = Some(score);
         }
     }
@@ -2118,7 +2118,7 @@ fn parse_semver(value: &str) -> Option<SemVer> {
         return None;
     }
     let core = value
-        .split(|ch| ch == '-' || ch == '+')
+        .split(['-', '+'])
         .next()
         .unwrap_or(value);
     let mut parts = core.split('.');
