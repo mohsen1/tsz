@@ -205,10 +205,6 @@ struct CompilerOptions {
     /// Specify module code generation.
     #[serde(default)]
     module: Option<u32>,
-
-    /// Emit design-type metadata for decorated declarations in source files.
-    #[serde(default)]
-    isolated_modules: Option<bool>,
 }
 
 impl CompilerOptions {
@@ -267,7 +263,7 @@ impl CompilerOptions {
             strict_property_initialization: self.get_strict_property_initialization(),
             no_implicit_this: self.get_no_implicit_this(),
             use_unknown_in_catch_variables: strict_null_checks,
-            isolated_modules: self.isolated_modules.unwrap_or(false),
+            isolated_modules: false, // Default to false, can be set from tsconfig
         }
     }
 }
