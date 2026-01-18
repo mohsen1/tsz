@@ -78,7 +78,6 @@ jobs:
           parent_branch: ${{ inputs.parent_branch }}
           scope_path: ${{ inputs.scope_path }}
           task_context: ${{ inputs.task_context }}
-        continue-on-error: true
 
       - name: Upload logs on failure
         if: always()
