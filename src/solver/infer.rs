@@ -694,12 +694,6 @@ impl<'a> InferenceContext<'a> {
         Ok(results)
     }
 
-    /// Get the interner reference
-    #[allow(dead_code)]
-    pub fn interner(&self) -> &dyn TypeDatabase {
-        self.interner
-    }
-
     // =========================================================================
     // Constraint Collection
     // =========================================================================
