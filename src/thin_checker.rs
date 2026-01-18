@@ -24550,15 +24550,110 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        use crate::parser::node_flags;
+        use crate::parser::syntax_kind_ext;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // 1. Declaration files (.d.ts) are always ambient
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
+        // 2. Get the node and check its flags for AMBIENT
+        let Some(node) = self.ctx.arena.get(var_idx) else {
+            return false;
+        };
+
+        // Check if the node has the AMBIENT flag set (node_flags::AMBIENT = 1 << 25)
+        // Note: flags are stored as u16, so we check the u32 version against node_flags
+        if (node.flags as u32 & node_flags::AMBIENT) != 0 {
+            return true;
+        }
+
+        // 3. Check modifiers based on node kind
+        match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    return self.has_declare_modifier(&func.modifiers);
+                }
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.ctx.arena.get_class(node) {
+                    return self.has_declare_modifier(&class.modifiers);
+                }
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                // Interfaces are always type-only, but check for declare modifier
+                if let Some(iface) = self.ctx.arena.get_interface(node) {
+                    return self.has_declare_modifier(&iface.modifiers);
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                // Type aliases are type-only
+                if let Some(alias) = self.ctx.arena.get_type_alias(node) {
+                    return self.has_declare_modifier(&alias.modifiers);
+                }
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+                    return self.has_declare_modifier(&enum_decl.modifiers);
+                }
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = self.ctx.arena.get_module(node) {
+                    return self.has_declare_modifier(&module.modifiers);
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                // VariableStatement has modifiers directly
+                if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                    return self.has_declare_modifier(&var_stmt.modifiers);
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                // For VariableDeclaration nodes, we need to find the containing VariableStatement
+                // Since there are no parent pointers, we check through the binder's node_symbols
+                // to find if there's a VariableStatement with declare modifier that contains this
+                return self.check_variable_declaration_is_ambient(var_idx);
+            }
+            _ => {}
+        }
+
+        false
+    }
+
+    /// Check if a variable declaration is part of an ambient variable statement.
+    /// This searches through statements in the source file to find the containing
+    /// VariableStatement and checks its modifiers.
+    fn check_variable_declaration_is_ambient(&self, var_decl_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
+
+        // Get the variable declaration node to find its position
+        let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) else {
+            return false;
+        };
+        let var_pos = var_decl_node.pos;
+        let var_end = var_decl_node.end;
+
+        // Search through statements in the source file
+        // We look for VariableStatements that contain this declaration
+        // Use the first source file in the arena (for single-file checking)
+        if let Some(source) = self.ctx.arena.source_files.first() {
+            for &stmt_idx in &source.statements.nodes {
+                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        // Check if this statement contains the variable declaration
+                        if stmt_node.pos <= var_pos && stmt_node.end >= var_end {
+                            // Found containing statement, check its modifiers
+                            if let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) {
+                                return self.has_declare_modifier(&var_stmt.modifiers);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
