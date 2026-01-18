@@ -19204,8 +19204,8 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
+        // Validate if this appears to be a module file (has import/export syntax)
+        if self.has_module_syntax(func_idx) {
             return true;
         }
 
@@ -24553,6 +24553,41 @@ impl<'a> ThinCheckerState<'a> {
                 return false;
             }
             current = ext.parent;
+        }
+        false
+    }
+
+    /// Check if the source file contains module syntax (import/export statements).
+    ///
+    /// Traverses to the source file root and scans top-level statements for
+    /// ImportDeclaration, ImportEqualsDeclaration, ExportDeclaration, or ExportAssignment.
+    fn has_module_syntax(&self, idx: NodeIndex) -> bool {
+        // Find the source file root
+        let Some(root_idx) = self.find_enclosing_source_file(idx) else {
+            return false;
+        };
+        let Some(root_node) = self.ctx.arena.get(root_idx) else {
+            return false;
+        };
+        let Some(sf) = self.ctx.arena.get_source_file(root_node) else {
+            return false;
+        };
+
+        // Scan top-level statements for module syntax
+        for &stmt_idx in &sf.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
         }
         false
     }
