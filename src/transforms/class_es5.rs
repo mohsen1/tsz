@@ -1518,25 +1518,6 @@ impl<'a> ClassES5Emitter<'a> {
         }
     }
 
-    fn emit_accessor(&mut self, class_name: &str, accessor_idx: NodeIndex, is_getter: bool) {
-        let Some(accessor_node) = self.arena.get(accessor_idx) else {
-            return;
-        };
-        let Some(accessor_data) = self.arena.get_accessor(accessor_node) else {
-            return;
-        };
-
-        let is_static = self.is_static(&accessor_data.modifiers);
-        let name = self.get_identifier_text(accessor_data.name);
-
-        // Use combined accessor for single getter or setter
-        if is_getter {
-            self.emit_combined_accessor(class_name, &name, Some(accessor_idx), None, is_static);
-        } else {
-            self.emit_combined_accessor(class_name, &name, None, Some(accessor_idx), is_static);
-        }
-    }
-
     fn emit_static_members(&mut self, class_name: &str, class_data: &ClassData) {
         // First, collect static accessors by name for combining getter/setter pairs
         let mut static_accessor_map: std::collections::HashMap<
@@ -2812,23 +2793,6 @@ impl<'a> ClassES5Emitter<'a> {
         let name = format!("_{}", (b'a' + (self.temp_var_counter % 26) as u8) as char);
         self.temp_var_counter += 1;
         name
-    }
-
-    /// Emit a single variable declaration (for for-loop initializers, etc.)
-    fn emit_variable_declaration(&mut self, decl_idx: NodeIndex) {
-        let Some(decl_node) = self.arena.get(decl_idx) else {
-            return;
-        };
-        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-            return;
-        };
-
-        self.emit_binding_name(decl.name);
-
-        if !decl.initializer.is_none() {
-            self.write(" = ");
-            self.emit_expression(decl.initializer);
-        }
     }
 
     fn emit_if_statement(&mut self, stmt_idx: NodeIndex) {
@@ -4329,45 +4293,6 @@ impl<'a> ClassES5Emitter<'a> {
         String::new()
     }
 
-    /// Check if a name is a valid identifier (can use dot notation) or needs bracket notation
-    fn is_valid_identifier_name(&self, idx: NodeIndex) -> bool {
-        if let Some(node) = self.arena.get(idx) {
-            // Identifiers use dot notation
-            if self.arena.get_identifier(node).is_some() {
-                return true;
-            }
-            // Numeric and string literals need bracket notation
-            if node.kind == SyntaxKind::NumericLiteral as u16 {
-                return false;
-            }
-            if node.kind == SyntaxKind::StringLiteral as u16 {
-                return false;
-            }
-        }
-        true // Default to dot notation
-    }
-
-    /// Get the property name for bracket notation (with quotes for strings)
-    fn get_computed_property_name(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            // String literals need quotes in bracket notation
-            if node.kind == SyntaxKind::StringLiteral as u16 {
-                if let Some(lit) = self.arena.get_literal(node) {
-                    return format!("\"{}\"", lit.text);
-                }
-            }
-            // Other literals (numbers) are used as-is
-            if let Some(lit) = self.arena.get_literal(node) {
-                return lit.text.clone();
-            }
-            // Identifiers
-            if let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
-        }
-        String::new()
-    }
-
     fn is_static(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -4405,11 +4330,6 @@ impl<'a> ClassES5Emitter<'a> {
             }
         }
         false
-    }
-
-    /// Check if heritage clauses contain an `extends` clause (not just `implements`)
-    fn has_extends_clause(&self, heritage_clauses: &Option<NodeList>) -> bool {
-        self.get_extends_class_name(heritage_clauses).is_some()
     }
 
     /// Get the base class name from the extends clause
