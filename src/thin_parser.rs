@@ -4502,7 +4502,6 @@ impl ThinParserState {
         start_pos: u32,
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
-        use crate::checker::types::diagnostics::diagnostic_codes;
         self.parse_expected(SyntaxKind::TypeKeyword);
 
         let name = self.parse_identifier();
@@ -6995,7 +6994,6 @@ impl ThinParserState {
                     let is_computed_property_context = next_token == SyntaxKind::CloseBracketToken;
 
                     if !has_following_expression && !is_computed_property_context {
-                        use crate::checker::types::diagnostics::diagnostic_codes;
                         self.error_expression_expected();
                     }
 
@@ -7009,7 +7007,6 @@ impl ThinParserState {
 
                 // Check for missing operand (e.g., just "await" with nothing after it)
                 if self.can_parse_semicolon() || self.is_token(SyntaxKind::SemicolonToken) {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
                     self.error_expression_expected();
                 }
 

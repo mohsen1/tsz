@@ -104,8 +104,8 @@ impl<'a> InlayHintsProvider<'a> {
     }
 
     /// Provide inlay hints for the given range.
-    pub fn provide_inlay_hints(&self, root: NodeIndex, range: Range) -> Vec<InlayHint> {
-        let mut hints = Vec::new();
+    pub fn provide_inlay_hints(&self, _root: NodeIndex, _range: Range) -> Vec<InlayHint> {
+        let hints = Vec::new();
 
         // For now, return empty hints
         // Full implementation will traverse the AST and collect hints

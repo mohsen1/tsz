@@ -347,7 +347,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 self.record_node_flow(stmt_idx);
 
                 // Check for try contexts with finally blocks that need to execute
-                let pre_exit_flow = self.current_flow;
+                let _pre_exit_flow = self.current_flow;
 
                 // Collect and execute any finally blocks on the stack
                 let mut finally_flows: Vec<NodeIndex> = Vec::new();

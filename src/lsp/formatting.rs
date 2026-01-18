@@ -169,7 +169,7 @@ impl DocumentFormattingProvider {
     /// Format using eslint with --fix.
     fn format_with_eslint(
         file_path: &str,
-        source_text: &str,
+        _source_text: &str,
         _options: &FormattingOptions,
     ) -> Result<Vec<TextEdit>, String> {
         // Run eslint with --fix

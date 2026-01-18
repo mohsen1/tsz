@@ -1733,7 +1733,7 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(export) = walker.arena.get_export_decl(node) {
                         if !export.export_clause.is_none() {
                             // Check if export_clause is a declaration (e.g., export const x = 1)
-                            if let Some(export_clause_node) = walker.arena.get(export.export_clause)
+                            if let Some(_export_clause_node) = walker.arena.get(export.export_clause)
                             {
                                 // Recurse into the export_clause to find the actual declaration
                                 walker.for_each_child(export.export_clause, |w, inner_idx| {

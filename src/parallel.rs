@@ -27,7 +27,6 @@
 //! ```
 
 use crate::binder::{Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
-use crate::checker::context::LibContext;
 use crate::lib_loader;
 use crate::parser::NodeIndex;
 use crate::parser::thin_node::ThinNodeArena;
@@ -498,8 +497,6 @@ pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
 }
 
 pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
-    use crate::binder::symbol_flags;
-
     // Calculate total symbols needed
     let total_symbols: usize = results.iter().map(|r| r.symbols.len()).sum();
 

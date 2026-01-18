@@ -546,7 +546,7 @@ impl ThinBinderState {
             }
 
             // Move to parent node
-            if let Some(node) = arena.get(current) {
+            if let Some(_node) = arena.get(current) {
                 if let Some(ext) = arena.get_extended(current) {
                     current = ext.parent;
                 } else {
@@ -795,7 +795,7 @@ impl ThinBinderState {
         // Track lib arenas for cross-file symbol resolution
         for lib in lib_files {
             // Store symbol arena mappings for all lib symbols
-            for (name, sym_id) in lib.binder.file_locals.iter() {
+            for (_name, sym_id) in lib.binder.file_locals.iter() {
                 if !self.symbol_arenas.contains_key(sym_id) {
                     self.symbol_arenas.insert(*sym_id, Arc::clone(&lib.arena));
                 }
@@ -4322,7 +4322,7 @@ impl ThinBinderState {
 
             // Check if symbols from this lib file are accessible
             let mut has_accessible_symbols = false;
-            for (name, &sym_id) in lib_file.binder.file_locals.iter() {
+            for (name, &_sym_id) in lib_file.binder.file_locals.iter() {
                 // Try to resolve the symbol through our binder
                 if self.file_locals.get(name).is_some() ||
                    self.lib_binders.iter().any(|b| b.file_locals.get(name).is_some()) {

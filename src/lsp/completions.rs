@@ -881,7 +881,7 @@ impl<'a> Completions<'a> {
         &self,
         func_type: TypeId,
         param_index: usize,
-        checker: &mut ThinCheckerState,
+        _checker: &mut ThinCheckerState,
     ) -> Option<TypeId> {
         let interner = self.interner?;
 

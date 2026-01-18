@@ -56,7 +56,7 @@ impl<'a> FlowGraph<'a> {
     }
 
     /// Get a mutable reference to a flow node by ID.
-    pub fn get_mut(&mut self, id: FlowNodeId) -> Option<&mut FlowNode> {
+    pub fn get_mut(&mut self, _id: FlowNodeId) -> Option<&mut FlowNode> {
         // Note: This would require interior mutability or a different API design
         // For now, we'll return None as FlowGraph is meant for querying, not modifying
         None

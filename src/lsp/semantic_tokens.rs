@@ -11,8 +11,8 @@
 //!
 //! Each token is encoded relative to the previous token for efficiency.
 
-use crate::binder::{Symbol, SymbolId, symbol_flags};
-use crate::lsp::position::{LineMap, Position};
+use crate::binder::{Symbol, symbol_flags};
+use crate::lsp::position::LineMap;
 use crate::parser::thin_node::ThinNodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;

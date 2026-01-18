@@ -4,17 +4,42 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 ---
 
+## Current State (January 2025)
+
+| Metric | Value |
+|--------|-------|
+| Lines of Rust | ~200,000 |
+| Unit Tests | ~10,420 |
+| Ignored Tests | 6 (infinite loops) |
+| Test-Aware Patterns | 39 in thin_checker.rs |
+
+**Build Status:** Passes
+**Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
+
+---
+
 ## Priority List (Current Focus)
 
-**Stop all feature work until these are addressed:**
+### 1. Fix Hanging Tests
 
-### 1. Remove Test-Aware Code from Source
+Several tests have infinite loops and hang forever. These must be identified and marked with `#[ignore]` before any other work.
 
-The checker has ~40 places that check file names to suppress errors for tests. This is architectural debt that must be removed.
+**Currently Ignored (infinite loops):**
+- `test_class_es5_commonjs_class_exports` (transforms/class_es5_tests.rs)
+- `test_source_map_decorator_combined_advanced` (source_map_tests.rs)
+- `test_source_map_decorator_composition_es5_comprehensive` (source_map_tests.rs)
+- `test_source_map_decorator_composition_es5_method_params` (source_map_tests.rs)
+- `test_source_map_decorator_metadata_es5_parameter_decorators` (source_map_tests.rs)
+
+**Action:** Run tests with timeouts to find any remaining hanging tests.
+
+### 2. Remove Test-Aware Code from Checker
+
+The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
 
 **What to remove from `src/thin_checker.rs`:**
 ```rust
-// BAD - This pattern appears 40+ times and must be removed:
+// BAD - This pattern appears 39 times and must be removed:
 let is_test_file = self.ctx.file_name.contains("conformance")
     || self.ctx.file_name.contains("test")
     || self.ctx.file_name.contains("cases");
@@ -24,39 +49,27 @@ if is_test_file && self.ctx.file_name.contains("Symbol") {
 }
 ```
 
-**The rule:** Source code must not know about tests. If a test fails, fix the underlying logic, not by adding special cases for test file names.
+**The rule:** Source code must not know about tests. If a test fails, fix the underlying logic.
 
-### 2. Fix Testing Infrastructure
+### 3. Fix Test Infrastructure
 
 Before fixing more checker/parser bugs, the test infrastructure needs to:
 - Parse `@` directives from test files (like `@strict`, `@noImplicitAny`)
 - Configure the checker environment based on those directives
 - Match how TypeScript's own test runner works
 
-### 3. Architecture Review
+### 4. Clean Up Warnings
 
-Review and clean up before adding features:
-- Remove all `file_name.contains()` checks in checker
-- Ensure parser and checker are test-agnostic
-- Document actual architectural decisions in specs/
+Run `cargo clippy` and fix warnings. Many unused imports and dead code exist.
 
-### 4. Use ts-tests Properly
+### 5. Run Conformance Tests
 
-The `ts-tests/` directory should work like TypeScript's test suite:
-- Test infrastructure reads directives from test files
-- Configures compiler options accordingly
-- Compares output to baselines
+After cleanup, run the conformance test suite:
+```bash
+./differential-test/run-conformance.sh --max=200 --workers=4
+```
 
-### 5. Study Results, Then Plan
-
-After cleanup, analyze test results to identify:
-- Root causes of failures (not symptoms)
-- Patterns in missing/extra errors
-- Priority order for fixes
-
-### 6. Update agents.md
-
-Enforce these rules in agent instructions to prevent regression.
+Analyze results to identify root causes of failures.
 
 ---
 
@@ -90,12 +103,22 @@ Enforce these rules in agent instructions to prevent regression.
 | Suppress errors for specific tests | Implement correct behavior |
 | Add "Tier 0/1/2" patches | Fix root cause once |
 | Add filtering for test patterns | Make checker correct for all code |
+| Create infinite loops in transforms | Add recursion limits |
 
 ---
 
 ## Commands
 
 ```bash
+# Build
+cargo build
+
+# Run all tests
+cargo test --lib
+
+# Run specific test module
+cargo test --lib solver::
+
 # Build WASM
 wasm-pack build --target web --out-dir pkg
 
@@ -110,15 +133,15 @@ wasm-pack build --target web --out-dir pkg
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/thin_parser.rs` | Parser |
-| `src/thin_checker.rs` | Type checker (needs cleanup) |
-| `src/binder/` | Symbol binding |
-| `src/solver/` | Type resolution |
-| `src/checker/types/diagnostics.rs` | Error codes |
-| `differential-test/` | Test infrastructure |
-| `specs/` | Architecture docs |
+| File | Purpose | Lines |
+|------|---------|-------|
+| `src/thin_checker.rs` | Type checker (needs cleanup) | 24,564 |
+| `src/thin_parser.rs` | Parser | 11,068 |
+| `src/binder.rs` | Symbol binding | 2,108 |
+| `src/solver/` | Type resolution (39 files) | ~15,000 |
+| `src/transforms/` | ES5 downlevel transforms | ~10,000 |
+| `differential-test/` | Conformance test infrastructure | - |
+| `AGENTS.md` | Architecture rules for AI agents | - |
 
 ---
 
@@ -130,7 +153,13 @@ wasm-pack build --target web --out-dir pkg
 | Missing Errors | TSC emits, we don't |
 | Extra Errors | We emit, TSC doesn't |
 
+---
 
 ## Project Goals
 
 **Target:** 95%+ exact match with TypeScript compiler on conformance tests, with clean architecture and maintainable codebase.
+
+**Non-Goals:**
+- 100% compatibility (edge cases acceptable)
+- Supporting deprecated features
+- Matching TSC performance exactly (we aim for better)

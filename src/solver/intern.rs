@@ -1054,7 +1054,7 @@ impl TypeInterner {
         let mut has_number = false;
         let mut has_boolean = false;
         let mut has_bigint = false;
-        let mut has_symbol = false;
+        let mut _has_symbol = false;
 
         // First pass: identify which primitive types are present
         for &type_id in flat.iter() {
@@ -1063,7 +1063,7 @@ impl TypeInterner {
                 TypeId::NUMBER => has_number = true,
                 TypeId::BOOLEAN => has_boolean = true,
                 TypeId::BIGINT => has_bigint = true,
-                TypeId::SYMBOL => has_symbol = true,
+                TypeId::SYMBOL => _has_symbol = true,
                 _ => {
                     if let Some(TypeKey::Intrinsic(kind)) = self.lookup(type_id) {
                         match kind {
@@ -1071,7 +1071,7 @@ impl TypeInterner {
                             IntrinsicKind::Number => has_number = true,
                             IntrinsicKind::Boolean => has_boolean = true,
                             IntrinsicKind::Bigint => has_bigint = true,
-                            IntrinsicKind::Symbol => has_symbol = true,
+                            IntrinsicKind::Symbol => _has_symbol = true,
                             _ => {}
                         }
                     }

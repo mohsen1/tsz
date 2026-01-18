@@ -4,14 +4,10 @@
 //! references to the symbol at the cursor position, distinguishing
 //! between reads (references) and writes (assignments).
 
-use crate::binder::SymbolId;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::references::FindReferences;
-use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNodeArena;
-use crate::scanner::SyntaxKind;
 use crate::thin_binder::ThinBinderState;
 
 /// The kind of highlight - distinguishes between reads and writes.
