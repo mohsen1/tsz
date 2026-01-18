@@ -22569,9 +22569,15 @@ class Child extends Parent {
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "Performance issue: O(n^2) in compute_line_col with ES5 class+decorator+parameter decorator factories - hangs >30s"]
 fn test_source_map_decorator_combined_advanced() {
     // Test combined advanced decorator patterns
+    // NOTE: This test hangs when combining:
+    // - ES5 target (causes ClassES5Emitter to emit)
+    // - Class decorator factories (@controller("/api"))
+    // - Method decorator factories (@get("/route"))
+    // - Parameter decorator factories (@inject("token"))
+    // The compute_line_col function is O(n) per call, called O(n) times = O(n^2)
     let source = r#"function controller(path: string) {
     return function(target: any) { return target; };
 }
