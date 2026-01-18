@@ -10,8 +10,8 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 |--------|-------|
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
-| Ignored Tests | 6 (infinite loops) |
-| Test-Aware Patterns | 39 in thin_checker.rs |
+| Ignored Tests | 7 (infinite loops, stack overflow) |
+| Test-Aware Patterns | 8 in thin_checker.rs |
 
 **Build Status:** Passes
 **Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
@@ -35,11 +35,15 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 ### 2. Remove Test-Aware Code from Checker
 
-The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
+The checker has **8 remaining places** that check file names to suppress errors for tests. This is architectural debt (reduced from 39).
+
+**Remaining patterns in `src/thin_checker.rs` (lines 24264-24279):**
+- `is_class_method`: checks file_name for "class", "Class", "method", "Method"
+- `is_in_namespace_context`: checks file_name for "namespace", "module", "Module", "Namespace"
 
 **What to remove from `src/thin_checker.rs`:**
 ```rust
-// BAD - This pattern appears 39 times and must be removed:
+// BAD - This pattern must be removed:
 let is_test_file = self.ctx.file_name.contains("conformance")
     || self.ctx.file_name.contains("test")
     || self.ctx.file_name.contains("cases");
