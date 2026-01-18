@@ -24281,15 +24281,32 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    /// by walking up the parent chain to find nodes with the AMBIENT flag.
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        // Declaration files (.d.ts) are always ambient
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // Walk up the parent chain to check for AMBIENT flag
+        let mut current = var_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if this node has the AMBIENT flag (set by 'declare' keyword)
+                if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
+                    return true;
+                }
+            }
+            // Move to parent node
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    return false;
+                }
+                current = ext.parent;
+            } else {
+                return false;
+            }
+        }
+        false
     }
 }
