@@ -55319,7 +55319,7 @@ admin.save();"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
+#[ignore = "TIMEOUT: Test hangs during ES5 class transform with comprehensive decorator composition (class/method/property/parameter/accessor decorators). Times out after 60s. Possible cause: recursive transform or exponential complexity in decorator emission for complex inheritance + decorator patterns."]
 fn test_source_map_decorator_composition_es5_comprehensive() {
     let source = r#"// Comprehensive decorator composition patterns for ES5 transform testing
 
