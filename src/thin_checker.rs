@@ -19071,12 +19071,12 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
+        if self.ctx.isolated_modules() {
             return true;
         }
 
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
+        // Validate if this is a module file (has import/export declarations in AST)
+        if self.is_file_module() {
             return true;
         }
 
@@ -19096,17 +19096,117 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
-            return true;
-        }
-
         // More liberal fallback: validate if any strict mode features are enabled
         if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
             return true;
         }
 
+        false
+    }
+
+    /// Check if the current file is a module (has import/export declarations).
+    /// Uses AST-based detection instead of filename heuristics.
+    fn is_file_module(&self) -> bool {
+        // Get the root source file node
+        let Some(root_node) = self.ctx.arena.nodes.last() else {
+            return false;
+        };
+
+        // Check if it's a source file
+        if root_node.kind != syntax_kind_ext::SOURCE_FILE {
+            return false;
+        }
+
+        let Some(source_file) = self.ctx.arena.get_source_file(root_node) else {
+            return false;
+        };
+
+        // Check each top-level statement for import/export declarations
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match stmt.kind {
+                // Import declarations indicate module
+                k if k == syntax_kind_ext::IMPORT_DECLARATION => return true,
+                k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => return true,
+
+                // Export declarations indicate module
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => return true,
+                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
+
+                // Check for export modifier on declarations using existing method
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::INTERFACE_DECLARATION
+                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || k == syntax_kind_ext::ENUM_DECLARATION
+                    || k == syntax_kind_ext::MODULE_DECLARATION =>
+                {
+                    if self.has_export_modifier_on_modifiers(stmt) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
+    /// Check if a node's modifiers include the 'export' keyword.
+    /// Helper for is_file_module to check export on declarations.
+    fn has_export_modifier_on_modifiers(&self, node: &crate::parser::thin_node::ThinNode) -> bool {
+        let modifiers = match node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.as_ref()),
+            syntax_kind_ext::CLASS_DECLARATION => self
+                .ctx
+                .arena
+                .get_class(node)
+                .and_then(|c| c.modifiers.as_ref()),
+            syntax_kind_ext::VARIABLE_STATEMENT => self
+                .ctx
+                .arena
+                .get_variable(node)
+                .and_then(|v| v.modifiers.as_ref()),
+            syntax_kind_ext::INTERFACE_DECLARATION => self
+                .ctx
+                .arena
+                .get_interface(node)
+                .and_then(|i| i.modifiers.as_ref()),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                .ctx
+                .arena
+                .get_type_alias(node)
+                .and_then(|t| t.modifiers.as_ref()),
+            syntax_kind_ext::ENUM_DECLARATION => self
+                .ctx
+                .arena
+                .get_enum(node)
+                .and_then(|e| e.modifiers.as_ref()),
+            syntax_kind_ext::MODULE_DECLARATION => self
+                .ctx
+                .arena
+                .get_module(node)
+                .and_then(|m| m.modifiers.as_ref()),
+            _ => None,
+        };
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
+                        return true;
+                    }
+                }
+            }
+        }
         false
     }
 
