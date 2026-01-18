@@ -13570,29 +13570,26 @@ impl<'a> ThinCheckerState<'a> {
     /// For detailed errors with elaboration (e.g., "property 'x' is missing"),
     /// use `error_type_not_assignable_with_reason_at` instead.
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
-        // SELECTIVE DIAGNOSTIC SUPPRESSION (2025-01-15 - Task 8 Pattern 1)
+        // ERROR TYPE SUPPRESSION
         //
-        // When source or target type IS ERROR, suppress the TS2322 emission.
-        // This prevents unhelpful errors like "Type 'error' is not assignable to type 'string'".
+        // When source or target type IS the ERROR sentinel type, suppress TS2322 emission.
+        // This prevents unhelpful cascading errors like "Type 'error' is not assignable to type 'string'".
         //
         // Rationale:
-        // 1. When a type resolves to ERROR, it means the symbol couldn't be resolved (TS2304)
-        // 2. Emitting TS2322 for "Type 'error' is not assignable" provides no additional value
-        // 3. TypeScript doesn't emit these errors - it only reports the resolution failure
-        // 4. This fixes 7 out of 10 false positive test files (Pattern 1 in Task 8)
+        // 1. ERROR type means symbol resolution failed earlier (TS2304 already emitted)
+        // 2. Emitting TS2322 for ERROR provides no diagnostic value to users
+        // 3. TypeScript behavior: only report the root resolution failure, not cascades
         //
-        // The Worker 11 change removed all ERROR suppression to fix missing TS2322 errors,
-        // but that was too broad. We need to be more selective:
-        // - Suppress when source/target IS ERROR (can't provide useful error message)
-        // - Don't suppress when source/target CONTAINS ERROR (e.g., union with error member)
-        //
-        // See: TASK_8_TEST_FAILURES.md Pattern 1 for full investigation details.
+        // Note: We only suppress when type IS ERROR, not when type CONTAINS ERROR.
+        // A union like `string | error` should still be checked against other types.
         if source == TypeId::ERROR || target == TypeId::ERROR {
             return;
         }
 
-        // Additional suppression for ANY types - ANY should be assignable to and from any type
-        // This matches TypeScript's behavior where any bypasses type checking
+        // ANY TYPE SUPPRESSION
+        //
+        // ANY is assignable to and from any type - this matches TypeScript semantics.
+        // The `any` type is an escape hatch that bypasses type checking entirely.
         if source == TypeId::ANY || target == TypeId::ANY {
             return;
         }
@@ -13626,23 +13623,18 @@ impl<'a> ThinCheckerState<'a> {
     ) {
         use crate::solver::{CompatChecker, TypeFormatter};
 
-        // SELECTIVE DIAGNOSTIC SUPPRESSION (2025-01-15 - Task 8 Pattern 1)
+        // ERROR TYPE SUPPRESSION
         //
-        // When source or target type IS ERROR, suppress the TS2322 emission.
-        // This prevents unhelpful errors like "Type 'error' is not assignable to type 'string'".
+        // When source or target type IS the ERROR sentinel type, suppress TS2322 emission.
+        // This prevents unhelpful cascading errors like "Type 'error' is not assignable to type 'string'".
         //
         // Rationale:
-        // 1. When a type resolves to ERROR, it means the symbol couldn't be resolved (TS2304)
-        // 2. Emitting TS2322 for "Type 'error' is not assignable" provides no additional value
-        // 3. TypeScript doesn't emit these errors - it only reports the resolution failure
-        // 4. This fixes 7 out of 10 false positive test files (Pattern 1 in Task 8)
+        // 1. ERROR type means symbol resolution failed earlier (TS2304 already emitted)
+        // 2. Emitting TS2322 for ERROR provides no diagnostic value to users
+        // 3. TypeScript behavior: only report the root resolution failure, not cascades
         //
-        // The Worker 11 change removed all ERROR suppression to fix missing TS2322 errors,
-        // but that was too broad. We need to be more selective:
-        // - Suppress when source/target IS ERROR (can't provide useful error message)
-        // - Don't suppress when source/target CONTAINS ERROR (e.g., union with error member)
-        //
-        // See: TASK_8_TEST_FAILURES.md Pattern 1 for full investigation details.
+        // Note: We only suppress when type IS ERROR, not when type CONTAINS ERROR.
+        // A union like `string | error` should still be checked against other types.
         if source == TypeId::ERROR || target == TypeId::ERROR {
             return;
         }
