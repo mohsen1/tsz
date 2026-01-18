@@ -24538,15 +24538,29 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function is within a namespace or module context
-    fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect namespace/module context
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain.
+    /// by traversing the parent chain to find a ModuleDeclaration node
+    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
 
-        self.ctx.file_name.contains("namespace") ||
-        self.ctx.file_name.contains("module") ||
-        self.ctx.file_name.contains("Module") ||
-        self.ctx.file_name.contains("Namespace")
+        let mut current = func_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if current node is a MODULE_DECLARATION (namespace/module)
+                if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    return true;
+                }
+            }
+            // Move to parent
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
