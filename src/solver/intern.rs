@@ -7,13 +7,27 @@
 //! - O(1) type equality (just compare TypeId values)
 //! - Memory efficient (each unique structure stored once)
 //! - Cache-friendly (work with u32 arrays instead of heap objects)
+//!
+//! # Concurrency Strategy
+//!
+//! The TypeInterner uses a sharded DashMap-based architecture for lock-free
+//! concurrent access:
+//!
+//! - **Sharded Type Storage**: 64 shards based on hash of TypeKey to minimize contention
+//! - **DashMap for Interning**: Each shard uses DashMap for lock-free read/write operations
+//! - **Arc for Immutability**: Type data is stored in Arc<T> for cheap cloning
+//! - **No RwLock<Vec<T>>**: Avoids the read-then-write deadlock pattern
+//!
+//! This design allows true parallel type checking without lock contention.
 
 use crate::interner::{Atom, ShardedInterner};
 use crate::solver::types::*;
-use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
+use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
 
 const SHARD_BITS: u32 = 6;
 const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
@@ -67,137 +81,171 @@ fn literal_domain(literal: &LiteralValue) -> LiteralDomain {
     }
 }
 
+/// A single shard of the type interned storage.
+///
+/// Uses DashMap for lock-free concurrent access to type mappings.
 struct TypeShard {
-    key_to_index: RwLock<FxHashMap<TypeKey, u32>>,
-    index_to_key: RwLock<Vec<TypeKey>>,
+    /// Map from TypeKey to local index within this shard
+    key_to_index: DashMap<TypeKey, u32, FxBuildHasher>,
+    /// Atomic counter for allocating new indices in this shard
+    next_index: AtomicU32,
+    /// Map from local index to TypeKey (using Arc for shared access)
+    /// Note: We use a separate Vec-like structure indexed by local_index
+    /// This is stored in a DashMap for lock-free concurrent access
+    index_to_key: DashMap<u32, Arc<TypeKey>, FxBuildHasher>,
 }
 
 impl TypeShard {
     fn new() -> Self {
         TypeShard {
-            key_to_index: RwLock::new(FxHashMap::default()),
-            index_to_key: RwLock::new(Vec::new()),
+            key_to_index: DashMap::with_hasher(FxBuildHasher::default()),
+            next_index: AtomicU32::new(0),
+            index_to_key: DashMap::with_hasher(FxBuildHasher::default()),
         }
     }
 }
 
-struct SliceInterner<T> {
-    items: Vec<Arc<[T]>>,
-    map: FxHashMap<Arc<[T]>, u32>,
+/// Lock-free slice interner using DashMap for concurrent access.
+struct ConcurrentSliceInterner<T> {
+    items: DashMap<u32, Arc<[T]>, FxBuildHasher>,
+    next_id: AtomicU32,
 }
 
-impl<T> SliceInterner<T>
+impl<T> ConcurrentSliceInterner<T>
 where
-    T: Eq + Hash,
+    T: Eq + Hash + Clone + Send + Sync + 'static,
 {
     fn new() -> Self {
+        let items = DashMap::with_hasher(FxBuildHasher::default());
         let empty: Arc<[T]> = Arc::from(Vec::new());
-        let mut map = FxHashMap::default();
-        map.insert(empty.clone(), 0);
-        SliceInterner {
-            items: vec![empty],
-            map,
+        items.insert(0, empty);
+        ConcurrentSliceInterner {
+            items,
+            next_id: AtomicU32::new(1),
         }
     }
 
-    fn intern(&mut self, items: Vec<T>) -> u32 {
-        if items.is_empty() {
+    fn intern(&self, items_slice: &[T]) -> u32 {
+        if items_slice.is_empty() {
             return 0;
         }
 
-        if let Some(&id) = self.map.get(items.as_slice()) {
-            return id;
+        // Create a temporary Arc for lookup
+        let temp_arc: Arc<[T]> = Arc::from(items_slice.to_vec());
+
+        // Try to insert - if already exists, get existing ID
+        for entry in self.items.iter() {
+            if entry.value() == &temp_arc {
+                return *entry.key();
+            }
         }
 
-        let arc: Arc<[T]> = items.into();
-        let id = self.items.len() as u32;
-        self.items.push(arc.clone());
-        self.map.insert(arc, id);
+        // Allocate new ID
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.items.insert(id, temp_arc);
         id
     }
 
     fn get(&self, id: u32) -> Option<Arc<[T]>> {
-        self.items.get(id as usize).cloned()
+        self.items.get(&id).map(|e| e.value().clone())
     }
 
     fn empty(&self) -> Arc<[T]> {
-        self.items[0].clone()
+        self.items.get(&0).map(|e| e.value().clone()).unwrap_or_else(|| Arc::from(Vec::new()))
     }
 }
 
-struct ValueInterner<T> {
-    items: Vec<Arc<T>>,
-    map: FxHashMap<Arc<T>, u32>,
+/// Lock-free value interner using DashMap for concurrent access.
+struct ConcurrentValueInterner<T> {
+    items: DashMap<u32, Arc<T>, FxBuildHasher>,
+    map: DashMap<Arc<T>, u32, FxBuildHasher>,
+    next_id: AtomicU32,
 }
 
-impl<T> ValueInterner<T>
+impl<T> ConcurrentValueInterner<T>
 where
-    T: Eq + Hash,
+    T: Eq + Hash + Clone + Send + Sync + 'static,
 {
     fn new() -> Self {
-        ValueInterner {
-            items: Vec::new(),
-            map: FxHashMap::default(),
+        ConcurrentValueInterner {
+            items: DashMap::with_hasher(FxBuildHasher::default()),
+            map: DashMap::with_hasher(FxBuildHasher::default()),
+            next_id: AtomicU32::new(0),
         }
     }
 
-    fn intern(&mut self, value: T) -> u32 {
-        if let Some(&id) = self.map.get(&value) {
-            return id;
+    fn intern(&self, value: T) -> u32 {
+        let value_arc = Arc::new(value);
+
+        // Try to get existing ID
+        if let Some(ref_entry) = self.map.get(&value_arc) {
+            return *ref_entry.value();
         }
 
-        let arc = Arc::new(value);
-        let id = self.items.len() as u32;
-        self.items.push(arc.clone());
-        self.map.insert(arc, id);
-        id
+        // Allocate new ID
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        // Double-check: another thread might have inserted while we allocated
+        match self.map.entry(value_arc.clone()) {
+            Entry::Vacant(e) => {
+                e.insert(id);
+                self.items.insert(id, value_arc);
+                id
+            }
+            Entry::Occupied(e) => *e.get(),
+        }
     }
 
     fn get(&self, id: u32) -> Option<Arc<T>> {
-        self.items.get(id as usize).cloned()
+        self.items.get(&id).map(|e| e.value().clone())
     }
 }
 
-/// Type interning table.
-/// Thread-safe via RwLock for concurrent access.
+/// Type interning table with lock-free concurrent access.
+///
+/// Uses sharded DashMap structures for all internal storage, enabling
+/// true parallel type checking without lock contention.
 pub struct TypeInterner {
-    /// Sharded storage for user-defined types
-    shards: [TypeShard; SHARD_COUNT],
-    /// String interner for property names and string literals
-    /// Thread-safe for concurrent access during type construction
+    /// Sharded storage for user-defined types (lock-free)
+    shards: Vec<TypeShard>,
+    /// String interner for property names and string literals (already lock-free)
     pub string_interner: ShardedInterner,
-    type_lists: RwLock<SliceInterner<TypeId>>,
-    tuple_lists: RwLock<SliceInterner<TupleElement>>,
-    template_lists: RwLock<SliceInterner<TemplateSpan>>,
-    object_shapes: RwLock<ValueInterner<ObjectShape>>,
-    object_property_maps: RwLock<Vec<Option<Arc<FxHashMap<Atom, usize>>>>>,
-    function_shapes: RwLock<ValueInterner<FunctionShape>>,
-    callable_shapes: RwLock<ValueInterner<CallableShape>>,
-    conditional_types: RwLock<ValueInterner<ConditionalType>>,
-    mapped_types: RwLock<ValueInterner<MappedType>>,
-    applications: RwLock<ValueInterner<TypeApplication>>,
+    /// Concurrent interners for type components
+    type_lists: ConcurrentSliceInterner<TypeId>,
+    tuple_lists: ConcurrentSliceInterner<TupleElement>,
+    template_lists: ConcurrentSliceInterner<TemplateSpan>,
+    object_shapes: ConcurrentValueInterner<ObjectShape>,
+    /// Object property maps: DashMap for lock-free concurrent access
+    object_property_maps: DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>,
+    function_shapes: ConcurrentValueInterner<FunctionShape>,
+    callable_shapes: ConcurrentValueInterner<CallableShape>,
+    conditional_types: ConcurrentValueInterner<ConditionalType>,
+    mapped_types: ConcurrentValueInterner<MappedType>,
+    applications: ConcurrentValueInterner<TypeApplication>,
 }
 
 impl TypeInterner {
     /// Create a new type interner with pre-registered intrinsics
     pub fn new() -> Self {
+        let shards: Vec<TypeShard> = (0..SHARD_COUNT).map(|_| TypeShard::new()).collect();
+
         TypeInterner {
-            shards: std::array::from_fn(|_| TypeShard::new()),
+            shards,
             string_interner: {
                 let interner = ShardedInterner::new();
                 interner.intern_common();
                 interner
             },
-            type_lists: RwLock::new(SliceInterner::new()),
-            tuple_lists: RwLock::new(SliceInterner::new()),
-            template_lists: RwLock::new(SliceInterner::new()),
-            object_shapes: RwLock::new(ValueInterner::new()),
-            object_property_maps: RwLock::new(Vec::new()),
-            function_shapes: RwLock::new(ValueInterner::new()),
-            callable_shapes: RwLock::new(ValueInterner::new()),
-            conditional_types: RwLock::new(ValueInterner::new()),
-            mapped_types: RwLock::new(ValueInterner::new()),
-            applications: RwLock::new(ValueInterner::new()),
+            type_lists: ConcurrentSliceInterner::new(),
+            tuple_lists: ConcurrentSliceInterner::new(),
+            template_lists: ConcurrentSliceInterner::new(),
+            object_shapes: ConcurrentValueInterner::new(),
+            object_property_maps: DashMap::with_hasher(FxBuildHasher::default()),
+            function_shapes: ConcurrentValueInterner::new(),
+            callable_shapes: ConcurrentValueInterner::new(),
+            conditional_types: ConcurrentValueInterner::new(),
+            mapped_types: ConcurrentValueInterner::new(),
+            applications: ConcurrentValueInterner::new(),
         }
     }
 
@@ -219,24 +267,19 @@ impl TypeInterner {
     }
 
     pub fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
-        let lists = self.type_lists.read().expect("type_lists lock poisoned");
-        lists.get(id.0).unwrap_or_else(|| lists.empty())
+        self.type_lists.get(id.0).unwrap_or_else(|| self.type_lists.empty())
     }
 
     pub fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
-        let lists = self.tuple_lists.read().expect("tuple_lists lock poisoned");
-        lists.get(id.0).unwrap_or_else(|| lists.empty())
+        self.tuple_lists.get(id.0).unwrap_or_else(|| self.tuple_lists.empty())
     }
 
     pub fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
-        let lists = self.template_lists.read().expect("template_lists lock poisoned");
-        lists.get(id.0).unwrap_or_else(|| lists.empty())
+        self.template_lists.get(id.0).unwrap_or_else(|| self.template_lists.empty())
     }
 
     pub fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
         self.object_shapes
-            .read()
-            .expect("object_shapes lock poisoned")
             .get(id.0)
             .unwrap_or_else(|| {
                 Arc::new(ObjectShape {
@@ -253,16 +296,21 @@ impl TypeInterner {
             return PropertyLookup::Uncached;
         }
 
-        let Some(map) = self.object_property_map(shape_id, &shape) else {
-            return PropertyLookup::Uncached;
-        };
-
-        match map.get(&name) {
-            Some(&idx) => PropertyLookup::Found(idx),
-            None => PropertyLookup::NotFound,
+        match self.object_property_map(shape_id, &shape) {
+            Some(map) => {
+                match map.get(&name) {
+                    Some(&idx) => PropertyLookup::Found(idx),
+                    None => PropertyLookup::NotFound,
+                }
+            }
+            None => PropertyLookup::Uncached,
         }
     }
 
+    /// Get or create a property map for an object shape.
+    ///
+    /// This uses a lock-free pattern with DashMap to avoid the read-then-write
+    /// deadlock that existed in the previous RwLock<Vec> implementation.
     fn object_property_map(
         &self,
         shape_id: ObjectShapeId,
@@ -272,34 +320,30 @@ impl TypeInterner {
             return None;
         }
 
-        {
-            let maps = self.object_property_maps.read().expect("object_property_maps lock poisoned");
-            if let Some(Some(map)) = maps.get(shape_id.0 as usize) {
-                return Some(map.clone());
-            }
+        // Try to get existing map (lock-free read)
+        if let Some(map) = self.object_property_maps.get(&shape_id) {
+            return Some(map.clone());
         }
 
+        // Build the property map
         let mut map = FxHashMap::default();
         for (idx, prop) in shape.properties.iter().enumerate() {
             map.insert(prop.name, idx);
         }
         let map = Arc::new(map);
 
-        let mut maps = self.object_property_maps.write().expect("object_property_maps lock poisoned");
-        if maps.len() <= shape_id.0 as usize {
-            maps.resize_with(shape_id.0 as usize + 1, || None);
+        // Try to insert - if another thread inserted first, use theirs
+        match self.object_property_maps.entry(shape_id) {
+            Entry::Vacant(e) => {
+                e.insert(map.clone());
+                Some(map)
+            }
+            Entry::Occupied(e) => Some(e.get().clone()),
         }
-        if let Some(Some(existing)) = maps.get(shape_id.0 as usize) {
-            return Some(existing.clone());
-        }
-        maps[shape_id.0 as usize] = Some(map.clone());
-        Some(map)
     }
 
     pub fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
         self.function_shapes
-            .read()
-            .expect("function_shapes lock poisoned")
             .get(id.0)
             .unwrap_or_else(|| {
                 Arc::new(FunctionShape {
@@ -316,8 +360,6 @@ impl TypeInterner {
 
     pub fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
         self.callable_shapes
-            .read()
-            .expect("callable_shapes lock poisoned")
             .get(id.0)
             .unwrap_or_else(|| {
                 Arc::new(CallableShape {
@@ -331,8 +373,6 @@ impl TypeInterner {
 
     pub fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
         self.conditional_types
-            .read()
-            .expect("conditional_types lock poisoned")
             .get(id.0)
             .unwrap_or_else(|| {
                 Arc::new(ConditionalType {
@@ -347,8 +387,6 @@ impl TypeInterner {
 
     pub fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
         self.mapped_types
-            .read()
-            .expect("mapped_types lock poisoned")
             .get(id.0)
             .unwrap_or_else(|| {
                 Arc::new(MappedType {
@@ -368,8 +406,6 @@ impl TypeInterner {
 
     pub fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
         self.applications
-            .read()
-            .expect("applications lock poisoned")
             .get(id.0)
             .unwrap_or_else(|| {
                 Arc::new(TypeApplication {
@@ -382,6 +418,8 @@ impl TypeInterner {
     /// Intern a type key and return its TypeId.
     /// If the key already exists, returns the existing TypeId.
     /// Otherwise, creates a new TypeId and stores the key.
+    ///
+    /// This uses a lock-free pattern with DashMap for concurrent access.
     pub fn intern(&self, key: TypeKey) -> TypeId {
         if let Some(id) = self.get_intrinsic_id(&key) {
             return id;
@@ -392,33 +430,38 @@ impl TypeInterner {
         let shard_idx = (hasher.finish() as usize) & (SHARD_COUNT - 1);
         let shard = &self.shards[shard_idx];
 
-        {
-            let map = shard.key_to_index.read().expect("shard key_to_index lock poisoned");
-            if let Some(&local_index) = map.get(&key) {
-                return self.make_id(local_index, shard_idx as u32);
-            }
-        }
-
-        let mut map = shard.key_to_index.write().expect("shard key_to_index lock poisoned");
-        let mut storage = shard.index_to_key.write().expect("shard index_to_key lock poisoned");
-
-        if let Some(&local_index) = map.get(&key) {
+        // Try to get existing ID (lock-free read)
+        if let Some(entry) = shard.key_to_index.get(&key) {
+            let local_index = *entry.value();
             return self.make_id(local_index, shard_idx as u32);
         }
 
-        let local_index = storage.len() as u32;
+        // Allocate new index
+        let local_index = shard.next_index.fetch_add(1, Ordering::Relaxed);
         if local_index > (u32::MAX >> SHARD_BITS) {
             // Return error type instead of panicking
             return TypeId::ERROR;
         }
 
-        storage.push(key.clone());
-        map.insert(key, local_index);
-
-        self.make_id(local_index, shard_idx as u32)
+        // Double-check: another thread might have inserted while we allocated
+        match shard.key_to_index.entry(key.clone()) {
+            Entry::Vacant(e) => {
+                e.insert(local_index);
+                let key_arc = Arc::new(key);
+                shard.index_to_key.insert(local_index, key_arc);
+                self.make_id(local_index, shard_idx as u32)
+            }
+            Entry::Occupied(e) => {
+                // Another thread inserted first, use their ID
+                let existing_index = *e.get();
+                self.make_id(existing_index, shard_idx as u32)
+            }
+        }
     }
 
-    /// Look up the TypeKey for a given TypeId
+    /// Look up the TypeKey for a given TypeId.
+    ///
+    /// This uses lock-free DashMap access.
     pub fn lookup(&self, id: TypeId) -> Option<TypeKey> {
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);
@@ -429,60 +472,50 @@ impl TypeInterner {
         let local_index = raw_val >> SHARD_BITS;
 
         let shard = self.shards.get(shard_idx)?;
-        let storage = shard.index_to_key.read().expect("shard index_to_key lock poisoned");
-        storage.get(local_index as usize).cloned()
+        shard.index_to_key.get(&(local_index as u32)).map(|r| r.value().as_ref().clone())
     }
 
     fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
-        let mut lists = self.type_lists.write().expect("type_lists lock poisoned");
-        TypeListId(lists.intern(members))
+        TypeListId(self.type_lists.intern(&members))
     }
 
     fn intern_tuple_list(&self, elements: Vec<TupleElement>) -> TupleListId {
-        let mut lists = self.tuple_lists.write().expect("tuple_lists lock poisoned");
-        TupleListId(lists.intern(elements))
+        TupleListId(self.tuple_lists.intern(&elements))
     }
 
     fn intern_template_list(&self, spans: Vec<TemplateSpan>) -> TemplateLiteralId {
-        let mut lists = self.template_lists.write().expect("template_lists lock poisoned");
-        TemplateLiteralId(lists.intern(spans))
+        TemplateLiteralId(self.template_lists.intern(&spans))
     }
 
     fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
-        let mut shapes = self.object_shapes.write().expect("object_shapes lock poisoned");
-        ObjectShapeId(shapes.intern(shape))
+        ObjectShapeId(self.object_shapes.intern(shape))
     }
 
     fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
-        let mut shapes = self.function_shapes.write().expect("function_shapes lock poisoned");
-        FunctionShapeId(shapes.intern(shape))
+        FunctionShapeId(self.function_shapes.intern(shape))
     }
 
     fn intern_callable_shape(&self, shape: CallableShape) -> CallableShapeId {
-        let mut shapes = self.callable_shapes.write().expect("callable_shapes lock poisoned");
-        CallableShapeId(shapes.intern(shape))
+        CallableShapeId(self.callable_shapes.intern(shape))
     }
 
     fn intern_conditional_type(&self, conditional: ConditionalType) -> ConditionalTypeId {
-        let mut types = self.conditional_types.write().expect("conditional_types lock poisoned");
-        ConditionalTypeId(types.intern(conditional))
+        ConditionalTypeId(self.conditional_types.intern(conditional))
     }
 
     fn intern_mapped_type(&self, mapped: MappedType) -> MappedTypeId {
-        let mut types = self.mapped_types.write().expect("mapped_types lock poisoned");
-        MappedTypeId(types.intern(mapped))
+        MappedTypeId(self.mapped_types.intern(mapped))
     }
 
     fn intern_application(&self, application: TypeApplication) -> TypeApplicationId {
-        let mut apps = self.applications.write().expect("applications lock poisoned");
-        TypeApplicationId(apps.intern(application))
+        TypeApplicationId(self.applications.intern(application))
     }
 
-    /// Get the number of interned types
+    /// Get the number of interned types (lock-free read)
     pub fn len(&self) -> usize {
         let mut total = TypeId::FIRST_USER as usize;
         for shard in &self.shards {
-            total += shard.index_to_key.read().expect("shard index_to_key lock poisoned").len();
+            total += shard.next_index.load(Ordering::Relaxed) as usize;
         }
         total
     }
