@@ -69,8 +69,8 @@ struct TemplateParts {
     expressions: Vec<NodeIndex>,
 }
 
-/// Maximum recursion depth for expression/statement emission to prevent infinite loops
-const MAX_RECURSION_DEPTH: u32 = 200;
+/// Maximum recursion depth for emit_expression/emit_statement to prevent stack overflow
+const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
 
 /// ES5 class emitter - emits ES5 IIFE pattern for classes
 pub struct ClassES5Emitter<'a> {
@@ -96,7 +96,7 @@ pub struct ClassES5Emitter<'a> {
     private_accessors: Vec<PrivateAccessorInfo>,
     /// Current class name (for private field WeakMap names)
     class_name: String,
-    /// Recursion depth counter to prevent stack overflow from malformed AST
+    /// Current recursion depth for emit_expression/emit_statement
     recursion_depth: u32,
 }
 
@@ -1409,12 +1409,12 @@ impl<'a> ClassES5Emitter<'a> {
         // Check if accessor body is empty
         let (body_is_empty, body_is_single_line) = if !accessor_data.body.is_none() {
             let body_node = self.arena.get(accessor_data.body);
-            let is_empty = body_node.is_none_or(|n| {
+            let is_empty = body_node.map_or(true, |n| {
                 self.arena
                     .get_block(n)
-                    .is_none_or(|b| b.statements.nodes.is_empty())
+                    .map_or(true, |b| b.statements.nodes.is_empty())
             });
-            let is_single_line = body_node.is_some_and(|n| self.is_single_line_block(n));
+            let is_single_line = body_node.map_or(false, |n| self.is_single_line_block(n));
             (is_empty, is_single_line)
         } else {
             (true, false)
@@ -1518,7 +1518,6 @@ impl<'a> ClassES5Emitter<'a> {
         }
     }
 
-    #[allow(dead_code)]
     fn emit_accessor(&mut self, class_name: &str, accessor_idx: NodeIndex, is_getter: bool) {
         let Some(accessor_node) = self.arena.get(accessor_idx) else {
             return;
@@ -2309,13 +2308,12 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_statement(&mut self, stmt_idx: NodeIndex) {
-        // Guard against infinite recursion from malformed AST
-        self.recursion_depth += 1;
-        if self.recursion_depth > MAX_RECURSION_DEPTH {
-            self.recursion_depth -= 1;
-            self.write("/* MAX_RECURSION_DEPTH exceeded */");
+        // Guard against infinite recursion
+        if self.recursion_depth >= MAX_EMIT_RECURSION_DEPTH {
+            self.write("/* recursion limit reached */");
             return;
         }
+        self.recursion_depth += 1;
 
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             self.recursion_depth -= 1;
@@ -2817,7 +2815,6 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Emit a single variable declaration (for for-loop initializers, etc.)
-    #[allow(dead_code)]
     fn emit_variable_declaration(&mut self, decl_idx: NodeIndex) {
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return;
@@ -3342,13 +3339,12 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_expression(&mut self, expr_idx: NodeIndex) {
-        // Guard against infinite recursion from malformed AST
-        self.recursion_depth += 1;
-        if self.recursion_depth > MAX_RECURSION_DEPTH {
-            self.recursion_depth -= 1;
-            self.write("/* MAX_RECURSION_DEPTH exceeded */");
+        // Guard against infinite recursion
+        if self.recursion_depth >= MAX_EMIT_RECURSION_DEPTH {
+            self.write("/* recursion limit reached */");
             return;
         }
+        self.recursion_depth += 1;
 
         let Some(expr_node) = self.arena.get(expr_idx) else {
             self.recursion_depth -= 1;
@@ -3535,7 +3531,7 @@ impl<'a> ClassES5Emitter<'a> {
                     let has_spread = arr.elements.nodes.iter().any(|&elem_idx| {
                         self.arena
                             .get(elem_idx)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                            .map_or(false, |n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
                     });
 
                     if has_spread {
@@ -3806,7 +3802,7 @@ impl<'a> ClassES5Emitter<'a> {
             let is_spread = self
                 .arena
                 .get(elem_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT);
+                .map_or(false, |n| n.kind == syntax_kind_ext::SPREAD_ELEMENT);
 
             if is_spread {
                 // Flush current group first
@@ -4334,7 +4330,6 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Check if a name is a valid identifier (can use dot notation) or needs bracket notation
-    #[allow(dead_code)]
     fn is_valid_identifier_name(&self, idx: NodeIndex) -> bool {
         if let Some(node) = self.arena.get(idx) {
             // Identifiers use dot notation
@@ -4353,7 +4348,6 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Get the property name for bracket notation (with quotes for strings)
-    #[allow(dead_code)]
     fn get_computed_property_name(&self, idx: NodeIndex) -> String {
         if let Some(node) = self.arena.get(idx) {
             // String literals need quotes in bracket notation
@@ -4414,7 +4408,6 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Check if heritage clauses contain an `extends` clause (not just `implements`)
-    #[allow(dead_code)]
     fn has_extends_clause(&self, heritage_clauses: &Option<NodeList>) -> bool {
         self.get_extends_class_name(heritage_clauses).is_some()
     }

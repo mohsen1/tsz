@@ -22569,15 +22569,9 @@ class Child extends Parent {
 }
 
 #[test]
-#[ignore = "Performance issue: O(n^2) in compute_line_col with ES5 class+decorator+parameter decorator factories - hangs >30s"]
+#[ignore = "INFINITE LOOP - ES5 class transform with complex decorator patterns (class, method, property, parameter decorators combined) causes unbounded recursion in ClassES5Emitter."]
 fn test_source_map_decorator_combined_advanced() {
     // Test combined advanced decorator patterns
-    // NOTE: This test hangs when combining:
-    // - ES5 target (causes ClassES5Emitter to emit)
-    // - Class decorator factories (@controller("/api"))
-    // - Method decorator factories (@get("/route"))
-    // - Parameter decorator factories (@inject("token"))
-    // The compute_line_col function is O(n) per call, called O(n) times = O(n^2)
     let source = r#"function controller(path: string) {
     return function(target: any) { return target; };
 }
@@ -44383,7 +44377,7 @@ console.log(getMetadata("column", service, "name"));"#;
 }
 
 #[test]
-#[ignore = "ES5 parameter decorator transforms not yet implemented - protected by MAX_EMIT_DEPTH"]
+#[ignore = "INFINITE LOOP - ES5 class transform with multiple parameter decorators on constructor and methods causes unbounded recursion in ClassES5Emitter."]
 fn test_source_map_decorator_metadata_es5_parameter_decorators() {
     let source = r#"const paramMetadata = new Map<string, Map<number, any>>();
 
@@ -54751,7 +54745,7 @@ console.log(getMetadata("author", Component));"#;
 }
 
 #[test]
-#[ignore = "ES5 parameter decorator transforms not yet implemented - protected by MAX_EMIT_DEPTH"]
+#[ignore = "INFINITE LOOP - ES5 class transform with chained parameter decorators on method parameters causes unbounded recursion in ClassES5Emitter."]
 fn test_source_map_decorator_composition_es5_method_params() {
     let source = r#"const paramMetadata = new Map<any, Map<string, any[]>>();
 
@@ -55325,7 +55319,7 @@ admin.save();"#;
 }
 
 #[test]
-#[ignore = "TIMEOUT: Test hangs during ES5 class transform with comprehensive decorator composition (class/method/property/parameter/accessor decorators). Times out after 60s. Possible cause: recursive transform or exponential complexity in decorator emission for complex inheritance + decorator patterns."]
+#[ignore = "INFINITE LOOP - ES5 class transform with complex decorator patterns causes unbounded recursion in ClassES5Emitter. Issue involves async methods with parameter decorators and accessor decorators with observable patterns. Likely in emit_expression/emit_statement mutual recursion path."]
 fn test_source_map_decorator_composition_es5_comprehensive() {
     let source = r#"// Comprehensive decorator composition patterns for ES5 transform testing
 
