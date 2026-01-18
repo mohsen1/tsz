@@ -14997,39 +14997,7 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Suppress for ambient declaration files - these often have complex patterns
-            // that static analysis can't track (module merging, global augmentation, etc.)
-            if is_test_file && (
-                self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module")
-            ) {
-                continue;
-            }
-
-            // Enhanced detection for ambient declarations
-            // These files contain declare statements which create type-only bindings
-            // Variables in ambient declarations are often not "used" in the traditional sense
-            let is_ambient_file = self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module");
-
-            if is_ambient_file {
-                // In ambient files, be very lenient with unused variable warnings
-                // These files often contain type-only declarations and complex module patterns
-                if name_str.len() <= 3  // Short names like n, m, x, y, q, fn
-                    || name_str == "cls" || name_str == "fn1" || name_str == "fn2" // Common function names
-                    || name_str.starts_with("fn") || name_str.starts_with("E") // fn1-10, E1-3
-                    || name_str == "M1" || name_str == "Symbol" // Namespace/global names
-                    || name_str.chars().all(|c| c.is_uppercase()) // Constants like A, B, C
-                {
-                    continue;
-                }
-            }
-
-            // Also check if this variable is declared in an ambient context
+            // Check if this variable is declared in an ambient context
             // Use the symbol's first declaration node if available
             if !symbol.declarations.is_empty() && self.is_ambient_declaration(symbol.declarations[0]) {
                 continue;
