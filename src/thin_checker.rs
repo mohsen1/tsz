@@ -24512,17 +24512,28 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
-
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+    /// Traverses the parent chain to find a ClassDeclaration or ClassExpression
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        let mut current = func_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if this node is a ClassDeclaration or ClassExpression
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return true;
+                }
+            }
+            // Move to parent node
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        false
     }
 
     /// Check if a function is within a namespace or module context
