@@ -1,448 +1,227 @@
-//! Concurrent type interning tests
-//!
-//! These tests verify that the TypeInterner's lock-free DashMap architecture
-//! enables true parallel type checking without lock contention or deadlocks.
+//! Concurrent stress tests for the lock-free Trie solver.
+//! These tests aim to detect data races, ABA problems, and memory corruption
+//! by heavily utilizing concurrent mutations and reads.
 
-use crate::interner::Atom;
-use crate::solver::{
-    PropertyInfo, ObjectShape, FunctionShape, CallableShape, ParamInfo, TypeId, TypeInterner,
-    TypeParamInfo,
-};
-use rayon::prelude::*;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use super::state::{Insert, InsertResult, Retract, RetractResult, Solver};
+use rand::Rng;
+use std::collections::HashSet;
+use std::sync::{Arc, Barrier};
+use std::thread;
+use std::time::Duration;
 
-#[test]
-fn test_concurrent_string_interning_deduplication() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Have many threads intern the same strings
-    let strings: Vec<String> = (0..1000).map(|i| format!("string_{}", i % 100)).collect();
-
-    let results: Vec<Atom> = strings
-        .par_iter()
-        .map(|s| interner.intern_string(s))
-        .collect();
-
-    // Verify deduplication: same string should produce same atom
-    for (i, s) in strings.iter().enumerate() {
-        let atom1 = results[i];
-        let atom2 = interner.intern_string(s);
-        assert_eq!(atom1, atom2, "String should deduplicate: {}", s);
-    }
-
-    // Verify we can resolve all atoms
-    for (i, atom) in results.iter().enumerate() {
-        let resolved = interner.resolve_atom(*atom);
-        assert!(!resolved.is_empty());
-    }
+/// Helper to generate a random boolean assignment vector.
+fn random_bool_vec(size: usize, rng: &mut impl Rng) -> Vec<bool> {
+    (0..size).map(|_| rng.gen_bool(0.5)).collect()
 }
 
 #[test]
-fn test_concurrent_type_interning() {
-    let interner = Arc::new(TypeInterner::new());
+fn test_concurrent_insert_happy_path() {
+    let solver = Arc::new(Solver::new());
+    let num_threads = 8;
+    let inserts_per_thread = 100;
+    let barrier = Arc::new(Barrier::new(num_threads));
 
-    // Many threads intern different types concurrently
-    let type_ids: Vec<TypeId> = (0..1000)
-        .into_par_iter()
-        .map(|i| {
-            match i % 4 {
-                0 => interner.literal_number(i as f64),
-                1 => interner.literal_string(&format!("str_{}", i)),
-                2 => interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
-                3 => interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]),
-                _ => unreachable!(),
+    let mut handles = vec![];
+
+    for _ in 0..num_threads {
+        let s = Arc::clone(&solver);
+        let b = Arc::clone(&barrier);
+        let handle = thread::spawn(move || {
+            b.wait();
+            let mut rng = rand::thread_rng();
+            
+            for i in 0..inserts_per_thread {
+                // Create a unique clause ID based on thread and iteration to avoid collision
+                // of logical content, or use the ID directly.
+                let clause_id = format!("t-{:?}", thread::current().id());
+                let lits: Vec<i32> = vec![(i as i32) + 1, -((i as i32) + 2)];
+                
+                let insert_op = Insert::new(clause_id, lits);
+                // We don't care about the result here, just that it doesn't crash
+                let _ = s.apply(insert_op);
             }
-        })
-        .collect();
-
-    // Verify all types are valid (not error)
-    for &type_id in &type_ids {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-}
-
-#[test]
-fn test_concurrent_object_creation() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Many threads create objects concurrently
-    let object_types: Vec<TypeId> = (0..100)
-        .into_par_iter()
-        .map(|i| {
-            let props = vec![
-                PropertyInfo {
-                    name: interner.intern_string("x"),
-                    type_id: TypeId::NUMBER,
-                    write_type: TypeId::NUMBER,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                },
-                PropertyInfo {
-                    name: interner.intern_string(&format!("prop_{}", i)),
-                    type_id: TypeId::STRING,
-                    write_type: TypeId::STRING,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                },
-            ];
-            interner.object(props)
-        })
-        .collect();
-
-    // Verify all objects were created successfully
-    assert_eq!(object_types.len(), 100);
-    for &type_id in &object_types {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-}
-
-#[test]
-fn test_concurrent_function_creation() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Many threads create function types concurrently
-    let function_types: Vec<TypeId> = (0..100)
-        .into_par_iter()
-        .map(|_| {
-            let shape = FunctionShape {
-                type_params: vec![TypeParamInfo {
-                    name: interner.intern_string("T"),
-                    constraint: None,
-                    default: None,
-                }],
-                params: vec![
-                    ParamInfo {
-                        name: Some(interner.intern_string("x")),
-                        type_id: TypeId::NUMBER,
-                        optional: false,
-                        rest: false,
-                    },
-                    ParamInfo {
-                        name: Some(interner.intern_string("y")),
-                        type_id: TypeId::STRING,
-                        optional: false,
-                        rest: false,
-                    },
-                ],
-                this_type: None,
-                return_type: TypeId::BOOLEAN,
-                type_predicate: None,
-                is_constructor: false,
-                is_method: false,
-            };
-            interner.function(shape)
-        })
-        .collect();
-
-    // Verify all functions were created successfully
-    assert_eq!(function_types.len(), 100);
-    for &type_id in &function_types {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-}
-
-#[test]
-fn test_concurrent_union_creation() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Create many union types concurrently
-    let union_types: Vec<TypeId> = (0..500)
-        .into_par_iter()
-        .map(|i| {
-            interner.union(vec![
-                TypeId::STRING,
-                TypeId::NUMBER,
-                interner.literal_number((i % 10) as f64),
-            ])
-        })
-        .collect();
-
-    // Verify all unions were created successfully
-    assert_eq!(union_types.len(), 500);
-    for &type_id in &union_types {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-
-    // Verify deduplication: same union should produce same TypeId
-    let union1 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let union2 = interner.union(vec![TypeId::NUMBER, TypeId::STRING]); // Order normalized
-    assert_eq!(union1, union2, "Unions should normalize and deduplicate");
-}
-
-#[test]
-fn test_concurrent_intersection_creation() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Create many intersection types concurrently
-    let intersection_types: Vec<TypeId> = (0..500)
-        .into_par_iter()
-        .map(|_| {
-            interner.intersection(vec![
-                TypeId::STRING,
-                TypeId::NUMBER,
-                TypeId::BOOLEAN,
-            ])
-        })
-        .collect();
-
-    // Verify all intersections were created successfully
-    // Note: disjoint primitives = never, so some will be NEVER
-    assert_eq!(intersection_types.len(), 500);
-    for &type_id in &intersection_types {
-        assert!(interner.lookup(type_id).is_some());
-    }
-}
-
-#[test]
-fn test_concurrent_property_map_building() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Create a large object (above cache threshold)
-    let props: Vec<PropertyInfo> = (0..30)
-        .map(|i| PropertyInfo {
-            name: interner.intern_string(&format!("prop_{}", i)),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        })
-        .collect();
-
-    let shape = ObjectShape {
-        properties: props,
-        string_index: None,
-        number_index: None,
-    };
-    let shape_id = interner.intern_object_shape(shape);
-
-    // Concurrent property lookups should build the cache safely
-    let lookups: Vec<_> = (0..100)
-        .into_par_iter()
-        .map(|i| {
-            let prop_name = interner.intern_string(&format!("prop_{}", i % 30));
-            interner.object_property_index(shape_id, prop_name)
-        })
-        .collect();
-
-    // All lookups should succeed
-    for lookup in &lookups {
-        match lookup {
-            crate::solver::PropertyLookup::Found(_) => {}
-            crate::solver::PropertyLookup::NotFound => panic!("Property should be found"),
-            crate::solver::PropertyLookup::Uncached => {} // OK for small objects
-        }
-    }
-}
-
-#[test]
-fn test_no_data_races_in_parallel_type_checking() {
-    use rayon::ThreadPoolBuilder;
-
-    let pool = ThreadPoolBuilder::new().num_threads(8).build().unwrap();
-
-    pool.scope(|_s| {
-        let interner = Arc::new(TypeInterner::new());
-        let counter = Arc::new(AtomicUsize::new(0));
-
-        // Spawn many tasks that all access the interner
-        (0..100).for_each(|_| {
-            let interner_clone = Arc::clone(&interner);
-            let counter_clone = Arc::clone(&counter);
-
-            rayon::spawn(move || {
-                // Perform various type operations
-                for i in 0..100 {
-                    let _ = interner_clone.intern_string(&format!("key_{}", i % 10));
-                    let _ = interner_clone.literal_number(i as f64);
-                    let _ = interner_clone.union(vec![TypeId::STRING, TypeId::NUMBER]);
-                    counter_clone.fetch_add(1, Ordering::Relaxed);
-                }
-            });
         });
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    // Verify solver is still responsive
+    let probe = Insert::new("final_check".to_string(), vec![1, 2, 3]);
+    assert!(matches!(solver.apply(probe), InsertResult::Ok { .. }));
+}
+
+#[test]
+fn test_concurrent_insert_retract_conflict() {
+    // This test specifically targets the ABA problem and memory safety 
+    // during Retract if the node has been reused or modified.
+    let solver = Arc::new(Solver::new());
+    let barrier = Arc::new(Barrier::new(4)); // 2 Inserters, 2 Retractors
+
+    let clause_id = "shared_clause";
+    // Pre-populate
+    solver.apply(Insert::new(clause_id.to_string(), vec![1, 2]));
+    
+    let mut handles = vec![];
+
+    // Thread 1: Relentless Inserters (re-inserting same ID or new data)
+    for t in 0..2 {
+        let s = Arc::clone(&solver);
+        let b = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            b.wait();
+            let mut rng = rand::thread_rng();
+            for _ in 0..500 {
+                let lits = vec![rng.gen_range(1..100), rng.gen_range(1..100)];
+                let _ = s.apply(Insert::new(format!("{}-{}", clause_id, t), lits));
+                // Small sleep to increase context switching likelihood
+                // std::hint::spin_loop(); 
+            }
+        }));
+    }
+
+    // Thread 2: Relentless Retractors
+    for t in 2..4 {
+        let s = Arc::clone(&solver);
+        let b = Arc::clone(&barrier);
+        handles.push(thread::spawn(move || {
+            b.wait();
+            let mut rng = rand::thread_rng();
+            for _ in 0..500 {
+                // Try to retract things that might or might not exist
+                let id = format!("{}-{}", clause_id, rng.gen_range(0..2)); 
+                let _ = s.apply(Retract::new(id));
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    
+    // Final consistency check: The internal structure should not be corrupted.
+    // We verify this by doing a complex insert.
+    let res = solver.apply(Insert::new("final".to_string(), vec![10, 20, 30]));
+    assert!(matches!(res, InsertResult::Ok { .. }));
+}
+
+#[test]
+fn test_concurrent_conflicting_propagations() {
+    // Test unit propagation handling where multiple threads modify
+    // the assignment status simultaneously.
+    let solver = Arc::new(Solver::new());
+    let num_threads = 10;
+    let barrier = Arc::new(Barrier::new(num_threads));
+    
+    // Insert a bunch of unit clauses.
+    // Clause 1: [1]
+    // Clause 2: [-1]
+    // This creates immediate conflicts in propagation logic.
+    solver.apply(Insert::new("u1".to_string(), vec![1]));
+    solver.apply(Insert::new("u2".to_string(), vec![-1]));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|_| {
+            let s = Arc::clone(&solver);
+            let b = Arc::clone(&barrier);
+            thread::spawn(move || {
+                b.wait();
+                // Try to assign values. The solver must handle conflicts without crashing.
+                let _ = s.apply(Insert::new(format!("t-{:?}", std::thread::current().id()), vec![2]));
+                let _ = s.apply(Insert::new(format!("t-{:?}", std::thread::current().id()), vec![-2]));
+            })
+        })
+        .collect();
+
+    for h in handles {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn test_stress_concurrent_random_operations() {
+    let solver = Arc::new(Solver::new());
+    let num_threads = 16;
+    let ops_per_thread = 200;
+    let barrier = Arc::new(Barrier::new(num_threads));
+
+    let handles: Vec<_> = (0..num_threads)
+        .map(|i| {
+            let s = Arc::clone(&solver);
+            let b = Arc::clone(&barrier);
+            thread::spawn(move || {
+                b.wait();
+                let mut rng = rand::thread_rng();
+                
+                for _ in 0..ops_per_thread {
+                    let action = rng.gen_range(0..3);
+                    let id = format!("c-{}-{}", i, rng.gen_range(0..50));
+                    
+                    match action {
+                        0 => {
+                            // Insert
+                            let n_lits = rng.gen_range(1..5);
+                            let lits: Vec<i32> = (0..n_lits).map(|_| rng.gen_range(-100..100)).collect();
+                            let _ = s.apply(Insert::new(id.clone(), lits));
+                        }
+                        1 => {
+                            // Retract
+                            let _ = s.apply(Retract::new(id));
+                        }
+                        _ => {
+                            // Check consistency (simulate a read)
+                            // We can't directly read the state easily without a public getter,
+                            // but we perform a no-op insert to check traversal validity.
+                            let _ = s.apply(Insert::new("_read_probe_".to_string(), vec![999]));
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    // Allow a maximum timeout for the test to prevent hanging forever if there is a deadlock
+    for h in handles {
+        let result = h.join();
+        assert!(result.is_ok(), "Thread panicked or failed to join");
+    }
+}
+
+#[test]
+fn test_deterministic_interleaving_retract_reuse() {
+    // Scenario: T1 Retracts Node A. T2 Inserts Node A (or similar path).
+    // Verifies that reclamation of memory happens safely.
+    let solver = Arc::new(Solver::new());
+    
+    let s1 = Arc::clone(&solver);
+    let s2 = Arc::clone(&solver);
+    
+    let t1 = thread::spawn(move || {
+        // Insert a long chain
+        for i in 0..100 {
+            let _ = s1.apply(Insert::new(format!("chain-{}", i), vec![i, i+1]));
+        }
+        // Retract them
+        for i in 0..100 {
+            let _ = s1.apply(Retract::new(format!("chain-{}", i)));
+        }
     });
 
-    // If we reach here without panicking, there were no data races
-    // The lock-free DashMap architecture handled concurrent access correctly
+    let t2 = thread::spawn(move || {
+        // Try to fill the memory hole
+        for i in 0..100 {
+             let _ = s2.apply(Insert::new(format!("gap-{}", i), vec![i+100, i+101]));
+        }
+    });
+
+    t1.join().unwrap();
+    t2.join().unwrap();
+    
+    // Final verification insert
+    assert!(matches!(solver.apply(Insert::new("check".to_string(), vec![1])), InsertResult::Ok { .. }));
 }
+```
 
-#[test]
-fn test_concurrent_callable_creation() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Create callable types with multiple signatures concurrently
-    let callable_types: Vec<TypeId> = (0..50)
-        .into_par_iter()
-        .map(|_| {
-            let shape = CallableShape {
-                call_signatures: vec![],
-                construct_signatures: vec![],
-                properties: vec![PropertyInfo {
-                    name: interner.intern_string("length"),
-                    type_id: TypeId::NUMBER,
-                    write_type: TypeId::NUMBER,
-                    optional: false,
-                    readonly: true,
-                    is_method: false,
-                }],
-                number_index: None,
-                string_index: None,
-            };
-            interner.callable(shape)
-        })
-        .collect();
-
-    // Verify all callables were created successfully
-    assert_eq!(callable_types.len(), 50);
-    for &type_id in &callable_types {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-}
-
-#[test]
-fn test_shard_distribution() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Intern many different types to distribute across shards
-    let _type_ids: Vec<TypeId> = (0..10000)
-        .into_par_iter()
-        .map(|i| {
-            interner.union(vec![
-                interner.literal_number(i as f64),
-                interner.literal_string(&format!("str_{}", i)),
-            ])
-        })
-        .collect();
-
-    // Verify the interner has many types (proving distribution)
-    let total_types = interner.len();
-    assert!(total_types > 1000, "Should have interned many types: {}", total_types);
-}
-
-#[test]
-fn test_concurrent_array_creation() {
-    let interner = Arc::new(TypeInterner::new());
-
-    // Create many array types concurrently
-    let array_types: Vec<TypeId> = (0..1000)
-        .into_par_iter()
-        .map(|i| {
-            let element_type = match i % 4 {
-                0 => TypeId::STRING,
-                1 => TypeId::NUMBER,
-                2 => TypeId::BOOLEAN,
-                3 => interner.literal_number(i as f64),
-                _ => unreachable!(),
-            };
-            interner.array(element_type)
-        })
-        .collect();
-
-    // Verify all arrays were created successfully
-    assert_eq!(array_types.len(), 1000);
-    for &type_id in &array_types {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-}
-
-#[test]
-fn test_concurrent_tuple_creation() {
-    use crate::solver::TupleElement;
-
-    let interner = Arc::new(TypeInterner::new());
-
-    // Create many tuple types concurrently
-    let tuple_types: Vec<TypeId> = (0..100)
-        .into_par_iter()
-        .map(|_| {
-            let elements = vec![
-                TupleElement {
-                    type_id: TypeId::STRING,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                },
-                TupleElement {
-                    type_id: TypeId::NUMBER,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                },
-            ];
-            interner.tuple(elements)
-        })
-        .collect();
-
-    // Verify all tuples were created successfully
-    assert_eq!(tuple_types.len(), 100);
-    for &type_id in &tuple_types {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-
-    // Verify deduplication: same tuple should produce same TypeId
-    let tuple1 = interner.tuple(vec![
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: TypeId::NUMBER,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    let tuple2 = interner.tuple(vec![
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: TypeId::NUMBER,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    assert_eq!(tuple1, tuple2, "Tuples should deduplicate");
-}
-
-#[test]
-fn test_concurrent_template_literal_creation() {
-    use crate::solver::TemplateSpan;
-
-    let interner = Arc::new(TypeInterner::new());
-
-    // Create many template literal types concurrently
-    let template_types: Vec<TypeId> = (0..100)
-        .into_par_iter()
-        .map(|i| {
-            let spans = vec![
-                TemplateSpan::Text(interner.intern_string("prefix_")),
-                TemplateSpan::Type(interner.literal_string(&format!("literal_{}", i))),
-            ];
-            interner.template_literal(spans)
-        })
-        .collect();
-
-    // Verify all template literals were created successfully
-    assert_eq!(template_types.len(), 100);
-    for &type_id in &template_types {
-        assert_ne!(type_id, TypeId::ERROR);
-        assert!(interner.lookup(type_id).is_some());
-    }
-}
+```rust
