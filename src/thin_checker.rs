@@ -24621,15 +24621,89 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        use crate::parser::node_flags;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // Check if this is a .d.ts declaration file (inherently ambient)
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
+        // Check if the node itself or any ancestor has the AMBIENT flag
+        let mut current = var_idx;
+        for _ in 0..50 {
+            // Limit traversal depth to prevent infinite loops
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+
+            // Check node flags for AMBIENT
+            if (node.flags as u32 & node_flags::AMBIENT) != 0 {
+                return true;
+            }
+
+            // Check for declare modifier on variable statement or declaration
+            if self.node_has_declare_modifier(current) {
+                return true;
+            }
+
+            // Move to parent
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        false
+    }
+
+    /// Check if a node has the 'declare' modifier
+    fn node_has_declare_modifier(&self, idx: NodeIndex) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        // Get modifiers based on node type
+        let modifiers = match node.kind {
+            syntax_kind_ext::VARIABLE_STATEMENT | syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
+                self.ctx.arena.get_variable(node).map(|vs| vs.modifiers.clone())
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.ctx.arena.get_function(node).map(|f| f.modifiers.clone())
+            }
+            syntax_kind_ext::CLASS_DECLARATION => {
+                self.ctx.arena.get_class(node).map(|c| c.modifiers.clone())
+            }
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.ctx.arena.get_interface(node).map(|i| i.modifiers.clone())
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.ctx.arena.get_type_alias(node).map(|ta| ta.modifiers.clone())
+            }
+            syntax_kind_ext::ENUM_DECLARATION => {
+                self.ctx.arena.get_enum(node).map(|e| e.modifiers.clone())
+            }
+            syntax_kind_ext::MODULE_DECLARATION => {
+                self.ctx.arena.get_module(node).map(|m| m.modifiers.clone())
+            }
+            _ => None,
+        };
+
+        if let Some(Some(mods)) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
