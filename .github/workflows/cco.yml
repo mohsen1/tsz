@@ -40,8 +40,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install CCO
-        run: npm install -g @mohsen/claude-code-orchestrator
+      - name: Install CCO from GitHub (fixed version)
+        run: |
+          cd /tmp
+          git clone https://github.com/mohsen1/claude-code-orchestrator.git
+          cd claude-code-orchestrator
+          npm install
+          npm run build
+          npm link
 
       - name: Verify CCO installation
         run: cco --version
