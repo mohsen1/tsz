@@ -67,6 +67,8 @@ pub struct CompilerOptions {
     pub no_emit: Option<bool>,
     #[serde(default)]
     pub no_emit_on_error: Option<bool>,
+    #[serde(default)]
+    pub isolated_modules: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -347,6 +349,10 @@ pub fn resolve_compiler_options(
         resolved.no_emit_on_error = no_emit_on_error;
     }
 
+    if let Some(isolated_modules) = options.isolated_modules {
+        resolved.checker.isolated_modules = isolated_modules;
+    }
+
     Ok(resolved)
 }
 
@@ -443,6 +449,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
         strict: child.strict.or(base.strict),
         no_emit: child.no_emit.or(base.no_emit),
         no_emit_on_error: child.no_emit_on_error.or(base.no_emit_on_error),
+        isolated_modules: child.isolated_modules.or(base.isolated_modules),
     }
 }
 
