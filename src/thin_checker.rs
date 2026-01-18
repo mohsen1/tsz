@@ -24550,15 +24550,99 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        use crate::parser::node_flags;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // Declaration files (.d.ts) are always ambient
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
+        // Check if the node itself has the AMBIENT flag set
+        if let Some(node) = self.ctx.arena.get(var_idx) {
+            if (node.flags as u32) & node_flags::AMBIENT != 0 {
+                return true;
+            }
+        }
+
+        // Walk up the parent chain looking for declare modifier or ambient flag
+        let mut current_idx = var_idx;
+        while !current_idx.is_none() {
+            let Some(ext) = self.ctx.arena.get_extended(current_idx) else {
+                break;
+            };
+
+            // Check the AMBIENT flag on the current node
+            if let Some(node) = self.ctx.arena.get(current_idx) {
+                if (node.flags as u32) & node_flags::AMBIENT != 0 {
+                    return true;
+                }
+
+                // Check for declare modifier on nodes that can have modifiers
+                match node.kind {
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                        || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST =>
+                    {
+                        if let Some(var_data) = self.ctx.arena.get_variable(node) {
+                            if self.has_declare_modifier(&var_data.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+                    {
+                        if let Some(func_data) = self.ctx.arena.get_function(node) {
+                            if self.has_declare_modifier(&func_data.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::CLASS_EXPRESSION =>
+                    {
+                        if let Some(class_data) = self.ctx.arena.get_class(node) {
+                            if self.has_declare_modifier(&class_data.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                        if let Some(module_data) = self.ctx.arena.get_module(node) {
+                            if self.has_declare_modifier(&module_data.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        if let Some(iface_data) = self.ctx.arena.get_interface(node) {
+                            if self.has_declare_modifier(&iface_data.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                        if let Some(enum_data) = self.ctx.arena.get_enum(node) {
+                            if self.has_declare_modifier(&enum_data.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        if let Some(type_alias_data) = self.ctx.arena.get_type_alias(node) {
+                            if self.has_declare_modifier(&type_alias_data.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Move to parent
+            current_idx = ext.parent;
+        }
+
+        false
     }
 }
