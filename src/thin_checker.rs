@@ -19183,21 +19183,11 @@ impl<'a> ThinCheckerState<'a> {
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
+        // Validate based on compiler options and AST context, not file names.
+        // This ensures consistent behavior regardless of file path.
 
         // Always validate in declaration files (.d.ts files are always strict)
         if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
             return true;
         }
 
@@ -19211,24 +19201,24 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in strict property initialization contexts
-        // If we're doing strict property checking, likely need strict async too
-        if self.ctx.strict_property_initialization() {
+        // Validate when any strict mode features are enabled via compiler options
+        // These options indicate the code should be validated strictly
+        if self.ctx.strict_property_initialization()
+            || self.ctx.strict_null_checks()
+            || self.ctx.strict_function_types()
+            || self.ctx.no_implicit_any()
+        {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
+        // Check if we're in an ambient context - ambient declarations are always validated
+        if self.is_ambient_declaration(func_idx) {
             return true;
         }
 
-        // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
-            return true;
-        }
-
-        false
+        // Default: validate async functions to catch TS2705 errors
+        // This is more conservative but ensures we don't miss validation
+        true
     }
 
     /// Check if a node has the `abstract` modifier.
@@ -24520,41 +24510,129 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
+    /// Uses AST parent traversal to detect class context.
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
 
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+        // Check if the node itself is a method declaration
+        if let Some(node) = self.ctx.arena.get(func_idx) {
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                return true;
+            }
+        }
+
+        // Traverse parent chain to find class context
+        let mut current = func_idx;
+        let mut depth = 0;
+        while !current.is_none() && depth < 20 {
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    {
+                        return true;
+                    }
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+
+        false
     }
 
     /// Check if a function is within a namespace or module context
-    fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect namespace/module context
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain.
+    /// Uses AST parent traversal to detect namespace/module declarations.
+    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
 
-        self.ctx.file_name.contains("namespace") ||
-        self.ctx.file_name.contains("module") ||
-        self.ctx.file_name.contains("Module") ||
-        self.ctx.file_name.contains("Namespace")
+        // Traverse parent chain to find namespace/module context
+        let mut current = func_idx;
+        let mut depth = 0;
+        while !current.is_none() && depth < 20 {
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        return true;
+                    }
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+
+        false
     }
 
-    /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    /// Check if a node is declared in an ambient context (has 'declare' modifier)
+    /// Uses AST inspection to check for DeclareKeyword in modifiers.
+    fn is_ambient_declaration(&self, node_idx: NodeIndex) -> bool {
+        use crate::scanner::SyntaxKind;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // Check the node's modifiers for 'declare' keyword
+        if let Some(node) = self.ctx.arena.get(node_idx) {
+            // Get modifiers based on node kind
+            let modifiers: Option<crate::parser::NodeList> = if let Some(func) = self.ctx.arena.get_function(node) {
+                func.modifiers.clone()
+            } else if let Some(class) = self.ctx.arena.get_class(node) {
+                class.modifiers.clone()
+            } else {
+                None
+            };
+
+            if let Some(mods) = modifiers {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                        if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check if we're inside an ambient module (declare module { ... })
+        let mut current = node_idx;
+        let mut depth = 0;
+        while !current.is_none() && depth < 20 {
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                    // Check for ambient module block
+                    if parent_node.kind == crate::parser::syntax_kind_ext::MODULE_DECLARATION {
+                        // Check if the module declaration has 'declare' modifier
+                        if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                            if let Some(mods) = &module.modifiers {
+                                for &mod_idx in &mods.nodes {
+                                    if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                                        if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+            depth += 1;
+        }
+
+        false
     }
 }

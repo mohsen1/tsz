@@ -35,17 +35,17 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 ### 2. Remove Test-Aware Code from Checker
 
-The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
+The checker has **24 places** that check file names to suppress errors for tests. This is architectural debt.
 
 > **Pattern Breakdown:**
-> - **24 patterns in dead code**: In `check_unused_declarations()` - function disabled with early `return;`
-> - **15 patterns in active code**: In `should_validate_async_function_context()`, `is_class_method()`, `is_in_namespace_context()`, `is_ambient_declaration()`
+> - **24 patterns in dead code**: All remaining patterns are in `check_unused_declarations()` - function disabled with early `return;`
+> - **0 patterns in active code**: All active patterns replaced with AST-based detection
 >
 > Verify count: `grep -c 'file_name\.contains' src/thin_checker.rs`
 
 **What to remove from `src/thin_checker.rs`:**
 ```rust
-// BAD - This pattern appears 39 times and must be removed:
+// BAD - This pattern appears 24 times and must be removed:
 let is_test_file = self.ctx.file_name.contains("conformance")
     || self.ctx.file_name.contains("test")
     || self.ctx.file_name.contains("cases");

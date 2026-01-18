@@ -23,11 +23,11 @@ if is_test_file && self.ctx.file_name.contains("Symbol") {
 }
 ```
 
-This pattern has appeared in the checker code and represents a fundamental architectural violation. The checker currently has 39 instances of this pattern that need removal.
+This pattern has appeared in the checker code and represents a fundamental architectural violation. The checker currently has 24 instances of this pattern that need removal.
 
-> **Pattern Breakdown (39 total):**
-> - **24 patterns in dead code**: Located in `check_unused_declarations()` which has an early `return;` at line 14901 making the code unreachable
-> - **15 patterns in active code**: Located in `should_validate_async_function_context()`, `is_class_method()`, `is_in_namespace_context()`, and `is_ambient_declaration()`
+> **Pattern Breakdown (24 total):**
+> - **24 patterns in dead code**: All remaining patterns are in `check_unused_declarations()` which has an early `return;` at line 14901 making the code unreachable
+> - **0 patterns in active code**: All active code patterns have been replaced with AST-based detection
 >
 > Run `grep -c 'file_name\.contains' src/thin_checker.rs` to verify the current count.
 
