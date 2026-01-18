@@ -14,13 +14,12 @@ permissions:
 
 env:
   NODE_VERSION: '22'
-  CCO_TIMEOUT_MINUTES: 360  # 6 hours (GitHub max for public repos)
 
 jobs:
   cco:
     name: Run CCO Orchestration
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ env.CCO_TIMEOUT_MINUTES }}
+    timeout-minutes: 360  # 6 hours (GitHub max for public repos)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -54,7 +53,7 @@ jobs:
             "workerCount": 8,
             "engineerManagerGroupSize": 4,
             "cloneDepth": 100,
-            "maxRunDurationMinutes": ${{ env.CCO_TIMEOUT_MINUTES }},
+            "maxRunDurationMinutes": 360,
             "authMode": "api-keys-first",
             "useRunBranch": false
           }
