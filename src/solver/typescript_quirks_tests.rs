@@ -378,9 +378,8 @@ fn test_method_bivariance_disabled() {
     // This test documents the current behavior; full contravariance for methods
     // may require additional solver refinements.
     //
-    // TODO: Track known limitation - disable_method_bivariance doesn't fully prevent
-    // bivariance because method comparison treats source and target as a group.
-    // Consider tracking as an issue for future solver enhancement.
+    // KNOWN LIMITATION: disable_method_bivariance doesn't fully prevent bivariance
+    // because method comparison treats source and target as a group.
     assert!(
         checker.is_subtype_of(obj_with_cat_method, obj_with_animal_method),
         "Current behavior: reverse also passes (method comparison treats both as methods)"
@@ -526,18 +525,16 @@ fn test_optional_property_includes_undefined() {
     // include undefined, so type A (optional string) should ideally be assignable to type B
     // (explicit string | undefined) and vice versa.
     //
-    // TODO: Current implementation may not fully support this quirk.
+    // KNOWN LIMITATION: Current implementation may not fully support this quirk.
     // This test documents the expected behavior; assertions disabled pending implementation.
     //
-    // Expected behavior (when implemented):
-    // assert!(
-    //     checker.is_subtype_of(type_a, type_b),
-    //     "Optional string should be subtype of string|undefined when exact_optional_property_types=false"
-    // );
-    // assert!(
-    //     checker.is_subtype_of(type_b, type_a),
-    //     "string|undefined should be subtype of optional string when exact_optional_property_types=false"
-    // );
+    // Expected behavior (when fully implemented):
+    // - { x?: string } should be subtype of { x: string | undefined }
+    // - { x: string | undefined } should be subtype of { x?: string }
+    //
+    // The types are created above (type_a and type_b) to ensure compilation.
+    // The subtype relationship depends on the solver's handling of optional properties.
+    let _ = (type_a, type_b); // Silence unused variable warnings
 }
 
 // =============================================================================
@@ -650,11 +647,9 @@ fn test_callback_contravariance_strict() {
     // contravariance to callback parameters in strict mode.
     // The test below documents the current behavior where both directions
     // are treated equivalently for nested function comparisons.
-    // This is an area for future solver enhancement.
     //
-    // TODO: Track known limitation - nested callback contravariance not fully
-    // implemented in strict mode. Consider filing an issue or adding to known
-    // limitations document for future improvement.
+    // KNOWN LIMITATION: Nested callback contravariance not fully implemented in strict mode.
+    // Nested functions are compared structurally without tracking variance positions.
 
     // Current behavior: both directions work (equivalence)
     assert!(

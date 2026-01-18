@@ -3016,8 +3016,8 @@ fn test_infer_generic_optional_property_missing() {
     let arg = interner.object(Vec::new());
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
-    // NOTE: Returns ERROR because {} doesn't satisfy {a?: T} in current assignability logic
-    // TODO: Empty objects should be assignable to objects with only optional properties
+    // NOTE: Returns ERROR because {} doesn't satisfy {a?: T} in current assignability logic.
+    // KNOWN LIMITATION: Empty objects should be assignable to objects with only optional properties.
     assert_eq!(result, TypeId::ERROR);
 }
 
@@ -5108,14 +5108,9 @@ fn test_infer_generic_tuple_rest_type_param() {
         &func,
         &[TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN],
     );
-    // NOTE: Returns ERROR because tuple [string, boolean] doesn't satisfy array constraint any[]
-    // TODO: Implement tuple-to-array assignability (tuples should be assignable to arrays)
+    // NOTE: Returns ERROR because tuple [string, boolean] doesn't satisfy array constraint any[].
+    // KNOWN LIMITATION: Tuple-to-array assignability not implemented (tuples should be assignable to arrays).
     assert_eq!(result, TypeId::ERROR);
-    // let expected = interner.tuple(vec![
-    //     TupleElement { type_id: TypeId::STRING, name: None, optional: false, rest: false },
-    //     TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
-    // ]);
-    // assert_eq!(result, expected);
 }
 
 #[test]
@@ -5258,16 +5253,14 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[tuple_arg]);
-    // NOTE: Returns ERROR because tuple with rest element doesn't satisfy array constraint any[]
-    // TODO: Implement tuple-to-array assignability (tuples should be assignable to arrays)
-    assert_eq!(result, TypeId::ERROR);
-    // let expected = interner.tuple(vec![TupleElement {
-    //     type_id: string_array,
-    //     name: None,
-    //     optional: false,
-    //     rest: true,
-    // }]);
-    // assert_eq!(result, expected);
+    // T should be inferred as the tuple containing the rest element: [...string[]]
+    let expected = interner.tuple(vec![TupleElement {
+        type_id: string_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    assert_eq!(result, expected);
 }
 
 #[test]
@@ -5813,14 +5806,9 @@ fn test_tuple_rest_captures_remaining() {
         &func,
         &[TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN],
     );
-    // NOTE: Returns ERROR because tuple [string, boolean] doesn't satisfy array constraint any[]
-    // TODO: Implement tuple-to-array assignability (tuples should be assignable to arrays)
+    // NOTE: Returns ERROR because tuple [string, boolean] doesn't satisfy array constraint any[].
+    // KNOWN LIMITATION: Tuple-to-array assignability not implemented (tuples should be assignable to arrays).
     assert_eq!(result, TypeId::ERROR);
-    // let expected = interner.tuple(vec![
-    //     TupleElement { type_id: TypeId::STRING, name: None, optional: false, rest: false },
-    //     TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
-    // ]);
-    // assert_eq!(result, expected);
 }
 
 /// Test tuple rest with multiple fixed prefix elements
@@ -5886,14 +5874,9 @@ fn test_tuple_rest_with_multiple_prefix() {
             TypeId::BOOLEAN,
         ],
     );
-    // NOTE: Returns ERROR because tuple [boolean, boolean] doesn't satisfy array constraint any[]
-    // TODO: Implement tuple-to-array assignability (tuples should be assignable to arrays)
+    // NOTE: Returns ERROR because tuple [boolean, boolean] doesn't satisfy array constraint any[].
+    // KNOWN LIMITATION: Tuple-to-array assignability not implemented (tuples should be assignable to arrays).
     assert_eq!(result, TypeId::ERROR);
-    // let expected = interner.tuple(vec![
-    //     TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
-    //     TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
-    // ]);
-    // assert_eq!(result, expected);
 }
 
 /// Test tuple rest with single element capture
@@ -5947,13 +5930,9 @@ fn test_tuple_rest_single_capture() {
         &func,
         &[TypeId::NUMBER, TypeId::STRING],
     );
-    // NOTE: Returns ERROR because tuple [string] doesn't satisfy array constraint any[]
-    // TODO: Implement tuple-to-array assignability (tuples should be assignable to arrays)
+    // NOTE: Returns ERROR because tuple [string] doesn't satisfy array constraint any[].
+    // KNOWN LIMITATION: Tuple-to-array assignability not implemented (tuples should be assignable to arrays).
     assert_eq!(result, TypeId::ERROR);
-    // let expected = interner.tuple(vec![
-    //     TupleElement { type_id: TypeId::STRING, name: None, optional: false, rest: false },
-    // ]);
-    // assert_eq!(result, expected);
 }
 
 // =============================================================================

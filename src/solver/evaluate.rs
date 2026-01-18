@@ -181,22 +181,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a type, resolving any meta-types if possible.
     /// Returns the evaluated type (may be the same if no evaluation needed).
     ///
-    /// # TODO: Application Type Expansion (Worker 2 - Redux test fix)
+    /// # KNOWN LIMITATION: Application Type Expansion
     ///
     /// **Problem**: `Application(Ref(sym), args)` types (like `Reducer<S, A>`) are not
     /// being expanded to their instantiated form. This causes diagnostics to show
     /// `Ref(5)<error>` instead of the actual type.
     ///
-    /// **Current Behavior**: Application types pass through unchanged at line ~202.
+    /// **Current Behavior**: Application types pass through unchanged.
     /// This means when comparing a function type against `Reducer<S, A>`, the
     /// Application type is not expanded to its underlying function type.
     ///
-    /// **Observed Diagnostics in redux test**:
-    /// - `Type '(state: undefined | Ref(5)<error>, action: Ref(6)<error>) => any'
-    ///    is not assignable to type 'Ref(1)<Ref(5)<error>, Ref(6)<error>>'`
-    /// - `Ref(5)`, `Ref(6)`, `Ref(7)` etc. should be expanded to actual types
-    ///
-    /// **Fix Approach**: Add a case for `TypeKey::Application(app_id)`:
+    /// **Fix Approach** (for future implementation):
     /// 1. Get the base type from the Application
     /// 2. If base is a `Ref(sym)`, resolve it using `self.resolver.resolve_ref(sym, ...)`
     /// 3. Get the type parameters from the resolved type (type alias or interface)
