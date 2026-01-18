@@ -44377,7 +44377,6 @@ console.log(getMetadata("column", service, "name"));"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
 fn test_source_map_decorator_metadata_es5_parameter_decorators() {
     let source = r#"const paramMetadata = new Map<string, Map<number, any>>();
 
@@ -54745,7 +54744,6 @@ console.log(getMetadata("author", Component));"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - needs investigation"]
 fn test_source_map_decorator_composition_es5_method_params() {
     let source = r#"const paramMetadata = new Map<any, Map<string, any[]>>();
 
