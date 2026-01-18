@@ -489,6 +489,10 @@ pub fn escape_js_string(s: &str, quote: char) -> String {
     result
 }
 
+/// Base64 character set for encoding
+const BASE64_CHARS: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
 /// Base64 encode a byte slice
 pub fn base64_encode(input: &[u8]) -> String {
     let bytes = input;
