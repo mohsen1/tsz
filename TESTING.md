@@ -9,7 +9,7 @@ This guide covers the testing infrastructure for the Rust/WASM TypeScript compil
 ./wasm/test.sh
 
 # 2. Run conformance tests (compare against TypeScript)
-./wasm/differential-test/run-conformance.sh --max=1000
+./wasm/conformance/run-conformance.sh --max=1000
 
 # 3. Test a specific file
 node wasm/scripts/run-single-test.mjs tests/cases/compiler/2dArrays.ts
@@ -29,20 +29,20 @@ node wasm/scripts/run-single-test.mjs tests/cases/compiler/2dArrays.ts
 ```
 
 ### 📊 Conformance Tests  
-**Location**: `./wasm/differential-test/`  
+**Location**: `./wasm/conformance/`  
 **Purpose**: Compare WASM output against TypeScript compiler  
 **Speed**: Medium-Slow (1-15 mins depending on scope)
 
 ```bash
 # Quick iteration (1000 tests, ~1 min)
-./wasm/differential-test/run-conformance.sh --max=1000
+./wasm/conformance/run-conformance.sh --max=1000
 
 # Full suite (45K tests, ~15 mins) 
-./wasm/differential-test/run-conformance.sh --all
+./wasm/conformance/run-conformance.sh --all
 
 # Specific categories
-./wasm/differential-test/run-conformance.sh --category=compiler
-./wasm/differential-test/run-conformance.sh --category=conformance
+./wasm/conformance/run-conformance.sh --category=compiler
+./wasm/conformance/run-conformance.sh --category=conformance
 ```
 
 ### 🔍 Individual Test Scripts
@@ -68,7 +68,7 @@ node wasm/scripts/validate-wasm.mjs
 ./wasm/test.sh
 
 # 2. Get baseline conformance
-./wasm/differential-test/run-conformance.sh --max=1000
+./wasm/conformance/run-conformance.sh --max=1000
 ```
 
 ### 🔧 During Development  
@@ -77,7 +77,7 @@ node wasm/scripts/validate-wasm.mjs
 node wasm/scripts/run-single-test.mjs tests/cases/compiler/yourTest.ts --verbose
 
 # Quick conformance check
-./wasm/differential-test/run-conformance.sh --max=500
+./wasm/conformance/run-conformance.sh --max=500
 ```
 
 ### ✅ Before Committing
@@ -86,10 +86,10 @@ node wasm/scripts/run-single-test.mjs tests/cases/compiler/yourTest.ts --verbose
 ./wasm/test.sh
 
 # 2. Conformance hasn't regressed
-./wasm/differential-test/run-conformance.sh --max=2000
+./wasm/conformance/run-conformance.sh --max=2000
 
 # 3. If working on parser/checker, run full suite
-./wasm/differential-test/run-conformance.sh --all
+./wasm/conformance/run-conformance.sh --all
 ```
 
 ## Understanding Conformance Metrics
@@ -107,17 +107,17 @@ Focus testing on these high-impact areas:
 
 1. **TS2454 (Used before assigned)**: 573 missing errors
    ```bash
-   node wasm/differential-test/find-ts2454.mjs
+   node wasm/conformance/find-ts2454.mjs
    ```
 
 2. **TS2322 (Type not assignable)**: 310 missing errors  
    ```bash
-   node wasm/differential-test/find-ts2322.mjs
+   node wasm/conformance/find-ts2322.mjs
    ```
 
 3. **TS2339 (Property doesn't exist)**: 292 extra errors
    ```bash  
-   node wasm/differential-test/find-ts2339.mjs
+   node wasm/conformance/find-ts2339.mjs
    ```
 
 ## Performance Testing
@@ -140,10 +140,10 @@ node --prof wasm/scripts/run-single-test.mjs tests/cases/compiler/largeFile.ts
 2. **Conformance regression**:
    ```bash  
    # Find new failures
-   ./wasm/differential-test/run-conformance.sh --max=1000 | grep "FAIL"
+   ./wasm/conformance/run-conformance.sh --max=1000 | grep "FAIL"
    
    # Debug specific error type
-   node wasm/differential-test/find-ts2322.mjs
+   node wasm/conformance/find-ts2322.mjs
    ```
 
 3. **Parser issues**:
@@ -162,7 +162,7 @@ wasm/
 │   ├── compare-baselines.mjs   # Compare against baselines  
 │   ├── run-batch-tests.mjs     # Run multiple tests
 │   └── validate-wasm.mjs       # WASM module validation
-├── differential-test/          # Conformance test suite
+├── conformance/          # Conformance test suite
 │   ├── run-conformance.sh      # Main conformance runner
 │   ├── find-ts2454.mjs         # Find specific error types
 │   └── ...                     # Error-specific analyzers

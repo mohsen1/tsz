@@ -1,5 +1,5 @@
 {
-  "name": "tsz-differential-test",
+  "name": "tsz-conformance",
   "version": "1.0.0",
   "type": "module",
   "description": "Differential testing harness for TypeScript vs Rust/WASM compiler",
