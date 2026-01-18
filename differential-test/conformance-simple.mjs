@@ -4,6 +4,7 @@
 
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, basename } from 'path';
+import { parseTestDirectives, mapToWasmCompilerOptions } from './directive-parser.mjs';
 
 const CONFIG = {
   wasmPkgPath: join(process.cwd(), '../pkg'),
@@ -63,9 +64,31 @@ async function main() {
     const relPath = filePath.replace(CONFIG.conformanceDir + '/', '');
 
     try {
-      const code = readFileSync(filePath, 'utf-8');
+      const rawCode = readFileSync(filePath, 'utf-8');
 
-      const parser = new wasm.ThinParser(fileName, code);
+      // Parse test directives from source code
+      const { options, isMultiFile, cleanCode, files } = parseTestDirectives(rawCode);
+
+      // Skip multi-file tests
+      if (isMultiFile && files.length > 0) {
+        continue;
+      }
+
+      const parser = new wasm.ThinParser(fileName, cleanCode);
+
+      // Build compiler options from test directives using the centralized mapper
+      const wasmOptions = mapToWasmCompilerOptions(options);
+
+      // Handle strict mode default: if strict is not explicitly set, default to false
+      if (options.strict === undefined) {
+        wasmOptions.strict = false;
+      }
+
+      // Apply compiler options to WASM parser
+      if (Object.keys(wasmOptions).length > 0) {
+        parser.setCompilerOptions(JSON.stringify(wasmOptions));
+      }
+
       parser.parseSourceFile();
 
       const diagsJson = parser.getDiagnosticsJson();
