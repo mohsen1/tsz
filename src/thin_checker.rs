@@ -24524,17 +24524,37 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a function node is a class method (instance or static)
-    fn is_class_method(&self, _func_idx: NodeIndex) -> bool {
-        // For now, assume functions in classes need async validation
-        // This is a conservative approach that catches more cases.
-        // In a full implementation, we would check the parent node chain
-        // to see if we're inside a class declaration.
-
-        // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+    ///
+    /// Traverses the parent chain from the function node to find if it's inside
+    /// a ClassDeclaration or ClassExpression.
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        let mut current = func_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if we've reached a class declaration or expression
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return true;
+                }
+                // Stop at function boundaries that are NOT methods/constructors
+                // (nested functions inside a class method are still "in" the class,
+                // but a function declaration outside a class is not)
+                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                {
+                    return false;
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
     }
 
     /// Check if a function is within a namespace or module context
