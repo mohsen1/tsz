@@ -5,6 +5,9 @@
 
 // Allow dead code for binder infrastructure methods that will be used in future phases
 #![allow(dead_code)]
+// Allow collapsible if statements - this is a style choice that doesn't affect correctness
+// Many nested if-let patterns are clearer when not collapsed for readability
+#![allow(clippy::collapsible_if)]
 
 use crate::binder::{
     ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, Symbol, SymbolArena,
@@ -277,6 +280,7 @@ impl ThinBinderState {
     /// This is used for type checking after parallel binding and symbol merging.
     /// Global augmentations are interface/type declarations inside `declare global` blocks
     /// that should merge with lib.d.ts symbols during type resolution.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_bound_state_with_scopes_and_augmentations(
         symbols: SymbolArena,
         file_locals: SymbolTable,
@@ -485,16 +489,16 @@ impl ThinBinderState {
         let debug_enabled = crate::module_resolution_debug::is_debug_enabled();
 
         // First, check if it's a direct export from this module
-        if let Some(module_table) = self.module_exports.get(module_specifier) {
-            if let Some(sym_id) = module_table.get(export_name) {
-                if debug_enabled {
-                    eprintln!(
-                        "[RESOLVE_IMPORT] '{}' from module '{}' -> direct export symbol id={}",
-                        export_name, module_specifier, sym_id.0
-                    );
-                }
-                return Some(sym_id);
+        if let Some(module_table) = self.module_exports.get(module_specifier)
+            && let Some(sym_id) = module_table.get(export_name)
+        {
+            if debug_enabled {
+                eprintln!(
+                    "[RESOLVE_IMPORT] '{}' from module '{}' -> direct export symbol id={}",
+                    export_name, module_specifier, sym_id.0
+                );
             }
+            return Some(sym_id);
         }
 
         // Not found in direct exports, check for re-exports
@@ -584,20 +588,20 @@ impl ThinBinderState {
 
     /// Exit the current persistent scope.
     fn exit_persistent_scope(&mut self) {
-        if !self.current_scope_id.is_none() {
-            if let Some(scope) = self.scopes.get(self.current_scope_id.0 as usize) {
-                self.current_scope_id = scope.parent;
-            }
+        if !self.current_scope_id.is_none()
+            && let Some(scope) = self.scopes.get(self.current_scope_id.0 as usize)
+        {
+            self.current_scope_id = scope.parent;
         }
     }
 
     /// Declare a symbol in the current persistent scope.
     /// This adds the symbol to the persistent scope table for later querying.
     fn declare_in_persistent_scope(&mut self, name: String, sym_id: SymbolId) {
-        if !self.current_scope_id.is_none() {
-            if let Some(scope) = self.scopes.get_mut(self.current_scope_id.0 as usize) {
-                scope.table.set(name, sym_id);
-            }
+        if !self.current_scope_id.is_none()
+            && let Some(scope) = self.scopes.get_mut(self.current_scope_id.0 as usize)
+        {
+            scope.table.set(name, sym_id);
         }
     }
 
@@ -715,19 +719,19 @@ impl ThinBinderState {
         self.current_flow = start_flow;
         self.is_external_module = self.source_file_is_external_module(arena, root);
 
-        if let Some(node) = arena.get(root) {
-            if let Some(sf) = arena.get_source_file(node) {
-                // First pass: collect hoisted declarations
-                self.collect_hoisted_declarations(arena, &sf.statements);
+        if let Some(node) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(node)
+        {
+            // First pass: collect hoisted declarations
+            self.collect_hoisted_declarations(arena, &sf.statements);
 
-                // Process hoisted function declarations first
-                self.process_hoisted_functions(arena);
+            // Process hoisted function declarations first
+            self.process_hoisted_functions(arena);
 
-                // Second pass: bind each statement
-                for &stmt_idx in &sf.statements.nodes {
-                    self.bind_node(arena, stmt_idx);
-                    self.top_level_flow.insert(stmt_idx.0, self.current_flow);
-                }
+            // Second pass: bind each statement
+            for &stmt_idx in &sf.statements.nodes {
+                self.bind_node(arena, stmt_idx);
+                self.top_level_flow.insert(stmt_idx.0, self.current_flow);
             }
         }
 
@@ -879,13 +883,13 @@ impl ThinBinderState {
         let mut symbol_nodes = Vec::new();
         self.collect_statement_symbol_nodes(arena, old_suffix_statements, &mut symbol_nodes);
         for node in symbol_nodes {
-            if let Some(sym_id) = self.node_symbols.remove(&node.0) {
-                if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    sym.declarations.retain(|decl| *decl != node);
-                    if sym.value_declaration == node {
-                        sym.value_declaration =
-                            sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                    }
+            if let Some(sym_id) = self.node_symbols.remove(&node.0)
+                && let Some(sym) = self.symbols.get_mut(sym_id)
+            {
+                sym.declarations.retain(|decl| *decl != node);
+                if sym.value_declaration == node {
+                    sym.value_declaration =
+                        sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
                 }
             }
         }
@@ -945,7 +949,7 @@ impl ThinBinderState {
         let keep_node = |node_id: &u32| {
             arena
                 .get(NodeIndex(*node_id))
-                .map_or(false, |node| node.pos < reparse_start)
+                .is_some_and(|node| node.pos < reparse_start)
         };
 
         self.node_flow.retain(|node_id, _| keep_node(node_id));
@@ -998,26 +1002,26 @@ impl ThinBinderState {
     }
 
     fn collect_hoisted_var_decl(&mut self, arena: &ThinNodeArena, decl_list_idx: NodeIndex) {
-        if let Some(node) = arena.get(decl_list_idx) {
-            if let Some(list) = arena.get_variable(node) {
-                // Check if this is a var declaration (not let/const)
-                let is_var = (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0;
-                if is_var {
-                    for &decl_idx in &list.declarations.nodes {
-                        if let Some(decl_node) = arena.get(decl_idx) {
-                            if let Some(decl) = arena.get_variable_declaration(decl_node) {
-                                if let Some(name) = self.get_identifier_name(arena, decl.name) {
-                                    self.hoisted_vars.push((name.to_string(), decl_idx));
-                                } else {
-                                    let mut names = Vec::new();
-                                    self.collect_binding_identifiers(arena, decl.name, &mut names);
-                                    for ident_idx in names {
-                                        if let Some(name) =
-                                            self.get_identifier_name(arena, ident_idx)
-                                        {
-                                            self.hoisted_vars.push((name.to_string(), ident_idx));
-                                        }
-                                    }
+        if let Some(node) = arena.get(decl_list_idx)
+            && let Some(list) = arena.get_variable(node)
+        {
+            // Check if this is a var declaration (not let/const)
+            let is_var = (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0;
+            if is_var {
+                for &decl_idx in &list.declarations.nodes {
+                    if let Some(decl_node) = arena.get(decl_idx)
+                        && let Some(decl) = arena.get_variable_declaration(decl_node)
+                    {
+                        if let Some(name) = self.get_identifier_name(arena, decl.name) {
+                            self.hoisted_vars.push((name.to_string(), decl_idx));
+                        } else {
+                            let mut names = Vec::new();
+                            self.collect_binding_identifiers(arena, decl.name, &mut names);
+                            for ident_idx in names {
+                                if let Some(name) =
+                                    self.get_identifier_name(arena, ident_idx)
+                                {
+                                    self.hoisted_vars.push((name.to_string(), ident_idx));
                                 }
                             }
                         }
@@ -1028,12 +1032,11 @@ impl ThinBinderState {
     }
 
     fn collect_hoisted_from_node(&mut self, arena: &ThinNodeArena, idx: NodeIndex) {
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::BLOCK {
-                if let Some(block) = arena.get_block(node) {
-                    self.collect_hoisted_declarations(arena, &block.statements);
-                }
-            }
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = arena.get_block(node)
+        {
+            self.collect_hoisted_declarations(arena, &block.statements);
         }
     }
 
@@ -1041,21 +1044,20 @@ impl ThinBinderState {
     fn process_hoisted_functions(&mut self, arena: &ThinNodeArena) {
         let functions = std::mem::take(&mut self.hoisted_functions);
         for func_idx in functions {
-            if let Some(node) = arena.get(func_idx) {
-                if let Some(func) = arena.get_function(node) {
-                    if let Some(name) = self.get_identifier_name(arena, func.name) {
-                        let is_exported = self.has_export_modifier(arena, &func.modifiers);
-                        let sym_id = self.declare_symbol(
-                            name,
-                            symbol_flags::FUNCTION,
-                            func_idx,
-                            is_exported,
-                        );
+            if let Some(node) = arena.get(func_idx)
+                && let Some(func) = arena.get_function(node)
+                && let Some(name) = self.get_identifier_name(arena, func.name)
+            {
+                let is_exported = self.has_export_modifier(arena, &func.modifiers);
+                let sym_id = self.declare_symbol(
+                    name,
+                    symbol_flags::FUNCTION,
+                    func_idx,
+                    is_exported,
+                );
 
-                        // Also add to persistent scope
-                        self.declare_in_persistent_scope(name.to_string(), sym_id);
-                    }
-                }
+                // Also add to persistent scope
+                self.declare_in_persistent_scope(name.to_string(), sym_id);
             }
         }
     }
@@ -1074,7 +1076,6 @@ impl ThinBinderState {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 self.record_flow(idx);
-                return;
             }
             // Variable declarations
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
@@ -1381,11 +1382,11 @@ impl ThinBinderState {
                 self.bind_module_declaration(arena, node, idx);
             }
             k if k == syntax_kind_ext::MODULE_BLOCK => {
-                if let Some(block) = arena.get_module_block(node) {
-                    if let Some(ref statements) = block.statements {
-                        for &stmt_idx in &statements.nodes {
-                            self.bind_node(arena, stmt_idx);
-                        }
+                if let Some(block) = arena.get_module_block(node)
+                    && let Some(ref statements) = block.statements
+                {
+                    for &stmt_idx in &statements.nodes {
+                        self.bind_node(arena, stmt_idx);
                     }
                 }
             }
@@ -1402,23 +1403,23 @@ impl ThinBinderState {
             k if k == syntax_kind_ext::RETURN_STATEMENT
                 || k == syntax_kind_ext::THROW_STATEMENT =>
             {
-                if let Some(ret) = arena.get_return_statement(node) {
-                    if !ret.expression.is_none() {
-                        self.bind_node(arena, ret.expression);
-                    }
+                if let Some(ret) = arena.get_return_statement(node)
+                    && !ret.expression.is_none()
+                {
+                    self.bind_node(arena, ret.expression);
                 }
             }
 
             // Binary expressions - traverse into operands
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                if let Some(bin) = arena.get_binary_expr(node) {
-                    if self.is_assignment_operator(bin.operator_token) {
-                        self.bind_node(arena, bin.left);
-                        self.bind_node(arena, bin.right);
-                        let flow = self.create_flow_assignment(idx);
-                        self.current_flow = flow;
-                        return;
-                    }
+                if let Some(bin) = arena.get_binary_expr(node)
+                    && self.is_assignment_operator(bin.operator_token)
+                {
+                    self.bind_node(arena, bin.left);
+                    self.bind_node(arena, bin.right);
+                    let flow = self.create_flow_assignment(idx);
+                    self.current_flow = flow;
+                    return;
                 }
                 // Record flow for binary expressions to support flow analysis in closures
                 self.bind_binary_expression_iterative(arena, idx);
@@ -1465,10 +1466,10 @@ impl ThinBinderState {
                 || k == syntax_kind_ext::YIELD_EXPRESSION
                 || k == syntax_kind_ext::NON_NULL_EXPRESSION =>
             {
-                if node.has_data() {
-                    if let Some(unary) = arena.unary_exprs_ex.get(node.data_index as usize) {
-                        self.bind_node(arena, unary.expression);
-                    }
+                if node.has_data()
+                    && let Some(unary) = arena.unary_exprs_ex.get(node.data_index as usize)
+                {
+                    self.bind_node(arena, unary.expression);
                 }
             }
 
@@ -1477,10 +1478,10 @@ impl ThinBinderState {
                 || k == syntax_kind_ext::AS_EXPRESSION
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
             {
-                if node.has_data() {
-                    if let Some(assertion) = arena.type_assertions.get(node.data_index as usize) {
-                        self.bind_node(arena, assertion.expression);
-                    }
+                if node.has_data()
+                    && let Some(assertion) = arena.type_assertions.get(node.data_index as usize)
+                {
+                    self.bind_node(arena, assertion.expression);
                 }
             }
 
@@ -1493,11 +1494,11 @@ impl ThinBinderState {
 
             // Tagged templates
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
-                if node.has_data() {
-                    if let Some(tagged) = arena.tagged_templates.get(node.data_index as usize) {
-                        self.bind_node(arena, tagged.tag);
-                        self.bind_node(arena, tagged.template);
-                    }
+                if node.has_data()
+                    && let Some(tagged) = arena.tagged_templates.get(node.data_index as usize)
+                {
+                    self.bind_node(arena, tagged.tag);
+                    self.bind_node(arena, tagged.template);
                 }
             }
 
@@ -1626,10 +1627,10 @@ impl ThinBinderState {
 
     /// Get identifier name from a node index.
     fn get_identifier_name<'a>(&self, arena: &'a ThinNodeArena, idx: NodeIndex) -> Option<&'a str> {
-        if let Some(node) = arena.get(idx) {
-            if let Some(id) = arena.get_identifier(node) {
-                return Some(&id.escaped_text);
-            }
+        if let Some(node) = arena.get(idx)
+            && let Some(id) = arena.get_identifier(node)
+        {
+            return Some(&id.escaped_text);
         }
         None
     }
@@ -1703,55 +1704,55 @@ impl ThinBinderState {
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = arena.get_function(node) {
-                    if let Some(name) = self.get_identifier_name(arena, func.name) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(func) = arena.get_function(node)
+                    && let Some(name) = self.get_identifier_name(arena, func.name)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = arena.get_class(node) {
-                    if let Some(name) = self.get_identifier_name(arena, class.name) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(class) = arena.get_class(node)
+                    && let Some(name) = self.get_identifier_name(arena, class.name)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                if let Some(iface) = arena.get_interface(node) {
-                    if let Some(name) = self.get_identifier_name(arena, iface.name) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(iface) = arena.get_interface(node)
+                    && let Some(name) = self.get_identifier_name(arena, iface.name)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                if let Some(alias) = arena.get_type_alias(node) {
-                    if let Some(name) = self.get_identifier_name(arena, alias.name) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(alias) = arena.get_type_alias(node)
+                    && let Some(name) = self.get_identifier_name(arena, alias.name)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_decl) = arena.get_enum(node) {
-                    if let Some(name) = self.get_identifier_name(arena, enum_decl.name) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(enum_decl) = arena.get_enum(node)
+                    && let Some(name) = self.get_identifier_name(arena, enum_decl.name)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                if let Some(module) = arena.get_module(node) {
-                    if let Some(name) = self.get_identifier_name(arena, module.name) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(module) = arena.get_module(node)
+                    && let Some(name) = self.get_identifier_name(arena, module.name)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::IMPORT_DECLARATION => {
                 self.collect_import_names(arena, node, out);
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                if let Some(import) = arena.get_import_decl(node) {
-                    if let Some(name) = self.get_identifier_name(arena, import.import_clause) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(import) = arena.get_import_decl(node)
+                    && let Some(name) = self.get_identifier_name(arena, import.import_clause)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
@@ -1799,17 +1800,17 @@ impl ThinBinderState {
 
         match node.kind {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var_stmt) = arena.get_variable(node) {
-                    if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first() {
-                        self.collect_variable_decl_names(arena, decl_list_idx, false, out);
-                    }
+                if let Some(var_stmt) = arena.get_variable(node)
+                    && let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
+                {
+                    self.collect_variable_decl_names(arena, decl_list_idx, false, out);
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = arena.get_function(node) {
-                    if let Some(name) = self.get_identifier_name(arena, func.name) {
-                        out.insert(name.to_string());
-                    }
+                if let Some(func) = arena.get_function(node)
+                    && let Some(name) = self.get_identifier_name(arena, func.name)
+                {
+                    out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::BLOCK => {
@@ -1849,13 +1850,12 @@ impl ThinBinderState {
         idx: NodeIndex,
         out: &mut FxHashSet<String>,
     ) {
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::BLOCK {
-                if let Some(block) = arena.get_block(node) {
-                    for &stmt_idx in &block.statements.nodes {
-                        self.collect_hoisted_file_scope_names(arena, stmt_idx, out);
-                    }
-                }
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = arena.get_block(node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                self.collect_hoisted_file_scope_names(arena, stmt_idx, out);
             }
         }
     }
@@ -1879,17 +1879,17 @@ impl ThinBinderState {
         }
 
         for &decl_idx in &list.declarations.nodes {
-            if let Some(decl_node) = arena.get(decl_idx) {
-                if let Some(decl) = arena.get_variable_declaration(decl_node) {
-                    if let Some(name) = self.get_identifier_name(arena, decl.name) {
-                        out.insert(name.to_string());
-                    } else {
-                        let mut names = Vec::new();
-                        self.collect_binding_identifiers(arena, decl.name, &mut names);
-                        for ident_idx in names {
-                            if let Some(name) = self.get_identifier_name(arena, ident_idx) {
-                                out.insert(name.to_string());
-                            }
+            if let Some(decl_node) = arena.get(decl_idx)
+                && let Some(decl) = arena.get_variable_declaration(decl_node)
+            {
+                if let Some(name) = self.get_identifier_name(arena, decl.name) {
+                    out.insert(name.to_string());
+                } else {
+                    let mut names = Vec::new();
+                    self.collect_binding_identifiers(arena, decl.name, &mut names);
+                    for ident_idx in names {
+                        if let Some(name) = self.get_identifier_name(arena, ident_idx) {
+                            out.insert(name.to_string());
                         }
                     }
                 }
@@ -1903,39 +1903,38 @@ impl ThinBinderState {
         node: &ThinNode,
         out: &mut FxHashSet<String>,
     ) {
-        if let Some(import) = arena.get_import_decl(node) {
-            if let Some(clause_node) = arena.get(import.import_clause) {
-                if let Some(clause) = arena.get_import_clause(clause_node) {
-                    if !clause.name.is_none() {
-                        if let Some(name) = self.get_identifier_name(arena, clause.name) {
-                            out.insert(name.to_string());
-                        }
+        if let Some(import) = arena.get_import_decl(node)
+            && let Some(clause_node) = arena.get(import.import_clause)
+            && let Some(clause) = arena.get_import_clause(clause_node)
+        {
+            if !clause.name.is_none()
+                && let Some(name) = self.get_identifier_name(arena, clause.name)
+            {
+                out.insert(name.to_string());
+            }
+            if !clause.named_bindings.is_none()
+                && let Some(bindings_node) = arena.get(clause.named_bindings)
+            {
+                if bindings_node.kind == SyntaxKind::Identifier as u16 {
+                    if let Some(name) =
+                        self.get_identifier_name(arena, clause.named_bindings)
+                    {
+                        out.insert(name.to_string());
                     }
-                    if !clause.named_bindings.is_none() {
-                        if let Some(bindings_node) = arena.get(clause.named_bindings) {
-                            if bindings_node.kind == SyntaxKind::Identifier as u16 {
-                                if let Some(name) =
-                                    self.get_identifier_name(arena, clause.named_bindings)
-                                {
-                                    out.insert(name.to_string());
-                                }
-                            } else if let Some(named) = arena.get_named_imports(bindings_node) {
-                                for &spec_idx in &named.elements.nodes {
-                                    if let Some(spec_node) = arena.get(spec_idx) {
-                                        if let Some(spec) = arena.get_specifier(spec_node) {
-                                            let local_ident = if !spec.name.is_none() {
-                                                spec.name
-                                            } else {
-                                                spec.property_name
-                                            };
-                                            if let Some(name) =
-                                                self.get_identifier_name(arena, local_ident)
-                                            {
-                                                out.insert(name.to_string());
-                                            }
-                                        }
-                                    }
-                                }
+                } else if let Some(named) = arena.get_named_imports(bindings_node) {
+                    for &spec_idx in &named.elements.nodes {
+                        if let Some(spec_node) = arena.get(spec_idx)
+                            && let Some(spec) = arena.get_specifier(spec_node)
+                        {
+                            let local_ident = if !spec.name.is_none() {
+                                spec.name
+                            } else {
+                                spec.property_name
+                            };
+                            if let Some(name) =
+                                self.get_identifier_name(arena, local_ident)
+                            {
+                                out.insert(name.to_string());
                             }
                         }
                     }
@@ -2000,15 +1999,15 @@ impl ThinBinderState {
 
         for &decl_idx in &list.declarations.nodes {
             out.push(decl_idx);
-            if let Some(decl_node) = arena.get(decl_idx) {
-                if let Some(decl) = arena.get_variable_declaration(decl_node) {
-                    if let Some(_name) = self.get_identifier_name(arena, decl.name) {
-                        out.push(decl.name);
-                    } else {
-                        let mut names = Vec::new();
-                        self.collect_binding_identifiers(arena, decl.name, &mut names);
-                        out.extend(names);
-                    }
+            if let Some(decl_node) = arena.get(decl_idx)
+                && let Some(decl) = arena.get_variable_declaration(decl_node)
+            {
+                if self.get_identifier_name(arena, decl.name).is_some() {
+                    out.push(decl.name);
+                } else {
+                    let mut names = Vec::new();
+                    self.collect_binding_identifiers(arena, decl.name, &mut names);
+                    out.extend(names);
                 }
             }
         }
@@ -2020,32 +2019,31 @@ impl ThinBinderState {
         node: &ThinNode,
         out: &mut Vec<NodeIndex>,
     ) {
-        if let Some(import) = arena.get_import_decl(node) {
-            if let Some(clause_node) = arena.get(import.import_clause) {
-                if let Some(clause) = arena.get_import_clause(clause_node) {
-                    if !clause.name.is_none() {
-                        out.push(clause.name);
-                    }
-                    if !clause.named_bindings.is_none() {
-                        if let Some(bindings_node) = arena.get(clause.named_bindings) {
-                            if bindings_node.kind == SyntaxKind::Identifier as u16 {
-                                out.push(clause.named_bindings);
-                            } else if let Some(named) = arena.get_named_imports(bindings_node) {
-                                for &spec_idx in &named.elements.nodes {
-                                    out.push(spec_idx);
-                                    if let Some(spec_node) = arena.get(spec_idx) {
-                                        if let Some(spec) = arena.get_specifier(spec_node) {
-                                            let local_ident = if !spec.name.is_none() {
-                                                spec.name
-                                            } else {
-                                                spec.property_name
-                                            };
-                                            if !local_ident.is_none() {
-                                                out.push(local_ident);
-                                            }
-                                        }
-                                    }
-                                }
+        if let Some(import) = arena.get_import_decl(node)
+            && let Some(clause_node) = arena.get(import.import_clause)
+            && let Some(clause) = arena.get_import_clause(clause_node)
+        {
+            if !clause.name.is_none() {
+                out.push(clause.name);
+            }
+            if !clause.named_bindings.is_none()
+                && let Some(bindings_node) = arena.get(clause.named_bindings)
+            {
+                if bindings_node.kind == SyntaxKind::Identifier as u16 {
+                    out.push(clause.named_bindings);
+                } else if let Some(named) = arena.get_named_imports(bindings_node) {
+                    for &spec_idx in &named.elements.nodes {
+                        out.push(spec_idx);
+                        if let Some(spec_node) = arena.get(spec_idx)
+                            && let Some(spec) = arena.get_specifier(spec_node)
+                        {
+                            let local_ident = if !spec.name.is_none() {
+                                spec.name
+                            } else {
+                                spec.property_name
+                            };
+                            if !local_ident.is_none() {
+                                out.push(local_ident);
                             }
                         }
                     }
@@ -2085,10 +2083,10 @@ impl ThinBinderState {
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::AbstractKeyword as u16 {
-                        return true;
-                    }
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16
+                {
+                    return true;
                 }
             }
         }
@@ -2101,10 +2099,10 @@ impl ThinBinderState {
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-                        return true;
-                    }
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                {
+                    return true;
                 }
             }
         }
@@ -2117,10 +2115,10 @@ impl ThinBinderState {
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
-                        return true;
-                    }
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                {
+                    return true;
                 }
             }
         }
@@ -2133,10 +2131,10 @@ impl ThinBinderState {
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
-                        return true;
-                    }
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
                 }
             }
         }
