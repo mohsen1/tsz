@@ -1,0 +1,42 @@
+{
+  "name": "claude-orchestrator-action",
+  "version": "1.0.0",
+  "description": "Recursive hierarchical agent system GitHub Action",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint \"{src,test}/**/*.{ts,js}\"",
+    "format": "prettier -w .",
+    "test": "jest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.0",
+    "@anthropic-ai/sdk": "^0.20.2",
+    "fs-extra": "^11.2.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.13.0",
+    "eslint": "^9.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "jest": "^29.7.0",
+    "jest-mock-extended": "^3.0.5",
+    "prettier": "^3.3.3",
+    "tmp-promise": "^3.0.3",
+    "ts-jest": "^29.3.4",
+    "typescript-eslint": "^8.18.2",
+    "typescript": "^5.7.2"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/test/**/*.test.ts"
+    ],
+    "resetMocks": true
+  }
+}

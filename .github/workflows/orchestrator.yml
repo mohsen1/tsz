@@ -1,0 +1,84 @@
+name: AI Orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: 'The task description for the AI agents'
+        required: true
+      role:
+        description: 'Current role: director, architect, worker, or reviewer'
+        default: 'director'
+      parent_branch:
+        description: 'The branch this agent should report to'
+        default: 'main'
+      scope_path:
+        description: 'The directory this agent is responsible for'
+        default: '.'
+      task_context:
+        description: 'Optional task context passed down the chain'
+        required: false
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  swarm:
+    name: Run AI Swarm
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || (github.event.inputs.parent_branch || 'main') }}
+
+      - name: Display event information
+        run: |
+          echo "Event name: ${{ github.event_name }}"
+          echo "Role: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}"
+          echo "Goal: ${{ inputs.goal }}"
+          echo "Parent branch: ${{ inputs.parent_branch || 'main' }}"
+          echo "Scope path: ${{ inputs.scope_path || '.' }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install action dependencies
+        run: |
+          cd .github/actions/orchestrator-action
+          npm install
+
+      - name: Run Swarm Logic
+        id: swarm
+        uses: ./.github/actions/orchestrator-action
+        with:
+          anthropic_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          role: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}
+          goal: ${{ inputs.goal }}
+          parent_branch: ${{ inputs.parent_branch }}
+          scope_path: ${{ inputs.scope_path }}
+          task_context: ${{ inputs.task_context }}
+        continue-on-error: true
+
+      - name: Upload logs on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchestrator-logs-${{ github.run_id }}
+          path: |
+            ~/orchestrator-logs/
+            .github/actions/orchestrator-action/*.log
+          retention-days: 7
+          if-no-files-found: ignore
