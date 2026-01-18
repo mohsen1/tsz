@@ -1,2 +1,0 @@
-protected namespace M {
-}

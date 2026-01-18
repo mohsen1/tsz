@@ -54,13 +54,13 @@ docker run --rm \
     --cpus="$WORKERS" \
     -v "$WASM_DIR/pkg:/wasm-pkg:ro" \
     -v "$SCRIPT_DIR:/runner-src:ro" \
-    -v "$ROOT_DIR/ts-tests:/ts-tests:ro" \
+    -v "$ROOT_DIR/TypeScript/tests:/ts-tests:ro" \
     "$IMAGE_NAME" sh -c "
         # Create structure that matches runner paths:
         # __dirname = /app/differential-test
         # wasmPkgPath = resolve(__dirname, '../pkg') = /app/pkg
-        # conformanceDir = resolve(__dirname, '../ts-tests/cases/conformance') = /app/ts-tests/cases/conformance
-        # libPath = resolve(__dirname, '../ts-tests/lib/lib.d.ts') = /app/ts-tests/lib/lib.d.ts
+        # conformanceDir = resolve(__dirname, '../TypeScript/tests/cases/conformance') = /app/ts-tests/cases/conformance
+        # libPath = resolve(__dirname, '../TypeScript/tests/lib/lib.d.ts') = /app/ts-tests/lib/lib.d.ts
         mkdir -p /app/differential-test /app/pkg /app/ts-tests/cases /app/ts-tests/lib
         cp -r /wasm-pkg/* /app/pkg/
         cp -r /runner-src/*.mjs /runner-src/*.js /runner-src/package.json /app/differential-test/ 2>/dev/null || true

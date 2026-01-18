@@ -991,7 +991,7 @@ fn is_ambient_declaration(&self, node_idx: NodeIndex) -> bool {
 
 ### 13.3 Configuration
 - `src/compiler_options.rs` - Compiler options structure
-- Test files in `ts-tests/` - Contains `@directive` comments
+- Test files in `TypeScript/tests/` - Contains `@directive` comments
 
 ### 13.4 Documentation
 - `PROJECT_DIRECTION.md` - High-level project priorities
