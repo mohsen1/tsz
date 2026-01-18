@@ -123,7 +123,7 @@ impl DocumentFormattingProvider {
 
         if options.insert_spaces {
             cmd.arg("--use-tabs").arg("false");
-            cmd.arg(&format!("--tab-width={}", options.tab_size));
+            cmd.arg(format!("--tab-width={}", options.tab_size));
         } else {
             cmd.arg("--use-tabs").arg("true");
         }
