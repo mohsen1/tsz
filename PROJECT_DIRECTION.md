@@ -10,8 +10,8 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 |--------|-------|
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
-| Ignored Tests | 6 (infinite loops) |
-| Test-Aware Patterns | 39 in thin_checker.rs |
+| Ignored Tests | 7 total (5 infinite loops, 1 stack overflow, 1 utility) |
+| Test-Aware Patterns | 39 in thin_checker.rs (all in dead code after early return) |
 
 **Build Status:** Passes
 **Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
@@ -24,25 +24,40 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 Several tests have infinite loops and hang forever. These must be identified and marked with `#[ignore]` before any other work.
 
-**Currently Ignored (infinite loops):**
-- `test_class_es5_commonjs_class_exports` (transforms/class_es5_tests.rs)
+**Currently Ignored:**
+
+*Infinite Loops (5 tests):*
+- `test_class_es5_commonjs_debug_querybuilder` (transforms/class_es5_tests.rs)
 - `test_source_map_decorator_combined_advanced` (source_map_tests.rs)
 - `test_source_map_decorator_composition_es5_comprehensive` (source_map_tests.rs)
 - `test_source_map_decorator_composition_es5_method_params` (source_map_tests.rs)
 - `test_source_map_decorator_metadata_es5_parameter_decorators` (source_map_tests.rs)
 
+*Stack Overflow (1 test):*
+- `test_deep_binary_expression_type_check` (thin_checker_tests.rs) - needs iterative implementation
+
+*Utility (1 test):*
+- `test_print_type_sizes` (lib_tests.rs) - intentionally ignored, run manually with `--ignored`
+
 **Action:** Run tests with timeouts to find any remaining hanging tests.
 
 ### 2. Remove Test-Aware Code from Checker
 
-~~The checker has **24 places** that check file names to suppress errors for tests.~~ **COMPLETED**
+The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
 
-> **Status: RESOLVED**
-> All `file_name.contains` patterns have been removed from `src/thin_checker.rs`.
-> - Active code: Replaced with AST-based detection using parent traversal
-> - Dead code: Removed entirely by cleaning up disabled `check_unused_declarations()`
->
-> Verify: `grep -c 'file_name\.contains' src/thin_checker.rs` (should return 0)
+**Status:** All 39 `file_name.contains` patterns are now in dead code, located after an early return in `check_unused_declarations`. The entire block is scheduled for removal.
+
+**What to remove from `src/thin_checker.rs`:**
+```rust
+// BAD - This pattern appears 39 times and must be removed:
+let is_test_file = self.ctx.file_name.contains("conformance")
+    || self.ctx.file_name.contains("test")
+    || self.ctx.file_name.contains("cases");
+
+if is_test_file && self.ctx.file_name.contains("Symbol") {
+    return; // Suppressing errors for tests
+}
+```
 
 **The rule:** Source code must not know about tests. If a test fails, fix the underlying logic.
 
