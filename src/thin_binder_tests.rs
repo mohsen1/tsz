@@ -1,7 +1,20 @@
 //! Tests for ThinBinder
+//!
+//! This module contains tests for the thin binder implementation, organized into sections:
+//! - Basic declarations (variables, functions, classes, interfaces, etc.)
+//! - Import/export binding
+//! - Scope resolution and parameter binding
+//! - Namespace and enum exports
+//! - Symbol merging (namespace/class/function/enum merging)
+//! - Scope chain traversal
+//! - Module import resolution
 
 use crate::thin_binder::ThinBinderState;
 use crate::thin_parser::ThinParserState;
+
+// =============================================================================
+// Basic Declaration Binding Tests
+// =============================================================================
 
 #[test]
 fn test_thin_binder_variable_declaration() {
@@ -122,6 +135,10 @@ fn test_thin_binder_enum_declaration() {
     assert!(binder.file_locals.has("Color"));
 }
 
+// =============================================================================
+// Import/Export Binding Tests
+// =============================================================================
+
 #[test]
 fn test_thin_binder_import_declaration() {
     let mut parser = ThinParserState::new(
@@ -220,6 +237,22 @@ fn test_thin_binder_exported_const() {
     );
 }
 
+// =============================================================================
+// Scope Resolution and Parameter Binding Tests
+// =============================================================================
+
+/// Helper function to verify that a parameter reference in a function body
+/// correctly resolves to the parameter's symbol.
+///
+/// This is a core test for scope chain resolution - when we reference `node`
+/// inside a function body, it should resolve to the `node` parameter, not
+/// a global or any other symbol.
+///
+/// # Arguments
+/// * `source` - TypeScript source code containing a function
+/// * `function_name` - Name of the function to analyze
+/// * `param_name` - Name of the parameter to verify resolution for
+/// * `include_scopes` - Whether to include scope information in the binder
 fn assert_bound_state_resolves_param_impl(
     source: &str,
     function_name: &str,
@@ -362,10 +395,13 @@ fn assert_bound_state_resolves_param_impl(
     );
 }
 
+/// Wrapper for `assert_bound_state_resolves_param_impl` with scopes enabled.
 fn assert_bound_state_resolves_param(source: &str, function_name: &str, param_name: &str) {
     assert_bound_state_resolves_param_impl(source, function_name, param_name, true);
 }
 
+/// Wrapper for `assert_bound_state_resolves_param_impl` without scopes.
+/// Used to test fallback resolution when scope information is not available.
 fn assert_bound_state_resolves_param_without_scopes(
     source: &str,
     function_name: &str,
@@ -374,6 +410,7 @@ fn assert_bound_state_resolves_param_without_scopes(
     assert_bound_state_resolves_param_impl(source, function_name, param_name, false);
 }
 
+/// Checks if a node is within a container by walking up the parent chain.
 fn node_is_within(
     arena: &crate::parser::thin_node::ThinNodeArena,
     node_idx: crate::parser::NodeIndex,
@@ -617,6 +654,11 @@ export function getModuleInstanceStateForAliasTarget(
         "Expected for-of expression to resolve to statements declaration"
     );
 }
+
+// =============================================================================
+// Namespace and Enum Export Tests
+// =============================================================================
+
 #[test]
 fn test_namespace_binding_debug() {
     use crate::thin_binder::ThinBinderState;
@@ -720,6 +762,10 @@ var x: Alias;
         "Alias should have declarations"
     );
 }
+
+// =============================================================================
+// Symbol Merging Tests (Namespace/Class/Function/Enum)
+// =============================================================================
 
 #[test]
 fn test_namespace_exports_merge_across_decls() {
@@ -1045,6 +1091,12 @@ enum Merge {
     assert_eq!(exports.len(), 2, "Merge should have exactly 2 exports (namespace export extra + enum member A)");
 }
 
+// =============================================================================
+// Performance and Edge Case Tests
+// =============================================================================
+
+/// Tests that deeply nested binary expressions don't cause stack overflow.
+/// Uses 50,000 chained additions to stress test the binding walk.
 #[test]
 fn test_thin_binder_deep_binary_expression() {
     const COUNT: usize = 50000;
@@ -1066,7 +1118,10 @@ fn test_thin_binder_deep_binary_expression() {
     assert!(binder.file_locals.is_empty());
 }
 
-// BIND-12: Test namespace member resolution
+// =============================================================================
+// Namespace Member Resolution Tests
+// =============================================================================
+
 #[test]
 fn test_namespace_member_resolution_basic() {
     use crate::thin_binder::ThinBinderState;
@@ -1603,6 +1658,10 @@ const msg2 = ErrorCode.getMessage(ErrorCode.ServerError);
         "getMessage should be in ErrorCode exports"
     );
 }
+
+// =============================================================================
+// Scope Chain Traversal Tests
+// =============================================================================
 
 #[test]
 fn test_scope_chain_traversal() {
