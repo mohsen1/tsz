@@ -2963,16 +2963,11 @@ impl ThinBinderState {
             return true;
         };
 
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::BREAK_STATEMENT
-                || k == syntax_kind_ext::RETURN_STATEMENT
-                || k == syntax_kind_ext::THROW_STATEMENT
-                || k == syntax_kind_ext::CONTINUE_STATEMENT =>
-            {
-                false
-            }
-            _ => true,
-        }
+        let kind = stmt_node.kind;
+        !(kind == syntax_kind_ext::BREAK_STATEMENT
+            || kind == syntax_kind_ext::RETURN_STATEMENT
+            || kind == syntax_kind_ext::THROW_STATEMENT
+            || kind == syntax_kind_ext::CONTINUE_STATEMENT)
     }
 
     fn bind_try_statement(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
@@ -3510,31 +3505,31 @@ impl ThinBinderState {
                     syntax_kind_ext::VARIABLE_STATEMENT => arena
                         .get_variable(stmt_node)
                         .and_then(|v| v.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::FUNCTION_DECLARATION => arena
                         .get_function(stmt_node)
                         .and_then(|f| f.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::CLASS_DECLARATION => arena
                         .get_class(stmt_node)
                         .and_then(|c| c.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::INTERFACE_DECLARATION => arena
                         .get_interface(stmt_node)
                         .and_then(|i| i.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
                         .get_type_alias(stmt_node)
                         .and_then(|t| t.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::ENUM_DECLARATION => arena
                         .get_enum(stmt_node)
                         .and_then(|e| e.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::MODULE_DECLARATION => arena
                         .get_module(stmt_node)
                         .and_then(|m| m.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::EXPORT_DECLARATION => true, // export { x }
                     _ => false,
                 };
@@ -4261,7 +4256,7 @@ impl ThinBinderState {
 
         report.push_str(&format!("Expected symbols present: {}/{}\n", present.len(), Self::EXPECTED_GLOBAL_SYMBOLS.len()));
         if !missing.is_empty() {
-            report.push_str(&format!("\nMissing symbols:\n"));
+            report.push_str("\nMissing symbols:\n");
             for name in &missing {
                 report.push_str(&format!("  - {}\n", name));
             }
