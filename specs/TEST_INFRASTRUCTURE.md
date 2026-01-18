@@ -1,19 +1,12 @@
-<<<<<<< HEAD
-# Test Infrastructure Documentation
+# Test Infrastructure Specification
 
-This document describes how the test infrastructure works in the TypeScript compiler, including how test directives are parsed, how compiler options are configured, and the proper way to set up tests.
+## Executive Summary
 
-## Table of Contents
+This document specifies the testing infrastructure required to achieve TypeScript Compiler (TSC) conformance without polluting source code with test-aware logic. The key architectural principle is: **test infrastructure reads configuration from test files and passes it to the compiler, not the other way around**.
 
-1. [Overview](#overview)
-2. [Test Directive Parsing](#test-directive-parsing)
-3. [CompilerOptions Flow](#compileroptions-flow)
-4. [Configuring Tests Properly](#configuring-tests-properly)
-5. [Strict Mode Configuration](#strict-mode-configuration)
-6. [Example Workflow](#example-workflow)
-7. [Common Patterns](#common-patterns)
+---
 
-## Overview
+## 1. Overview
 
 The test infrastructure processes TypeScript test files that may contain special comment directives. These directives configure how the compiler parses, type-checks, and emits code. The infrastructure supports both single-file and multi-file tests.
 
@@ -24,7 +17,55 @@ The test infrastructure processes TypeScript test files that may contain special
 3. **Multi-File Support**: Tests can specify multiple files using `// @filename:` directives
 4. **Independence**: Each test should be self-contained with explicit option configuration
 
-## Test Directive Parsing
+### Problem Statement
+
+Current architectural debt:
+- Source code contains ~40+ `file_name.contains("conformance")` checks
+- Checker suppresses errors based on file path patterns
+- Test-specific logic leaks into production code paths
+- Violates separation of concerns (tests shouldn't affect source behavior)
+
+**The Rule:** Source code must not know about tests. If a test fails, fix the underlying logic, not by adding special cases for test file names.
+
+---
+
+## 2. How TypeScript's Test Suite Works
+
+TypeScript's conformance test suite uses a directive-based approach:
+
+### Test File Structure
+```typescript
+// @strict: true
+// @noImplicitAny: true
+// @target: ES2015
+
+// Test code here
+function add(a, b) {  // Should error with noImplicitAny
+    return a + b;
+}
+```
+
+### Multi-File Tests
+```typescript
+// @filename: a.ts
+export const x = 1;
+
+// @filename: b.ts
+import { x } from './a';
+const y: string = x;  // Should error: Type 'number' is not assignable to type 'string'
+```
+
+### How It Works
+1. **Test Runner** reads the test file
+2. **Directive Parser** extracts `@` directives from comments
+3. **Compiler** is invoked with the extracted options
+4. **Output** is compared to baseline files
+
+**Key Insight:** The compiler never sees the directives. The test infrastructure handles them.
+
+---
+
+## 3. Test Directive Parsing
 
 Test directives are special comments at the beginning of test files that configure compiler behavior.
 
@@ -94,7 +135,55 @@ function parseMultiFileTest(source) {
 }
 ```
 
-## CompilerOptions Flow
+### Example Implementation (JavaScript)
+
+```javascript
+/**
+ * Parse test directives from source code.
+ * Returns: { options: CompilerOptions, isMultiFile: boolean, files: File[] }
+ */
+function parseTestDirectives(code) {
+  const lines = code.split('\n');
+  const options = {};
+  let isMultiFile = false;
+  const files = [];
+  let currentFile = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Multi-file directive
+    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/);
+    if (filenameMatch) {
+      isMultiFile = true;
+      if (currentFile) files.push(currentFile);
+      currentFile = { name: filenameMatch[1], lines: [] };
+      continue;
+    }
+
+    // Compiler option directive
+    const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
+    if (optionMatch) {
+      const [, key, value] = optionMatch;
+      options[camelCase(key)] = parseValue(value);
+      continue;
+    }
+
+    // Regular code line
+    if (currentFile) {
+      currentFile.lines.push(line);
+    }
+  }
+
+  if (currentFile) files.push(currentFile);
+
+  return { options, isMultiFile, files };
+}
+```
+
+---
+
+## 4. CompilerOptions Flow
 
 The compiler options flow through several layers from test directives to actual type checking.
 
@@ -214,54 +303,86 @@ pub fn resolve_compiler_options(
 }
 ```
 
-## Configuring Tests Properly
+### Data Flow Diagram
 
-### Best Practices
-
-1. **Always Use Explicit Options**: Don't rely on file path inspection to determine compiler options
-2. **Use Directives**: Specify all required compiler options via test directives
-3. **Be Self-Contained**: Tests should work independently of their file location
-4. **Document Intent**: Use directives to make test requirements clear
-
-### Incorrect Approach (Anti-Pattern)
-
-```rust
-// DON'T: Infer options from file path
-fn should_use_strict_mode(file_path: &str) -> bool {
-    file_path.contains("strict") || file_path.contains("Strict")
-}
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     TEST INFRASTRUCTURE                          │
+│                     (conformance-runner.mjs)                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. Read test file from disk                                    │
+│     ↓                                                            │
+│  2. parseTestDirectives(code)                                   │
+│     ├─> Extract @strict, @noImplicitAny, etc.                   │
+│     ├─> Extract @filename for multi-file tests                  │
+│     └─> Build CompilerOptions object                            │
+│     ↓                                                            │
+│  3. Create compiler instance                                    │
+│     const parser = new ThinParser(fileName, code)               │
+│     ↓                                                            │
+│  4. Configure compiler with directives                          │
+│     parser.setCompilerOptions(JSON.stringify(options))          │
+│     ↓                                                            │
+│  5. Add lib files (if needed)                                   │
+│     parser.addLibFile("lib.d.ts", libSource)                    │
+│     ↓                                                            │
+│  6. Run compilation                                             │
+│     parser.parseSourceFile()                                    │
+│     parser.checkSourceFile()                                    │
+│     ↓                                                            │
+│  7. Extract diagnostics                                         │
+│     const result = parser.checkSourceFile()                     │
+│     ↓                                                            │
+│  8. Compare to baseline                                         │
+│     compareToBaseline(testFile, result.diagnostics)             │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                        WASM BOUNDARY                             │
+│                   (ThinParser public API)                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  setCompilerOptions(json: String)                               │
+│    ↓                                                             │
+│  Deserialize CompilerOptions                                    │
+│    ↓                                                             │
+│  Store in self.compiler_options                                 │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      SOURCE CODE                                 │
+│                   (src/thin_checker.rs)                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ThinCheckerState::new(                                         │
+│    arena,                                                        │
+│    binder,                                                       │
+│    type_interner,                                               │
+│    file_name,                                                    │
+│    checker_options  ← Derived from CompilerOptions              │
+│  )                                                               │
+│    ↓                                                             │
+│  Check types using configuration                                │
+│    if options.no_implicit_any && type_is_any(...) {             │
+│      emit_diagnostic(TS7006);                                   │
+│    }                                                             │
+│    ↓                                                             │
+│  Return diagnostics                                             │
+│                                                                  │
+│  NO FILE NAME CHECKS!                                           │
+│  NO if (file_name.contains("test")) { ... }                     │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-This approach is problematic because:
-- It couples test behavior to file system structure
-- It makes tests fragile when files are moved
-- It's not obvious from the test file what options are used
-- It violates the principle of explicit configuration
+---
 
-### Correct Approach
-
-```typescript
-// test-strict-mode.ts
-// @strict: true
-
-// Test code here
-let x: number = 42;
-```
-
-In the test infrastructure:
-
-```rust
-// Create checker with explicit strict flag
-let mut checker = ThinCheckerState::new(
-    arena,
-    binder,
-    types,
-    file_name,
-    strict  // Passed explicitly, not inferred
-);
-```
-
-## Strict Mode Configuration
+## 5. Strict Mode Configuration
 
 Strict mode is a meta-option that enables multiple strict checking flags.
 
@@ -289,194 +410,10 @@ impl<'a> CheckerContext<'a> {
             no_implicit_this: strict,
             // ... rest of initialization
         }
-=======
-# Test Infrastructure Specification
-
-## Executive Summary
-
-This document specifies the testing infrastructure required to achieve TypeScript Compiler (TSC) conformance without polluting source code with test-aware logic. The key architectural principle is: **test infrastructure reads configuration from test files and passes it to the compiler, not the other way around**.
-
-## Problem Statement
-
-Current architectural debt:
-- Source code contains ~40+ `file_name.contains("conformance")` checks
-- Checker suppresses errors based on file path patterns
-- Test-specific logic leaks into production code paths
-- Violates separation of concerns (tests shouldn't affect source behavior)
-
-**The Rule:** Source code must not know about tests. If a test fails, fix the underlying logic, not by adding special cases for test file names.
-
----
-
-## 1. Overview: How TypeScript's Test Suite Works
-
-TypeScript's conformance test suite uses a directive-based approach:
-
-### Test File Structure
-```typescript
-// @strict: true
-// @noImplicitAny: true
-// @target: ES2015
-
-// Test code here
-function add(a, b) {  // Should error with noImplicitAny
-    return a + b;
-}
-```
-
-### Multi-File Tests
-```typescript
-// @filename: a.ts
-export const x = 1;
-
-// @filename: b.ts
-import { x } from './a';
-const y: string = x;  // Should error: Type 'number' is not assignable to type 'string'
-```
-
-### How It Works
-1. **Test Runner** reads the test file
-2. **Directive Parser** extracts `@` directives from comments
-3. **Compiler** is invoked with the extracted options
-4. **Output** is compared to baseline files
-
-**Key Insight:** The compiler never sees the directives. The test infrastructure handles them.
-
----
-
-## 2. Current State: What's Missing
-
-Our test infrastructure has partial directive parsing but lacks:
-
-1. **Complete Directive Support**
-   - Currently parses some directives (`@strict`, `@target`, etc.)
-   - Missing many compiler options (`@noImplicitReturns`, `@strictPropertyInitialization`, etc.)
-   - No support for lib file directives (`@lib: es2015,dom`)
-
-2. **CompilerOptions Flow**
-   - Directives are parsed but not fully mapped to checker configuration
-   - `CompilerOptions` struct exists but isn't used consistently
-   - No validation of option values
-
-3. **Lib File Handling**
-   - Lib files detected by filename pattern in `WasmProgram.add_file()` (lines 1562-1566 in lib.rs)
-   - **WRONG:** This is test infrastructure logic in source code
-   - Should be handled by test runner, not compiler
-
-4. **Baseline Comparison**
-   - Test runner compares diagnostic codes
-   - Needs more sophisticated comparison (messages, positions, categories)
-
----
-
-## 3. Required Features
-
-### 3.1 Directive Parsing
-
-The test infrastructure must parse all TypeScript test directives.
-
-#### Supported Directives
-
-**Compiler Behavior:**
-- `@strict: boolean` - Enable all strict checks
-- `@noImplicitAny: boolean` - Raise error on implicit any types
-- `@noImplicitReturns: boolean` - Error on missing return statements
-- `@noImplicitThis: boolean` - Error on implicit this types
-- `@strictNullChecks: boolean` - Enable strict null checking
-- `@strictFunctionTypes: boolean` - Enable strict function type checking
-- `@strictPropertyInitialization: boolean` - Ensure properties are initialized
-- `@useUnknownInCatchVariables: boolean` - Catch variables are unknown, not any
-
-**Output Options:**
-- `@target: string` - ECMAScript target version (ES3, ES5, ES2015, ES2020, ESNext)
-- `@module: string` - Module system (CommonJS, ES2015, ESNext, Node16, NodeNext)
-- `@lib: string` - Comma-separated list of lib files (es5, es2015, dom, webworker)
-
-**JavaScript Support:**
-- `@allowJs: boolean` - Allow JavaScript files
-- `@checkJs: boolean` - Type check JavaScript files
-
-**Emit Options:**
-- `@noEmit: boolean` - Don't emit output
-- `@declaration: boolean` - Generate .d.ts files
-- `@outdir: string` - Output directory
-
-**Multi-File:**
-- `@filename: string` - Starts a new file section in multi-file tests
-
-#### Example Implementation (JavaScript)
-
-```javascript
-/**
- * Parse test directives from source code.
- * Returns: { options: CompilerOptions, isMultiFile: boolean, files: File[] }
- */
-function parseTestDirectives(code) {
-  const lines = code.split('\n');
-  const options = {};
-  let isMultiFile = false;
-  const files = [];
-  let currentFile = null;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Multi-file directive
-    const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/);
-    if (filenameMatch) {
-      isMultiFile = true;
-      if (currentFile) files.push(currentFile);
-      currentFile = { name: filenameMatch[1], lines: [] };
-      continue;
-    }
-
-    // Compiler option directive
-    const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
-    if (optionMatch) {
-      const [, key, value] = optionMatch;
-      options[camelCase(key)] = parseValue(value);
-      continue;
-    }
-
-    // Regular code line
-    if (currentFile) {
-      currentFile.lines.push(line);
-    }
-  }
-
-  if (currentFile) files.push(currentFile);
-
-  return { options, isMultiFile, files };
-}
-```
-
-### 3.2 CompilerOptions Configuration
-
-Map parsed directives to `CompilerOptions` struct:
-
-```rust
-// In src/lib.rs (already exists, lines 160-200)
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompilerOptions {
-    pub strict: bool,
-    pub no_implicit_any: bool,
-    pub strict_null_checks: bool,
-    pub strict_function_types: bool,
-    pub target: String,
-    pub module: String,
-    // Add more options as needed
-}
-
-impl CompilerOptions {
-    fn to_checker_options(&self) -> crate::cli::config::CheckerOptions {
-        // Convert to internal checker options
->>>>>>> origin/em-4
     }
 }
 ```
 
-<<<<<<< HEAD
 ### Individual Strict Flags
 
 Each flag can be controlled independently in non-strict mode:
@@ -554,64 +491,9 @@ function foo(x) {
 }
 ```
 
-## Example Workflow
-
-### Single-File Test
-
-```typescript
-// strictModeExample.ts
-// @strict: true
-// @target: es2015
-
-function processUser(user) {  // Will error: implicit any
-    return user.name.toUpperCase();
-}
-
-const result = processUser({ name: "Alice" });
-```
-
-**Flow:**
-
-1. Test file contains directives at the top
-2. Test runner extracts `strict: true` and `target: es2015`
-3. Creates `CompilerOptions { strict: Some(true), target: Some("es2015"), ... }`
-4. Resolves to `ResolvedCompilerOptions` with `checker.strict = true`
-5. Creates `CheckerContext` with all strict flags enabled
-6. `ThinCheckerState` performs type checking with strict mode
-7. Produces TS7006 diagnostic for implicit 'any' parameter
-
-### Multi-File Test
-
-```typescript
-// multiFileTest.ts
-// @strict: true
-=======
-**Flow:**
-```
-Test File → parseTestDirectives() → CompilerOptions JSON →
-ThinParser.setCompilerOptions() → CheckerOptions → ThinCheckerState
-```
-
-### 3.3 Baseline Comparison
-
-Compare actual output to expected baselines:
-
-```javascript
-function compareToBaseline(testFile, actualDiagnostics) {
-  const baselinePath = getBaselinePath(testFile);
-  const expectedDiagnostics = readBaseline(baselinePath);
-
-  return {
-    exactMatch: deepEqual(actualDiagnostics, expectedDiagnostics),
-    missingErrors: expectedDiagnostics.filter(e => !actualDiagnostics.includes(e)),
-    extraErrors: actualDiagnostics.filter(e => !expectedDiagnostics.includes(e)),
-  };
-}
-```
-
 ---
 
-## 4. The ts-tests/ Directory Structure
+## 6. The ts-tests/ Directory Structure
 
 ```
 ts-tests/
@@ -642,133 +524,7 @@ ts-tests/
 
 ---
 
-## 5. Data Flow: Test Directives → Checker Configuration
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     TEST INFRASTRUCTURE                          │
-│                     (conformance-runner.mjs)                     │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  1. Read test file from disk                                    │
-│     ↓                                                            │
-│  2. parseTestDirectives(code)                                   │
-│     ├─> Extract @strict, @noImplicitAny, etc.                   │
-│     ├─> Extract @filename for multi-file tests                  │
-│     └─> Build CompilerOptions object                            │
-│     ↓                                                            │
-│  3. Create compiler instance                                    │
-│     const parser = new ThinParser(fileName, code)               │
-│     ↓                                                            │
-│  4. Configure compiler with directives                          │
-│     parser.setCompilerOptions(JSON.stringify(options))          │
-│     ↓                                                            │
-│  5. Add lib files (if needed)                                   │
-│     parser.addLibFile("lib.d.ts", libSource)                    │
-│     ↓                                                            │
-│  6. Run compilation                                             │
-│     parser.parseSourceFile()                                    │
-│     parser.checkSourceFile()                                    │
-│     ↓                                                            │
-│  7. Extract diagnostics                                         │
-│     const result = parser.checkSourceFile()                     │
-│     ↓                                                            │
-│  8. Compare to baseline                                         │
-│     compareToBaseline(testFile, result.diagnostics)             │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                        WASM BOUNDARY                             │
-│                   (ThinParser public API)                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  setCompilerOptions(json: String)                               │
-│    ↓                                                             │
-│  Deserialize CompilerOptions                                    │
-│    ↓                                                             │
-│  Store in self.compiler_options                                 │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                      SOURCE CODE                                 │
-│                   (src/thin_checker.rs)                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ThinCheckerState::new(                                         │
-│    arena,                                                        │
-│    binder,                                                       │
-│    type_interner,                                               │
-│    file_name,                                                    │
-│    checker_options  ← Derived from CompilerOptions              │
-│  )                                                               │
-│    ↓                                                             │
-│  Check types using configuration                                │
-│    if options.no_implicit_any && type_is_any(...) {             │
-│      emit_diagnostic(TS7006);                                   │
-│    }                                                             │
-│    ↓                                                             │
-│  Return diagnostics                                             │
-│                                                                  │
-│  NO FILE NAME CHECKS!                                           │
-│  NO if (file_name.contains("test")) { ... }                     │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### ASCII Flow Diagram
-
-```
-Test File            Test Infrastructure           WASM API              Source Code
-─────────            ───────────────────           ────────              ───────────
-
-foo.test.ts
-  |
-  | // @strict: true
-  | // @noImplicitAny: true
-  |
-  v
-[Read & Parse]
-  |
-  v
-{
-  strict: true,   ──────────────────────────────>  ThinParser
-  noImplicitAny: true                               .setCompilerOptions(json)
-}                                                    |
-                                                     v
-                                                   Store options
-                                                     |
-[Invoke checker] ─────────────────────────────────> |
-                                                     v
-                                                   ThinParser.checkSourceFile()
-                                                     |
-                                                     v
-                                                   ThinCheckerState::new(
-                                                     ...,
-                                                     checker_options
-                                                   )
-                                                     |
-                                                     v
-                                                   if no_implicit_any {
-                                                     check_for_implicit_any()
-                                                   }
-                                                     |
-                                                     v
-[Collect results] <─────────────────────────────── diagnostics
-  |
-  v
-[Compare to baseline]
-  |
-  v
-[Report]
-```
-
----
-
-## 6. Examples of @ Directives and Their Meanings
+## 7. Examples of @ Directives and Their Meanings
 
 ### Example 1: Strict Mode Test
 
@@ -808,7 +564,7 @@ const p = Promise.resolve(42);
 ### Example 3: Multi-File Test
 
 ```typescript
->>>>>>> origin/em-4
+// @strict: true
 // @filename: lib.ts
 export interface User {
     name: string;
@@ -816,161 +572,6 @@ export interface User {
 }
 
 // @filename: main.ts
-<<<<<<< HEAD
-import { User } from "./lib";
-
-function greet(user: User) {
-    console.log(`Hello, ${user.name}!`);
-}
-
-greet({ name: "Bob" });  // TS2345: Missing 'age' property
-```
-
-**Flow:**
-
-1. Test runner detects `@filename:` directives
-2. Splits into two files: `lib.ts` and `main.ts`
-3. Header directives (`@strict: true`) apply to all files
-4. Each file is parsed, bound, and checked independently
-5. Import resolution connects the files
-6. Type checking detects missing property in strict mode
-
-### Rust Unit Test Pattern
-
-```rust
-#[test]
-fn test_strict_null_checks() {
-    let source = r#"
-let x: string = "hello";
-let y: string = null;  // Should error in strict mode
-"#;
-
-    let mut parser = ThinParserState::new(
-        "test.ts".to_string(),
-        source.to_string()
-    );
-    let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty());
-
-    let mut binder = ThinBinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-
-    // Test with strict mode OFF
-    let mut checker_non_strict = ThinCheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        false  // strict = false
-    );
-    checker_non_strict.check_source_file(root);
-    assert!(checker_non_strict.ctx.diagnostics.is_empty());
-
-    // Test with strict mode ON
-    let mut checker_strict = ThinCheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        true  // strict = true
-    );
-    checker_strict.check_source_file(root);
-
-    // Should have error: Type 'null' not assignable to 'string'
-    assert!(!checker_strict.ctx.diagnostics.is_empty());
-    let codes: Vec<u32> = checker_strict.ctx.diagnostics
-        .iter()
-        .map(|d| d.code)
-        .collect();
-    assert!(codes.contains(&2322));  // TS2322
-}
-```
-
-## Common Patterns
-
-### Pattern 1: Testing Strict vs Non-Strict Behavior
-
-```typescript
-// @strict: false
-// Test that shows different behavior in strict/non-strict mode
-
-let implicitAny = function(x) { return x; };  // OK in non-strict
-```
-
-```typescript
-// @strict: true
-// Same code should error in strict mode
-
-let implicitAny = function(x) { return x; };  // TS7006
-```
-
-### Pattern 2: Module Resolution Tests
-
-```typescript
-// @module: commonjs
-// @filename: a.ts
-export const value = 42;
-
-// @filename: b.ts
-import { value } from "./a";
-console.log(value);
-```
-
-### Pattern 3: Target-Specific Tests
-
-```typescript
-// @target: es5
-// Test ES5 output (no arrow functions, etc.)
-
-const add = (a: number, b: number) => a + b;
-// Should transpile to function expression
-```
-
-### Pattern 4: Declaration Emit Tests
-
-```typescript
-// @declaration: true
-// @emitDeclarationOnly: true
-
-export class MyClass {
-    private x: number;
-    constructor(x: number) {
-        this.x = x;
-    }
-}
-// Should generate .d.ts with public API only
-```
-
-### Pattern 5: JSX Tests
-
-```typescript
-// @jsx: preserve
-// @filename: Component.tsx
-
-const element = <div>Hello</div>;
-// JSX should be preserved in output
-```
-
-## Summary
-
-The test infrastructure follows these principles:
-
-1. **Explicit Configuration**: Always pass compiler options explicitly through directives or function parameters
-2. **No Path Inference**: Never infer compiler behavior from file paths
-3. **Self-Contained Tests**: Each test file specifies its own requirements
-4. **Clear Separation**: Distinct layers for parsing directives, resolving options, and type checking
-5. **Strict Mode Cascade**: The `strict` flag is a meta-option that enables multiple strict checks
-
-When writing tests:
-- Use `// @directive: value` comments to configure behavior
-- Create checkers with explicit `strict` parameter (true/false)
-- Don't rely on file naming conventions for configuration
-- Test both strict and non-strict modes explicitly when behavior differs
-
-This architecture ensures tests are portable, maintainable, and clearly express their requirements.
-=======
 import { User } from './lib';
 
 // Should error: Property 'email' does not exist on type 'User' (TS2339)
@@ -1009,11 +610,60 @@ document.getElementById('app');
 
 ---
 
-## 7. Implementation Requirements
+## 8. Configuring Tests Properly
 
-### 7.1 Where Directive Parsing Should Happen
+### Best Practices
 
-**✓ CORRECT: Test Infrastructure**
+1. **Always Use Explicit Options**: Don't rely on file path inspection to determine compiler options
+2. **Use Directives**: Specify all required compiler options via test directives
+3. **Be Self-Contained**: Tests should work independently of their file location
+4. **Document Intent**: Use directives to make test requirements clear
+
+### Incorrect Approach (Anti-Pattern)
+
+```rust
+// DON'T: Infer options from file path
+fn should_use_strict_mode(file_path: &str) -> bool {
+    file_path.contains("strict") || file_path.contains("Strict")
+}
+```
+
+This approach is problematic because:
+- It couples test behavior to file system structure
+- It makes tests fragile when files are moved
+- It's not obvious from the test file what options are used
+- It violates the principle of explicit configuration
+
+### Correct Approach
+
+```typescript
+// test-strict-mode.ts
+// @strict: true
+
+// Test code here
+let x: number = 42;
+```
+
+In the test infrastructure:
+
+```rust
+// Create checker with explicit strict flag
+let mut checker = ThinCheckerState::new(
+    arena,
+    binder,
+    types,
+    file_name,
+    strict  // Passed explicitly, not inferred
+);
+```
+
+---
+
+## 9. Implementation Requirements
+
+### 9.1 Where Directive Parsing Should Happen
+
+**CORRECT: Test Infrastructure**
 
 ```javascript
 // In differential-test/conformance-runner.mjs
@@ -1038,7 +688,7 @@ async function runTest(testFile) {
 }
 ```
 
-**✗ WRONG: Source Code**
+**WRONG: Source Code**
 
 ```rust
 // BAD - DO NOT DO THIS in src/thin_checker.rs
@@ -1056,7 +706,7 @@ fn check_source_file(&mut self, root: NodeIndex) {
 }
 ```
 
-### 7.2 How to Pass Configuration to the Checker
+### 9.2 How to Pass Configuration to the Checker
 
 **Use the existing `CompilerOptions` API:**
 
@@ -1094,7 +744,7 @@ const options = parseTestDirectives(code);
 parser.setCompilerOptions(JSON.stringify(options));
 ```
 
-### 7.3 How This Prevents Test-Aware Code in Source
+### 9.3 How This Prevents Test-Aware Code in Source
 
 **Before (BAD):**
 ```rust
@@ -1127,129 +777,65 @@ if self.options.no_implicit_any && is_implicit_any(type_id) {
 
 ---
 
-## 8. Integration with differential-test/run-conformance.sh
+## 10. Example Workflows
 
-The test runner script coordinates the entire testing process.
+### Single-File Test
 
-### Current Implementation (differential-test/conformance-runner.mjs)
+```typescript
+// strictModeExample.ts
+// @strict: true
+// @target: es2015
 
-Already implements most required features:
-
-```javascript
-// Line 68-125: parseTestDirectives() function
-function parseTestDirectives(code) {
-  // ✓ Parses @filename for multi-file tests
-  // ✓ Parses compiler options (@strict, @target, etc.)
-  // ✓ Returns { options, isMultiFile, cleanCode, files }
+function processUser(user) {  // Will error: implicit any
+    return user.name.toUpperCase();
 }
 
-// Line 130-196: runTsc() - reference implementation
-async function runTsc(code, fileName, testOptions) {
-  // ✓ Builds CompilerOptions from test directives
-  // ✓ Creates TypeScript program with options
-  // ✓ Returns diagnostics
-}
-
-// Line 284-332: runWasm() - our implementation
-async function runWasm(code, fileName, testOptions) {
-  const parser = new ThinParser(fileName, code);
-
-  // ✓ Adds lib files
-  if (!testOptions.nolib) {
-    parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
-  }
-
-  // MISSING: Need to pass testOptions to parser
-  // TODO: parser.setCompilerOptions(JSON.stringify(testOptions));
-
-  parser.parseSourceFile();
-  const checkResult = parser.checkSourceFile();
-
-  return { diagnostics: checkResult.diagnostics };
-}
+const result = processUser({ name: "Alice" });
 ```
 
-### Required Changes
+**Flow:**
 
-**1. Pass options to WASM compiler:**
+1. Test file contains directives at the top
+2. Test runner extracts `strict: true` and `target: es2015`
+3. Creates `CompilerOptions { strict: Some(true), target: Some("es2015"), ... }`
+4. Resolves to `ResolvedCompilerOptions` with `checker.strict = true`
+5. Creates `CheckerContext` with all strict flags enabled
+6. `ThinCheckerState` performs type checking with strict mode
+7. Produces TS7006 diagnostic for implicit 'any' parameter
 
-```javascript
-async function runWasm(code, fileName, testOptions) {
-  const parser = new ThinParser(fileName, code);
+### Multi-File Test
 
-  // ADD THIS: Configure compiler with test directives
-  parser.setCompilerOptions(JSON.stringify(testOptions));
-
-  if (!testOptions.nolib) {
-    parser.addLibFile(DEFAULT_LIB_NAME, DEFAULT_LIB_SOURCE);
-  }
-
-  parser.parseSourceFile();
-  const checkResult = parser.checkSourceFile();
-
-  return { diagnostics: checkResult.diagnostics };
+```typescript
+// multiFileTest.ts
+// @strict: true
+// @filename: lib.ts
+export interface User {
+    name: string;
+    age: number;
 }
-```
 
-**2. Support more directives:**
+// @filename: main.ts
+import { User } from "./lib";
 
-```javascript
-function parseTestDirectives(code) {
-  // ... existing code ...
-
-  // Add support for more options:
-  if (testOptions.noimplicitreturns !== undefined) {
-    compilerOptions.noImplicitReturns = testOptions.noimplicitreturns;
-  }
-  if (testOptions.strictpropertyinitialization !== undefined) {
-    compilerOptions.strictPropertyInitialization = testOptions.strictpropertyinitialization;
-  }
-  if (testOptions.lib) {
-    compilerOptions.lib = testOptions.lib.split(',').map(s => s.trim());
-  }
-
-  // ... rest of code ...
+function greet(user: User) {
+    console.log(`Hello, ${user.name}!`);
 }
+
+greet({ name: "Bob" });  // TS2345: Missing 'age' property
 ```
 
-**3. Remove lib file detection from WasmProgram:**
+**Flow:**
 
-Currently in src/lib.rs (lines 1562-1566):
-
-```rust
-// REMOVE THIS from WasmProgram.add_file():
-let is_lib_file = file_name.contains("lib.d.ts")
-    || file_name.contains("lib.es")
-    || file_name.contains("lib.dom")
-    || file_name.contains("lib.webworker")
-    || file_name.contains("lib.scripthost");
-```
-
-Instead, test infrastructure should explicitly specify lib files:
-
-```javascript
-// In test runner
-if (testOptions.lib) {
-  for (const libName of testOptions.lib) {
-    const libPath = getLibPath(libName);
-    const libSource = readFileSync(libPath);
-    parser.addLibFile(libName, libSource);
-  }
-}
-```
-
-Or use the new `markAsLibFile()` API (lines 342-345):
-
-```rust
-#[wasm_bindgen(js_name = markAsLibFile)]
-pub fn mark_as_lib_file(&mut self, file_id: u32) {
-    self.lib_file_ids.insert(file_id);
-}
-```
+1. Test runner detects `@filename:` directives
+2. Splits into two files: `lib.ts` and `main.ts`
+3. Header directives (`@strict: true`) apply to all files
+4. Each file is parsed, bound, and checked independently
+5. Import resolution connects the files
+6. Type checking detects missing property in strict mode
 
 ---
 
-## 9. Architecture Overview
+## 11. Architecture Overview
 
 ### Component Responsibilities
 
@@ -1349,7 +935,74 @@ pub fn mark_as_lib_file(&mut self, file_id: u32) {
 
 ---
 
-## 10. Implementation Checklist
+## 12. Common Patterns
+
+### Pattern 1: Testing Strict vs Non-Strict Behavior
+
+```typescript
+// @strict: false
+// Test that shows different behavior in strict/non-strict mode
+
+let implicitAny = function(x) { return x; };  // OK in non-strict
+```
+
+```typescript
+// @strict: true
+// Same code should error in strict mode
+
+let implicitAny = function(x) { return x; };  // TS7006
+```
+
+### Pattern 2: Module Resolution Tests
+
+```typescript
+// @module: commonjs
+// @filename: a.ts
+export const value = 42;
+
+// @filename: b.ts
+import { value } from "./a";
+console.log(value);
+```
+
+### Pattern 3: Target-Specific Tests
+
+```typescript
+// @target: es5
+// Test ES5 output (no arrow functions, etc.)
+
+const add = (a: number, b: number) => a + b;
+// Should transpile to function expression
+```
+
+### Pattern 4: Declaration Emit Tests
+
+```typescript
+// @declaration: true
+// @emitDeclarationOnly: true
+
+export class MyClass {
+    private x: number;
+    constructor(x: number) {
+        this.x = x;
+    }
+}
+// Should generate .d.ts with public API only
+```
+
+### Pattern 5: JSX Tests
+
+```typescript
+// @jsx: preserve
+// @filename: Component.tsx
+
+const element = <div>Hello</div>;
+// JSX should be preserved in output
+```
+
+---
+
+## 13. Implementation Checklist
 
 ### Phase 1: Test Infrastructure Enhancements
 
@@ -1382,7 +1035,7 @@ pub fn mark_as_lib_file(&mut self, file_id: u32) {
 
 ---
 
-## 11. Success Criteria
+## 14. Success Criteria
 
 1. **No Test-Aware Code**
    - Zero `file_name.contains()` checks in src/
@@ -1446,69 +1099,33 @@ pub fn mark_as_lib_file(&mut self, file_id: u32) {
 
 ---
 
-## Appendix B: Migration Path for Existing Code
+## Summary
 
-### Step 1: Identify Test-Aware Checks
+The test infrastructure follows these principles:
 
-```bash
-# Find all file name checks
-grep -r "file_name.contains" src/
+1. **Explicit Configuration**: Always pass compiler options explicitly through directives or function parameters
+2. **No Path Inference**: Never infer compiler behavior from file paths
+3. **Self-Contained Tests**: Each test file specifies its own requirements
+4. **Clear Separation**: Distinct layers for parsing directives, resolving options, and type checking
+5. **Strict Mode Cascade**: The `strict` flag is a meta-option that enables multiple strict checks
 
-# Find test-specific conditions
-grep -r "is_test" src/
-grep -r "conformance" src/
-```
+When writing tests:
+- Use `// @directive: value` comments to configure behavior
+- Create checkers with explicit `strict` parameter (true/false)
+- Don't rely on file naming conventions for configuration
+- Test both strict and non-strict modes explicitly when behavior differs
 
-### Step 2: For Each Check, Determine the Intent
-
-Example:
-```rust
-// Current code
-if file_name.contains("strict") {
-    self.options.strict = true;  // Force strict mode
-}
-```
-
-Ask: "Why does this test need different behavior?"
-Answer: "It should have strict mode enabled"
-
-Solution: Test infrastructure should pass `@strict: true` directive
-
-### Step 3: Replace with Option-Based Logic
-
-```rust
-// Before
-if file_name.contains("strict") {
-    // special logic
-}
-
-// After
-if self.options.strict {
-    // same logic, but controlled by options
-}
-```
-
-### Step 4: Update Test Infrastructure
-
-```javascript
-// Test file has:
-// @strict: true
-
-// Test runner now:
-const options = parseTestDirectives(code);
-parser.setCompilerOptions(JSON.stringify(options));
-```
+This architecture ensures tests are portable, maintainable, and clearly express their requirements.
 
 ---
 
-## Conclusion
+**Document Version**: 1.1
+**Last Updated**: 2025-01-17
+**Status**: Active
 
-This architecture achieves two critical goals:
+---
 
-1. **Clean Source Code**: The compiler implements TypeScript semantics without test-aware hacks
-2. **Comprehensive Testing**: Tests can configure the compiler to match any scenario
-
-By following the principle "test infrastructure reads configuration from test files and passes it to the compiler", we maintain a clear separation of concerns and ensure the compiler remains production-ready.
-
-**Remember:** If a test fails, fix the underlying logic, not by adding special cases for test file names.
->>>>>>> origin/em-4
+**Related Documents**:
+- `PROJECT_DIRECTION.md` - Overall project priorities and rules
+- `specs/ARCHITECTURE_CLEANUP.md` - Architecture cleanup documentation
+- `specs/DIAGNOSTICS.md` - Diagnostic implementation guidelines
