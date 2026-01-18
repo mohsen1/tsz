@@ -15064,17 +15064,6 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
-            // Additional Symbol-specific suppression for ES5 Symbol polyfill patterns
-            // In ES5SymbolProperty tests, `Symbol` is redefined and used in computed properties
-            if is_test_file && (
-                self.ctx.file_name.contains("ES5Symbol")
-                || self.ctx.file_name.contains("SymbolProperty")
-                || (self.ctx.file_name.contains("Symbol") && name_str == "Symbol")
-                || (name_str == "Symbol" && self.ctx.file_name.contains("ES5"))
-            ) {
-                continue;
-            }
-
             // Skip short test variables that are likely used in computed properties
             // Many TS conformance tests use short names that are referenced dynamically
             if name_str.len() <= 6 && (name_str == "Op" || name_str == "Po") {
