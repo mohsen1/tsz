@@ -49,9 +49,6 @@ jobs:
       - name: Create config directory
         run: mkdir -p ~/cco-config
 
-      - name: Write api-keys.json (z.ai format)
-        run: echo '${{ secrets.API_KEYS_JSON_RAW }}' > ~/cco-config/api-keys.json
-
       - name: Write orchestrator.json
         run: |
           cat > ~/cco-config/orchestrator.json << 'EOF'
@@ -60,19 +57,16 @@ jobs:
             "branch": "main",
             "model": "opus",
             "workerCount": 8,
-            "engineerManagerGroupSize": 4,
+            "groupSize": 4,
             "cloneDepth": 100,
             "maxRunDurationMinutes": 360,
-            "authMode": "api-keys-first",
+            "authMode": "oauth",
             "useRunBranch": false
           }
           EOF
 
       - name: Verify config files
         run: |
-          echo "=== api-keys.json ==="
-          cat ~/cco-config/api-keys.json
-          echo ""
           echo "=== orchestrator.json ==="
           cat ~/cco-config/orchestrator.json
 
@@ -93,6 +87,7 @@ jobs:
           cco start --config ~/cco-config
         env:
           # z.ai API configuration
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
           API_TIMEOUT_MS: "3000000"
 
