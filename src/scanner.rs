@@ -216,6 +216,7 @@ impl SyntaxKind {
 
     /// Safely convert a u16 to SyntaxKind if it's a valid token kind.
     /// Returns None for extended syntax kinds (AST nodes > 166).
+    #[allow(unsafe_code)]
     pub fn try_from_u16(value: u16) -> Option<SyntaxKind> {
         // Static assertion: SyntaxKind must be repr(u16) and same size as u16
         const _: () = assert!(
@@ -229,7 +230,8 @@ impl SyntaxKind {
             // 1. SyntaxKind is #[repr(u16)] (checked at compile time above)
             // 2. The value is in the valid enum range (0..=LAST_TOKEN)
             // 3. SyntaxKind has contiguous values starting from 0
-            Some(unsafe { std::mem::transmute(value) })
+            #[allow(clippy::missing_transmute_annotations)]
+            Some(unsafe { std::mem::transmute::<u16, SyntaxKind>(value) })
         } else {
             None
         }
