@@ -70,7 +70,7 @@ struct TemplateParts {
 }
 
 /// Maximum recursion depth for expression/statement emission to prevent infinite loops
-const MAX_RECURSION_DEPTH: u32 = 500;
+const MAX_RECURSION_DEPTH: u32 = 200;
 
 /// ES5 class emitter - emits ES5 IIFE pattern for classes
 pub struct ClassES5Emitter<'a> {
