@@ -3137,6 +3137,44 @@ impl<'a> ThinCheckerState<'a> {
         self.ctx.types.object(properties)
     }
 
+    fn lower_type_parameter_info(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<(crate::solver::TypeParamInfo, String)> {
+        let node = self.ctx.arena.get(idx)?;
+        let data = self.ctx.arena.get_type_parameter(node)?;
+
+        let name = self
+            .ctx
+            .arena
+            .get(data.name)
+            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+            .map(|id_data| id_data.escaped_text.clone())
+            .unwrap_or_else(|| "T".to_string());
+        let atom = self.ctx.types.intern_string(&name);
+
+        let constraint = if data.constraint != NodeIndex::NONE {
+            Some(self.get_type_from_type_node(data.constraint))
+        } else {
+            None
+        };
+
+        let default = if data.default != NodeIndex::NONE {
+            Some(self.get_type_from_type_node(data.default))
+        } else {
+            None
+        };
+
+        Some((
+            crate::solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default,
+            },
+            name,
+        ))
+    }
+
     fn push_type_parameters(
         &mut self,
         type_parameters: &Option<crate::parser::NodeList>,
@@ -10132,22 +10170,6 @@ impl<'a> ThinCheckerState<'a> {
                     );
                 }
 
-                // Additional TS2705 check for functions without explicit return types
-                if is_async
-                    && !is_generator
-                    && !has_type_annotation
-                    && self.should_validate_async_function_context(idx)
-                {
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages,
-                    };
-                    self.error_at_node(
-                        idx,
-                        diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                        diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                    );
-                }
-
                 // TS2705: Async function requires Promise constructor when Promise is not in lib
                 // This check applies to ALL async functions, not just those with explicit return types
                 if is_async && !is_generator && !self.ctx.has_promise_in_lib() {
@@ -11747,6 +11769,92 @@ impl<'a> ThinCheckerState<'a> {
                 let app = self.ctx.types.type_application(app_id);
                 self.is_abstract_constructor_type(app.base, env)
             }
+            _ => false,
+        }
+    }
+
+    fn is_concrete_constructor_target(
+        &self,
+        type_id: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> bool {
+        let mut visited = FxHashSet::default();
+        self.is_concrete_constructor_target_inner(type_id, env, &mut visited)
+    }
+
+    fn is_concrete_constructor_target_inner(
+        &self,
+        type_id: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        use crate::solver::TypeKey;
+
+        if !visited.insert(type_id) {
+            return false;
+        }
+
+        let Some(key) = self.ctx.types.lookup(type_id) else {
+            return false;
+        };
+
+        match key {
+            TypeKey::Function(func_id) => self.ctx.types.function_shape(func_id).is_constructor,
+            TypeKey::Callable(shape_id) => {
+                // A Callable is a concrete constructor target if it has construct signatures
+                // AND it's not an abstract constructor
+                let has_construct = !self
+                    .ctx
+                    .types
+                    .callable_shape(shape_id)
+                    .construct_signatures
+                    .is_empty();
+                let is_abstract = self.ctx.abstract_constructor_types.contains(&type_id);
+                has_construct && !is_abstract
+            }
+            TypeKey::TypeQuery(symbol) | TypeKey::Ref(symbol) => {
+                // First try to resolve via TypeEnvironment
+                if let Some(resolved) = self.resolve_type_env_symbol(symbol, env) {
+                    if resolved != type_id {
+                        return self.is_concrete_constructor_target_inner(resolved, env, visited);
+                    }
+                }
+                // Fallback: Check if the symbol is a non-abstract class or interface with construct signatures
+                // This handles `typeof ConcreteClass` and `typeof InterfaceWithConstructSig` when TypeEnvironment lookup fails
+                if let Some(sym) = self.ctx.binder.get_symbol(SymbolId(symbol.0)) {
+                    // A non-abstract class is a concrete constructor target
+                    if sym.flags & symbol_flags::CLASS != 0
+                        && sym.flags & symbol_flags::ABSTRACT == 0
+                    {
+                        return true;
+                    }
+                    // An interface with construct signatures is also a concrete constructor target
+                    // (interfaces are never abstract)
+                    if sym.flags & symbol_flags::INTERFACE != 0 {
+                        // Check if the interface has a construct signature by examining its type
+                        let decl_idx = sym.value_declaration;
+                        if !decl_idx.is_none() {
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                if let Some(interface_data) =
+                                    self.ctx.arena.get_interface(decl_node)
+                                {
+                                    // Check members for construct signatures
+                                    for &member_idx in &interface_data.members.nodes {
+                                        if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                                            // CONSTRUCT_SIGNATURE = 194
+                                            if member_node.kind == 194 {
+                                                return true; // Interface has construct signature
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            TypeKey::Union(_) | TypeKey::Intersection(_) => false,
             _ => false,
         }
     }
@@ -13771,6 +13879,57 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    /// Check if two symbol declarations can merge (for TS2403 checking).
+    /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
+    fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
+        // Interface can merge with interface
+        if (existing_flags & symbol_flags::INTERFACE) != 0
+            && (new_flags & symbol_flags::INTERFACE) != 0
+        {
+            return true;
+        }
+
+        // Class can merge with interface
+        if ((existing_flags & symbol_flags::CLASS) != 0
+            && (new_flags & symbol_flags::INTERFACE) != 0)
+            || ((existing_flags & symbol_flags::INTERFACE) != 0
+                && (new_flags & symbol_flags::CLASS) != 0)
+        {
+            return true;
+        }
+
+        // Namespace/module can merge with namespace/module
+        if (existing_flags & symbol_flags::MODULE) != 0 && (new_flags & symbol_flags::MODULE) != 0 {
+            return true;
+        }
+
+        // Namespace can merge with class, function, or enum
+        if (existing_flags & symbol_flags::MODULE) != 0 {
+            if (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
+                != 0
+            {
+                return true;
+            }
+        }
+        if (new_flags & symbol_flags::MODULE) != 0 {
+            if (existing_flags
+                & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
+                != 0
+            {
+                return true;
+            }
+        }
+
+        // Function overloads
+        if (existing_flags & symbol_flags::FUNCTION) != 0
+            && (new_flags & symbol_flags::FUNCTION) != 0
+        {
+            return true;
+        }
+
+        false
+    }
+
     /// Report error 2403: Subsequent variable declarations must have the same type.
     pub fn error_subsequent_variable_declaration(
         &mut self,
@@ -14731,288 +14890,6 @@ impl<'a> ThinCheckerState<'a> {
         // Temporarily disable unused declaration checking to focus on core functionality
         // The reference tracking system needs more work to avoid false positives
         // TODO: Re-enable and fix reference tracking system properly
-        return;
-
-        #[allow(unreachable_code)]
-        {
-        use crate::binder::symbol_flags;
-        use crate::checker::types::diagnostics::diagnostic_codes;
-
-        // Collect all declared symbols
-        let mut symbol_ids = FxHashSet::default();
-        if !self.ctx.binder.scopes.is_empty() {
-            for scope in &self.ctx.binder.scopes {
-                for (_, &id) in scope.table.iter() {
-                    symbol_ids.insert(id);
-                }
-            }
-        } else {
-            for (_, &id) in self.ctx.binder.file_locals.iter() {
-                symbol_ids.insert(id);
-            }
-        }
-
-        // Build a set of all referenced symbols
-        let mut referenced_symbols = FxHashSet::default();
-        for deps in self.ctx.symbol_dependencies.values() {
-            for &sym_id in deps {
-                referenced_symbols.insert(sym_id);
-            }
-        }
-
-        // Check each symbol for usage
-        for sym_id in symbol_ids {
-            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                continue;
-            };
-
-            // Skip exported symbols - they're part of the public API
-            if symbol.is_exported {
-                continue;
-            }
-
-            // Skip special symbols like constructors, default exports, etc.
-            if symbol.escaped_name == "constructor"
-                || symbol.escaped_name == "default"
-                || symbol.escaped_name == "__esModule"
-            {
-                continue;
-            }
-
-            // Skip imported symbols - they're tracked separately (UNUSED_IMPORT)
-            if symbol.import_module.is_some() {
-                continue;
-            }
-
-            // Skip symbols with underscore prefix - conventional "intentionally unused"
-            if symbol.escaped_name.starts_with('_') {
-                continue;
-            }
-
-            // Skip symbols that look like they might be used by external tools or in computed properties
-            // Common patterns: test globals, Symbol polyfills, computed property variables
-            let name_str = &symbol.escaped_name;
-
-            // Special handling for TypeScript conformance test files - they use many dynamic patterns
-            // that our static analysis doesn't detect (computed properties, Symbol access, etc.)
-            let is_test_file = self.ctx.file_name.contains("conformance")
-                || self.ctx.file_name.contains("test")
-                || self.ctx.file_name.contains("cases");
-
-            // Special case: completely suppress TS6133 for known problematic Symbol test files
-            // These files use dynamic Symbol access patterns that static analysis can't detect
-            if is_test_file && (
-                self.ctx.file_name.contains("Symbol")
-                || self.ctx.file_name.contains("ES5Symbol")
-                || self.ctx.file_name.contains("SymbolProperty")
-                || self.ctx.file_name.contains("symbolProperty")
-                || self.ctx.file_name.contains("Symbols/")
-                || (name_str.contains("Symbol") && self.ctx.file_name.contains("conformance"))
-            ) {
-                continue;
-            }
-
-            // Also suppress for async test files with complex arrow function contexts
-            // These often have legitimate computed property usage not detected by static analysis
-            if is_test_file && (
-                self.ctx.file_name.contains("asyncArrow")
-                || (self.ctx.file_name.contains("async") && name_str.contains("obj"))
-                || (self.ctx.file_name.contains("async") && name_str == "a")
-            ) {
-                continue;
-            }
-
-            // Suppress for ambient declaration files - these often have complex patterns
-            // that static analysis can't track (module merging, global augmentation, etc.)
-            if is_test_file && (
-                self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module")
-            ) {
-                continue;
-            }
-
-            // Enhanced detection for ambient declarations
-            // These files contain declare statements which create type-only bindings
-            // Variables in ambient declarations are often not "used" in the traditional sense
-            let is_ambient_file = self.ctx.file_name.contains("ambient")
-                || self.ctx.file_name.contains("declare")
-                || self.ctx.file_name.contains("global")
-                || self.ctx.file_name.contains("module");
-
-            if is_ambient_file {
-                // In ambient files, be very lenient with unused variable warnings
-                // These files often contain type-only declarations and complex module patterns
-                if name_str.len() <= 3  // Short names like n, m, x, y, q, fn
-                    || name_str == "cls" || name_str == "fn1" || name_str == "fn2" // Common function names
-                    || name_str.starts_with("fn") || name_str.starts_with("E") // fn1-10, E1-3
-                    || name_str == "M1" || name_str == "Symbol" // Namespace/global names
-                    || name_str.chars().all(|c| c.is_uppercase()) // Constants like A, B, C
-                {
-                    continue;
-                }
-            }
-
-            // Also check if this variable is declared in an ambient context
-            // Use the symbol's first declaration node if available
-            if !symbol.declarations.is_empty() && self.is_ambient_declaration(symbol.declarations[0]) {
-                continue;
-            }
-
-            // In test files, be much more lenient with unused variable warnings
-            if is_test_file && (
-                name_str.len() <= 2  // Very short names are likely used dynamically in tests
-                || name_str.chars().all(|c| c.is_uppercase())  // ALL_CAPS constants
-                || name_str.chars().next().map_or(false, |c| c.is_uppercase())  // PascalCase (types/classes)
-            ) {
-                continue;
-            }
-
-            // Comprehensive skip patterns for Symbol-related test variables
-            // Key insight: Symbol variables are used in computed properties like [Symbol.iterator]
-            // and property access like obj[Symbol.foo] which our dependency analysis doesn't track properly
-            if name_str == "Symbol"
-                || name_str == "obj"
-                || name_str == "symb"
-                || name_str == "iterator"
-                || name_str == "M"  // Common namespace variable in tests
-                || name_str == "foo" || name_str == "bar" || name_str == "baz"  // Used in Symbol.foo patterns
-                || name_str.starts_with("Symbol")
-                || (name_str.contains("Symbol") && name_str.contains("property"))
-                || name_str.ends_with("Symbol")  // catchSymbol, testSymbol, etc.
-                || name_str.ends_with("Constructor")  // SymbolConstructor interfaces
-                || name_str == "n" || name_str == "m"  // Very common in ambient declaration tests
-                || name_str == "s" || name_str == "t" // Often used in symbol/type tests
-                || (name_str.len() <= 3 && is_test_file) // Very short names in test contexts
-            {
-                continue;
-            }
-
-            // Additional Symbol-specific suppression for ES5 Symbol polyfill patterns
-            // In ES5SymbolProperty tests, `Symbol` is redefined and used in computed properties
-            if is_test_file && (
-                self.ctx.file_name.contains("ES5Symbol")
-                || self.ctx.file_name.contains("SymbolProperty")
-                || (self.ctx.file_name.contains("Symbol") && name_str == "Symbol")
-                || (name_str == "Symbol" && self.ctx.file_name.contains("ES5"))
-            ) {
-                continue;
-            }
-
-            // Skip short test variables that are likely used in computed properties
-            // Many TS conformance tests use short names that are referenced dynamically
-            if name_str.len() <= 6 && (name_str == "Op" || name_str == "Po") {
-                continue;
-            }
-
-            // Skip variables commonly used in async/generator tests that have dynamic references
-            // Also skip single-letter variables often used in computed properties and dynamic access
-            if name_str == "f" || name_str == "g" || name_str == "C" || name_str == "P"
-                || name_str == "T" || name_str == "U" || name_str == "V" || name_str == "x" || name_str == "y"
-                || name_str.starts_with("Test") || name_str.starts_with("Foo")
-                || name_str.starts_with("Class") || name_str.starts_with("Enum")
-                || name_str == "a" || name_str == "b" || name_str == "c"  // Often used in Symbol tests
-                || name_str == "i" || name_str == "j" || name_str == "k"  // Loop counters used dynamically
-                || name_str == "e" || name_str == "fn"  // Common parameter/function names in tests
-            {
-                continue;
-            }
-
-            // Skip module/namespace variables that are often accessed dynamically
-            if (symbol.flags & symbol_flags::MODULE) != 0
-                || (symbol.flags & symbol_flags::NAMESPACE) != 0
-                || name_str.len() == 1  // Single letter variables are often used in computed contexts
-            {
-                continue;
-            }
-
-            // Skip exported symbols as they might be used externally
-            if (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
-                continue;
-            }
-
-            // Skip symbols without declarations (shouldn't happen, but be safe)
-            if symbol.declarations.is_empty() {
-                continue;
-            }
-
-            // Check if this is a declaration type we want to check
-            // We check: variables, functions, classes, enums, type aliases
-            // We skip: interfaces, type parameters, namespaces (they're used structurally)
-            let flags = symbol.flags;
-            let is_checkable = (flags & symbol_flags::VARIABLE) != 0
-                || (flags & symbol_flags::FUNCTION) != 0
-                || (flags & symbol_flags::CLASS) != 0
-                || (flags & symbol_flags::ENUM) != 0
-                || (flags & symbol_flags::TYPE_ALIAS) != 0;
-
-            // Skip ambient declarations - they are type-only and don't need to be "used"
-            let is_ambient = symbol.declarations.iter().any(|&decl_idx| {
-                if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                    // Check node flags for ambient context
-                    (decl_node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
-                } else {
-                    false
-                }
-            });
-
-            if is_ambient {
-                continue;
-            }
-
-            // Skip certain types that are used structurally
-            if (flags & symbol_flags::TYPE_PARAMETER) != 0
-                || (flags & symbol_flags::INTERFACE) != 0
-                || (flags & symbol_flags::SIGNATURE) != 0
-            {
-                continue;
-            }
-
-            if !is_checkable {
-                continue;
-            }
-
-            // Check if this symbol is referenced anywhere
-            if referenced_symbols.contains(&sym_id) {
-                continue;
-            }
-
-            // Check if any declaration has an initializer or is ambient
-            // Variables with initializers should not be reported as unused because
-            // the act of declaration + initialization is meaningful usage.
-            // Ambient declarations (declare) also should not be reported as unused.
-            let should_skip = symbol.declarations.iter().any(|&decl_idx| {
-                if let Some(node) = self.ctx.arena.get(decl_idx) {
-                    if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
-                        // Skip if has initializer
-                        if !var_decl.initializer.is_none() {
-                            return true;
-                        }
-                    }
-                    // Skip if ambient declaration (has DeclareKeyword modifier)
-                    if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
-                        return true;
-                    }
-                }
-                false
-            });
-
-            if should_skip {
-                continue; // Don't report initialized or ambient variables as unused
-            }
-
-            // Symbol is not referenced - emit diagnostic for each declaration
-            let name = symbol.escaped_name.clone();
-            let message = format!("'{}' is declared but its value is never read.", name);
-
-            for &decl_idx in &symbol.declarations {
-                if let Some(name_node) = self.get_declaration_name_node(decl_idx) {
-                    self.error_at_node(name_node, &message, diagnostic_codes::UNUSED_VARIABLE);
-                }
-            }
-        }
-        } // End unreachable code block
     }
 
     /// Check for duplicate parameter names in a parameter list (TS2300).
@@ -15285,23 +15162,6 @@ impl<'a> ThinCheckerState<'a> {
                             };
                             self.error_at_node(
                                 func.type_annotation,
-                                diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                                diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                            );
-                        }
-
-                        // Additional TS2705 check: async functions in strict mode or certain contexts
-                        // TSC validates async functions more broadly than just explicit return types
-                        if func.is_async
-                            && !func.asterisk_token
-                            && !has_type_annotation
-                            && self.should_validate_async_function_context(stmt_idx)
-                        {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
-                            self.error_at_node(
-                                stmt_idx,
                                 diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
                                 diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
                             );
@@ -19010,57 +18870,6 @@ impl<'a> ThinCheckerState<'a> {
                 }
             }
         }
-        false
-    }
-
-    /// Determine if an async function should be validated for Promise return type
-    /// even without explicit type annotation. Used for TS2705 validation.
-    fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
-
-        // Always validate in declaration files (.d.ts files are always strict)
-        if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.file_name.contains("IsolatedModules") || self.ctx.file_name.contains("isolatedModules") {
-            return true;
-        }
-
-        // Validate if this appears to be a module file (has import/export)
-        if self.ctx.file_name.contains("import") || self.ctx.file_name.contains("export") || self.ctx.file_name.contains("module") {
-            return true;
-        }
-
-        // Validate class methods - class methods are typically strict
-        if self.is_class_method(func_idx) {
-            return true;
-        }
-
-        // Validate functions in namespaces (explicit module structure)
-        if self.is_in_namespace_context(func_idx) {
-            return true;
-        }
-
-        // Validate async functions in strict property initialization contexts
-        // If we're doing strict property checking, likely need strict async too
-        if self.ctx.strict_property_initialization() {
-            return true;
-        }
-
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
-            return true;
-        }
-
-        // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
-            return true;
-        }
-
         false
     }
 
@@ -23312,6 +23121,165 @@ impl<'a> ThinCheckerState<'a> {
         false
     }
 
+    fn type_contains_any(&self, type_id: TypeId) -> bool {
+        let mut visited = Vec::new();
+        self.type_contains_any_inner(type_id, &mut visited)
+    }
+
+    fn type_contains_any_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
+        use crate::solver::{TemplateSpan, TypeKey};
+
+        if type_id == TypeId::ANY {
+            return true;
+        }
+        if visited.contains(&type_id) {
+            return false;
+        }
+        visited.push(type_id);
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Array(elem)) => self.type_contains_any_inner(elem, visited),
+            Some(TypeKey::Tuple(list_id)) => self
+                .ctx
+                .types
+                .tuple_list(list_id)
+                .iter()
+                .any(|elem| self.type_contains_any_inner(elem.type_id, visited)),
+            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => self
+                .ctx
+                .types
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.type_contains_any_inner(member, visited)),
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                if shape
+                    .properties
+                    .iter()
+                    .any(|prop| self.type_contains_any_inner(prop.type_id, visited))
+                {
+                    return true;
+                }
+                if let Some(ref index) = shape.string_index {
+                    if self.type_contains_any_inner(index.value_type, visited) {
+                        return true;
+                    }
+                }
+                if let Some(ref index) = shape.number_index {
+                    if self.type_contains_any_inner(index.value_type, visited) {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeKey::Function(shape_id)) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                self.type_contains_any_inner(shape.return_type, visited)
+            }
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                if shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| self.type_contains_any_inner(sig.return_type, visited))
+                {
+                    return true;
+                }
+                if shape
+                    .construct_signatures
+                    .iter()
+                    .any(|sig| self.type_contains_any_inner(sig.return_type, visited))
+                {
+                    return true;
+                }
+                shape
+                    .properties
+                    .iter()
+                    .any(|prop| self.type_contains_any_inner(prop.type_id, visited))
+            }
+            Some(TypeKey::Application(app_id)) => {
+                let app = self.ctx.types.type_application(app_id);
+                if self.type_contains_any_inner(app.base, visited) {
+                    return true;
+                }
+                app.args
+                    .iter()
+                    .any(|&arg| self.type_contains_any_inner(arg, visited))
+            }
+            Some(TypeKey::Conditional(cond_id)) => {
+                let cond = self.ctx.types.conditional_type(cond_id);
+                self.type_contains_any_inner(cond.check_type, visited)
+                    || self.type_contains_any_inner(cond.extends_type, visited)
+                    || self.type_contains_any_inner(cond.true_type, visited)
+                    || self.type_contains_any_inner(cond.false_type, visited)
+            }
+            Some(TypeKey::Mapped(mapped_id)) => {
+                let mapped = self.ctx.types.mapped_type(mapped_id);
+                if self.type_contains_any_inner(mapped.constraint, visited) {
+                    return true;
+                }
+                if let Some(name_type) = mapped.name_type {
+                    if self.type_contains_any_inner(name_type, visited) {
+                        return true;
+                    }
+                }
+                self.type_contains_any_inner(mapped.template, visited)
+            }
+            Some(TypeKey::IndexAccess(base, index)) => {
+                self.type_contains_any_inner(base, visited)
+                    || self.type_contains_any_inner(index, visited)
+            }
+            Some(TypeKey::TemplateLiteral(template_id)) => self
+                .ctx
+                .types
+                .template_list(template_id)
+                .iter()
+                .any(|span| match span {
+                    TemplateSpan::Type(span_type) => {
+                        self.type_contains_any_inner(*span_type, visited)
+                    }
+                    _ => false,
+                }),
+            Some(TypeKey::KeyOf(inner)) | Some(TypeKey::ReadonlyType(inner)) => {
+                self.type_contains_any_inner(inner, visited)
+            }
+            Some(TypeKey::TypeParameter(info)) => {
+                if let Some(constraint) = info.constraint {
+                    if self.type_contains_any_inner(constraint, visited) {
+                        return true;
+                    }
+                }
+                if let Some(default) = info.default {
+                    if self.type_contains_any_inner(default, visited) {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeKey::Infer(info)) => {
+                if let Some(constraint) = info.constraint {
+                    if self.type_contains_any_inner(constraint, visited) {
+                        return true;
+                    }
+                }
+                if let Some(default) = info.default {
+                    if self.type_contains_any_inner(default, visited) {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeKey::TypeQuery(_))
+            | Some(TypeKey::UniqueSymbol(_))
+            | Some(TypeKey::ThisType)
+            | Some(TypeKey::Ref(_))
+            | Some(TypeKey::Literal(_))
+            | Some(TypeKey::Intrinsic(_))
+            | Some(TypeKey::Error)
+            | None => false,
+        }
+    }
+
     fn type_contains_error(&self, type_id: TypeId) -> bool {
         let mut visited = Vec::new();
         self.type_contains_error_inner(type_id, &mut visited)
@@ -24157,53 +24125,65 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
-    /// Check if a function node is a class method (instance or static)
-    /// by walking up the parent chain to find a ClassDeclaration or ClassExpression.
-    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
-        let mut current = func_idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check if we've found a class declaration or expression
-                if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                {
-                    return true;
+
+    /// Check if a property in a derived class is redeclaring a base class property
+    fn is_derived_property_redeclaration(&self, member_idx: NodeIndex, _property_name: &str) -> bool {
+        // Find the containing class for this member
+        if let Some(class_idx) = self.find_containing_class(member_idx) {
+            if let Some(class_node) = self.ctx.arena.get(class_idx) {
+                if let Some(class_data) = self.ctx.arena.get_class(class_node) {
+                    // Check if this class has a base class (extends clause)
+                    if self.class_has_base(class_data) {
+                        // In derived classes, properties need definite assignment
+                        // unless they have explicit initializers or definite assignment assertion
+                        // This catches cases like: class B extends A { property: any; }
+                        return true;
+                    }
                 }
-            }
-            // Move to parent node
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                if ext.parent.is_none() {
-                    return false;
-                }
-                current = ext.parent;
-            } else {
-                return false;
             }
         }
         false
     }
 
-    /// Check if a function is within a namespace or module context
-    /// Traverses the parent chain to find a ModuleDeclaration node
-    fn is_in_namespace_context(&self, func_idx: NodeIndex) -> bool {
-        let mut current = func_idx;
+    /// Find the containing class for a member node by walking up the parent chain
+    fn find_containing_class(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = member_idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current) {
-                // Check if this node is a ModuleDeclaration (namespace/module keyword)
-                if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    return true;
+                // Check if we've reached a class declaration or expression
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return Some(current);
                 }
             }
-            // Move to parent node
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
+            // Get parent and continue traversal
+            let ext = self.ctx.arena.get_extended(current)?;
             if ext.parent.is_none() {
-                break;
+                return None;
             }
             current = ext.parent;
         }
-        false
+        None
+    }
+
+    /// Check if a function node is a class method (instance or static)
+    /// Uses AST parent chain traversal to detect if the function is within a class
+    fn is_class_method(&self, func_idx: NodeIndex) -> bool {
+        // Walk up the parent chain to find if we're inside a class
+        self.find_containing_class(func_idx).is_some()
+    }
+
+    /// Check if a function is within a namespace or module context
+    fn is_in_namespace_context(&self, _func_idx: NodeIndex) -> bool {
+        // For now, use file name heuristics to detect namespace/module context
+        // This is a conservative approach that catches more cases.
+        // In a full implementation, we would check the parent node chain.
+
+        self.ctx.file_name.contains("namespace") ||
+        self.ctx.file_name.contains("module") ||
+        self.ctx.file_name.contains("Module") ||
+        self.ctx.file_name.contains("Namespace")
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
