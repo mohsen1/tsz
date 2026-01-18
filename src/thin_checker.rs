@@ -24282,15 +24282,84 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check if a variable is declared in an ambient context (declare keyword)
-    fn is_ambient_declaration(&self, _var_idx: NodeIndex) -> bool {
-        // For now, use file name heuristics to detect ambient declarations
-        // This is a conservative approach that catches most ambient declaration contexts
-        // In a full implementation, we would traverse the AST to find 'declare' modifiers
+    /// by traversing the AST to find 'declare' modifiers or AMBIENT flags
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        use crate::parser::syntax_kind_ext;
 
-        // Files with 'ambient' in their name are ambient declaration test files
-        self.ctx.file_name.contains("ambient")
-            || self.ctx.file_name.contains("declare")
-            || self.ctx.file_name.contains("Ambient")
-            || self.ctx.file_name.contains("Declare")
+        // Declaration files (.d.ts) are inherently ambient
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
+        let mut current = var_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check node flags for AMBIENT
+                if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
+                    return true;
+                }
+
+                // Check for declare modifier on various statement types
+                match node.kind {
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                        if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                            if self.has_declare_modifier(&var_stmt.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        if let Some(func) = self.ctx.arena.get_function(node) {
+                            if self.has_declare_modifier(&func.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        if let Some(class) = self.ctx.arena.get_class(node) {
+                            if self.has_declare_modifier(&class.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                        // Namespace/module declarations - check modifiers via arena
+                        if let Some(module) = self.ctx.arena.get_module(node) {
+                            if self.has_declare_modifier(&module.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                        if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+                            if self.has_declare_modifier(&enum_decl.modifiers) {
+                                return true;
+                            }
+                        }
+                    }
+                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        // Interfaces are always ambient in nature
+                        return true;
+                    }
+                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                        // Type aliases are always ambient in nature
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Move to parent
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+
+        false
     }
 }
