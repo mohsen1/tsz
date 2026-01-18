@@ -9,10 +9,6 @@
 //! - Uses ThinBinderState for symbol information
 //! - Uses Solver's TypeInterner for structural type equality (O(1) comparison)
 //! - Uses solver::lower::TypeLower for AST-to-type conversion
-//!
-//! # Status
-//!
-//! Phase 7.5 integration - using solver type system for type checking.
 
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::types::diagnostics::{

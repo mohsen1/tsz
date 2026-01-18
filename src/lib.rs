@@ -21,18 +21,18 @@ pub use scanner_impl::*;
 #[cfg(test)]
 mod scanner_impl_tests;
 
-// Parser AST types (Phase 3)
+// Parser AST types
 pub mod parser;
 
-// ThinParser - Cache-optimized parser using ThinNodeArena (Phase 0.1)
+// ThinParser - Cache-optimized parser using ThinNodeArena
 pub mod thin_parser;
 #[cfg(test)]
 mod thin_parser_tests;
 
-// Binder types and implementation (Phase 4)
+// Binder types and implementation
 pub mod binder;
 
-// ThinBinder - Binder using ThinNodeArena (Phase 0.1)
+// ThinBinder - Binder using ThinNodeArena
 pub mod thin_binder;
 #[cfg(test)]
 mod thin_binder_tests;
@@ -40,18 +40,18 @@ mod thin_binder_tests;
 // Module Resolution Debugging - Logging for symbol table operations and scope lookups
 pub mod module_resolution_debug;
 
-// Lib Loader - Load and merge lib.d.ts symbols into the binder (BIND-10)
+// Lib Loader - Load and merge lib.d.ts symbols into the binder
 pub mod lib_loader;
 
-// Checker types and implementation (Phase 5)
+// Checker types and implementation
 pub mod checker;
 
-// ThinChecker - Type checker using ThinNodeArena (Phase 0.1)
+// ThinChecker - Type checker using ThinNodeArena
 pub mod thin_checker;
 #[cfg(test)]
 mod thin_checker_tests;
 
-// ThinEmitter - Emitter using ThinNodeArena (Phase 0.1)
+// ThinEmitter - Emitter using ThinNodeArena
 #[cfg(test)]
 mod emitter_edge_case_tests;
 #[cfg(test)]
@@ -64,15 +64,15 @@ mod thin_emitter_tests;
 #[cfg(test)]
 mod transform_api_tests;
 
-// Parallel processing with Rayon (Phase 0.4)
+// Parallel processing with Rayon
 pub mod parallel;
 
-// Comment preservation (Phase 6.3)
+// Comment preservation
 pub mod comments;
 #[cfg(test)]
 mod comments_tests;
 
-// Source Map generation (Phase 6.2)
+// Source Map generation
 pub mod source_map;
 #[cfg(test)]
 mod source_map_tests;
@@ -83,21 +83,21 @@ pub mod source_writer;
 // EmitContext - Transform state management for the emitter
 pub mod emit_context;
 
-// TransformContext - Projection layer for AST transforms (Phase 6.1)
+// TransformContext - Projection layer for AST transforms
 pub mod transform_context;
 
-// LoweringPass - Phase 1 of Transform/Print architecture (Phase 6.1)
+// LoweringPass - Transform/Print architecture lowering pass
 pub mod lowering_pass;
 
-// Declaration file emitter (Phase 6.4)
+// Declaration file emitter
 pub mod declaration_emitter;
 #[cfg(test)]
 mod declaration_emitter_tests;
 
-// JavaScript transforms (Phase 6.5+)
+// JavaScript transforms
 pub mod transforms;
 
-// Query-based Structural Solver (Phase 7.5)
+// Query-based Structural Solver
 pub mod solver;
 
 // LSP (Language Server Protocol) support
@@ -314,7 +314,7 @@ impl WasmTransformContext {
 }
 
 /// High-performance parser using ThinNode architecture (16 bytes/node).
-/// This is the optimized path for Phase 8 test suite evaluation.
+/// Provides cache-optimized AST construction for improved performance.
 #[wasm_bindgen]
 pub struct ThinParser {
     parser: ThinParserState,
@@ -1936,7 +1936,7 @@ pub enum Comparison {
 }
 
 // =============================================================================
-// String Comparison Utilities (Phase 1.1)
+// String Comparison Utilities
 // =============================================================================
 
 /// Compare two strings using a case-sensitive ordinal comparison.
@@ -2074,7 +2074,7 @@ pub fn equate_strings_case_insensitive(a: &str, b: &str) -> bool {
 }
 
 // =============================================================================
-// Path Utilities (Phase 1.2)
+// Path Utilities
 // =============================================================================
 
 /// Directory separator used internally (forward slash).
@@ -2218,7 +2218,7 @@ pub fn to_file_name_lower_case(x: &str) -> String {
 }
 
 // =============================================================================
-// Character Classification (Phase 1.3 - Scanner Prep)
+// Character Classification
 // =============================================================================
 
 use crate::char_codes::CharacterCodes;
