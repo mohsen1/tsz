@@ -37,7 +37,11 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
 
-> **Cleanup in Progress:** Workers are actively refactoring these patterns using AST-based detection instead of file name heuristics. Verify current count with: `grep -c 'file_name\.contains' src/thin_checker.rs`
+> **Pattern Breakdown:**
+> - **24 patterns in dead code**: In `check_unused_declarations()` - function disabled with early `return;`
+> - **15 patterns in active code**: In `should_validate_async_function_context()`, `is_class_method()`, `is_in_namespace_context()`, `is_ambient_declaration()`
+>
+> Verify count: `grep -c 'file_name\.contains' src/thin_checker.rs`
 
 **What to remove from `src/thin_checker.rs`:**
 ```rust
