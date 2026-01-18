@@ -145,7 +145,6 @@ use crate::lsp::{
     GoToDefinition, HoverProvider, ImportCandidate, ImportCandidateKind, RenameProvider,
     SemanticTokensProvider, SignatureHelpProvider,
 };
-use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::TypeInterner;
 use crate::thin_binder::ThinBinderState;
 use crate::thin_checker::ThinCheckerState;

@@ -686,7 +686,7 @@ impl<'a> ThinCheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-        let is_function_declaration = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+        let _is_function_declaration = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
 
         match node.kind {
             // Identifiers
@@ -2488,7 +2488,6 @@ impl<'a> ThinCheckerState<'a> {
     /// Get type from a type query node (typeof X).
     /// Creates a TypeQuery type with the actual SymbolId from the binder.
     fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::binder::SymbolId;
         use crate::solver::{SymbolRef, TypeKey};
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -3225,7 +3224,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Second pass: Now resolve constraints and defaults with all type parameters in scope
-        for (idx, &param_idx) in param_indices.iter().enumerate() {
+        for (_idx, &param_idx) in param_indices.iter().enumerate() {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -3992,7 +3991,6 @@ impl<'a> ThinCheckerState<'a> {
         sig: &crate::parser::thin_node::SignatureData,
     ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
         use crate::solver::ParamInfo;
-        use std::sync::Arc;
 
         let Some(ref params_list) = sig.parameters else {
             return (Vec::new(), None);
@@ -5018,7 +5016,7 @@ impl<'a> ThinCheckerState<'a> {
         let mut accessors: FxHashMap<Atom, AccessorAggregate> = FxHashMap::default();
         let mut static_string_index: Option<crate::solver::IndexSignature> = None;
         let mut static_number_index: Option<crate::solver::IndexSignature> = None;
-        let mut has_static_nominal_members = false;
+        let mut _has_static_nominal_members = false;
 
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -5034,7 +5032,7 @@ impl<'a> ThinCheckerState<'a> {
                         continue;
                     }
                     if self.member_requires_nominal(&prop.modifiers, prop.name) {
-                        has_static_nominal_members = true;
+                        _has_static_nominal_members = true;
                     }
                     let Some(name) = self.get_property_name(prop.name) else {
                         continue;
@@ -5069,7 +5067,7 @@ impl<'a> ThinCheckerState<'a> {
                         continue;
                     }
                     if self.member_requires_nominal(&method.modifiers, method.name) {
-                        has_static_nominal_members = true;
+                        _has_static_nominal_members = true;
                     }
                     let Some(name) = self.get_property_name(method.name) else {
                         continue;
@@ -5098,7 +5096,7 @@ impl<'a> ThinCheckerState<'a> {
                         continue;
                     }
                     if self.member_requires_nominal(&accessor.modifiers, accessor.name) {
-                        has_static_nominal_members = true;
+                        _has_static_nominal_members = true;
                     }
                     let Some(name) = self.get_property_name(accessor.name) else {
                         continue;
@@ -5922,8 +5920,7 @@ impl<'a> ThinCheckerState<'a> {
     /// 4. `any` type - TypeScript doesn't check definite assignment for `any`
     /// 5. `typeof undefined` - resolves to `undefined`, which allows uninitialized use
     fn symbol_type_allows_uninitialized(&mut self, sym_id: SymbolId) -> bool {
-        use crate::binder::SymbolId as BinderSymbolId;
-        use crate::solver::{LiteralValue, SymbolRef, TypeKey};
+        use crate::solver::{SymbolRef, TypeKey};
 
         let declared_type = self.get_type_of_symbol(sym_id);
 
@@ -5943,7 +5940,7 @@ impl<'a> ThinCheckerState<'a> {
 
         // Handle TypeQuery (typeof x) - resolve the underlying type
         if let TypeKey::TypeQuery(SymbolRef(ref_sym_id)) = type_key {
-            let resolved = self.get_type_of_symbol(BinderSymbolId(ref_sym_id));
+            let resolved = self.get_type_of_symbol(SymbolId(ref_sym_id));
             // Check if resolved type allows uninitialized use
             if resolved == TypeId::UNDEFINED || resolved == TypeId::ANY {
                 return true;
@@ -7420,7 +7417,7 @@ impl<'a> ThinCheckerState<'a> {
         if callee_type == TypeId::ANY {
             // Still need to check arguments for definite assignment (TS2454) and other errors
             // Create a dummy context helper that returns None for all parameter types
-            let ctx_helper = ContextualTypeContext::new(self.ctx.types);
+            let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
@@ -7431,7 +7428,7 @@ impl<'a> ThinCheckerState<'a> {
         }
         if callee_type == TypeId::ERROR {
             // Still need to check arguments for definite assignment (TS2454) and other errors
-            let ctx_helper = ContextualTypeContext::new(self.ctx.types);
+            let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
@@ -9449,7 +9446,7 @@ impl<'a> ThinCheckerState<'a> {
                     };
                 }
 
-                let mut element_types: Vec<TypeId> =
+                let element_types: Vec<TypeId> =
                     elements.iter().map(|element| element.type_id).collect();
                 if element_types.is_empty() {
                     TypeId::NEVER
@@ -11052,7 +11049,6 @@ impl<'a> ThinCheckerState<'a> {
     /// Get the type of an enum member (STRING or NUMBER) by finding its parent enum.
     /// This is used when enum members are accessed through namespace exports.
     fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
-        use crate::parser::node_flags;
 
         // Get the extended node to find parent
         let Some(ext) = self.ctx.arena.get_extended(member_decl) else {
@@ -11761,7 +11757,7 @@ impl<'a> ThinCheckerState<'a> {
                     resolved != type_id && self.is_abstract_constructor_type(resolved, env)
                 })
                 .unwrap_or(false),
-            TypeKey::Callable(shape_id) => {
+            TypeKey::Callable(_shape_id) => {
                 // For Callable types (constructor types), check if they're in the abstract set
                 // This handles `typeof AbstractClass` which returns a Callable type
                 if self.ctx.abstract_constructor_types.contains(&type_id) {
@@ -11841,8 +11837,6 @@ impl<'a> ThinCheckerState<'a> {
                 }
                 // Fallback: Check if the symbol is a non-abstract class or interface with construct signatures
                 // This handles `typeof ConcreteClass` and `typeof InterfaceWithConstructSig` when TypeEnvironment lookup fails
-                use crate::binder::SymbolId;
-                use crate::solver::SymbolRef;
                 if let Some(sym) = self.ctx.binder.get_symbol(SymbolId(symbol.0)) {
                     // A non-abstract class is a concrete constructor target
                     if sym.flags & symbol_flags::CLASS != 0
@@ -12273,8 +12267,7 @@ impl<'a> ThinCheckerState<'a> {
     /// Evaluate a mapped type constraint with symbol resolution.
     /// Handles keyof Ref(sym) by resolving the Ref and getting its keys.
     fn evaluate_mapped_constraint_with_resolution(&mut self, constraint: TypeId) -> TypeId {
-        use crate::binder::SymbolId;
-        use crate::solver::{LiteralValue, SymbolRef, TypeKey};
+        use crate::solver::TypeKey;
 
         let Some(key) = self.ctx.types.lookup(constraint) else {
             return constraint;
@@ -12313,7 +12306,7 @@ impl<'a> ThinCheckerState<'a> {
         self.ensure_application_symbols_resolved(type_id);
 
         let env = self.ctx.type_env.borrow();
-        let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
+        let evaluator = TypeEvaluator::with_resolver(self.ctx.types, &*env);
         evaluator.evaluate(type_id)
     }
 
@@ -13092,7 +13085,6 @@ impl<'a> ThinCheckerState<'a> {
     /// Ensure all symbols referenced in Application types are resolved in the type_env.
     /// This walks the type structure and calls get_type_of_symbol for any Application base symbols.
     fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
-        use crate::solver::TypeKey;
         use std::collections::HashSet;
 
         let mut visited: HashSet<TypeId> = HashSet::new();
@@ -14253,7 +14245,7 @@ impl<'a> ThinCheckerState<'a> {
     /// the type is resolved through the normal property access mechanism.
     ///
     /// Returns the base class constructor type if in a derived class, otherwise ERROR.
-    fn get_type_of_super_keyword(&mut self, idx: NodeIndex) -> TypeId {
+    fn get_type_of_super_keyword(&mut self, _idx: NodeIndex) -> TypeId {
         // Check if we're in a class context
         if let Some(ref class_info) = self.ctx.enclosing_class {
             // Get the base class
@@ -16194,7 +16186,7 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check if an assignment target is a readonly property.
     /// Reports error TS2540 if trying to assign to a readonly property.
-    fn check_readonly_assignment(&mut self, target_idx: NodeIndex, expr_idx: NodeIndex) {
+    fn check_readonly_assignment(&mut self, target_idx: NodeIndex, _expr_idx: NodeIndex) {
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
             return;
         };
@@ -16531,7 +16523,6 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check if a property is readonly in a class declaration (by looking at AST).
     fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
-        use crate::scanner::SyntaxKind;
 
         // Find the class declaration by name
         if let Some(sym_id) = self.ctx.binder.file_locals.get(class_name) {
@@ -17293,7 +17284,7 @@ impl<'a> ThinCheckerState<'a> {
         _class_idx: NodeIndex,
         class: &crate::parser::thin_node::ClassData,
         is_declared: bool,
-        is_abstract: bool,
+        _is_abstract: bool,
     ) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
@@ -20253,7 +20244,7 @@ impl<'a> ThinCheckerState<'a> {
         &self,
         members: &[NodeIndex],
         start: usize,
-        name: &str,
+        _name: &str,
     ) -> (bool, Option<String>) {
         if start >= members.len() {
             return (false, None);
@@ -20269,7 +20260,7 @@ impl<'a> ThinCheckerState<'a> {
                 if !method.body.is_none() {
                     // This is an implementation - check if name matches
                     let impl_name = self.get_method_name_from_node(member_idx);
-                    if let Some(ref impl_name_str) = impl_name {
+                    if impl_name.is_some() {
                         return (true, impl_name);
                     }
                 }
@@ -21356,7 +21347,7 @@ impl<'a> ThinCheckerState<'a> {
     /// Emits TS2420 when a class incorrectly implements an interface.
     fn check_implements_clauses(
         &mut self,
-        class_idx: NodeIndex,
+        _class_idx: NodeIndex,
         class_data: &crate::parser::thin_node::ClassData,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
@@ -23328,8 +23319,6 @@ impl<'a> ThinCheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
-        use crate::solver::TypeKey;
-
         if visited_aliases.iter().any(|&seen| seen == sym_id) {
             return None;
         }
@@ -24504,7 +24493,7 @@ impl<'a> ThinCheckerState<'a> {
 
 
     /// Check if a property in a derived class is redeclaring a base class property
-    fn is_derived_property_redeclaration(&self, member_idx: NodeIndex, property_name: &str) -> bool {
+    fn is_derived_property_redeclaration(&self, member_idx: NodeIndex, _property_name: &str) -> bool {
         // Find the containing class for this member
         if let Some(class_idx) = self.find_containing_class(member_idx) {
             if let Some(class_node) = self.ctx.arena.get(class_idx) {
@@ -24523,9 +24512,7 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Find the containing class for a member node by walking up the parent chain
-    fn find_containing_class(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
-        use crate::scanner::SyntaxKind;
-
+    fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
         // Check if this member is directly in a class
         // Since we don't have parent pointers, we need to search through classes
         // This is a simplified approach - in a full implementation we'd maintain parent links

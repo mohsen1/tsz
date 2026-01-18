@@ -12,7 +12,7 @@
 //! block-scoped variables (let/const) and detect use-before-definite-assignment errors.
 
 use crate::binder::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
-use crate::parser::thin_node::{NodeAccess, ThinNodeArena};
+use crate::parser::thin_node::ThinNodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;

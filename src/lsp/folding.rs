@@ -165,7 +165,7 @@ impl<'a> FoldingRangeProvider<'a> {
 
             // Type Alias
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                if let Some(alias) = self.arena.get_type_alias(node) {
+                if let Some(_alias) = self.arena.get_type_alias(node) {
                     let alias_range = self.get_line_range(node_idx);
 
                     if alias_range.0 < alias_range.1 {

@@ -25,8 +25,7 @@
 
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::{
-    ClassData, FunctionData, MethodDeclData, PropertyDeclData, TaggedTemplateData,
-    TemplateExprData, ThinNode, ThinNodeArena,
+    ClassData, FunctionData, TaggedTemplateData, TemplateExprData, ThinNode, ThinNodeArena,
 };
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
