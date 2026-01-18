@@ -15,6 +15,7 @@ pub(crate) fn push_i64(output: &mut String, value: i64) {
     }
 }
 
+#[allow(unsafe_code)]
 fn push_u64(output: &mut String, mut value: u64) {
     if value == 0 {
         output.push('0');
