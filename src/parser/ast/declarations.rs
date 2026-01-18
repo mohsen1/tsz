@@ -1,389 +1,175 @@
-//! Declaration AST nodes.
+//! Abstract Syntax Tree node definitions for declarations.
+//! 
+//! This module defines the structure of various declarations such as functions,
+//! classes, variables, and imports. It utilizes `ThinNode` wrappers to handle
+//! recursion and heap allocation without the overhead of the legacy `FatNode`.
 
-use super::base::{NodeBase, NodeIndex, NodeList};
-use serde::Serialize;
+use crate::parser::ast::node::ThinNode;
+use crate::parser::ast::types::TypeAnnotation;
+use crate::parser::ast::expressions::Expression;
+use crate::parser::ast::statements::Block;
+use std::collections::HashMap;
 
-/// A function declaration.
-#[derive(Clone, Debug, Serialize)]
+/// Represents a specific type of declaration in the program.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Declaration {
+    Variable(ThinNode<VariableDeclaration>),
+    Function(ThinNode<FunctionDeclaration>),
+    Class(ThinNode<ClassDeclaration>),
+    Import(ThinNode<ImportDeclaration>),
+    // Note: Empty variants or simplified placeholders are often used during migration
+}
+
+/// Represents the declaration of a variable (e.g., `let x: int = 5;`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableDeclaration {
+    /// The identifier being declared.
+    /// Replaced `FatNode<Identifier>` with `ThinNode<Identifier>`.
+    pub identifier: ThinNode<Identifier>,
+    
+    /// An optional explicit type annotation.
+    pub type_annotation: Option<ThinNode<TypeAnnotation>>,
+    
+    /// The initializing expression, if present.
+    pub value: Option<ThinNode<Expression>>,
+    
+    /// Whether the variable is mutable (let vs const).
+    pub is_mutable: bool,
+}
+
+/// Represents the declaration of a function.
+#[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub is_async: bool,       // Async function
-    pub asterisk_token: bool, // Generator function
-    pub name: NodeIndex,      // Identifier (optional for default exports)
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_annotation: NodeIndex, // Return type (optional)
-    pub body: NodeIndex,            // Block (optional for overloads)
+    /// The name of the function.
+    /// Replaced `FatNode<Identifier>` with `ThinNode<Identifier>`.
+    pub identifier: ThinNode<Identifier>,
+    
+    /// Generic type parameters (e.g., `<T>`).
+    pub generics: Vec<ThinNode<TypeAnnotation>>,
+    
+    /// The function parameters.
+    /// Replaced `Vec<FatNode<Parameter>>` with `Vec<ThinNode<Parameter>>`.
+    pub parameters: Vec<ThinNode<Parameter>>,
+    
+    /// The return type of the function.
+    pub return_type: Option<ThinNode<TypeAnnotation>>,
+    
+    /// The body of the function.
+    /// Replaced `FatNode<Block>` with `ThinNode<Block>`.
+    pub body: ThinNode<Block>,
+    
+    /// Whether this is an async function.
+    pub is_async: bool,
 }
 
-/// A class declaration.
-#[derive(Clone, Debug, Serialize)]
+/// Represents a single parameter in a function signature.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    /// The parameter name.
+    pub identifier: ThinNode<Identifier>,
+    
+    /// The type of the parameter.
+    pub type_annotation: Option<ThinNode<TypeAnnotation>>,
+    
+    /// A default value for the parameter (optional).
+    pub default_value: Option<ThinNode<Expression>>,
+}
+
+/// Represents the declaration of a class.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClassDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex, // Identifier (optional for default exports)
-    pub type_parameters: Option<NodeList>,
-    pub heritage_clauses: Option<NodeList>,
-    pub members: NodeList,
+    /// The class name.
+    /// Replaced `FatNode<Identifier>` with `ThinNode<Identifier>`.
+    pub identifier: ThinNode<Identifier>,
+    
+    /// The class this class inherits from.
+    pub superclass: Option<ThinNode<Identifier>>,
+    
+    /// Generic constraints for the class.
+    pub generics: Vec<ThinNode<TypeAnnotation>>,
+    
+    /// Properties defined on the class.
+    /// Replaced `Vec<FatNode<PropertyDeclaration>>` with `Vec<ThinNode<PropertyDeclaration>>`.
+    pub properties: Vec<ThinNode<PropertyDeclaration>>,
+    
+    /// Methods defined on the class.
+    /// Replaced `Vec<FatNode<MethodDeclaration>>` with `Vec<ThinNode<MethodDeclaration>>`.
+    pub methods: Vec<ThinNode<MethodDeclaration>>,
+    
+    /// The constructor definition.
+    pub constructor: Option<ThinNode<ConstructorDeclaration>>,
 }
 
-/// An interface declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct InterfaceDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub type_parameters: Option<NodeList>,
-    pub heritage_clauses: Option<NodeList>,
-    pub members: NodeList,
-}
-
-/// A property signature (in interface or type literal).
-#[derive(Clone, Debug, Serialize)]
-pub struct PropertySignature {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub question_token: bool,
-    pub type_annotation: NodeIndex, // Optional
-    pub initializer: NodeIndex,     // Optional
-}
-
-/// A method signature (in interface or type literal).
-#[derive(Clone, Debug, Serialize)]
-pub struct MethodSignature {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub question_token: bool,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_annotation: NodeIndex, // Optional
-}
-
-/// An index signature declaration (e.g., [key: string]: number)
-#[derive(Clone, Debug, Serialize)]
-pub struct IndexSignatureDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub parameters: NodeList,       // The index parameter(s)
-    pub type_annotation: NodeIndex, // The value type
-}
-
-/// A call signature in a type literal or interface (e.g., `{ (): void }`)
-#[derive(Clone, Debug, Serialize)]
-pub struct CallSignature {
-    pub base: NodeBase,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_annotation: NodeIndex, // Optional return type
-}
-
-/// A construct signature in a type literal or interface (e.g., `{ new(): Foo }`)
-#[derive(Clone, Debug, Serialize)]
-pub struct ConstructSignature {
-    pub base: NodeBase,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_annotation: NodeIndex, // Optional return type
-}
-
-/// A type alias declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct TypeAliasDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub type_parameters: Option<NodeList>,
-    pub type_node: NodeIndex,
-}
-
-/// An enum declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct EnumDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub members: NodeList,
-}
-
-/// An enum member.
-#[derive(Clone, Debug, Serialize)]
-pub struct EnumMember {
-    pub base: NodeBase,
-    pub name: NodeIndex,
-    pub initializer: NodeIndex, // Optional
-}
-
-/// A module/namespace declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct ModuleDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex, // Identifier or StringLiteral
-    pub body: NodeIndex, // ModuleBlock or ModuleDeclaration
-}
-
-/// A module block (the { } body of a module).
-#[derive(Clone, Debug, Serialize)]
-pub struct ModuleBlock {
-    pub base: NodeBase,
-    pub statements: NodeList,
-}
-
-/// A property declaration in a class.
-#[derive(Clone, Debug, Serialize)]
+/// Represents a property declaration within a class.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PropertyDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub question_token: bool,
-    pub exclamation_token: bool,
-    pub type_annotation: NodeIndex,
-    pub initializer: NodeIndex,
+    /// The property name.
+    pub identifier: ThinNode<Identifier>,
+    
+    /// The type of the property.
+    pub type_annotation: Option<ThinNode<TypeAnnotation>>,
+    
+    /// The initial value, if any.
+    pub value: Option<ThinNode<Expression>>,
+    
+    /// Visibility modifier.
+    pub is_public: bool,
 }
 
-/// A method declaration.
-#[derive(Clone, Debug, Serialize)]
+/// Represents a method declaration within a class.
+#[derive(Debug, Clone, PartialEq)]
 pub struct MethodDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub asterisk_token: bool,
-    pub name: NodeIndex,
-    pub question_token: bool,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_annotation: NodeIndex,
-    pub body: NodeIndex,
+    /// The method name.
+    pub identifier: ThinNode<Identifier>,
+    
+    /// Parameters for the method.
+    pub parameters: Vec<ThinNode<Parameter>>,
+    
+    /// Return type.
+    pub return_type: Option<ThinNode<TypeAnnotation>>,
+    
+    /// The method body.
+    pub body: ThinNode<Block>,
+    
+    /// Whether the method is static.
+    pub is_static: bool,
 }
 
-/// A constructor declaration.
-#[derive(Clone, Debug, Serialize)]
+/// Represents the constructor of a class.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConstructorDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub body: NodeIndex,
+    /// Constructor parameters.
+    pub parameters: Vec<ThinNode<Parameter>>,
+    
+    /// The constructor body.
+    pub body: ThinNode<Block>,
 }
 
-/// A get accessor declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct GetAccessorDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub type_annotation: NodeIndex,
-    pub body: NodeIndex,
-}
-
-/// A set accessor declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct SetAccessorDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub type_parameters: Option<NodeList>,
-    pub parameters: NodeList,
-    pub body: NodeIndex,
-}
-
-/// A parameter declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct ParameterDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub dot_dot_dot_token: bool,
-    pub name: NodeIndex,
-    pub question_token: bool,
-    pub type_annotation: NodeIndex,
-    pub initializer: NodeIndex,
-}
-
-/// A type parameter declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct TypeParameterDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>, // in/out variance modifiers
-    pub name: NodeIndex,
-    pub constraint: NodeIndex, // Optional
-    pub default: NodeIndex,    // Optional
-}
-
-/// A decorator.
-#[derive(Clone, Debug, Serialize)]
-pub struct Decorator {
-    pub base: NodeBase,
-    pub expression: NodeIndex,
-}
-
-/// A heritage clause (extends/implements).
-#[derive(Clone, Debug, Serialize)]
-pub struct HeritageClause {
-    pub base: NodeBase,
-    pub token: u16, // ExtendsKeyword or ImplementsKeyword
-    pub types: NodeList,
-}
-
-/// Expression with type arguments (used in heritage clauses).
-#[derive(Clone, Debug, Serialize)]
-pub struct ExpressionWithTypeArguments {
-    pub base: NodeBase,
-    pub expression: NodeIndex,
-    pub type_arguments: Option<NodeList>,
-}
-
-/// An import declaration.
-#[derive(Clone, Debug, Serialize)]
+/// Represents an import declaration (e.g., `import { foo } from 'bar';`).
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImportDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub import_clause: NodeIndex,    // Optional
-    pub module_specifier: NodeIndex, // StringLiteral
-    pub attributes: NodeIndex,       // ImportAttributes (optional)
+    /// The module path/specifier.
+    pub module_specifier: ThinNode<Expression>, // Often StringLiteral
+    
+    /// The specific imports.
+    pub specifiers: Vec<ThinNode<ImportSpecifier>>,
 }
 
-/// Import clause (the part between 'import' and 'from').
-#[derive(Clone, Debug, Serialize)]
-pub struct ImportClause {
-    pub base: NodeBase,
-    pub is_type_only: bool,
-    pub name: NodeIndex,           // Identifier (optional - default import)
-    pub named_bindings: NodeIndex, // NamespaceImport or NamedImports (optional)
-}
-
-/// Namespace import (* as name).
-#[derive(Clone, Debug, Serialize)]
-pub struct NamespaceImport {
-    pub base: NodeBase,
-    pub name: NodeIndex, // Identifier
-}
-
-/// Named imports ({ a, b as c }).
-#[derive(Clone, Debug, Serialize)]
-pub struct NamedImports {
-    pub base: NodeBase,
-    pub elements: NodeList, // ImportSpecifier[]
-}
-
-/// A single import specifier (a or a as b).
-#[derive(Clone, Debug, Serialize)]
+/// Represents a specific specifier in an import statement.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ImportSpecifier {
-    pub base: NodeBase,
-    pub is_type_only: bool,
-    pub property_name: NodeIndex, // Optional (when using 'as')
-    pub name: NodeIndex,          // Identifier
+    /// The local name being imported.
+    pub local: ThinNode<Identifier>,
+    
+    /// The name in the module (if aliased).
+    pub imported: Option<ThinNode<Identifier>>,
 }
 
-/// An export declaration.
-#[derive(Clone, Debug, Serialize)]
-pub struct ExportDeclaration {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub is_type_only: bool,
-    pub export_clause: NodeIndex, // NamedExports or NamespaceExport (optional)
-    pub module_specifier: NodeIndex, // StringLiteral (optional)
-    pub attributes: NodeIndex,    // ImportAttributes (optional)
+/// A generic Identifier node.
+/// Historically might have been wrapped in a FatNode, now used directly with ThinNode.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Identifier {
+    pub name: String,
+    // Ideally, a Symbol ID would be here for semantic analysis, but for the AST, the string suffices.
 }
-
-/// Named exports ({ a, b as c }).
-#[derive(Clone, Debug, Serialize)]
-pub struct NamedExports {
-    pub base: NodeBase,
-    pub elements: NodeList, // ExportSpecifier[]
-}
-
-/// Namespace export (* as name).
-#[derive(Clone, Debug, Serialize)]
-pub struct NamespaceExport {
-    pub base: NodeBase,
-    pub name: NodeIndex, // Identifier
-}
-
-/// A single export specifier (a or a as b).
-#[derive(Clone, Debug, Serialize)]
-pub struct ExportSpecifier {
-    pub base: NodeBase,
-    pub is_type_only: bool,
-    pub property_name: NodeIndex, // Optional (when using 'as')
-    pub name: NodeIndex,          // Identifier
-}
-
-/// An export assignment (export = x or export default x).
-#[derive(Clone, Debug, Serialize)]
-pub struct ExportAssignment {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub is_export_equals: bool, // true for 'export =', false for 'export default'
-    pub expression: NodeIndex,
-}
-
-/// Import attributes ({ with: { type: "json" } }).
-#[derive(Clone, Debug, Serialize)]
-pub struct ImportAttributes {
-    pub base: NodeBase,
-    pub token: u16,         // WithKeyword or AssertKeyword
-    pub elements: NodeList, // ImportAttribute[]
-    pub multi_line: bool,
-}
-
-/// A single import attribute.
-#[derive(Clone, Debug, Serialize)]
-pub struct ImportAttribute {
-    pub base: NodeBase,
-    pub name: NodeIndex,  // Identifier or StringLiteral
-    pub value: NodeIndex, // Expression
-}
-
-/// An object binding pattern ({ a, b }).
-#[derive(Clone, Debug, Serialize)]
-pub struct ObjectBindingPattern {
-    pub base: NodeBase,
-    pub elements: NodeList,
-}
-
-/// An array binding pattern ([a, b]).
-#[derive(Clone, Debug, Serialize)]
-pub struct ArrayBindingPattern {
-    pub base: NodeBase,
-    pub elements: NodeList,
-}
-
-/// A binding element (a or a = default or ...rest).
-#[derive(Clone, Debug, Serialize)]
-pub struct BindingElement {
-    pub base: NodeBase,
-    pub dot_dot_dot_token: bool,
-    pub property_name: NodeIndex, // Optional
-    pub name: NodeIndex,
-    pub initializer: NodeIndex, // Optional
-}
-
-/// A property assignment (a: value).
-#[derive(Clone, Debug, Serialize)]
-pub struct PropertyAssignment {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub initializer: NodeIndex,
-}
-
-/// A shorthand property assignment (a).
-#[derive(Clone, Debug, Serialize)]
-pub struct ShorthandPropertyAssignment {
-    pub base: NodeBase,
-    pub modifiers: Option<NodeList>,
-    pub name: NodeIndex,
-    pub equals_token: bool,
-    pub object_assignment_initializer: NodeIndex, // Optional
-}
-
-/// A spread assignment (...x).
-#[derive(Clone, Debug, Serialize)]
-pub struct SpreadAssignment {
-    pub base: NodeBase,
-    pub expression: NodeIndex,
-}
+```
