@@ -226,6 +226,9 @@ enum EmitDirective {
 /// Uses SourceWriter for output generation (enables source map support).
 /// Uses EmitContext for transform-specific state management.
 /// Uses TransformContext for directive-based transforms (Phase 2 architecture).
+/// Maximum recursion depth for emit operations to prevent infinite loops
+const MAX_EMIT_DEPTH: u32 = 200;
+
 pub struct ThinPrinter<'a> {
     /// The ThinNodeArena containing the AST.
     pub(super) arena: &'a ThinNodeArena,
@@ -253,6 +256,9 @@ pub struct ThinPrinter<'a> {
 
     /// Pending source position for mapping the next write.
     pub(super) pending_source_pos: Option<SourcePosition>,
+
+    /// Recursion depth counter to prevent infinite loops from malformed AST
+    pub(super) emit_depth: u32,
 }
 
 impl<'a> ThinPrinter<'a> {
@@ -294,6 +300,7 @@ impl<'a> ThinPrinter<'a> {
             source_map_text: None,
             last_processed_pos: 0,
             pending_source_pos: None,
+            emit_depth: 0,
         }
     }
 
@@ -1078,6 +1085,14 @@ impl<'a> ThinPrinter<'a> {
 
     /// Emit a node.
     fn emit_node(&mut self, node: &ThinNode, idx: NodeIndex) {
+        // Guard against infinite recursion from malformed AST
+        self.emit_depth += 1;
+        if self.emit_depth > MAX_EMIT_DEPTH {
+            self.emit_depth -= 1;
+            self.write("/* MAX_EMIT_DEPTH exceeded */");
+            return;
+        }
+
         // Phase 2 Architecture: Check transform directives first
         let has_transform = !self.transforms.is_empty()
             && Self::kind_may_have_transform(node.kind)
@@ -1093,6 +1108,7 @@ impl<'a> ThinPrinter<'a> {
         }
 
         self.pending_source_pos = previous_pending;
+        self.emit_depth -= 1;
     }
 
     fn kind_may_have_transform(kind: u16) -> bool {
