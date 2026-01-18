@@ -11,7 +11,7 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 | Lines of Rust | ~200,000 |
 | Unit Tests | ~10,420 |
 | Ignored Tests | 7 total (5 infinite loops, 1 stack overflow, 1 utility) |
-| Test-Aware Patterns | 39 in thin_checker.rs (all in dead code after early return) |
+| Test-Aware Patterns | 32 in thin_checker.rs (reduced from 39; remaining are in dead code after early return) |
 
 **Build Status:** Passes
 **Test Status:** Most pass, some failures, some hanging tests marked with `#[ignore]`
@@ -43,13 +43,17 @@ Several tests have infinite loops and hang forever. These must be identified and
 
 ### 2. Remove Test-Aware Code from Checker
 
-The checker has **39 places** that check file names to suppress errors for tests. This is architectural debt.
+The checker has **32 places** (down from 39) that check file names to suppress errors for tests. This is architectural debt.
 
-**Status:** All 39 `file_name.contains` patterns are now in dead code, located after an early return in `check_unused_declarations`. The entire block is scheduled for removal.
+**Status:** 7 patterns removed via AST-based detection:
+- `is_in_namespace_context`: Replaced 4 file_name heuristics with AST parent chain traversal
+- `should_validate_async_function_context`: Replaced 3 file_name heuristics with `is_es_module_file()` and `is_async_function()` helpers
+
+Remaining 32 patterns are in dead code, located after an early return in `check_unused_declarations`. The entire block is scheduled for removal.
 
 **What to remove from `src/thin_checker.rs`:**
 ```rust
-// BAD - This pattern appears 39 times and must be removed:
+// BAD - This pattern appears 32 times and must be removed:
 let is_test_file = self.ctx.file_name.contains("conformance")
     || self.ctx.file_name.contains("test")
     || self.ctx.file_name.contains("cases");
