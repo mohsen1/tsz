@@ -19225,12 +19225,6 @@ impl<'a> ThinCheckerState<'a> {
             return true;
         }
 
-        // Validate async functions in conformance test files
-        // These commonly test various async scenarios and should be validated
-        if self.ctx.file_name.contains("conformance") || self.ctx.file_name.contains("async") {
-            return true;
-        }
-
         // More liberal fallback: validate if any strict mode features are enabled
         if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
             return true;
