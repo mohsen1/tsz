@@ -84,7 +84,7 @@ pub fn jsdoc_for_node(
     }
 
     let leading_comments = get_leading_comments_from_cache(comments, target_pos, source_text);
-    if let Some(comment) = leading_comments.iter().rev().next() {
+    if let Some(comment) = leading_comments.last() {
         let end = comment.end as usize;
         let check = target_pos as usize;
         let gap_is_whitespace = end <= check

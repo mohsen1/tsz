@@ -11,6 +11,7 @@ use crate::lsp::position::{LineMap, Position, Range};
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::{NodeAccess, ThinNodeArena};
 use crate::parser::NodeIndex;
+use crate::scanner::SyntaxKind;
 use crate::thin_binder::ThinBinderState;
 use serde::{Deserialize, Serialize};
 
@@ -152,10 +153,9 @@ impl<'a> InlayHintsProvider<'a> {
         }
 
         // Recurse into children
-        self.arena
-            .visit_children(node_idx, |child_idx| {
-                self.collect_hints(child_idx, range_start, range_end, hints);
-            });
+        for child_idx in self.arena.get_children(node_idx) {
+            self.collect_hints(child_idx, range_start, range_end, hints);
+        }
     }
 
     /// Collect parameter name hints for a call expression.
@@ -219,12 +219,11 @@ impl<'a> InlayHintsProvider<'a> {
             return Vec::new();
         };
 
+        // get_function handles FunctionDeclaration, FunctionExpression, and ArrowFunction
         let params = if let Some(func) = self.arena.get_function(node) {
-            func.parameters.as_ref()
-        } else if let Some(arrow) = self.arena.get_arrow_func(node) {
-            arrow.parameters.as_ref()
+            Some(&func.parameters)
         } else if let Some(method) = self.arena.get_method_decl(node) {
-            method.parameters.as_ref()
+            Some(&method.parameters)
         } else {
             return Vec::new();
         };
@@ -257,7 +256,7 @@ impl<'a> InlayHintsProvider<'a> {
         };
 
         // Skip if the argument is an identifier with the same name as the parameter
-        if arg_node.kind == syntax_kind_ext::IDENTIFIER {
+        if arg_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(text) = self.arena.get_identifier_text(arg_idx) {
                 if text == param_name {
                     return true;
