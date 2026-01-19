@@ -29,12 +29,11 @@
 //! a ?? (b && c);   // OK
 //! ```
 
-use crate::checker::types::TypeId;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNodeArena;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
-use crate::solver::TypeStore;
+use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 
 /// Computes the result type of a nullish coalescing expression
 ///
@@ -43,15 +42,15 @@ use crate::solver::TypeStore;
 /// - If left is definitely not nullish -> result is left's type
 /// - If left may be nullish -> result is NonNullable<left> | right
 pub fn get_nullish_coalescing_type(
-    types: &mut TypeStore,
-    left_type: TypeId,
-    right_type: TypeId,
-) -> TypeId {
+    types: &mut impl TypeDatabase,
+    left_type: SolverTypeId,
+    right_type: SolverTypeId,
+) -> SolverTypeId {
     use crate::solver::{IntrinsicKind, TypeKey};
 
     // If left is ANY, result is ANY
-    if left_type == TypeId::ANY {
-        return TypeId::ANY;
+    if left_type == SolverTypeId::ANY {
+        return SolverTypeId::ANY;
     }
 
     // If left is definitely nullish, result is right's type
@@ -78,10 +77,10 @@ pub fn get_nullish_coalescing_type(
 }
 
 /// Checks if a type is definitely nullish (only null or undefined)
-fn is_definitely_nullish(types: &TypeStore, type_id: TypeId) -> bool {
+fn is_definitely_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
     use crate::solver::{IntrinsicKind, TypeKey};
 
-    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+    if type_id == SolverTypeId::NULL || type_id == SolverTypeId::UNDEFINED {
         return true;
     }
 
@@ -103,10 +102,10 @@ fn is_definitely_nullish(types: &TypeStore, type_id: TypeId) -> bool {
 }
 
 /// Checks if a type can be nullish (contains null or undefined)
-fn can_be_nullish(types: &TypeStore, type_id: TypeId) -> bool {
+fn can_be_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
     use crate::solver::{IntrinsicKind, TypeKey};
 
-    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+    if type_id == SolverTypeId::NULL || type_id == SolverTypeId::UNDEFINED {
         return true;
     }
 
@@ -127,7 +126,7 @@ fn can_be_nullish(types: &TypeStore, type_id: TypeId) -> bool {
 }
 
 /// Removes null and undefined from a type
-fn get_non_nullish_type(types: &mut TypeStore, type_id: TypeId) -> TypeId {
+fn get_non_nullish_type(types: &mut impl TypeDatabase, type_id: SolverTypeId) -> SolverTypeId {
     use crate::solver::{IntrinsicKind, TypeKey};
 
     let Some(key) = types.lookup(type_id) else {
@@ -136,11 +135,11 @@ fn get_non_nullish_type(types: &mut TypeStore, type_id: TypeId) -> TypeId {
 
     match key {
         TypeKey::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-            TypeId::NEVER
+            SolverTypeId::NEVER
         }
         TypeKey::Union(members) => {
             let members = types.type_list(members);
-            let non_nullish: Vec<TypeId> = members
+            let non_nullish: Vec<SolverTypeId> = members
                 .iter()
                 .filter(|&&m| {
                     !matches!(
@@ -148,14 +147,14 @@ fn get_non_nullish_type(types: &mut TypeStore, type_id: TypeId) -> TypeId {
                         Some(TypeKey::Intrinsic(
                             IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void
                         ))
-                    ) && m != TypeId::NULL
-                        && m != TypeId::UNDEFINED
+                    ) && m != SolverTypeId::NULL
+                        && m != SolverTypeId::UNDEFINED
                 })
                 .copied()
                 .collect();
 
             if non_nullish.is_empty() {
-                TypeId::NEVER
+                SolverTypeId::NEVER
             } else if non_nullish.len() == 1 {
                 non_nullish[0]
             } else {
@@ -223,10 +222,10 @@ impl PrecedenceError {
 /// - The target must be a valid assignment target
 /// - The result type is NonNullable<target> | value
 pub fn get_nullish_assignment_type(
-    types: &mut TypeStore,
-    target_type: TypeId,
-    value_type: TypeId,
-) -> TypeId {
+    types: &mut impl TypeDatabase,
+    target_type: SolverTypeId,
+    value_type: SolverTypeId,
+) -> SolverTypeId {
     // Similar to nullish coalescing, but target must remain assignable
     get_nullish_coalescing_type(types, target_type, value_type)
 }
@@ -234,42 +233,42 @@ pub fn get_nullish_assignment_type(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::TypeStore;
+    use crate::solver::TypeInterner;
 
     #[test]
     fn test_nullish_coalescing_with_null_left() {
-        let mut types = TypeStore::new();
+        let mut types = TypeInterner::new();
 
         // null ?? string should be string
-        let result = get_nullish_coalescing_type(&mut types, TypeId::NULL, TypeId::STRING);
-        assert_eq!(result, TypeId::STRING);
+        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::NULL, SolverTypeId::STRING);
+        assert_eq!(result, SolverTypeId::STRING);
     }
 
     #[test]
     fn test_nullish_coalescing_with_undefined_left() {
-        let mut types = TypeStore::new();
+        let mut types = TypeInterner::new();
 
         // undefined ?? number should be number
-        let result = get_nullish_coalescing_type(&mut types, TypeId::UNDEFINED, TypeId::NUMBER);
-        assert_eq!(result, TypeId::NUMBER);
+        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::UNDEFINED, SolverTypeId::NUMBER);
+        assert_eq!(result, SolverTypeId::NUMBER);
     }
 
     #[test]
     fn test_nullish_coalescing_non_nullish_left() {
-        let mut types = TypeStore::new();
+        let mut types = TypeInterner::new();
 
         // string ?? number should be string (string is never nullish)
-        let result = get_nullish_coalescing_type(&mut types, TypeId::STRING, TypeId::NUMBER);
-        assert_eq!(result, TypeId::STRING);
+        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::STRING, SolverTypeId::NUMBER);
+        assert_eq!(result, SolverTypeId::STRING);
     }
 
     #[test]
     fn test_nullish_coalescing_any_left() {
-        let mut types = TypeStore::new();
+        let mut types = TypeInterner::new();
 
         // any ?? number should be any
-        let result = get_nullish_coalescing_type(&mut types, TypeId::ANY, TypeId::NUMBER);
-        assert_eq!(result, TypeId::ANY);
+        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::ANY, SolverTypeId::NUMBER);
+        assert_eq!(result, SolverTypeId::ANY);
     }
 
     #[test]

@@ -26236,7 +26236,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
     let types = TypeInterner::new();
 
     // Test 1: Verify no_implicit_this flag exists in CheckerContext
-    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions { strict: true, no_implicit_any: true, no_implicit_returns: false, no_implicit_this: true, strict_null_checks: true, strict_function_types: true, strict_property_initialization: true, use_unknown_in_catch_variables: true, isolated_modules: false });
+    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions { strict: true, no_implicit_any: true, no_implicit_returns: false, no_implicit_this: true, strict_null_checks: true, strict_function_types: true, strict_property_initialization: true, use_unknown_in_catch_variables: true, isolated_modules: false, no_unchecked_indexed_access: false, strict_bind_call_apply: false, exact_optional_property_types: false });
     assert!(checker.ctx.no_implicit_this(), "no_implicit_this flag should be enabled in strict mode");
 
     // Test 2: Verify ANY type suppression constants exist

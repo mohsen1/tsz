@@ -140,6 +140,7 @@ impl<'a> HoverProvider<'a> {
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
             isolated_modules: false,
+            ..Default::default()
         };
         let mut checker = if let Some(cache) = type_cache.take() {
             ThinCheckerState::with_cache(

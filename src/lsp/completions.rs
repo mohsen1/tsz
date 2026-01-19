@@ -445,6 +445,7 @@ impl<'a> Completions<'a> {
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
             isolated_modules: false,
+            ..Default::default()
         };
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
@@ -638,6 +639,7 @@ impl<'a> Completions<'a> {
             strict_property_initialization: self.strict,
             use_unknown_in_catch_variables: self.strict,
             isolated_modules: false,
+            ..Default::default()
         };
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
