@@ -13,16 +13,16 @@ Running `cargo bench` directly on the host can consume 60GB+ RAM and crash the s
 
 ```bash
 # Run all benchmarks (Docker-safe)
-./wasm/bench.sh
+./scripts/bench.sh
 
 # Run specific benchmark
-./wasm/bench.sh emitter_bench
+./scripts/bench.sh emitter_bench
 
 # Run scanner benchmarks only
-./wasm/bench.sh scanner_bench
+./scripts/bench.sh scanner_bench
 
 # Run parser benchmarks only
-./wasm/bench.sh parser_bench
+./scripts/bench.sh parser_bench
 ```
 
 ## Emitter Benchmarks
@@ -153,7 +153,7 @@ Track these metrics over time:
 ## Troubleshooting
 
 ### Benchmark Fails with OOM
-- Ensure you're using `./wasm/bench.sh` (Docker wrapper)
+- Ensure you're using `./scripts/bench.sh` (Docker wrapper)
 - Check Docker memory limit (default: 8GB)
 - Reduce test source size if needed
 
