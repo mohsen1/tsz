@@ -39,6 +39,7 @@ use crate::transforms::private_fields_es5::{
     is_private_identifier,
 };
 use memchr;
+use std::collections::HashSet;
 
 struct ParamTransform {
     name: String,
@@ -98,6 +99,8 @@ pub struct ClassES5Emitter<'a> {
     class_name: String,
     /// Recursion depth counter for emit_expression
     recursion_depth: u32,
+    /// Nodes currently being visited (for cycle detection)
+    visiting_nodes: HashSet<NodeIndex>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -119,6 +122,7 @@ impl<'a> ClassES5Emitter<'a> {
             private_accessors: Vec::new(),
             class_name: String::new(),
             recursion_depth: 0,
+            visiting_nodes: HashSet::new(),
         }
     }
 
@@ -3341,15 +3345,24 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     fn emit_expression(&mut self, expr_idx: NodeIndex) {
+        // Cycle detection: check if we're already visiting this node
+        if !self.visiting_nodes.insert(expr_idx) {
+            // Node is already being visited - we have a cycle
+            self.write("/* cycle detected */");
+            return;
+        }
+
         // Recursion depth check to prevent infinite loops
         self.recursion_depth += 1;
         if self.recursion_depth > MAX_RECURSION_DEPTH {
             self.write("/* recursion limit exceeded */");
+            self.visiting_nodes.remove(&expr_idx);
             self.recursion_depth -= 1;
             return;
         }
 
         let Some(expr_node) = self.arena.get(expr_idx) else {
+            self.visiting_nodes.remove(&expr_idx);
             self.recursion_depth -= 1;
             return;
         };
@@ -3704,6 +3717,7 @@ impl<'a> ClassES5Emitter<'a> {
             }
         }
 
+        self.visiting_nodes.remove(&expr_idx);
         self.recursion_depth -= 1;
     }
 
