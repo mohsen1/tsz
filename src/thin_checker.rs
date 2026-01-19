@@ -11568,12 +11568,18 @@ impl<'a> ThinCheckerState<'a> {
         match (source_brand, target_brand) {
             (Some(brand1), Some(brand2)) => {
                 // Both types have private brands - they must match exactly
+                // Different private brands = different class declarations = not assignable
                 Some(brand1 == brand2)
             }
-            (Some(_), None) | (None, Some(_)) => {
-                // One type has a private brand, the other doesn't
-                // This is not assignable
+            (None, Some(_)) => {
+                // Target has a private brand but source doesn't
+                // Source cannot satisfy target's private requirements
                 Some(false)
+            }
+            (Some(_), None) => {
+                // Source has a private brand but target doesn't (e.g., interface)
+                // Fall through to structural check - a class can implement an interface
+                None
             }
             (None, None) => None, // Neither has private brand, fall through to normal check
         }
