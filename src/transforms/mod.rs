@@ -29,6 +29,7 @@ pub mod enum_es5;
 pub mod es5;
 pub mod helpers;
 pub mod ir;
+pub mod ir_printer;
 pub mod module_commonjs;
 pub mod namespace_es5;
 pub mod private_fields_es5;
