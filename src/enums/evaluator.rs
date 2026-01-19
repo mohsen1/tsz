@@ -134,7 +134,12 @@ impl<'a> EnumEvaluator<'a> {
             }
         }
 
+        // Track the last numeric value for auto-increment
+        // None means we haven't seen any numeric value yet (start at 0)
+        // Some(-1) sentinel would mean previous was non-numeric (string/computed)
         let mut last_numeric_value: Option<i64> = None;
+        // Track if we've seen a non-numeric initializer (string or computed)
+        let mut had_non_numeric = false;
 
         for &member_idx in &enum_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -154,17 +159,26 @@ impl<'a> EnumEvaluator<'a> {
             // Evaluate the member
             let value = if member_data.initializer.is_none() {
                 // Auto-increment from last numeric value
-                let next_val = last_numeric_value.map(|v| v + 1).unwrap_or(0);
-                last_numeric_value = Some(next_val);
-                EnumValue::Number(next_val)
+                if had_non_numeric {
+                    // Previous member was non-numeric (string/computed)
+                    // This is a TypeScript error - member needs explicit initializer
+                    EnumValue::Computed
+                } else {
+                    // Either first member or previous was numeric
+                    let next_val = last_numeric_value.map(|v| v + 1).unwrap_or(0);
+                    last_numeric_value = Some(next_val);
+                    EnumValue::Number(next_val)
+                }
             } else {
                 let evaluated = self.evaluate_expression(member_data.initializer);
                 // Update auto-increment tracker if numeric
                 if let EnumValue::Number(n) = &evaluated {
                     last_numeric_value = Some(*n);
+                    had_non_numeric = false; // Reset - can auto-increment again
                 } else {
                     // String or computed - can't auto-increment after
                     last_numeric_value = None;
+                    had_non_numeric = true;
                 }
                 evaluated
             };

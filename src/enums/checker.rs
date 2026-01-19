@@ -152,7 +152,10 @@ impl<'a> EnumChecker<'a> {
             }
 
             // After a string member, all subsequent members must have initializers
-            if had_string && !has_initializer && value.is_none() {
+            // Check if value is Computed due to missing initializer after string member
+            let needs_initializer = had_string && !has_initializer
+                && matches!(value, Some(EnumValue::Computed) | None);
+            if needs_initializer {
                 self.diagnostics.push(Diagnostic::error(
                     String::new(),
                     member_node.pos,
