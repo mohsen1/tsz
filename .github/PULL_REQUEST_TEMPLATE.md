@@ -7,7 +7,7 @@
 - [ ] No test-aware code (no `file_name.contains()` for behavior changes)
 - [ ] No whack-a-mole error suppression
 - [ ] Fixed root cause, not symptoms
-- [ ] All tests pass (`cargo test` or `./test.sh`)
+- [ ] All tests pass (`cargo test` or `./scripts/test.sh`)
 - [ ] Conformance tests reviewed
 - [ ] Reviewed [agents.md](../agents.md) architecture rules
 
@@ -15,7 +15,7 @@
 
 ### Tests Run
 <!-- Describe what tests were run -->
-- [ ] Unit tests: `./test.sh`
+- [ ] Unit tests: `./scripts/test.sh`
 - [ ] Conformance tests: `./conformance/run-conformance.sh`
 
 ### Conformance Test Results

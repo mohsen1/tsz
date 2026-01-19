@@ -7,11 +7,11 @@
 
 const commands = {
   "Rust Unit Tests": {
-    "Run all tests": "./test.sh",
-    "Run specific test": "./test.sh test_name", 
-    "Run benchmarks": "./test.sh --bench",
-    "Rebuild Docker image": "./test.sh --rebuild",
-    "Clean cache": "./test.sh --clean"
+    "Run all tests": "./scripts/test.sh",
+    "Run specific test": "./scripts/test.sh test_name",
+    "Run benchmarks": "./scripts/test.sh --bench",
+    "Rebuild Docker image": "./scripts/test.sh --rebuild",
+    "Clean cache": "./scripts/test.sh --clean"
   },
   
   "TypeScript Conformance": {

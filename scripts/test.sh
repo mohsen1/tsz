@@ -6,11 +6,11 @@
 # for fast iteration.
 #
 # Usage:
-#   ./test.sh              # Run all Rust unit tests
-#   ./test.sh test_name    # Run specific test
-#   ./test.sh --rebuild    # Force rebuild Docker image
-#   ./test.sh --clean      # Clean cached volumes
-#   ./test.sh --bench      # Run benchmarks
+#   ./scripts/test.sh              # Run all Rust unit tests
+#   ./scripts/test.sh test_name    # Run specific test
+#   ./scripts/test.sh --rebuild    # Force rebuild Docker image
+#   ./scripts/test.sh --clean      # Clean cached volumes
+#   ./scripts/test.sh --bench      # Run benchmarks
 #
 # For TypeScript test suite conformance testing, use:
 #   ./conformance/run-conformance.sh
@@ -21,7 +21,7 @@
 set -e
 
 IMAGE_NAME="rust-wasm-base"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Parse arguments
 REBUILD=false
