@@ -12,6 +12,7 @@ MAX_TESTS=500
 WORKERS=14
 REBUILD=false
 PARALLEL=true
+CATEGORIES="conformance"
 
 for arg in "$@"; do
     case $arg in
@@ -20,14 +21,16 @@ for arg in "$@"; do
         --max=*) MAX_TESTS="${arg#*=}" ;;
         --workers=*) WORKERS="${arg#*=}" ;;
         --sequential) PARALLEL=false ;;
+        --category=*) CATEGORIES="${arg#*=}" ;;
     esac
 done
 
 echo "======================================"
 echo "  Conformance Test Runner (Docker)"
 echo "======================================"
-echo "  Tests:   $MAX_TESTS"
-echo "  Workers: $WORKERS"
+echo "  Tests:     $MAX_TESTS"
+echo "  Workers:   $WORKERS"
+echo "  Categories: $CATEGORIES"
 echo "======================================"
 
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
@@ -43,10 +46,10 @@ echo "Running conformance tests..."
 
 if [ "$PARALLEL" = true ]; then
     RUNNER_SCRIPT="process-pool-conformance.mjs"
-    RUNNER_ARGS="--max=$MAX_TESTS --workers=$WORKERS"
+    RUNNER_ARGS="--max=$MAX_TESTS --workers=$WORKERS --category=$CATEGORIES"
 else
     RUNNER_SCRIPT="conformance-runner.mjs"
-    RUNNER_ARGS="--max=$MAX_TESTS"
+    RUNNER_ARGS="--max=$MAX_TESTS --category=$CATEGORIES"
 fi
 
 docker run --rm \

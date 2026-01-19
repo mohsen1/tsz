@@ -6,13 +6,16 @@
 # for fast iteration.
 #
 # Usage:
-#   ./scripts/test.sh              # Run all Rust unit tests
-#   ./scripts/test.sh test_name    # Run specific test
-#   ./scripts/test.sh --rebuild    # Force rebuild Docker image
-#   ./scripts/test.sh --clean      # Clean cached volumes
-#   ./scripts/test.sh --bench      # Run benchmarks
+#   ./scripts/test.sh                          # Run all Rust unit tests
+#   ./scripts/test.sh test_name                # Run specific test
+#   ./scripts/test.sh --rebuild                # Force rebuild Docker image
+#   ./scripts/test.sh --clean                  # Clean cached volumes
+#   ./scripts/test.sh --bench                  # Run benchmarks
+#   ./scripts/test.sh --conformance            # Run conformance tests
+#   ./scripts/test.sh --conformance compiler   # Run compiler category tests
+#   ./scripts/test.sh --conformance all        # Run all conformance categories
 #
-# For TypeScript test suite conformance testing, use:
+# For TypeScript test suite conformance testing, you can also use:
 #   ./conformance/run-conformance.sh
 #
 # Source code is always mounted fresh (not baked into image), so file changes
@@ -27,6 +30,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REBUILD=false
 CLEAN=false
 TEST_FILTER=""
+CONFORMANCE_TEST=""
+CONFORMANCE_CATEGORY=""
 
 for arg in "$@"; do
     case $arg in
@@ -36,11 +41,34 @@ for arg in "$@"; do
         --clean)
             CLEAN=true
             ;;
+        --conformance)
+            CONFORMANCE_TEST=true
+            ;;
+        compiler|conformance|projects)
+            if [ "$CONFORMANCE_TEST" = true ]; then
+                CONFORMANCE_CATEGORY="$arg"
+            fi
+            ;;
         *)
             TEST_FILTER="$arg"
             ;;
     esac
 done
+
+# Handle --all flag for conformance tests
+if [ "$CONFORMANCE_TEST" = true ] && [ "$TEST_FILTER" = "all" ]; then
+    CONFORMANCE_CATEGORY="conformance,compiler,projects"
+    TEST_FILTER=""
+fi
+
+# If conformance test requested, delegate to conformance runner
+if [ "$CONFORMANCE_TEST" = true ]; then
+    if [ -n "$CONFORMANCE_CATEGORY" ]; then
+        exec "$ROOT_DIR/conformance/run-conformance.sh" --category="$CONFORMANCE_CATEGORY"
+    else
+        exec "$ROOT_DIR/conformance/run-conformance.sh"
+    fi
+fi
 
 # Clean cached volumes if requested
 if [ "$CLEAN" = true ]; then
