@@ -1598,12 +1598,21 @@ impl<'a> ThinCheckerState<'a> {
         self.resolve_alias_symbol(member_sym, visited_aliases)
     }
 
-    fn resolve_require_call_symbol(
-        &self,
-        idx: NodeIndex,
-        visited_aliases: Option<&mut Vec<SymbolId>>,
-    ) -> Option<SymbolId> {
+    /// Extract the module specifier from a require() call expression or
+    /// a string literal (for import equals declarations where the parser
+    /// stores only the string literal, not the full require() call).
+    /// Returns the module path string (e.g., './util' from require('./util')).
+    fn get_require_module_specifier(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
+
+        // For import equals declarations, the parser stores just the string literal
+        // e.g., `import x = require('./util')` has module_specifier = StringLiteral('./util')
+        if node.kind == SyntaxKind::StringLiteral as u16 {
+            let literal = self.ctx.arena.get_literal(node)?;
+            return Some(literal.text.clone());
+        }
+
+        // Handle full require() call expression (for other contexts)
         if node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
         }
@@ -1619,12 +1628,21 @@ impl<'a> ThinCheckerState<'a> {
         let first_arg = args.nodes.first().copied()?;
         let arg_node = self.ctx.arena.get(first_arg)?;
         let literal = self.ctx.arena.get_literal(arg_node)?;
-        let sym_id = self.ctx.binder.file_locals.get(&literal.text)?;
+        Some(literal.text.clone())
+    }
 
-        if let Some(visited) = visited_aliases {
-            return self.resolve_alias_symbol(sym_id, visited);
-        }
-        Some(sym_id)
+    fn resolve_require_call_symbol(
+        &self,
+        idx: NodeIndex,
+        _visited_aliases: Option<&mut Vec<SymbolId>>,
+    ) -> Option<SymbolId> {
+        // For require() calls, we don't resolve to a single symbol.
+        // Instead, compute_type_of_symbol handles this by creating a module namespace type.
+        // This function now just returns None to indicate no single symbol resolution.
+        let _ = self.get_require_module_specifier(idx)?;
+        // Module resolution for require() is handled in compute_type_of_symbol
+        // by creating an object type from module_exports.
+        None
     }
 
     /// Check if a node is a `require()` call expression.
@@ -6894,15 +6912,33 @@ impl<'a> ThinCheckerState<'a> {
                             {
                                 return (self.get_type_of_symbol(target_sym), Vec::new());
                             }
-                            if let Some(target_sym) =
-                                self.resolve_require_call_symbol(import.module_specifier, None)
+                            // Check if this is a require() call - handle by creating module namespace type
+                            if let Some(module_specifier) =
+                                self.get_require_module_specifier(import.module_specifier)
                             {
-                                return (self.get_type_of_symbol(target_sym), Vec::new());
-                            }
-                            // Check if this is a require() call - if so, return ANY type instead of the literal type
-                            // This handles cases like: import x = require('./module') where multi-file module
-                            // resolution isn't available. The ANY type allows property access without errors.
-                            if self.is_require_call(import.module_specifier) {
+                                // Try to resolve the module from module_exports
+                                if let Some(exports_table) =
+                                    self.ctx.binder.module_exports.get(&module_specifier)
+                                {
+                                    // Create an object type with all the module's exports
+                                    use crate::solver::PropertyInfo;
+                                    let mut props: Vec<PropertyInfo> = Vec::new();
+                                    for (name, &sym_id) in exports_table.iter() {
+                                        let prop_type = self.get_type_of_symbol(sym_id);
+                                        let name_atom = self.ctx.types.intern_string(name);
+                                        props.push(PropertyInfo {
+                                            name: name_atom,
+                                            type_id: prop_type,
+                                            write_type: prop_type,
+                                            optional: false,
+                                            readonly: false,
+                                            is_method: false,
+                                        });
+                                    }
+                                    let module_type = self.ctx.types.object(props);
+                                    return (module_type, Vec::new());
+                                }
+                                // Module not found - return ANY to allow property access
                                 return (TypeId::ANY, Vec::new());
                             }
                             // Fall back to get_type_of_node for simple identifiers
