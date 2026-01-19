@@ -64,6 +64,23 @@ mod thin_emitter_tests;
 #[cfg(test)]
 mod transform_api_tests;
 
+// ThinPrinter - Clean, safe AST-to-JavaScript printer
+pub mod thin_printer;
+#[cfg(test)]
+mod thin_printer_tests;
+
+// Span - Source location tracking (byte offsets)
+pub mod span;
+
+// SourceFile - Owns source text and provides &str references
+pub mod source_file;
+
+// Diagnostics - Error collection, formatting, and reporting
+pub mod diagnostics;
+
+// Enums - Enum support including const enum inlining
+pub mod enums;
+
 // Parallel processing with Rayon (Phase 0.4)
 pub mod parallel;
 
@@ -107,24 +124,9 @@ pub mod lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 
-// Test Harness - Utilities for running tests with timeouts and fixtures
-#[cfg(test)]
-pub mod test_harness;
-
-// Module Resolution Infrastructure
-pub mod module_resolver;
-pub use module_resolver::{ModuleResolver, ResolvedModule, ResolutionFailure, ModuleExtension};
-
-// Import/Export Tracking
-pub mod imports;
-pub use imports::{ImportTracker, ImportedBinding, ImportKind, ImportDeclaration};
-
-pub mod exports;
-pub use exports::{ExportTracker, ExportedBinding, ExportKind, ExportDeclaration};
-
-// Module Dependency Graph
-pub mod module_graph;
-pub use module_graph::{ModuleGraph, ModuleId, ModuleInfo, CircularDependency};
+// WASM integration module - parallel type checking exports
+pub mod wasm;
+pub use wasm::{WasmTypeInterner, WasmParallelParser, WasmParallelChecker};
 
 // =============================================================================
 // Scanner Factory Function
