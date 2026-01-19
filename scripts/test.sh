@@ -44,9 +44,6 @@ for arg in "$@"; do
         --conformance)
             CONFORMANCE_TEST=true
             ;;
-        --all)
-            CONFORMANCE_CATEGORY="conformance,compiler,projects"
-            ;;
         compiler|conformance|projects)
             if [ "$CONFORMANCE_TEST" = true ]; then
                 CONFORMANCE_CATEGORY="$arg"
@@ -57,6 +54,12 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# Handle --all flag for conformance tests
+if [ "$CONFORMANCE_TEST" = true ] && [ "$TEST_FILTER" = "all" ]; then
+    CONFORMANCE_CATEGORY="conformance,compiler,projects"
+    TEST_FILTER=""
+fi
 
 # If conformance test requested, delegate to conformance runner
 if [ "$CONFORMANCE_TEST" = true ]; then
