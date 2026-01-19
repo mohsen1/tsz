@@ -32,13 +32,9 @@ This was a valid risk, but `TypeInterner` (`src/solver/intern.rs`) is already im
 
 #### 3. Parser & Error Recovery Logic
 
-*   **Gaming the Error Budget**:
-    In `src/thin_parser.rs`, `parse_statement` resets the error budgets:
-    ```rust
-    self.ts1109_statement_budget = 5;
-    self.ts1005_statement_budget = 2;
-    ```
-    This is a "whack-a-mole" strategy. Resetting budgets per statement is arbitrary. If a file is garbage, the parser should bail or synchronize faster, not just reset a counter.
+*   **Gaming the Error Budget (fixed)**:
+    Removed the statement-level TS1109/TS1005 “budgets” and recovery-based suppression from `src/thin_parser.rs`.
+    Parser recovery now relies on correct token consumption + `resync_after_error()` and a simple same-position de-dup guard (`last_error_pos`) to avoid cascades **without hiding real errors**.
 *   **Panic-driven logic**: The parser logic relies heavily on `unwrap` or array indexing without bounds checks in hot paths (though some are guarded). A compiler parsing user input **must never panic**. Unsafe digit emission has been removed; remaining work is to audit and eliminate unwrap-driven panics in the parser/checker hot paths.
 
 #### 4. Transformation Architecture (The "String" problem)

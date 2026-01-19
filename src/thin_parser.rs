@@ -89,10 +89,6 @@ pub struct ThinParserState {
     recursion_depth: u32,
     /// Position of last error (to prevent cascading errors at same position)
     last_error_pos: u32,
-    /// TS1109 error budget for current statement (prevents error storms)
-    ts1109_statement_budget: u32,
-    /// TS1005 error budget for current statement (prevents semicolon error storms)
-    ts1005_statement_budget: u32,
 }
 
 impl ThinParserState {
@@ -112,8 +108,6 @@ impl ThinParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
-            ts1109_statement_budget: 5, // Allow 5 TS1109 errors per statement (increased for better accuracy)
-            ts1005_statement_budget: 2, // Allow 2 TS1005 errors per statement (reduced for noise suppression)
         }
     }
 
@@ -127,8 +121,6 @@ impl ThinParserState {
         self.node_count = 0;
         self.recursion_depth = 0;
         self.last_error_pos = 0;
-        self.ts1109_statement_budget = 5; // Reset error budget (increased for better accuracy)
-        self.ts1005_statement_budget = 2; // Reset error budget (reduced for noise suppression)
     }
 
     /// Maximum recursion depth to prevent stack overflow on deeply nested code
@@ -449,70 +441,6 @@ impl ThinParserState {
     // Typed error helper methods (use these instead of parse_error_at_current_token)
     // =========================================================================
 
-    /// Check if we're at a recoverable position where we can continue parsing
-    /// This helps suppress false-positive TS1005 errors when the parser can reasonably recover
-    ///
-    /// For TS1005 (token expected), we need to balance between:
-    /// 1. Suppressing errors when the parser can clearly continue (reduces extra errors)
-    /// 2. Emitting errors when the missing token is genuine (reduces missing errors)
-    fn can_recover_from_error(&self) -> bool {
-        // If we're at a binary operator, we can continue the expression
-        // This handles cases like `a +` where the next operand is missing but we're continuing
-        if self.is_binary_operator() {
-            return true;
-        }
-
-        // If we're at a comma, we can continue (likely in a list)
-        // This handles cases like `[1,` where the next element is missing but list continues
-        if self.is_token(SyntaxKind::CommaToken) {
-            return true;
-        }
-
-        // If we're at an open parenthesis/bracket/brace, we might be starting a new sub-expression
-        // This handles cases like `a + (` where we're starting a parenthesized expression
-        if self.is_token(SyntaxKind::OpenParenToken)
-            || self.is_token(SyntaxKind::OpenBracketToken)
-            || self.is_token(SyntaxKind::OpenBraceToken)
-        {
-            return true;
-        }
-
-        // If we're at a token that clearly starts a new statement, we can recover
-        // This handles cases where the user has clearly moved on to the next statement
-        // But we need to be careful - only suppress for statement start, not expression start
-        if self.is_statement_start() {
-            return true;
-        }
-
-        // If we're at certain expression start tokens, we might be able to recover
-        // But be selective - only recover on tokens that clearly indicate a new expression
-        match self.token() {
-            // Literals and keywords that clearly start a new expression
-            SyntaxKind::NumericLiteral
-            | SyntaxKind::BigIntLiteral
-            | SyntaxKind::StringLiteral
-            | SyntaxKind::NoSubstitutionTemplateLiteral
-            | SyntaxKind::TemplateHead
-            | SyntaxKind::TrueKeyword
-            | SyntaxKind::FalseKeyword
-            | SyntaxKind::NullKeyword
-            | SyntaxKind::ThisKeyword
-            | SyntaxKind::SuperKeyword
-            | SyntaxKind::AwaitKeyword
-            | SyntaxKind::YieldKeyword => true,
-            // Open angle bracket for type arguments or JSX
-            SyntaxKind::LessThanToken => true,
-            // Colon for type annotations, object literal properties, or conditional operator
-            // This handles cases like `const x` followed by `: string` where we've moved on
-            SyntaxKind::ColonToken => true,
-            // Arrow function operator - indicates we're in an arrow function
-            SyntaxKind::EqualsGreaterThanToken => true,
-            // Type assertion keyword - indicates we're in a type context
-            SyntaxKind::AsKeyword => true,
-            _ => false,
-        }
-    }
-
     /// Error: Line break not permitted here (TS1142)
     fn error_line_break_not_permitted(&mut self) {
         use crate::checker::types::diagnostics::diagnostic_codes;
@@ -527,30 +455,6 @@ impl ThinParserState {
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading TS1109 errors when TS1005 or other errors already reported
         if self.token_pos() != self.last_error_pos {
-            // Check statement-level error budget to prevent error storms
-            if self.ts1109_statement_budget == 0 {
-                // Budget exhausted - suppress this TS1109 to prevent error storm
-                return;
-            }
-
-            // Additional check: suppress TS1109 if we're very close to a recent error
-            // This catches cascading errors where the parser recovers to the next token
-            // after a TS1005 or similar error.
-            // Only apply this if we've actually emitted an error (last_error_pos > 0)
-            // and the current position is within 30 characters of the last error.
-            // REDUCED from 50 to 30 to allow more legitimate TS1109 errors while preventing storms.
-            let current_pos = self.token_pos();
-            if self.last_error_pos > 0
-                && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(30)
-            {
-                // We're very close to a recent error (likely cascading), suppress this TS1109
-                return;
-            }
-
-            // Decrement budget - we're about to emit an error
-            self.ts1109_statement_budget -= 1;
-
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Expression expected",
@@ -596,35 +500,6 @@ impl ThinParserState {
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading errors when parse_semicolon() and similar functions call this
         if self.token_pos() != self.last_error_pos {
-            // Check TS1005 error budget to prevent error storms
-            if self.ts1005_statement_budget == 0 {
-                // Budget exhausted - suppress this TS1005 to prevent error storm
-                return;
-            }
-
-            // Additional check: suppress TS1005 if we're very close to a recent error
-            // This catches cascading errors where the parser recovers to the next token
-            // after another TS1005 or similar error.
-            let current_pos = self.token_pos();
-            if self.last_error_pos > 0
-                && current_pos > self.last_error_pos
-                && current_pos < self.last_error_pos.saturating_add(80)
-            {
-                // We're very close to a recent error (likely cascading), suppress this TS1005
-                return;
-            }
-
-            // Check if we can recover from this error
-            // If we're at a position where parsing can reasonably continue, suppress the error
-            // This reduces false-positive TS1005 errors in complex expressions
-            // Exception: Don't suppress ')' expected when we see '{' - this is likely a real error
-            if self.can_recover_from_error() && !(token == ")" && self.is_token(SyntaxKind::OpenBraceToken)) {
-                return;
-            }
-
-            // Decrement budget - we're about to emit an error
-            self.ts1005_statement_budget = self.ts1005_statement_budget.saturating_sub(1);
-
             use crate::checker::types::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 &format!("'{}' expected", token),
@@ -1378,11 +1253,6 @@ impl ThinParserState {
 
     /// Parse a statement
     pub fn parse_statement(&mut self) -> NodeIndex {
-        // Reset error budgets at statement boundaries to prevent error storms
-        // Increased to be more lenient and reduce false positives
-        self.ts1109_statement_budget = 5;
-        self.ts1005_statement_budget = 2;
-
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
             SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => self.parse_variable_statement(),
