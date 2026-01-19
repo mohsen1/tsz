@@ -64,6 +64,11 @@ mod thin_emitter_tests;
 #[cfg(test)]
 mod transform_api_tests;
 
+// ThinPrinter - Clean, safe AST-to-JavaScript printer
+pub mod thin_printer;
+#[cfg(test)]
+mod thin_printer_tests;
+
 // Parallel processing with Rayon (Phase 0.4)
 pub mod parallel;
 
