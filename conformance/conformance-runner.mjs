@@ -14,9 +14,9 @@ const __dirname = dirname(__filename);
 
 const CONFIG = {
   wasmPkgPath: resolve(__dirname, '../pkg'),
-  conformanceDir: resolve(__dirname, '../../tests/cases/conformance'),
+  conformanceDir: resolve(__dirname, '../TypeScript/tests/cases/conformance'),
 };
-const DEFAULT_LIB_PATH = resolve(__dirname, '../../tests/lib/lib.d.ts');
+const DEFAULT_LIB_PATH = resolve(__dirname, '../TypeScript/tests/lib/lib.d.ts');
 const DEFAULT_LIB_SOURCE = readFileSync(DEFAULT_LIB_PATH, 'utf8');
 const DEFAULT_LIB_NAME = 'lib.d.ts';
 

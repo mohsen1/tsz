@@ -128,8 +128,10 @@ pub mod cli;
 pub mod wasm;
 pub use wasm::{WasmTypeInterner, WasmParallelParser, WasmParallelChecker};
 
-// Module Resolution Infrastructure
+// Module Resolution Infrastructure (non-wasm targets only - requires file system access)
+#[cfg(not(target_arch = "wasm32"))]
 pub mod module_resolver;
+#[cfg(not(target_arch = "wasm32"))]
 pub use module_resolver::{ModuleResolver, ResolvedModule, ResolutionFailure, ModuleExtension};
 
 // Import/Export Tracking
@@ -139,8 +141,10 @@ pub use imports::{ImportTracker, ImportedBinding, ImportKind, ImportDeclaration}
 pub mod exports;
 pub use exports::{ExportTracker, ExportedBinding, ExportKind, ExportDeclaration};
 
-// Module Dependency Graph
+// Module Dependency Graph (non-wasm targets only - requires module_resolver)
+#[cfg(not(target_arch = "wasm32"))]
 pub mod module_graph;
+#[cfg(not(target_arch = "wasm32"))]
 pub use module_graph::{ModuleGraph, ModuleId, ModuleInfo, CircularDependency};
 
 // =============================================================================
