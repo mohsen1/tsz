@@ -136,21 +136,26 @@ async function main() {
   const args = process.argv.slice(2);
   const maxTests = parseInt(args.find(a => a.startsWith('--max='))?.split('=')[1] || '999999', 10);
   const numWorkers = parseInt(args.find(a => a.startsWith('--workers='))?.split('=')[1] || String(cpus().length), 10);
-  const category = args.find(a => !a.startsWith('-'))?.toLowerCase();
+  const categoryArg = args.find(a => a.startsWith('--category='))?.split('=')[1];
+  const categories = categoryArg ? categoryArg.split(',') : ['conformance'];
 
   log('Process Pool Conformance Test Runner', colors.bold);
   log('═'.repeat(60), colors.dim);
   log(`  Workers: ${numWorkers} (child processes)`, colors.cyan);
-
-  let testDir = CONFIG.conformanceDir;
-  if (category) {
-    testDir = join(CONFIG.conformanceDir, category);
-    log(`  Category: ${category}`, colors.cyan);
-  }
+  log(`  Categories: ${categories.join(', ')}`, colors.cyan);
 
   log(`\nCollecting test files (max ${maxTests})...`, colors.cyan);
-  const testFiles = getTestFiles(testDir, maxTests);
-  log(`  Found ${testFiles.length} test files`, colors.dim);
+  const testFiles = [];
+  const testsBasePath = resolve(__dirname, '../TypeScript/tests/cases');
+
+  for (const category of categories) {
+    const testDir = join(testsBasePath, category);
+    const files = getTestFiles(testDir, maxTests - testFiles.length);
+    testFiles.push(...files);
+    log(`  ${category}: ${files.length} files`, colors.dim);
+  }
+
+  log(`  Total: ${testFiles.length} test files`, colors.dim);
 
   // Split tests among workers
   const chunks = chunkArray(testFiles, numWorkers);
@@ -176,7 +181,7 @@ async function main() {
   try {
     // Run all child processes in parallel
     const childPromises = chunks.map((chunk, i) =>
-      runChildProcess(chunk, i, CONFIG.wasmPkgPath, CONFIG.conformanceDir, (completed, total) => {
+      runChildProcess(chunk, i, CONFIG.wasmPkgPath, testsBasePath, (completed, total) => {
         updateProgress(i, completed, total);
       })
     );
