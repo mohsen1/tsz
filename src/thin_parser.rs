@@ -656,6 +656,7 @@ impl ThinParserState {
     fn is_parameter_start(&self) -> bool {
         // Parameters can start with modifiers, identifiers, or binding patterns
         self.is_parameter_modifier()
+            || self.is_token(SyntaxKind::AtToken) // decorators on parameters
             || self.is_token(SyntaxKind::DotDotDotToken) // rest parameter
             || self.is_identifier_or_keyword()
             || self.is_token(SyntaxKind::OpenBraceToken) // object binding pattern
@@ -1045,6 +1046,19 @@ impl ThinParserState {
             | SyntaxKind::SuperKeyword
             | SyntaxKind::ImportKeyword
             | SyntaxKind::TypeKeyword
+            | SyntaxKind::AnyKeyword
+            | SyntaxKind::StringKeyword
+            | SyntaxKind::NumberKeyword
+            | SyntaxKind::BooleanKeyword
+            | SyntaxKind::SymbolKeyword
+            | SyntaxKind::BigIntKeyword
+            | SyntaxKind::ObjectKeyword
+            | SyntaxKind::NeverKeyword
+            | SyntaxKind::UnknownKeyword
+            | SyntaxKind::UndefinedKeyword
+            | SyntaxKind::RequireKeyword
+            | SyntaxKind::ModuleKeyword
+            | SyntaxKind::NamespaceKeyword
             | SyntaxKind::AsyncKeyword
             | SyntaxKind::AwaitKeyword
             | SyntaxKind::YieldKeyword
@@ -2382,8 +2396,22 @@ impl ThinParserState {
     fn parse_parameter(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
-        // Parse optional modifiers (public, private, protected, readonly)
-        let modifiers = self.parse_parameter_modifiers();
+        // Parse parameter decorators and parameter modifiers (public/private/readonly).
+        // We store decorators in the same `modifiers` list used elsewhere in the Thin AST.
+        let decorators = self.parse_decorators();
+        let param_modifiers = self.parse_parameter_modifiers();
+        let modifiers = match (decorators, param_modifiers) {
+            (None, None) => None,
+            (Some(list), None) | (None, Some(list)) => Some(list),
+            (Some(decorators), Some(param_modifiers)) => {
+                let mut nodes = Vec::with_capacity(
+                    decorators.nodes.len().saturating_add(param_modifiers.nodes.len()),
+                );
+                nodes.extend(decorators.nodes);
+                nodes.extend(param_modifiers.nodes);
+                Some(self.make_node_list(nodes))
+            }
+        };
 
         // Parse rest parameter (...)
         let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);

@@ -80,32 +80,19 @@ The transformation logic (ES5 downleveling) in `src/transforms/` is mixing AST m
 
 The project mimics TypeScript's architecture *too* closely in some places (like the massive switch statements) while deviating in dangerous ways (concurrency model) without solving the underlying data hazard problems.
 
-### 1. Fix Hanging Tests
-
-Several tests have infinite loops and hang forever. These must be fixed before any other work.
-
-**Currently Ignored (infinite loops):**
-- `test_class_es5_commonjs_class_exports` (transforms/class_es5_tests.rs)
-- `test_source_map_decorator_combined_advanced` (source_map_tests.rs)
-- `test_source_map_decorator_composition_es5_comprehensive` (source_map_tests.rs)
-- `test_source_map_decorator_composition_es5_method_params` (source_map_tests.rs)
-- `test_source_map_decorator_metadata_es5_parameter_decorators` (source_map_tests.rs)
-
-**Action:** Run tests with timeouts to find any remaining hanging tests.
-
-### 2. Improve Conformance Test Pass Rate
+### Improve Conformance Test Pass Rate
 
 Current pass rate is not close to our target of 95%+. Focus on fixing high-impact issues in the solver and checker to improve accuracy.
 
-### 3. Clean Up Clippy Ignores
+### Clean Up Clippy Ignores
 
 One by one go through rules ignored in `clippy.toml` and fix the underlying issues to enable the lints project-wide.
 
-### 4. Complete TODOs in conformance/TEST_CATEGORIES.md
+### Complete TODOs in conformance/TEST_CATEGORIES.md
 Finish implementing the unified test runner to handle `compiler/` and `projects/` tests in addition to `conformance/`.
 
 
-### 5. Improve code hygiene
+### Improve code hygiene
 
 - Move all scripts to `scripts/` directory. no scripts in root.
 - Update AGENTS.md so agents do not produce .md files for results of their work.

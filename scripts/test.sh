@@ -32,6 +32,8 @@ CLEAN=false
 TEST_FILTER=""
 CONFORMANCE_TEST=""
 CONFORMANCE_CATEGORY=""
+RUN_IGNORED=false
+TIMEOUT_SECS=""
 
 for arg in "$@"; do
     case $arg in
@@ -40,6 +42,12 @@ for arg in "$@"; do
             ;;
         --clean)
             CLEAN=true
+            ;;
+        --ignored)
+            RUN_IGNORED=true
+            ;;
+        --timeout=*)
+            TIMEOUT_SECS="${arg#*=}"
             ;;
         --conformance)
             CONFORMANCE_TEST=true
@@ -93,19 +101,32 @@ echo "🧪 Running tests..."
 
 # We use a workaround: copy source to a writable location inside the container
 # This avoids the ro mount conflict with the target cache
+NEXT_TEST_ARGS=""
+if [ "$RUN_IGNORED" = true ]; then
+    NEXT_TEST_ARGS="$NEXT_TEST_ARGS --run-ignored all"
+fi
+if [ -n "$TIMEOUT_SECS" ]; then
+    echo "   Timeout: ${TIMEOUT_SECS}s"
+    NEXT_TEST_ARGS="timeout ${TIMEOUT_SECS}s cargo nextest run$NEXT_TEST_ARGS"
+else
+    NEXT_TEST_ARGS="cargo nextest run$NEXT_TEST_ARGS"
+fi
+
 if [ -n "$TEST_FILTER" ]; then
     echo "   Filter: $TEST_FILTER"
     docker run --rm --memory="2g" --cpus="2.0" \
         -v "$ROOT_DIR:/source:ro" \
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
-        "$IMAGE_NAME" bash -c "rm -rf /app/* && cp -r /source/* /app/ && cargo nextest run $TEST_FILTER"
+        -v wasm-target-cache:/app/target \
+        "$IMAGE_NAME" bash -c "find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && cp -r /source/* /app/ && $NEXT_TEST_ARGS $TEST_FILTER"
 else
     docker run --rm --memory="2g" --cpus="2.0" \
         -v "$ROOT_DIR:/source:ro" \
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
-        "$IMAGE_NAME" bash -c "rm -rf /app/* && cp -r /source/* /app/ && cargo nextest run"
+        -v wasm-target-cache:/app/target \
+        "$IMAGE_NAME" bash -c "find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && cp -r /source/* /app/ && $NEXT_TEST_ARGS"
 fi
 
 echo "✅ Tests complete!"
