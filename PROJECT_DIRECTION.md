@@ -107,7 +107,7 @@ Finish implementing the unified test runner to handle `compiler/` and `projects/
 
 ### 5. Improve code hygiene
 
-- Move all scripts to `scripts/` directory. no scripts in root. Including test.sh, build-wasm.sh, etc.
+- Move all scripts to `scripts/` directory. no scripts in root.
 - Update AGENTS.md so agents do not produce .md files for results of their work.
 - Update .gitignore to not allow any new files in root.
 - Revisit scripts/ and conformance/ scripts and clean up as needed.
