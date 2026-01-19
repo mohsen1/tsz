@@ -76,7 +76,15 @@ The project mimics TypeScript's architecture *too* closely in some places (like 
 
 ### Improve Conformance Test Pass Rate
 
-Current pass rate is not close to our target of 95%+. Focus on fixing high-impact issues in the solver and checker to improve accuracy.
+Current pass rate: **35-43%** (depending on test sample size, up from ~3% with crashes).
+Target: 95%+. Recent fixes:
+- Fixed TS2705 false positives for async functions with Promise return types (major impact)
+- Fixed re-export symbol tracking for cache invalidation
+- Fixed typesVersions resolution (default compiler version)
+- Fixed lib.d.ts path in conformance runner
+- Fixed compiler options parsing (target/module string values)
+
+Top remaining issues: TS2304 (Cannot find name), TS2403, TS2664, TS2345, TS2571.
 
 ### Clean Up Clippy Ignores
 
