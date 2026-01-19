@@ -227,13 +227,98 @@ struct CompilerOptions {
     #[serde(default)]
     no_implicit_this: Option<bool>,
 
-    /// Specify ECMAScript target version.
-    #[serde(default)]
+    /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
+    #[serde(default, deserialize_with = "deserialize_target_or_module")]
     target: Option<u32>,
 
-    /// Specify module code generation.
-    #[serde(default)]
+    /// Specify module code generation (accepts string like "CommonJS" or numeric).
+    #[serde(default, deserialize_with = "deserialize_target_or_module")]
     module: Option<u32>,
+}
+
+/// Deserialize target/module values that can be either strings or numbers.
+/// TypeScript test files often use strings like "ES5", "ES2015", "CommonJS", etc.
+fn deserialize_target_or_module<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Visitor};
+
+    struct TargetOrModuleVisitor;
+
+    impl<'de> Visitor<'de> for TargetOrModuleVisitor {
+        type Value = Option<u32>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or integer representing target/module")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value as u32))
+        }
+
+        fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value as u32))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            // Parse string values to their TypeScript enum equivalents
+            let result = match value.to_uppercase().as_str() {
+                // ScriptTarget values
+                "ES3" => 0,
+                "ES5" => 1,
+                "ES2015" | "ES6" => 2,
+                "ES2016" => 3,
+                "ES2017" => 4,
+                "ES2018" => 5,
+                "ES2019" => 6,
+                "ES2020" => 7,
+                "ES2021" => 8,
+                "ES2022" => 9,
+                "ES2023" => 10,
+                "ESNEXT" => 99,
+                // ModuleKind values
+                "NONE" => 0,
+                "COMMONJS" => 1,
+                "AMD" => 2,
+                "UMD" => 3,
+                "SYSTEM" => 4,
+                "ES2015" | "ES6" => 5, // Already covered above
+                "ES2020" => 6,         // Already covered above
+                "ES2022" => 7,         // Already covered above
+                "ESNEXT" => 99,        // Already covered above
+                "NODE16" => 100,
+                "NODENEXT" => 199,
+                _ => return Ok(None), // Unknown value, treat as unset
+            };
+            Ok(Some(result))
+        }
+    }
+
+    deserializer.deserialize_any(TargetOrModuleVisitor)
 }
 
 impl CompilerOptions {

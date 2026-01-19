@@ -28,7 +28,7 @@ interface RunnerConfig {
 
 const DEFAULT_CONFIG: RunnerConfig = {
   wasmPkgPath: path.resolve(import.meta.dirname || __dirname, '../../pkg'),
-  testsBasePath: path.resolve(import.meta.dirname || __dirname, '../../tests/cases'),
+  testsBasePath: path.resolve(import.meta.dirname || __dirname, '../../TypeScript/tests/cases'),
   libPath: path.resolve(import.meta.dirname || __dirname, '../../tests/lib/lib.d.ts'),
   maxTests: 500,
   verbose: false,
@@ -620,7 +620,13 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   // Load WASM module
   let wasmModule: unknown;
   try {
-    wasmModule = await import(path.join(cfg.wasmPkgPath, 'wasm.js'));
+    const wasmPath = path.join(cfg.wasmPkgPath, 'wasm.js');
+    const module = await import(wasmPath);
+    // Initialize the WASM module - this is required before using any exports
+    if (typeof module.default === 'function') {
+      await module.default();
+    }
+    wasmModule = module;
     log(`  Loaded WASM module`, colors.dim);
   } catch (error) {
     log(`  Error loading WASM module: ${error}`, colors.red);
