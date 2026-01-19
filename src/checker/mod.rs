@@ -16,19 +16,17 @@
 //! The types module is still used by both ThinChecker and Solver.
 
 pub mod arena;
-pub mod array_literals;
 pub mod context;
 pub mod control_flow;
 pub mod declarations;
 pub mod decorators;
-pub mod destructuring;
 pub mod expr;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod jsx;
-pub mod object_literals;
+pub mod nullish;
+pub mod optional_chain;
 pub mod reachability_analyzer;
-pub mod spread;
 pub mod statements;
 pub mod types;
 
