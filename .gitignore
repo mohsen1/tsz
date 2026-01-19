@@ -41,9 +41,6 @@ TypeScript/tests/cases/rwc/*
 !TypeScript/tests/cases/projects/NodeModulesSearch/**/*
 !TypeScript/tests/cases/projects/projectOption/**/node_modules
 
-# Orchestrator
-.github/.orchestrator-state.json
-
 # Misc
 .env.local
 .claude/settings.local.json
