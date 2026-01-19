@@ -33,7 +33,7 @@ fi
 IMAGE_NAME="typescript-wasm-bench"
 if ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
     echo -e "${YELLOW}Building Docker image...${NC}"
-    docker build -t "$IMAGE_NAME" -f "$PROJECT_ROOT/Dockerfile.bench" "$PROJECT_ROOT"
+    docker build -t "$IMAGE_NAME" -f "$PROJECT_ROOT/scripts/docker/Dockerfile.bench" "$PROJECT_ROOT"
 fi
 
 # Determine which benchmarks to run
