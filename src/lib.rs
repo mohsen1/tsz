@@ -128,6 +128,21 @@ pub mod cli;
 pub mod wasm;
 pub use wasm::{WasmTypeInterner, WasmParallelParser, WasmParallelChecker};
 
+// Module Resolution Infrastructure
+pub mod module_resolver;
+pub use module_resolver::{ModuleResolver, ResolvedModule, ResolutionFailure, ModuleExtension};
+
+// Import/Export Tracking
+pub mod imports;
+pub use imports::{ImportTracker, ImportedBinding, ImportKind, ImportDeclaration};
+
+pub mod exports;
+pub use exports::{ExportTracker, ExportedBinding, ExportKind, ExportDeclaration};
+
+// Module Dependency Graph
+pub mod module_graph;
+pub use module_graph::{ModuleGraph, ModuleId, ModuleInfo, CircularDependency};
+
 // =============================================================================
 // Scanner Factory Function
 // =============================================================================

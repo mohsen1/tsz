@@ -26,6 +26,7 @@ use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::thin_binder::ThinBinderState;
 use rustc_hash::FxHashMap;
 
 /// Options for enum transformation
@@ -443,8 +444,11 @@ pub struct ConstEnumInliner<'a> {
 impl<'a> ConstEnumInliner<'a> {
     pub fn new(
         arena: &'a ThinNodeArena,
+        _binder: &'a ThinBinderState,
         source_text: &'a str,
     ) -> Self {
+        // Note: binder is reserved for future use when we need symbol resolution
+        // for cross-file const enum references
         ConstEnumInliner {
             transformer: EnumTransformer::new(arena),
             source_text,

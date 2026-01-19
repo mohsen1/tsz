@@ -3,13 +3,28 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Differential testing harness for TypeScript vs Rust/WASM compiler",
+  "main": "dist/runner.js",
   "scripts": {
-    "test": "node runner.js",
-    "test:catalog": "node runner.js --catalog",
-    "test:verbose": "node runner.js --verbose",
-    "report": "node runner.js --report-only"
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "npm run build && node dist/runner.js",
+    "test:conformance": "npm run build && node dist/runner.js --category=conformance",
+    "test:compiler": "npm run build && node dist/runner.js --category=compiler",
+    "test:projects": "npm run build && node dist/runner.js --category=projects",
+    "test:all": "npm run build && node dist/runner.js --category=conformance,compiler,projects",
+    "test:100": "npm run build && node dist/runner.js --max=100",
+    "test:500": "npm run build && node dist/runner.js --max=500",
+    "test:1000": "npm run build && node dist/runner.js --max=1000",
+    "test:verbose": "npm run build && node dist/runner.js --verbose",
+    "runner": "node conformance-runner.mjs",
+    "runner:simple": "node conformance-simple.mjs",
+    "runner:parallel": "node parallel-conformance.mjs",
+    "runner:embedded": "node conformance-embedded.mjs"
   },
   "dependencies": {
     "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0"
   }
 }
