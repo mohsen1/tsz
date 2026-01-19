@@ -68,6 +68,7 @@ impl SourceLocation {
 
 /// Line map for efficient offset <-> position conversion.
 /// Stores the starting offset of each line.
+#[derive(Debug, Clone)]
 pub struct LineMap {
     /// Starting offset of each line (line_starts[0] is always 0)
     line_starts: Vec<u32>,
