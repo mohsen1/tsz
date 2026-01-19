@@ -16,7 +16,7 @@ import { compareDiagnostics, formatComparison } from './compare.js';
 const DEFAULT_CONFIG = {
     wasmPkgPath: path.resolve(import.meta.dirname || __dirname, '../../pkg'),
     testsBasePath: path.resolve(import.meta.dirname || __dirname, '../../TypeScript/tests/cases'),
-    libPath: path.resolve(import.meta.dirname || __dirname, '../../tests/lib/lib.d.ts'),
+    libPath: path.resolve(import.meta.dirname || __dirname, '../../TypeScript/tests/lib/lib.d.ts'),
     maxTests: 500,
     verbose: false,
     categories: ['conformance', 'compiler'],
