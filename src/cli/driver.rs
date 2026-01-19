@@ -1518,19 +1518,10 @@ fn types_versions_compiler_version(options: &ResolvedCompilerOptions) -> SemVer 
 }
 
 fn default_types_versions_compiler_version() -> SemVer {
-    static DEFAULT: std::sync::OnceLock<SemVer> = std::sync::OnceLock::new();
-    *DEFAULT.get_or_init(|| {
-        let version =
-            serde_json::from_str::<serde_json::Value>(include_str!("../../package.json"))
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("version")
-                        .and_then(|value| value.as_str())
-                        .and_then(parse_semver)
-                });
-        version.unwrap_or(TYPES_VERSIONS_COMPILER_VERSION_FALLBACK)
-    })
+    // Use the fallback version directly since the project's package.json version
+    // is not a TypeScript version. The fallback represents the TypeScript version
+    // that this compiler is compatible with for typesVersions resolution.
+    TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
 }
 
 fn export_conditions(options: &ResolvedCompilerOptions) -> Vec<&'static str> {

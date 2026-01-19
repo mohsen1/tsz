@@ -3264,7 +3264,8 @@ impl ThinBinderState {
                                 let current_file = self.debugger.current_file.clone();
 
                                 // Collect all the export mappings first (before mutable borrow)
-                                let mut export_mappings: Vec<(String, Option<String>)> = Vec::new();
+                                // Also collect node indices and names for creating symbols
+                                let mut export_mappings: Vec<(String, Option<String>, NodeIndex)> = Vec::new();
                                 for &spec_idx in &named.elements.nodes {
                                     if let Some(spec_node) = arena.get(spec_idx) {
                                         if let Some(spec) = arena.get_specifier(spec_node) {
@@ -3284,15 +3285,29 @@ impl ThinBinderState {
                                                 export_mappings.push((
                                                     exported.to_string(),
                                                     original_name.map(|s| s.to_string()),
+                                                    spec_idx,
                                                 ));
                                             }
                                         }
                                     }
                                 }
 
+                                // Create symbols for re-export specifiers so they can be tracked
+                                // in the compilation cache for incremental invalidation
+                                for (exported, _, spec_idx) in &export_mappings {
+                                    let sym_id = self
+                                        .symbols
+                                        .alloc(symbol_flags::EXPORT_VALUE, exported.clone());
+                                    if let Some(sym) = self.symbols.get_mut(sym_id) {
+                                        sym.is_exported = true;
+                                        sym.is_type_only = export_type_only;
+                                    }
+                                    self.node_symbols.insert(spec_idx.0, sym_id);
+                                }
+
                                 // Now apply the mutable borrow to insert the mappings
                                 let file_reexports = self.reexports.entry(current_file).or_default();
-                                for (exported, original) in export_mappings {
+                                for (exported, original, _) in export_mappings {
                                     file_reexports.insert(exported, (source_module.clone(), original));
                                 }
                             }
