@@ -14,8 +14,11 @@ GOAL="${2:-}"
 BASE_BRANCH="${3:-main}"
 STATE_FILE=".github/.orchestrator-state.json"
 
-log() { echo "[orchestrator] $*"; }
+log() { echo "[orchestrator] $*" >&2; }
 error() { echo "[orchestrator] ERROR: $*" >&2; exit 1; }
+
+# Claude Code flags for making file changes
+CLAUDE_FLAGS="--dangerously-skip-permissions --print"
 
 # Initialize state file if needed
 init_state() {
@@ -63,7 +66,7 @@ Output ONLY a JSON array of task objects, no markdown fences:
 [{\"id\": \"short-id\", \"title\": \"Short title\", \"description\": \"What to do\"}]"
 
   local response
-  response=$(claude --print "$prompt" 2>/dev/null) || error "Claude Code failed"
+  response=$(claude $CLAUDE_FLAGS "$prompt" 2>/dev/null) || error "Claude Code failed"
 
   # Extract JSON array from response (handles markdown fences)
   local tasks
@@ -100,7 +103,7 @@ Details: $task_desc
 
 Important: Only make changes directly related to this task. Keep changes minimal and focused."
 
-  claude --print "$prompt" || {
+  claude $CLAUDE_FLAGS "$prompt" || {
     log "Claude Code execution completed (may have made changes or not)"
   }
 
@@ -158,7 +161,7 @@ Diff:
 $diff"
 
   local response
-  response=$(claude --print "$prompt" 2>/dev/null) || error "Claude Code failed"
+  response=$(claude $CLAUDE_FLAGS "$prompt" 2>/dev/null) || error "Claude Code failed"
 
   if echo "$response" | grep -q "^APPROVE"; then
     log "Approving PR #$pr_number"
