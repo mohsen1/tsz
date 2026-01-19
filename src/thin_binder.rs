@@ -4,7 +4,6 @@
 //! ThinNode and ThinNodeArena, avoiding the old Node enum pattern matching.
 
 // Allow dead code for binder infrastructure methods that will be used in future phases
-#![allow(dead_code)]
 
 use crate::binder::{
     ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, Symbol, SymbolArena,
@@ -2596,28 +2595,6 @@ impl ThinBinderState {
                 },
                 true,
             );
-
-            self.exit_scope(arena);
-        }
-    }
-
-    /// Bind a method declaration - creates a scope and binds the body.
-    fn bind_method_declaration(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
-        if let Some(method) = arena.get_method_decl(node) {
-            self.bind_modifiers(arena, &method.modifiers);
-            // Enter function scope
-            self.enter_scope(ContainerKind::Function, idx);
-            self.declare_arguments_symbol();
-
-            self.with_fresh_flow(|binder| {
-                // Bind parameters
-                for &param_idx in &method.parameters.nodes {
-                    binder.bind_parameter(arena, param_idx);
-                }
-
-                // Bind body
-                binder.bind_node(arena, method.body);
-            });
 
             self.exit_scope(arena);
         }
