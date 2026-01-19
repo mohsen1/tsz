@@ -28,11 +28,10 @@
 //!
 //! The result type is always `T | undefined` where T is the non-nullish result type.
 
-use crate::checker::types::TypeId;
 use crate::parser::thin_node::ThinNodeArena;
 use crate::parser::{syntax_kind_ext, NodeIndex};
 use crate::scanner::SyntaxKind;
-use crate::solver::TypeStore;
+use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 
 /// Information about an optional chain expression
 #[derive(Debug, Clone)]
@@ -130,19 +129,19 @@ pub fn is_optional_chain(arena: &ThinNodeArena, idx: NodeIndex) -> bool {
 /// If the expression is an optional chain and the base can be nullish,
 /// the result is T | undefined
 pub fn get_optional_chain_type(
-    types: &mut TypeStore,
-    base_type: TypeId,
-    access_type: TypeId,
+    types: &mut impl TypeDatabase,
+    base_type: SolverTypeId,
+    access_type: SolverTypeId,
     is_optional: bool,
-) -> TypeId {
+) -> SolverTypeId {
     if !is_optional {
         return access_type;
     }
 
     // For optional chains, result is always T | undefined
     // unless it already includes undefined
-    if access_type == TypeId::UNDEFINED {
-        return TypeId::UNDEFINED;
+    if access_type == SolverTypeId::UNDEFINED {
+        return SolverTypeId::UNDEFINED;
     }
 
     // Check if access_type already contains undefined
@@ -151,14 +150,14 @@ pub fn get_optional_chain_type(
     }
 
     // Create union T | undefined
-    types.union(vec![access_type, TypeId::UNDEFINED])
+    types.union(vec![access_type, SolverTypeId::UNDEFINED])
 }
 
 /// Checks if a type contains undefined
-pub fn type_contains_undefined(types: &TypeStore, type_id: TypeId) -> bool {
+pub fn type_contains_undefined(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
     use crate::solver::{IntrinsicKind, TypeKey};
 
-    if type_id == TypeId::UNDEFINED {
+    if type_id == SolverTypeId::UNDEFINED {
         return true;
     }
 
@@ -177,7 +176,7 @@ pub fn type_contains_undefined(types: &TypeStore, type_id: TypeId) -> bool {
 }
 
 /// Removes null and undefined from a type for optional chain narrowing
-pub fn get_non_nullish_type(types: &mut TypeStore, type_id: TypeId) -> TypeId {
+pub fn get_non_nullish_type(types: &mut impl TypeDatabase, type_id: SolverTypeId) -> SolverTypeId {
     use crate::solver::{IntrinsicKind, TypeKey};
 
     let Some(key) = types.lookup(type_id) else {
@@ -186,18 +185,18 @@ pub fn get_non_nullish_type(types: &mut TypeStore, type_id: TypeId) -> TypeId {
 
     match key {
         TypeKey::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-            TypeId::NEVER
+            SolverTypeId::NEVER
         }
         TypeKey::Union(members) => {
             let members = types.type_list(members);
-            let non_nullish: Vec<TypeId> = members
+            let non_nullish: Vec<SolverTypeId> = members
                 .iter()
                 .filter(|&&m| !is_nullish_type(types, m))
                 .copied()
                 .collect();
 
             if non_nullish.is_empty() {
-                TypeId::NEVER
+                SolverTypeId::NEVER
             } else if non_nullish.len() == 1 {
                 non_nullish[0]
             } else {
@@ -209,10 +208,10 @@ pub fn get_non_nullish_type(types: &mut TypeStore, type_id: TypeId) -> TypeId {
 }
 
 /// Checks if a type is nullish (null or undefined)
-pub fn is_nullish_type(types: &TypeStore, type_id: TypeId) -> bool {
+pub fn is_nullish_type(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
     use crate::solver::{IntrinsicKind, TypeKey};
 
-    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+    if type_id == SolverTypeId::NULL || type_id == SolverTypeId::UNDEFINED {
         return true;
     }
 
@@ -227,7 +226,7 @@ pub fn is_nullish_type(types: &TypeStore, type_id: TypeId) -> bool {
 }
 
 /// Checks if a type can be nullish (contains null or undefined)
-pub fn can_be_nullish(types: &TypeStore, type_id: TypeId) -> bool {
+pub fn can_be_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
     use crate::solver::{IntrinsicKind, TypeKey};
 
     if is_nullish_type(types, type_id) {

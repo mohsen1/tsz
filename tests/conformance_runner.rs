@@ -156,6 +156,9 @@ pub fn directives_to_options(directives: &TestDirectives) -> CheckerOptions {
         no_implicit_this: strict,
         use_unknown_in_catch_variables: strict,
         isolated_modules: false,
+        no_unchecked_indexed_access: false,
+        strict_bind_call_apply: false,
+        exact_optional_property_types: false,
     }
 }
 

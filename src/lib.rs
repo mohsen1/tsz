@@ -300,6 +300,9 @@ impl CompilerOptions {
             no_implicit_this: self.get_no_implicit_this(),
             use_unknown_in_catch_variables: strict_null_checks,
             isolated_modules: false,
+            no_unchecked_indexed_access: false,
+            strict_bind_call_apply: false,
+            exact_optional_property_types: false,
         }
     }
 }

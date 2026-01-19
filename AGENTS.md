@@ -355,6 +355,7 @@ if is_lib_declaration_file(&file_path) {
 - **specs/ARCHITECTURE_CLEANUP.md**: Architecture cleanup plan (create if needed)
 - **specs/TEST_INFRASTRUCTURE.md**: Test infrastructure design (create if needed)
 - **specs/WASM_ARCHITECTURE.md**: WASM boundary and public API design
+- **PROJECT_DIRECTION.md**: Project priorities and architecture rules
 
 ### 5.3 Key Implementation Files
 
