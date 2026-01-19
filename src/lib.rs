@@ -107,6 +107,10 @@ pub mod lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 
+// Test Harness - Utilities for running tests with timeouts and fixtures
+#[cfg(test)]
+pub mod test_harness;
+
 // =============================================================================
 // Scanner Factory Function
 // =============================================================================
