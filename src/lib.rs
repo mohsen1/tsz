@@ -286,8 +286,10 @@ where
             E: de::Error,
         {
             // Parse string values to their TypeScript enum equivalents
+            // Note: For shared values like ES2015/ES6, we use the ScriptTarget value
+            // because both target and module use the same match arm
             let result = match value.to_uppercase().as_str() {
-                // ScriptTarget values
+                // ScriptTarget values (0-10, 99)
                 "ES3" => 0,
                 "ES5" => 1,
                 "ES2015" | "ES6" => 2,
@@ -300,16 +302,12 @@ where
                 "ES2022" => 9,
                 "ES2023" => 10,
                 "ESNEXT" => 99,
-                // ModuleKind values
+                // ModuleKind-specific values
                 "NONE" => 0,
                 "COMMONJS" => 1,
                 "AMD" => 2,
                 "UMD" => 3,
                 "SYSTEM" => 4,
-                "ES2015" | "ES6" => 5, // Already covered above
-                "ES2020" => 6,         // Already covered above
-                "ES2022" => 7,         // Already covered above
-                "ESNEXT" => 99,        // Already covered above
                 "NODE16" => 100,
                 "NODENEXT" => 199,
                 _ => return Ok(None), // Unknown value, treat as unset

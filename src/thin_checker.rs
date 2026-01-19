@@ -10362,45 +10362,29 @@ impl<'a> ThinCheckerState<'a> {
                 };
 
                 // Only check non-generator async functions with explicit return types that aren't Promise
-                if is_async && !is_generator && !self.is_promise_type(return_type) {
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages,
-                    };
-                    self.error_at_node(
-                        type_annotation,
-                        diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                        diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                    );
+                // Skip this check if:
+                // 1. The return type is ERROR (unresolved reference, likely Promise not in lib)
+                // 2. The return type annotation text looks like it references Promise
+                if is_async && !is_generator {
+                    let should_emit_ts2705 = !self.is_promise_type(return_type)
+                        && return_type != TypeId::ERROR
+                        && !self.return_type_annotation_looks_like_promise(type_annotation);
+                    
+                    if should_emit_ts2705 {
+                        use crate::checker::types::diagnostics::{
+                            diagnostic_codes, diagnostic_messages,
+                        };
+                        self.error_at_node(
+                            type_annotation,
+                            diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                            diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                        );
+                    }
                 }
 
-                // Additional TS2705 check for functions without explicit return types
-                if is_async
-                    && !is_generator
-                    && !has_type_annotation
-                    && self.should_validate_async_function_context(idx)
-                {
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages,
-                    };
-                    self.error_at_node(
-                        idx,
-                        diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                        diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                    );
-                }
-
-                // TS2705: Async function requires Promise constructor when Promise is not in lib
-                // This check applies to ALL async functions, not just those with explicit return types
-                if is_async && !is_generator && !self.ctx.has_promise_in_lib() {
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages,
-                    };
-                    self.error_at_node(
-                        idx,
-                        diagnostic_messages::ASYNC_FUNCTION_REQUIRES_PROMISE_CONSTRUCTOR,
-                        diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                    );
-                }
+                // Note: TS2705 check for functions without explicit return types has been removed.
+                // TypeScript only emits TS2705 when there's an explicit non-Promise return type.
+                // The "Promise not in lib" check was also removed as it was emitting false positives.
             }
 
             // TS2366 (not all code paths return value) for function expressions and arrow functions
@@ -15577,53 +15561,32 @@ impl<'a> ThinCheckerState<'a> {
                         );
 
                         // TS2705: Async function must return Promise
-                        // Only check if there's an explicit return type annotation
+                        // Only check if there's an explicit return type annotation that is NOT Promise
+                        // Skip this check if the return type is ERROR or the annotation looks like Promise
                         // Note: Async generators (async function*) return AsyncGenerator, not Promise
                         if func.is_async
                             && !func.asterisk_token
                             && has_type_annotation
-                            && !self.is_promise_type(return_type)
                         {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
-                            self.error_at_node(
-                                func.type_annotation,
-                                diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                                diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                            );
+                            let should_emit_ts2705 = !self.is_promise_type(return_type)
+                                && return_type != TypeId::ERROR
+                                && !self.return_type_annotation_looks_like_promise(func.type_annotation);
+                            
+                            if should_emit_ts2705 {
+                                use crate::checker::types::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages,
+                                };
+                                self.error_at_node(
+                                    func.type_annotation,
+                                    diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                                    diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                                );
+                            }
                         }
 
-                        // Additional TS2705 check: async functions in strict mode or certain contexts
-                        // TSC validates async functions more broadly than just explicit return types
-                        if func.is_async
-                            && !func.asterisk_token
-                            && !has_type_annotation
-                            && self.should_validate_async_function_context(stmt_idx)
-                        {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
-                            self.error_at_node(
-                                stmt_idx,
-                                diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
-                                diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                            );
-                        }
-
-                        // TS2705: Async function requires Promise constructor when Promise is not in lib
-                        // This is a different check from the return type check above
-                        // Check if function is async and Promise is not available in lib
-                        if func.is_async && !func.asterisk_token && !self.ctx.has_promise_in_lib() {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
-                            self.error_at_node(
-                                stmt_idx,
-                                diagnostic_messages::ASYNC_FUNCTION_REQUIRES_PROMISE_CONSTRUCTOR,
-                                diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
-                            );
-                        }
+                        // Note: Removed extra TS2705 checks for:
+                        // - async functions without type annotations (TSC doesn't emit TS2705 for these)
+                        // - async functions when Promise is not in lib (this was causing false positives)
 
                         // Enter async context for await expression checking
                         if func.is_async {
@@ -23916,6 +23879,36 @@ impl<'a> ThinCheckerState<'a> {
         // Match exact Promise/PromiseLike names, or any name containing "Promise" (case-insensitive)
         // This handles types like MyPromise, CustomPromise, etc.
         matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
+    }
+
+    /// Check if a return type annotation syntactically looks like Promise<T>.
+    /// This is a fallback for when the type can't be resolved but the syntax is clearly Promise.
+    fn return_type_annotation_looks_like_promise(&self, type_annotation: NodeIndex) -> bool {
+        // Get the type node from the annotation
+        let Some(node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+
+        // Check if it's a type reference with "Promise" name
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+            // Get the type name - it could be an identifier or qualified name
+            if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
+                // Check for simple identifier like "Promise"
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    return self.is_promise_like_name(&ident.escaped_text);
+                }
+                // Also check for qualified names like SomeModule.Promise
+                if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node) {
+                    if let Some(right_node) = self.ctx.arena.get(qualified.right) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(right_node) {
+                            return self.is_promise_like_name(&ident.escaped_text);
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     /// Check if a type is a Promise or Promise-like type.
