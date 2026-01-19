@@ -1,1 +1,22 @@
-{"goal":"","tasks":[],"completed":[],"prs":[]}
+{
+  "goal": "Move scripts to scripts/",
+  "tasks": [
+    {
+      "id": "move-bench-script",
+      "title": "Move bench.sh to scripts/",
+      "description": "Move bench.sh from root to scripts/bench.sh and update any references in package.json or documentation"
+    },
+    {
+      "id": "move-build-wasm-script",
+      "title": "Move build-wasm.sh to scripts/",
+      "description": "Move build-wasm.sh from root to scripts/build-wasm.sh and update any references in package.json or documentation"
+    },
+    {
+      "id": "move-test-script",
+      "title": "Move test.sh to scripts/",
+      "description": "Move test.sh from root to scripts/test.sh and update any references in package.json, CI workflows, or documentation"
+    }
+  ],
+  "completed": [],
+  "prs": []
+}

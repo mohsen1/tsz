@@ -14,7 +14,7 @@ GOAL="${2:-}"
 BASE_BRANCH="${3:-main}"
 STATE_FILE=".github/.orchestrator-state.json"
 
-log() { echo "[orchestrator] $*"; }
+log() { echo "[orchestrator] $*" >&2; }
 error() { echo "[orchestrator] ERROR: $*" >&2; exit 1; }
 
 # Initialize state file if needed
