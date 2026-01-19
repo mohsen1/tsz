@@ -1,4 +1,4 @@
-use crate::source_writer::SourceWriter;
+use crate::source_writer::{SourcePosition, SourceWriter};
 
 #[test]
 fn write_usize_emits_digits() {
@@ -7,6 +7,26 @@ fn write_usize_emits_digits() {
     writer.write(",");
     writer.write_usize(42);
     assert_eq!(writer.get_output(), "0,42");
+}
+
+#[test]
+fn write_node_usize_emits_digits_and_mapping() {
+    let mut writer = SourceWriter::with_source_map("out.js".to_string());
+    writer.add_source("test.ts".to_string(), None);
+    writer.write_node_usize(
+        123,
+        SourcePosition {
+            pos: 0,
+            line: 0,
+            column: 0,
+        },
+    );
+    assert_eq!(writer.get_output(), "123");
+    let map_json = writer.generate_source_map_json().expect("source map");
+    assert!(
+        map_json.contains("\"mappings\""),
+        "expected mappings in source map json: {map_json}"
+    );
 }
 
 #[test]

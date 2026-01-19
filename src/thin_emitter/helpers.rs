@@ -66,24 +66,7 @@ impl<'a> ThinPrinter<'a> {
     /// Write an unsigned integer.
     pub(super) fn write_usize(&mut self, value: usize) {
         if let Some(source_pos) = self.take_pending_source_pos() {
-            if value == 0 {
-                self.writer.write_node("0", source_pos);
-                return;
-            }
-
-            let mut buf = [0u8; 20];
-            let mut i = buf.len();
-            let mut remaining = value;
-            while remaining > 0 {
-                let digit = (remaining % 10) as u8;
-                i -= 1;
-                buf[i] = b'0' + digit;
-                remaining /= 10;
-            }
-
-            // SAFETY: buffer only contains ASCII digits.
-            let digits = unsafe { std::str::from_utf8_unchecked(&buf[i..]) };
-            self.writer.write_node(digits, source_pos);
+            self.writer.write_node_usize(value, source_pos);
         } else {
             self.writer.write_usize(value);
         }

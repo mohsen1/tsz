@@ -30,9 +30,9 @@ fn push_u64(output: &mut String, mut value: u64) {
         value /= 10;
     }
 
-    // SAFETY: buffer only contains ASCII digits.
-    let digits = unsafe { std::str::from_utf8_unchecked(&buf[i..]) };
-    output.push_str(digits);
+    for &b in &buf[i..] {
+        output.push(b as char);
+    }
 }
 
 #[cfg(test)]

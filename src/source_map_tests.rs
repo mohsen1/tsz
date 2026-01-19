@@ -55704,7 +55704,6 @@ admin.save();"#;
 }
 
 #[test]
-#[test]
 fn test_source_map_decorator_composition_es5_comprehensive() {
     let source = r#"// Comprehensive decorator composition patterns for ES5 transform testing
 
