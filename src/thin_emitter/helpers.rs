@@ -2,10 +2,21 @@ use super::ThinPrinter;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::source_writer::SourcePosition;
+use crate::thin_printer::safe_slice;
 
 impl<'a> ThinPrinter<'a> {
     fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
+    }
+
+    // =========================================================================
+    // Safe String Slicing Helpers
+    // =========================================================================
+
+    /// Safely get a slice of text, returning empty string if out of bounds.
+    /// This prevents panics from invalid string indices.
+    pub(super) fn safe_slice_text<'b>(&self, text: &'b str, start: u32, end: u32) -> &'b str {
+        safe_slice::slice(text, start as usize, end as usize)
     }
 
     // =========================================================================

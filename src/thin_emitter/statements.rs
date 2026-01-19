@@ -3,6 +3,7 @@ use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNode;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::thin_printer::safe_slice;
 
 impl<'a> ThinPrinter<'a> {
     // =========================================================================
@@ -218,8 +219,11 @@ impl<'a> ThinPrinter<'a> {
                 let comments = get_trailing_comment_ranges(text, pos);
                 for comment in comments {
                     self.write_space();
-                    let comment_text = &text[comment.pos as usize..comment.end as usize];
-                    self.write(comment_text);
+                    // Use safe slicing to avoid panics
+                    let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+                    if !comment_text.is_empty() {
+                        self.write(comment_text);
+                    }
                 }
             }
         }

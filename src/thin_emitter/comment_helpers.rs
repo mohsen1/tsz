@@ -1,4 +1,5 @@
 use super::{CommentKind, ThinPrinter, get_leading_comment_ranges, get_trailing_comment_ranges};
+use crate::thin_printer::safe_slice;
 
 impl<'a> ThinPrinter<'a> {
     // =========================================================================
@@ -23,9 +24,11 @@ impl<'a> ThinPrinter<'a> {
         for comment in comments {
             // Add space before trailing comment
             self.write_space();
-            // Emit the comment text
-            let comment_text = &text[comment.pos as usize..comment.end as usize];
-            self.write(comment_text);
+            // Emit the comment text using safe slicing
+            let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+            if !comment_text.is_empty() {
+                self.write(comment_text);
+            }
         }
     }
 
@@ -41,8 +44,11 @@ impl<'a> ThinPrinter<'a> {
 
         let comments = get_leading_comment_ranges(text, pos as usize);
         for comment in comments {
-            let comment_text = &text[comment.pos as usize..comment.end as usize];
-            self.write(comment_text);
+            // Use safe slicing to avoid panics
+            let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+            if !comment_text.is_empty() {
+                self.write(comment_text);
+            }
             if comment.has_trailing_newline {
                 self.write_line();
             } else if comment.kind == CommentKind::MultiLine {
@@ -66,12 +72,16 @@ impl<'a> ThinPrinter<'a> {
         let start = self.last_processed_pos as usize;
         let end = std::cmp::min(up_to_pos as usize, text.len());
 
-        if start >= end {
+        if start >= end || start >= text.len() {
             return;
         }
 
-        // Scan the gap for comments
-        let gap_text = &text[start..end];
+        // Use safe slicing for the gap
+        let gap_text = safe_slice::slice(text, start, end);
+        if gap_text.is_empty() {
+            return;
+        }
+
         let bytes = gap_text.as_bytes();
         let len = bytes.len();
         let mut pos = 0;
@@ -99,8 +109,11 @@ impl<'a> ThinPrinter<'a> {
                     {
                         comment_end += 1;
                     }
-                    let comment_text = &text[comment_start..start + comment_end];
-                    self.write(comment_text);
+                    // Use safe slicing for comment text
+                    let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
+                    if !comment_text.is_empty() {
+                        self.write(comment_text);
+                    }
                     self.write_line();
 
                     // Skip past the comment and newline
@@ -123,8 +136,11 @@ impl<'a> ThinPrinter<'a> {
                         }
                         comment_end += 1;
                     }
-                    let comment_text = &text[comment_start..start + comment_end];
-                    self.write(comment_text);
+                    // Use safe slicing for comment text
+                    let comment_text = safe_slice::slice(text, comment_start, start + comment_end);
+                    if !comment_text.is_empty() {
+                        self.write(comment_text);
+                    }
                     self.write_line();
 
                     pos = comment_end;
