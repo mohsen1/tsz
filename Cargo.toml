@@ -9,6 +9,11 @@ crate-type = ["cdylib", "rlib"]
 [[bin]]
 name = "tsz"
 path = "src/bin/tsz.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = []
 
 [dependencies]
 anyhow = "1.0"
