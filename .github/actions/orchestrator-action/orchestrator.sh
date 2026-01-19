@@ -38,6 +38,18 @@ save_state() {
     '{goal: $goal, tasks: $tasks, completed: $completed, prs: $prs}' > "$STATE_FILE"
 }
 
+# Strip markdown code fences from response
+strip_markdown() {
+  sed 's/^```[a-z]*$//' | sed 's/^```$//' | tr '\n' '\001' | sed 's/\001\001*/\001/g' | tr '\001' '\n'
+}
+
+# Extract JSON array from text (handles multiline)
+extract_json_array() {
+  local input="$1"
+  # Remove markdown fences and extract JSON array
+  echo "$input" | sed 's/^```[a-z]*//g' | sed 's/```$//g' | tr -d '\n' | grep -o '\[.*\]'
+}
+
 # Plan: Use Claude Code to break down goal into tasks
 plan() {
   local goal="$1"
@@ -47,15 +59,15 @@ plan() {
 
 Goal: $goal
 
-Output ONLY a JSON array of task objects, no other text:
+Output ONLY a JSON array of task objects, no markdown fences:
 [{\"id\": \"short-id\", \"title\": \"Short title\", \"description\": \"What to do\"}]"
 
   local response
   response=$(claude --print "$prompt" 2>/dev/null) || error "Claude Code failed"
 
-  # Extract JSON array from response
+  # Extract JSON array from response (handles markdown fences)
   local tasks
-  tasks=$(echo "$response" | grep -o '\[.*\]' | head -1) || error "No valid JSON in response"
+  tasks=$(extract_json_array "$response") || error "No valid JSON in response"
 
   # Validate JSON
   echo "$tasks" | jq empty || error "Invalid JSON: $tasks"
