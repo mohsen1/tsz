@@ -6,7 +6,7 @@
     "scripts": {
         "build": "wasm-pack build --target web --out-dir pkg",
         "build:node": "wasm-pack build --target nodejs --out-dir pkg",
-        "test": "./test.sh",
+        "test": "./scripts/test.sh",
         "conformance": "./conformance/run-conformance.sh --all"
     },
     "dependencies": {
