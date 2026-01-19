@@ -294,3 +294,310 @@ fn test_type_checking_basic() {
     // Basic sanity check
     assert!(checker.ctx.diagnostics.is_empty());
 }
+
+// =============================================================================
+// Additional Integration Tests
+// =============================================================================
+
+#[test]
+fn test_complex_generic_constraints() {
+    let source = r#"
+        interface HasLength {
+            length: number;
+        }
+
+        function getLength<T extends HasLength>(obj: T): number {
+            return obj.length;
+        }
+
+        const strLen = getLength("hello");
+        const arrLen = getLength([1, 2, 3]);
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+}
+
+#[test]
+fn test_conditional_types() {
+    let source = r#"
+        type IsString<T> = T extends string ? "yes" : "no";
+        type A = IsString<string>;  // "yes"
+        type B = IsString<number>;  // "no"
+
+        type Flatten<T> = T extends Array<infer U> ? U : T;
+        type C = Flatten<number[]>;  // number
+        type D = Flatten<string>;    // string
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for conditional types, got: {:?}", diags);
+}
+
+#[test]
+fn test_mapped_types() {
+    let source = r#"
+        type Keys = "a" | "b" | "c";
+        type Mapped = { [K in Keys]: number };
+
+        type Partial<T> = { [P in keyof T]?: T[P] };
+        type Required<T> = { [P in keyof T]-?: T[P] };
+        type Readonly<T> = { readonly [P in keyof T]: T[P] };
+
+        interface Person {
+            name: string;
+            age: number;
+        }
+
+        type PartialPerson = Partial<Person>;
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for mapped types, got: {:?}", diags);
+}
+
+#[test]
+fn test_discriminated_unions() {
+    let source = r#"
+        type Shape =
+            | { kind: "circle"; radius: number }
+            | { kind: "square"; size: number }
+            | { kind: "rectangle"; width: number; height: number };
+
+        function getArea(shape: Shape): number {
+            switch (shape.kind) {
+                case "circle":
+                    return Math.PI * shape.radius ** 2;
+                case "square":
+                    return shape.size ** 2;
+                case "rectangle":
+                    return shape.width * shape.height;
+            }
+        }
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for discriminated unions, got: {:?}", diags);
+}
+
+#[test]
+fn test_template_literal_types_advanced() {
+    let source = r#"
+        type EventName<T extends string> = `on${Capitalize<T>}`;
+        type ClickEvent = EventName<"click">;  // "onClick"
+
+        type PropName = "name" | "age";
+        type Getter<T extends string> = `get${Capitalize<T>}`;
+        type Getters = Getter<PropName>;  // "getName" | "getAge"
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for template literal types, got: {:?}", diags);
+}
+
+#[test]
+fn test_class_with_decorators() {
+    let source = r#"
+        function log(target: any, key: string, descriptor: PropertyDescriptor) {
+            return descriptor;
+        }
+
+        class MyClass {
+            @log
+            method() {
+                return 42;
+            }
+        }
+    "#;
+    let parser = parse(source);
+    // Decorators should parse without errors
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for decorators, got: {:?}", diags);
+}
+
+#[test]
+fn test_private_class_fields() {
+    let source = r#"
+        class Counter {
+            #count = 0;
+
+            increment() {
+                this.#count++;
+            }
+
+            get value(): number {
+                return this.#count;
+            }
+        }
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for private fields, got: {:?}", diags);
+}
+
+#[test]
+fn test_using_declaration() {
+    // ES2024 using declaration (explicit resource management)
+    let source = r#"
+        interface Disposable {
+            [Symbol.dispose](): void;
+        }
+
+        function example() {
+            using resource: Disposable = {
+                [Symbol.dispose]() {
+                    console.log("disposed");
+                }
+            };
+        }
+    "#;
+    let parser = parse(source);
+    // Just verify parsing doesn't crash
+    let _ = parser.get_diagnostics();
+}
+
+#[test]
+fn test_satisfies_operator() {
+    let source = r##"
+        type Colors = "red" | "green" | "blue";
+        const palette = {
+            red: [255, 0, 0],
+            green: "#00ff00",
+            blue: [0, 0, 255]
+        } satisfies Record<Colors, string | number[]>;
+    "##;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for satisfies, got: {:?}", diags);
+}
+
+#[test]
+fn test_assertion_functions() {
+    let source = r#"
+        function assert(condition: boolean, message?: string): asserts condition {
+            if (!condition) {
+                throw new Error(message ?? "Assertion failed");
+            }
+        }
+
+        function assertIsDefined<T>(val: T): asserts val is NonNullable<T> {
+            if (val === undefined || val === null) {
+                throw new Error("Expected defined value");
+            }
+        }
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for assertion functions, got: {:?}", diags);
+}
+
+#[test]
+fn test_recursive_types() {
+    let source = r#"
+        type Json =
+            | string
+            | number
+            | boolean
+            | null
+            | Json[]
+            | { [key: string]: Json };
+
+        type LinkedList<T> = {
+            value: T;
+            next: LinkedList<T> | null;
+        };
+
+        type Tree<T> = {
+            value: T;
+            children: Tree<T>[];
+        };
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for recursive types, got: {:?}", diags);
+}
+
+#[test]
+fn test_namespace_and_module() {
+    let source = r#"
+        namespace Validation {
+            export interface StringValidator {
+                isValid(s: string): boolean;
+            }
+
+            export const numberRegex = /^[0-9]+$/;
+
+            export class NumberValidator implements StringValidator {
+                isValid(s: string): boolean {
+                    return numberRegex.test(s);
+                }
+            }
+        }
+
+        // Using the namespace
+        const validator: Validation.StringValidator = new Validation.NumberValidator();
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for namespace, got: {:?}", diags);
+}
+
+#[test]
+fn test_index_signatures() {
+    let source = r#"
+        interface StringArray {
+            [index: number]: string;
+        }
+
+        interface NumberOrString {
+            [key: string]: number | string;
+            length: number;
+        }
+
+        interface Dictionary<T> {
+            [key: string]: T;
+        }
+    "#;
+    let parser = parse(source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for index signatures, got: {:?}", diags);
+}
+
+#[test]
+fn test_binding_with_destructuring() {
+    let source = r#"
+        const { a, b: renamed, c = 10 } = { a: 1, b: 2 };
+        const [first, second, ...rest] = [1, 2, 3, 4, 5];
+
+        function processPoint({ x, y }: { x: number; y: number }) {
+            return x + y;
+        }
+
+        function processArray([head, ...tail]: number[]) {
+            return head + tail.length;
+        }
+    "#;
+    let (parser, binder) = parse_and_bind(source);
+
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(!binder.symbols.is_empty(), "Expected symbols from destructuring");
+}
+
+#[test]
+#[ignore = "Long-running test"]
+fn test_large_file_parsing() {
+    // Generate a large file to test parser performance
+    let mut source = String::new();
+    for i in 0..1000 {
+        source.push_str(&format!(
+            "const var{} = {};\nfunction fn{}(x: number): number {{ return x * {}; }}\n",
+            i, i, i, i
+        ));
+    }
+
+    let parser = parse(&source);
+    let diags = parser.get_diagnostics();
+    assert!(diags.is_empty(), "Expected no parse errors for large file");
+    assert!(parser.get_node_count() > 5000, "Expected many AST nodes");
+}
