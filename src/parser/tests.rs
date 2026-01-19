@@ -30,6 +30,7 @@ fn test_node_index() {
     assert!(!none.is_some());
 }
 
+#[cfg(feature = "legacy_ast")]
 #[test]
 fn test_node_arena() {
     let mut arena = NodeArena::new();
@@ -46,6 +47,7 @@ fn test_node_arena() {
     assert_eq!(node.end(), 4);
 }
 
+#[cfg(feature = "legacy_ast")]
 #[test]
 fn test_identifier() {
     let id = Identifier::new("myVar".to_string(), 10, 15);
@@ -55,6 +57,7 @@ fn test_identifier() {
     assert_eq!(id.base.end, 15);
 }
 
+#[cfg(feature = "legacy_ast")]
 #[test]
 fn test_source_file() {
     let sf = SourceFile::new("test.ts".to_string(), "const x = 1;".to_string());

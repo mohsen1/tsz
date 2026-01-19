@@ -25,8 +25,7 @@
 //! 3. **No heap allocation per node**: All storage in arena vectors
 //! 4. **O(1) node access**: Direct index into typed pool
 
-use super::ast::NodeList;
-use super::base::NodeIndex;
+use super::base::{NodeIndex, NodeList};
 use serde::Serialize;
 
 /// A thin 16-byte node header for cache-efficient AST storage.
@@ -4718,12 +4717,12 @@ impl NodeAccess for ThinNodeArena {
         };
 
         // Helper to add NodeList (expanding to individual nodes)
-        let add_list = |children: &mut Vec<NodeIndex>, list: &super::ast::NodeList| {
+        let add_list = |children: &mut Vec<NodeIndex>, list: &NodeList| {
             children.extend(list.nodes.iter().copied());
         };
 
         // Helper to add optional NodeList
-        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<super::ast::NodeList>| {
+        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<NodeList>| {
             if let Some(l) = list {
                 children.extend(l.nodes.iter().copied());
             }

@@ -15,7 +15,10 @@
 //! - Current `Node` enum is 208 bytes (0.31 nodes/cache-line)
 //! - ThinNode is 16 bytes (4 nodes/cache-line) - 13x better cache locality
 
+pub mod base;
+#[cfg(feature = "legacy_ast")]
 pub mod arena;
+#[cfg(feature = "legacy_ast")]
 pub mod ast;
 pub mod flags;
 pub mod thin_node;
@@ -26,10 +29,15 @@ mod tests;
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
-// Re-export AST types
+// Re-export base types used throughout the thin pipeline
+pub use base::{NodeIndex, NodeList, TextRange};
+
+// Re-export legacy AST (fat nodes) when enabled.
+#[cfg(feature = "legacy_ast")]
 pub use ast::*;
 
 // Re-export arena
+#[cfg(feature = "legacy_ast")]
 pub use arena::NodeArena;
 pub use thin_node::ThinNodeArena;
 

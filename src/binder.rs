@@ -601,7 +601,9 @@ impl Scope {
 // Binder State
 // =============================================================================
 
+#[cfg(feature = "legacy_ast")]
 use crate::parser::{Node, NodeArena};
+#[cfg(feature = "legacy_ast")]
 use wasm_bindgen::prelude::*;
 
 /// Scope context - tracks scope chain and hoisting
@@ -643,6 +645,7 @@ impl ScopeContext {
 }
 
 /// Binder state for walking the AST and creating symbols.
+#[cfg(feature = "legacy_ast")]
 #[wasm_bindgen]
 pub struct BinderState {
     /// Arena for allocating symbols
@@ -672,6 +675,7 @@ pub struct BinderState {
     pub node_symbols: NodeSymbolMap,
 }
 
+#[cfg(feature = "legacy_ast")]
 impl BinderState {
     pub fn new() -> Self {
         let mut flow_nodes = FlowNodeArena::new();
@@ -2053,6 +2057,7 @@ impl BinderState {
     }
 }
 
+#[cfg(feature = "legacy_ast")]
 impl Default for BinderState {
     fn default() -> Self {
         Self::new()
@@ -2063,6 +2068,7 @@ impl Default for BinderState {
 // WASM Methods
 // =============================================================================
 
+#[cfg(feature = "legacy_ast")]
 #[wasm_bindgen]
 impl BinderState {
     /// Create a new binder state.
