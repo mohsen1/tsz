@@ -26,6 +26,12 @@ pub struct CheckerOptions {
     pub no_implicit_this: bool,
     pub use_unknown_in_catch_variables: bool,
     pub isolated_modules: bool,
+    /// When true, indexed access with index signatures adds `| undefined` to the type
+    pub no_unchecked_indexed_access: bool,
+    /// When true, checking bind/call/apply uses strict function signatures
+    pub strict_bind_call_apply: bool,
+    /// When true, optional properties are treated as exactly `T | undefined` not `T | undefined | missing`
+    pub exact_optional_property_types: bool,
 }
 use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
@@ -692,5 +698,23 @@ impl<'a> CheckerContext<'a> {
     /// Check if isolatedModules is enabled.
     pub fn isolated_modules(&self) -> bool {
         self.compiler_options.isolated_modules
+    }
+
+    /// Check if noUncheckedIndexedAccess is enabled.
+    /// When enabled, index signature access adds `| undefined` to the result type.
+    pub fn no_unchecked_indexed_access(&self) -> bool {
+        self.compiler_options.no_unchecked_indexed_access
+    }
+
+    /// Check if strictBindCallApply is enabled.
+    /// When enabled, bind/call/apply use strict function signatures.
+    pub fn strict_bind_call_apply(&self) -> bool {
+        self.compiler_options.strict_bind_call_apply
+    }
+
+    /// Check if exactOptionalPropertyTypes is enabled.
+    /// When enabled, optional properties are `T | undefined` not `T | undefined | missing`.
+    pub fn exact_optional_property_types(&self) -> bool {
+        self.compiler_options.exact_optional_property_types
     }
 }
