@@ -82,6 +82,42 @@ let is_lib_file = file_name.contains("lib.d.ts")
 
 Note: The lib file detection pattern is acceptable only as a temporary measure during migration. The correct approach is to use explicit configuration via `CompilerOptions.markAsLibFile()`.
 
+### 1.5 Agent-Generated Markdown Artifacts
+
+**DO NOT** create .md files in the repository root or as output from agent operations.
+
+#### The Anti-Pattern
+
+```bash
+# BAD - Agents creating .md files in root:
+agent_result.md
+investigation.md
+analysis.md
+fix_summary.md
+```
+
+#### Why This Is Wrong
+
+1. **Clutters the repository**: Root directory should contain only essential project files
+2. **Not source code**: .md files are ephemeral documentation, not implementation
+3. **Breaks git hygiene**: Creates unnecessary commit noise
+4. **Violates project structure**: Documentation should be in docs/ or specs/
+
+#### The Rule
+
+**Agents must never create .md files.** Output should be:
+- Reported via console/log output
+- Committed as actual code changes (.rs, .ts, .js, etc.)
+- Added to specs/ only if it's a design specification
+
+#### Implementation
+
+Agents must:
+- Use console output for summaries (not file output)
+- Write actual implementation code, not documentation
+- If design work is needed, add to specs/ with reviewer approval
+- Never create .md files in repository root
+
 ---
 
 ## Section 2: Correct Approaches
