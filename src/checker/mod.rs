@@ -24,6 +24,8 @@ pub mod expr;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod jsx;
+pub mod nullish;
+pub mod optional_chain;
 pub mod reachability_analyzer;
 pub mod statements;
 pub mod types;
