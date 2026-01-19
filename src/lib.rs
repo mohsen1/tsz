@@ -78,6 +78,9 @@ pub mod source_file;
 // Diagnostics - Error collection, formatting, and reporting
 pub mod diagnostics;
 
+// Enums - Enum support including const enum inlining
+pub mod enums;
+
 // Parallel processing with Rayon (Phase 0.4)
 pub mod parallel;
 
