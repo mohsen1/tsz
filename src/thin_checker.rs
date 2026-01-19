@@ -7425,6 +7425,33 @@ impl<'a> ThinCheckerState<'a> {
                 type_stack.push(TypeId::BOOLEAN);
                 continue;
             }
+
+            // Nullish coalescing: `a ?? b`
+            //
+            // TypeScript semantics (simplified):
+            // - If `a` is not nullish, result is `a`
+            // - Otherwise, result is `b`
+            // Type is `(NonNullable<Left>) | Right` when Left is possibly nullish,
+            // otherwise just Left.
+            if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
+                // Propagate error types (don't collapse to unknown)
+                if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
+                    type_stack.push(TypeId::ERROR);
+                    continue;
+                }
+
+                let (non_nullish, cause) = self.split_nullish_type(left_type);
+                if cause.is_none() {
+                    type_stack.push(left_type);
+                } else {
+                    let result = match non_nullish {
+                        None => right_type,
+                        Some(non_nullish) => self.ctx.types.union2(non_nullish, right_type),
+                    };
+                    type_stack.push(result);
+                }
+                continue;
+            }
             let op_str = match op_kind {
                 k if k == SyntaxKind::PlusToken as u16 => "+",
                 k if k == SyntaxKind::MinusToken as u16 => "-",
