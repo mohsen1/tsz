@@ -4,88 +4,44 @@ on:
   workflow_dispatch:
     inputs:
       goal:
-        description: 'The task description for the AI agents'
+        description: 'Goal for the AI to achieve'
         required: true
-      role:
-        description: 'Current role: director, architect, worker, or reviewer'
-        default: 'director'
-      parent_branch:
-        description: 'The branch this agent should report to'
+      mode:
+        description: 'Mode: run (full), plan, work, review, merge'
+        default: 'run'
+        type: choice
+        options:
+          - run
+          - plan
+          - work
+          - review
+          - merge
+      branch:
+        description: 'Base branch'
         default: 'main'
-      scope_path:
-        description: 'The directory this agent is responsible for'
-        default: '.'
-      task_context:
-        description: 'Optional task context passed down the chain'
-        required: false
-  pull_request:
-    types: [opened, synchronize]
 
 permissions:
   contents: write
   pull-requests: write
-  actions: write
-
-env:
-  NODE_VERSION: '22'
 
 jobs:
-  swarm:
-    name: Run AI Swarm
+  orchestrate:
+    name: AI Orchestrator
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 60
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'pull_request' && github.head_ref || (github.event.inputs.parent_branch || 'main') }}
+          ref: ${{ inputs.branch }}
           token: ${{ secrets.GH_PAT || github.token }}
 
-      - name: Display event information
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          ROLE: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}
-          GOAL_TRUNC: ${{ inputs.goal }}
-          PARENT_BRANCH: ${{ inputs.parent_branch || 'main' }}
-          SCOPE_PATH: ${{ inputs.scope_path || '.' }}
-        run: |
-          echo "Event name: $EVENT_NAME"
-          echo "Role: $ROLE"
-          echo "Goal length: ${#GOAL_TRUNC} chars"
-          echo "Parent branch: $PARENT_BRANCH"
-          echo "Scope path: $SCOPE_PATH"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Install action dependencies
-        run: |
-          cd .github/actions/orchestrator-action
-          npm install
-
-      - name: Run Swarm Logic
-        id: swarm
+      - name: Run Orchestrator
         uses: ./.github/actions/orchestrator-action
         with:
-          anthropic_key: ${{ secrets.ANTHROPIC_AUTH_TOKEN }}
-          github_token: ${{ secrets.GH_PAT || github.token }}
-          base_url: ${{ secrets.ANTHROPIC_BASE_URL }}
-          role: ${{ github.event_name == 'pull_request' && 'reviewer' || inputs.role }}
           goal: ${{ inputs.goal }}
-          parent_branch: ${{ inputs.parent_branch }}
-          scope_path: ${{ inputs.scope_path }}
-          task_context: ${{ inputs.task_context }}
-
-      - name: Upload logs on failure
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: orchestrator-logs-${{ github.run_id }}
-          path: |
-            ~/orchestrator-logs/
-            .github/actions/orchestrator-action/*.log
-          retention-days: 7
-          if-no-files-found: ignore
+          mode: ${{ inputs.mode }}
+          branch: ${{ inputs.branch }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GH_PAT || github.token }}

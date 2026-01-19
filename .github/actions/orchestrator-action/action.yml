@@ -1,28 +1,46 @@
-name: 'Claude Recursive Swarm'
-description: 'Director -> Architect -> Worker hierarchical coding swarm'
+name: 'AI Orchestrator'
+description: 'Orchestrate AI tasks using Claude Code'
+
 inputs:
-  anthropic_key:
+  goal:
+    description: 'The high-level goal to achieve'
+    required: true
+  mode:
+    description: 'Mode: run (full loop), plan, work, review, merge'
+    default: 'run'
+  branch:
+    description: 'Base branch for changes'
+    default: 'main'
+  anthropic_api_key:
+    description: 'Anthropic API key'
     required: true
   github_token:
+    description: 'GitHub token for PRs'
     required: true
-  base_url:
-    description: 'Optional base URL for Anthropic API (e.g., for z.ai)'
-    required: false
-  role:
-    description: 'Current role: director, architect, worker, or reviewer'
-    default: 'director'
-  goal:
-    description: 'The task description'
-    required: true
-  parent_branch:
-    description: 'The branch this agent should report to'
-    default: 'main'
-  scope_path:
-    description: 'The directory this agent is responsible for (e.g. "src/backend")'
-    default: '.'
-  task_context:
-    description: 'Optional task context passed down the chain'
-    required: false
+
 runs:
-  using: 'node20'
-  main: 'dist/main.js'
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Install Claude Code
+      shell: bash
+      run: npm install -g @anthropic-ai/claude-code
+
+    - name: Configure Git
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Run Orchestrator
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        chmod +x ${{ github.action_path }}/orchestrator.sh
+        ${{ github.action_path }}/orchestrator.sh "${{ inputs.mode }}" "${{ inputs.goal }}" "${{ inputs.branch }}"
