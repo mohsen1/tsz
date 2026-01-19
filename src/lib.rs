@@ -69,6 +69,15 @@ pub mod thin_printer;
 #[cfg(test)]
 mod thin_printer_tests;
 
+// Span - Source location tracking (byte offsets)
+pub mod span;
+
+// SourceFile - Owns source text and provides &str references
+pub mod source_file;
+
+// Diagnostics - Error collection, formatting, and reporting
+pub mod diagnostics;
+
 // Parallel processing with Rayon (Phase 0.4)
 pub mod parallel;
 
