@@ -437,17 +437,14 @@ impl<'a> EnumTransformer<'a> {
 /// Inline const enum usages in a source file
 pub struct ConstEnumInliner<'a> {
     transformer: EnumTransformer<'a>,
+    #[allow(dead_code)]
     source_text: &'a str,
 }
 
 impl<'a> ConstEnumInliner<'a> {
-    pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
-        source_text: &'a str,
-    ) -> Self {
+    pub fn new(arena: &'a ThinNodeArena, source_text: &'a str) -> Self {
         ConstEnumInliner {
-            transformer: EnumTransformer::new(arena, binder),
+            transformer: EnumTransformer::new(arena),
             source_text,
         }
     }
@@ -486,27 +483,23 @@ impl<'a> ConstEnumInliner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
+    use crate::parser::NodeIndex;
 
-    fn create_transformer(source: &str) -> (ThinParserState, ThinBinderState) {
+    fn parse_source(source: &str) -> (ThinParserState, NodeIndex) {
         let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
-
-        let mut binder = ThinBinderState::new();
-        binder.bind_source_file(parser.get_arena(), root);
-
-        (parser, binder)
+        (parser, root)
     }
 
     #[test]
     fn test_numeric_enum_es5() {
-        let (parser, binder) = create_transformer("enum E { A, B, C }");
+        let (parser, root) = parse_source("enum E { A, B, C }");
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena, &binder);
+                    let mut transformer = EnumTransformer::new(&parser.arena);
                     transformer.register_enum(enum_idx);
                     let output = transformer.emit_enum_es5(enum_idx);
 
@@ -522,12 +515,12 @@ mod tests {
 
     #[test]
     fn test_string_enum_no_reverse_mapping() {
-        let (parser, binder) = create_transformer(r#"enum S { A = "alpha", B = "beta" }"#);
+        let (parser, root) = parse_source(r#"enum S { A = "alpha", B = "beta" }"#);
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena, &binder);
+                    let mut transformer = EnumTransformer::new(&parser.arena);
                     transformer.register_enum(enum_idx);
                     let output = transformer.emit_enum_es5(enum_idx);
 
@@ -545,12 +538,12 @@ mod tests {
 
     #[test]
     fn test_const_enum_erased() {
-        let (parser, binder) = create_transformer("const enum CE { A = 1, B = 2 }");
+        let (parser, root) = parse_source("const enum CE { A = 1, B = 2 }");
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena, &binder);
+                    let mut transformer = EnumTransformer::new(&parser.arena);
                     transformer.register_enum(enum_idx);
                     let output = transformer.emit_enum_es5(enum_idx);
 
@@ -565,9 +558,9 @@ mod tests {
 
     #[test]
     fn test_const_enum_preserved() {
-        let (parser, binder) = create_transformer("const enum CE { A = 1, B = 2 }");
+        let (parser, root) = parse_source("const enum CE { A = 1, B = 2 }");
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let options = EnumTransformOptions {
@@ -575,7 +568,7 @@ mod tests {
                         ..Default::default()
                     };
                     let mut transformer =
-                        EnumTransformer::with_options(&parser.arena, &binder, options);
+                        EnumTransformer::with_options(&parser.arena, options);
                     transformer.register_enum(enum_idx);
                     let output = transformer.emit_enum_es5(enum_idx);
 
@@ -591,12 +584,12 @@ mod tests {
 
     #[test]
     fn test_const_enum_inlining() {
-        let (parser, binder) = create_transformer("const enum Direction { Up = 1, Down = 2 }");
+        let (parser, root) = parse_source("const enum Direction { Up = 1, Down = 2 }");
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena, &binder);
+                    let mut transformer = EnumTransformer::new(&parser.arena);
                     transformer.register_enum(enum_idx);
                     transformer.evaluate_enum(enum_idx);
 
@@ -615,9 +608,9 @@ mod tests {
 
     #[test]
     fn test_const_enum_inlining_with_comments() {
-        let (parser, binder) = create_transformer("const enum Flags { None = 0, Read = 1 }");
+        let (parser, root) = parse_source("const enum Flags { None = 0, Read = 1 }");
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let options = EnumTransformOptions {
@@ -625,7 +618,7 @@ mod tests {
                         ..Default::default()
                     };
                     let mut transformer =
-                        EnumTransformer::with_options(&parser.arena, &binder, options);
+                        EnumTransformer::with_options(&parser.arena, options);
                     transformer.register_enum(enum_idx);
                     transformer.evaluate_enum(enum_idx);
 
@@ -638,12 +631,12 @@ mod tests {
 
     #[test]
     fn test_ambient_enum_erased() {
-        let (parser, binder) = create_transformer("declare enum E { A, B }");
+        let (parser, root) = parse_source("declare enum E { A, B }");
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena, &binder);
+                    let mut transformer = EnumTransformer::new(&parser.arena);
                     transformer.register_enum(enum_idx);
                     let output = transformer.emit_enum_es5(enum_idx);
 
@@ -655,12 +648,12 @@ mod tests {
 
     #[test]
     fn test_computed_enum_values() {
-        let (parser, binder) = create_transformer("enum E { A = 1 << 2, B = 3 | 4 }");
+        let (parser, root) = parse_source("enum E { A = 1 << 2, B = 3 | 4 }");
 
-        if let Some(root_node) = parser.arena.get(parser.get_source_file_idx().unwrap()) {
+        if let Some(root_node) = parser.arena.get(root) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena, &binder);
+                    let mut transformer = EnumTransformer::new(&parser.arena);
                     transformer.register_enum(enum_idx);
                     let values = transformer.evaluate_enum(enum_idx);
 
