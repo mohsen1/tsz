@@ -50,3 +50,13 @@ test-args.txt
 yarn-error.log
 yarn.lock
 ~*.docx
+
+# Root directory - prevent new files in root (scripts and configs go in subdirectories)
+/*.sh
+/*.mjs
+/*.js
+/*.py
+/*.rs
+/*.md
+Dockerfile
+Dockerfile.*
