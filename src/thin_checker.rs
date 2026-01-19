@@ -11564,7 +11564,7 @@ impl<'a> ThinCheckerState<'a> {
             .arena
             .get(root)
             .and_then(|node| self.ctx.arena.get_source_file(node))
-            .map(|sf| sf.text.as_str())?;
+            .map(|sf| sf.text.as_ref())?;
         let jsdoc = crate::lsp::jsdoc::jsdoc_for_node(self.ctx.arena, root, idx, source_text);
         if jsdoc.is_empty() {
             return None;
@@ -21839,7 +21839,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn node_text(&self, node_idx: NodeIndex) -> Option<String> {
         let (start, end) = self.get_node_span(node_idx)?;
-        let source = self.ctx.arena.source_files.first()?.text.as_str();
+        let source = self.ctx.arena.source_files.first()?.text.as_ref();
         let start = start as usize;
         let end = end as usize;
         if start >= end || end > source.len() {

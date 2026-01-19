@@ -13,6 +13,7 @@ use crate::char_codes::CharacterCodes;
 use crate::interner::{Atom, Interner};
 use crate::scanner::SyntaxKind;
 use wasm_bindgen::prelude::*;
+use std::sync::Arc;
 
 // =============================================================================
 // Token Flags
@@ -63,13 +64,16 @@ pub struct ScannerSnapshot {
 
 /// The scanner state that holds the current position and token information.
 ///
-/// ZERO-COPY OPTIMIZATION: Source is stored as UTF-8 String directly.
+/// ZERO-COPY OPTIMIZATION: Source is stored as UTF-8 text directly (no Vec<char>).
 /// For ASCII-only files (99% of TypeScript), byte position == character position.
 /// Positions are byte-based internally for performance, converted when needed.
 #[wasm_bindgen]
 pub struct ScannerState {
-    /// The source text as UTF-8 String (zero-copy from input)
-    source: String,
+    /// The source text as UTF-8 text, shared so we don't duplicate per phase.
+    ///
+    /// Note: this is still owned memory (Rust must own the bytes), but it can be shared
+    /// between the scanner, parser, and Thin AST without cloning the full file text.
+    source: Arc<str>,
     /// Current byte position
     pos: usize,
     /// End byte position
@@ -106,8 +110,9 @@ impl ScannerState {
         let end = text.len(); // byte length
         let mut interner = Interner::new();
         interner.intern_common(); // Pre-intern common keywords
+        let source: Arc<str> = Arc::from(text.into_boxed_str());
         ScannerState {
-            source: text,
+            source,
             pos: 0,
             end,
             full_start_pos: 0,
@@ -209,7 +214,7 @@ impl ScannerState {
     pub fn set_text(&mut self, text: String, start: Option<usize>, length: Option<usize>) {
         let start = start.unwrap_or(0);
         let len = length.unwrap_or(text.len() - start);
-        self.source = text;
+        self.source = Arc::from(text.into_boxed_str());
         self.pos = start;
         self.end = start + len;
         self.full_start_pos = start;
@@ -233,7 +238,7 @@ impl ScannerState {
     /// Get the source text.
     #[wasm_bindgen(js_name = getText)]
     pub fn get_text(&self) -> String {
-        self.source.clone()
+        self.source.to_string()
     }
 
     // =========================================================================
@@ -2090,6 +2095,14 @@ impl ScannerState {
     #[inline]
     pub fn source_text(&self) -> &str {
         &self.source
+    }
+}
+
+impl ScannerState {
+    /// Get a cloned handle to the shared source text.
+    #[inline]
+    pub fn source_text_arc(&self) -> Arc<str> {
+        self.source.clone()
     }
 }
 

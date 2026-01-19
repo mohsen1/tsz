@@ -13,24 +13,21 @@ This is a harsh, architectural-level code review of Project Zang. The goal is to
 
 #### 1. Fundamental Memory Architecture Violations
 
-**The "Zero-Copy" Lie**
-The documentation and comments claim "ZERO-COPY OPTIMIZATION" (`src/scanner_impl.rs`), but the implementation contradicts this.
+**Source Text Ownership (avoid full-file duplication)**
+“Zero-copy” should mean “no duplicate full-file copies inside the Rust pipeline.” Previously, parsing cloned the entire file into the Thin AST, doubling memory per file.
 
-*   **Scanner Owns String**: `ScannerState` holds `source: String`. This forces an allocation for every file scanned. A high-performance compiler must operate on `&str` or `&[u8]` owned by a central source manager (SourceFile), not cloned into the scanner.
-*   **Excessive Cloning**:
-    *   `ThinParserState::new` takes `String`.
-    *   `src/interner.rs`: `intern` takes `&str` and calls `to_string()`. While interning *should* own the string, the lookup path shouldn't force allocation if the string is already interned.
-    *   `ThinPrinter`: `take_output` returns `String`.
-*   **AST Duality**: You have `src/parser/ast/node.rs` (Fat Nodes using Box/enum) AND `src/parser/thin_node.rs` (SoA ThinNodes). While the transition to ThinNodes is the right move for cache locality, the codebase currently carries the dead weight of the old AST structure. The `Node` enum in `ast/node.rs` is huge (200+ bytes). If this is legacy, delete it. If it's for serialization, it's too expensive.
+*   **Shared source text**: `ScannerState` now stores `source: Arc<str>` and the Thin AST stores the same `Arc<str>` in `SourceFileData.text` (no full-file clone).
+*   **SourceFile is cheap to clone**: `src/source_file.rs` now stores `text: Arc<str>` instead of `String`.
+*   **Interner storage duplication removed**: `src/interner.rs` now stores interned strings as `Arc<str>` so bytes are not duplicated between the map and vector.
+*   **ThinPrinter output**: `take_output` returning `String` is expected (output must be owned).
+*   **AST Duality (legacy)**: The fat AST (`src/parser/ast/*`) and legacy wasm binder are now behind Cargo feature `legacy_ast` (default builds are thin-only). Decide whether to delete the legacy AST entirely once no consumers remain.
 
 #### 2. The Concurrency Bottleneck
 
-The solver architecture in `src/solver/intern.rs` is a concurrency trap waiting to happen.
+This was a valid risk, but `TypeInterner` (`src/solver/intern.rs`) is already implemented as a sharded `DashMap` + atomic architecture and avoids the `RwLock<Vec<_>>` deadlock/serialization pattern.
 
-*   **RwLock Hell**: `TypeInterner` wraps every single internal vector (shards, type lists, tuple lists, object shapes, etc.) in an `RwLock`.
-    *   In a parallel compilation environment (which `src/parallel.rs` attempts to implement), acquiring a write lock on `type_lists` stops *every other thread* from interning a type list.
-    *   **Fix**: Use a sharded `DashMap` or a lock-free append-only arena (like `bumpalo` with interior mutability) for interning. The current fine-grained locking on resizeable `Vec`s is catastrophic for scaling.
-*   **Rayon Misuse**: `src/parallel.rs` creates a new `ThinCheckerState` inside the parallel iterator. However, `ThinCheckerState` seems to rely on the global `TypeInterner`. Since the interner locks on writes, your parallel type checking will serialize on type creation.
+*   **Remaining work**: measure contention under real parallel check workloads and fix hot paths (e.g., avoid O(N) scans during slice interning).
+*   **Parallel design**: ensure per-thread `ThinCheckerState` work is mostly read-heavy, and that shared caches don’t become the new bottleneck.
 
 #### 3. Parser & Error Recovery Logic
 
@@ -41,7 +38,7 @@ The solver architecture in `src/solver/intern.rs` is a concurrency trap waiting 
     self.ts1005_statement_budget = 2;
     ```
     This is a "whack-a-mole" strategy. Resetting budgets per statement is arbitrary. If a file is garbage, the parser should bail or synchronize faster, not just reset a counter.
-*   **Panic-driven logic**: The parser logic relies heavily on `unwrap` or array indexing without bounds checks in hot paths (though some are guarded). A compiler parsing user input **must never panic**, yet `src/thin_emitter/helpers.rs` has unsafe string slicing: `unsafe { std::str::from_utf8_unchecked(&buf[i..]) }`. While technically safe for digits, it sets a dangerous precedent.
+*   **Panic-driven logic**: The parser logic relies heavily on `unwrap` or array indexing without bounds checks in hot paths (though some are guarded). A compiler parsing user input **must never panic**. Unsafe digit emission has been removed; remaining work is to audit and eliminate unwrap-driven panics in the parser/checker hot paths.
 
 #### 4. Transformation Architecture (The "String" problem)
 

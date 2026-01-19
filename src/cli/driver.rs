@@ -3085,7 +3085,7 @@ fn emit_outputs(
                     .arena
                     .get(file.source_file)
                     .and_then(|node| file.arena.get_source_file(node))
-                    .map(|source| source.text.as_str())
+                    .map(|source| source.text.as_ref())
                 {
                     printer.set_source_map_text(source_text);
                 }
@@ -3135,7 +3135,7 @@ fn emit_outputs(
                         .arena
                         .get(file.source_file)
                         .and_then(|node| file.arena.get_source_file(node))
-                        .map(|source| source.text.as_str())
+                        .map(|source| source.text.as_ref())
                     {
                         emitter.set_source_map_text(source_text);
                     }
