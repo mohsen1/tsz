@@ -22957,7 +22957,6 @@ class Child extends Parent {
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_combined_advanced() {
     // Test combined advanced decorator patterns
     let source = r#"function controller(path: string) {
@@ -44765,7 +44764,6 @@ console.log(getMetadata("column", service, "name"));"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_metadata_es5_parameter_decorators() {
     let source = r#"const paramMetadata = new Map<string, Map<number, any>>();
 
@@ -55133,7 +55131,6 @@ console.log(getMetadata("author", Component));"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_composition_es5_method_params() {
     let source = r#"const paramMetadata = new Map<any, Map<string, any[]>>();
 
@@ -55708,7 +55705,6 @@ admin.save();"#;
 
 #[test]
 #[test]
-#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_composition_es5_comprehensive() {
     let source = r#"// Comprehensive decorator composition patterns for ES5 transform testing
 

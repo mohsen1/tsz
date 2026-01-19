@@ -22067,7 +22067,6 @@ class DataProcessor {
 // ============================================================================
 
 #[test]
-#[ignore = "INFINITE LOOP - Cycle detection added to emit_expression but test still hangs. Root cause may be outside ClassES5Emitter - possibly in ThinPrinter or transformation pass interaction. Need further investigation."]
 fn test_class_es5_commonjs_class_exports() {
     // Test CommonJS module pattern with class exports
     let source = r#"
@@ -22178,14 +22177,13 @@ module.exports = A;
     let output = printer.get_output().to_string();
 
     assert!(
-        output.contains("function QueryBuilder"),
-        "Expected QueryBuilder function: {}",
+        output.contains("var A") && output.contains("= 1"),
+        "Expected var A assignment: {}",
         output
     );
     assert!(
-        output.contains("QueryBuilder.prototype.select")
-            && output.contains("QueryBuilder.prototype.from"),
-        "Expected QueryBuilder methods on prototype: {}",
+        output.contains("module.exports") && output.contains("= A"),
+        "Expected module.exports assignment: {}",
         output
     );
 }
