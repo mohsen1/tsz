@@ -1,6 +1,7 @@
 //! Node arena for AST storage.
 
-use super::ast::{Node, NodeIndex};
+use super::ast::Node;
+use super::base::{NodeIndex, NodeList};
 use super::thin_node::{NodeAccess, NodeInfo};
 use serde::Serialize;
 
@@ -133,12 +134,12 @@ impl NodeAccess for NodeArena {
         };
 
         // Helper to add NodeList (expanding to individual nodes)
-        let add_list = |children: &mut Vec<NodeIndex>, list: &super::ast::NodeList| {
+        let add_list = |children: &mut Vec<NodeIndex>, list: &NodeList| {
             children.extend(list.nodes.iter().copied());
         };
 
         // Helper to add optional NodeList
-        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<super::ast::NodeList>| {
+        let add_opt_list = |children: &mut Vec<NodeIndex>, list: &Option<NodeList>| {
             if let Some(l) = list {
                 children.extend(l.nodes.iter().copied());
             }
