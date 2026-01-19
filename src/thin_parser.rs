@@ -9,8 +9,6 @@
 //! - Uses ThinNodeArena instead of NodeArena
 //! - Each node is 16 bytes (vs 208 bytes for fat Node enum)
 
-// Allow dead code for parser infrastructure methods that will be used in future phases
-#![allow(dead_code)]
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
@@ -240,12 +238,6 @@ impl ThinParserState {
         (self.context_flags & CONTEXT_FLAG_ASYNC) != 0
     }
 
-    /// Check if we're inside a generator function/method
-    #[inline]
-    fn in_generator_context(&self) -> bool {
-        (self.context_flags & CONTEXT_FLAG_GENERATOR) != 0
-    }
-
     /// Check if we're inside a static block
     #[inline]
     fn in_static_block_context(&self) -> bool {
@@ -256,20 +248,6 @@ impl ThinParserState {
     #[inline]
     fn in_parameter_default_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_PARAMETER_DEFAULT) != 0
-    }
-
-    /// Set context flags and return the old value (for restoring later)
-    #[inline]
-    fn set_context_flags(&mut self, flags: u32) -> u32 {
-        let old = self.context_flags;
-        self.context_flags |= flags;
-        old
-    }
-
-    /// Restore context flags to a previous value
-    #[inline]
-    fn restore_context_flags(&mut self, flags: u32) {
-        self.context_flags = flags;
     }
 
     /// Check if the current token is an illegal binding identifier in the current context
@@ -441,15 +419,6 @@ impl ThinParserState {
     // Typed error helper methods (use these instead of parse_error_at_current_token)
     // =========================================================================
 
-    /// Error: Line break not permitted here (TS1142)
-    fn error_line_break_not_permitted(&mut self) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-        self.parse_error_at_current_token(
-            "Line break not permitted here.",
-            diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE,
-        );
-    }
-
     /// Error: Expression expected (TS1109)
     fn error_expression_expected(&mut self) {
         // Only emit error if we haven't already emitted one at this position
@@ -479,19 +448,6 @@ impl ThinParserState {
                 "Identifier expected",
                 diagnostic_codes::IDENTIFIER_EXPECTED,
             );
-        }
-    }
-
-    /// Check if the last error was about a missing close brace
-    /// Used for Pattern 4: Import/Export specifier brace mismatch cascading error suppression
-    fn was_last_error_about_missing_close_brace(&self) -> bool {
-        if let Some(last_error) = self.parse_diagnostics.last() {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            // Check if the last error was TS1005 (TOKEN_EXPECTED) about "}" expected
-            last_error.code == diagnostic_codes::TOKEN_EXPECTED
-                && last_error.message.contains("}' expected")
-        } else {
-            false
         }
     }
 
@@ -731,46 +687,6 @@ impl ThinParserState {
             | SyntaxKind::OpenBracketToken  // array literal/destructuring
             | SyntaxKind::LessThanToken => true,  // JSX/type argument
             _ => false,
-        }
-    }
-
-    /// Check if the current token could be the start of an array element expression
-    fn is_array_element_start(&self) -> bool {
-        match self.token() {
-            // Spread operator
-            SyntaxKind::DotDotDotToken => true,
-            // Literals that can be array elements
-            SyntaxKind::NumericLiteral
-            | SyntaxKind::BigIntLiteral
-            | SyntaxKind::StringLiteral
-            | SyntaxKind::NoSubstitutionTemplateLiteral
-            | SyntaxKind::TrueKeyword
-            | SyntaxKind::FalseKeyword
-            | SyntaxKind::NullKeyword => true,
-            // Identifiers and keywords that can start expressions
-            SyntaxKind::Identifier => true,
-            // This and super
-            SyntaxKind::ThisKeyword | SyntaxKind::SuperKeyword => true,
-            // Prefix operators that can start expressions
-            SyntaxKind::ExclamationToken  // !
-            | SyntaxKind::TildeToken  // ~
-            | SyntaxKind::PlusToken  // + (unary)
-            | SyntaxKind::MinusToken  // - (unary)
-            | SyntaxKind::PlusPlusToken  // ++ (prefix)
-            | SyntaxKind::MinusMinusToken  // -- (prefix)
-            | SyntaxKind::TypeOfKeyword
-            | SyntaxKind::VoidKeyword
-            | SyntaxKind::DeleteKeyword
-            | SyntaxKind::AwaitKeyword
-            | SyntaxKind::YieldKeyword => true,
-            // Structural tokens
-            SyntaxKind::OpenParenToken => true,  // parenthesized expression
-            SyntaxKind::OpenBracketToken => true,  // nested array
-            SyntaxKind::OpenBraceToken => true,  // object literal
-            SyntaxKind::LessThanToken => true,  // type argument or JSX
-            SyntaxKind::SlashToken => true,  // regex literal (might be division)
-            SyntaxKind::SlashEqualsToken => true,
-            _ => self.is_identifier_or_keyword(),
         }
     }
 
@@ -3629,46 +3545,6 @@ impl ThinParserState {
         }
     }
 
-    /// Parse constructor
-    fn parse_constructor(&mut self) -> NodeIndex {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::ConstructorKeyword);
-
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = self.parse_parameter_list();
-        self.parse_expected(SyntaxKind::CloseParenToken);
-
-        // Recovery: Handle return type annotation on constructor (invalid but users write it)
-        if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_error_at_current_token(
-                "Constructor cannot have a return type annotation.",
-                diagnostic_codes::CONSTRUCTOR_CANNOT_HAVE_RETURN_TYPE,
-            );
-            // Consume the type annotation for recovery
-            let _ = self.parse_type();
-        };
-
-        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
-        } else {
-            NodeIndex::NONE
-        };
-
-        let end_pos = self.token_end();
-        self.arena.add_constructor(
-            syntax_kind_ext::CONSTRUCTOR,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::ConstructorData {
-                modifiers: None,
-                type_parameters: None,
-                parameters,
-                body,
-            },
-        )
-    }
-
     /// Look ahead to see if we have an accessor (get/set followed by property name and ()
     fn look_ahead_is_accessor(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
@@ -3760,135 +3636,6 @@ impl ThinParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_index_sig
-    }
-
-    /// Parse get accessor: get foo() { return value; }
-    fn parse_get_accessor(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::GetKeyword);
-
-        let name = self.parse_property_name();
-
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "An accessor cannot have type parameters.",
-                diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
-            );
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
-
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
-            self.make_node_list(vec![])
-        } else {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'get' accessor cannot have parameters.",
-                diagnostic_codes::GETTER_MUST_NOT_HAVE_PARAMETERS,
-            );
-            self.parse_parameter_list()
-        };
-        self.parse_expected(SyntaxKind::CloseParenToken);
-
-        // Optional return type (supports type predicates)
-        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_return_type()
-        } else {
-            NodeIndex::NONE
-        };
-
-        // Parse body (may be empty for ambient declarations)
-        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
-        } else {
-            self.parse_semicolon();
-            NodeIndex::NONE
-        };
-
-        let end_pos = self.token_end();
-        self.arena.add_accessor(
-            syntax_kind_ext::GET_ACCESSOR,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::AccessorData {
-                modifiers: None,
-                name,
-                type_parameters,
-                parameters,
-                type_annotation,
-                body,
-            },
-        )
-    }
-
-    /// Parse set accessor: set foo(value) { this.value = value; }
-    fn parse_set_accessor(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::SetKeyword);
-
-        let name = self.parse_property_name();
-
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "An accessor cannot have type parameters.",
-                diagnostic_codes::ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
-            );
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
-
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
-            self.make_node_list(vec![])
-        } else {
-            self.parse_parameter_list()
-        };
-        self.parse_expected(SyntaxKind::CloseParenToken);
-
-        if parameters.len() != 1 {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'set' accessor must have exactly one parameter.",
-                diagnostic_codes::SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER,
-            );
-        }
-
-        if self.parse_optional(SyntaxKind::ColonToken) {
-            use crate::checker::types::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "A 'set' accessor cannot have a return type annotation.",
-                diagnostic_codes::SETTER_CANNOT_HAVE_RETURN_TYPE,
-            );
-            let _ = self.parse_type();
-        }
-
-        // Parse body (may be empty for ambient declarations)
-        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block()
-        } else {
-            self.parse_semicolon();
-            NodeIndex::NONE
-        };
-
-        let end_pos = self.token_end();
-        self.arena.add_accessor(
-            syntax_kind_ext::SET_ACCESSOR,
-            start_pos,
-            end_pos,
-            crate::parser::thin_node::AccessorData {
-                modifiers: None,
-                name,
-                type_parameters,
-                parameters,
-                type_annotation: NodeIndex::NONE,
-                body,
-            },
-        )
     }
 
     /// Parse interface declaration
