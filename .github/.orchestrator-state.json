@@ -1,0 +1,21 @@
+{
+  "goal": "Move bench.sh from root to scripts/bench.sh. Update any references.",
+  "tasks": [
+    {
+      "id": "move-bench-script",
+      "title": "Move bench.sh to scripts/bench.sh",
+      "description": "Move bench.sh from the repository root to scripts/bench.sh. Update the script's internal path calculations (SCRIPT_DIR and PROJECT_ROOT) to reflect the new location. Create the scripts/ directory if it doesn't exist."
+    },
+    {
+      "id": "update-benchmarks-docs",
+      "title": "Update BENCHMARKS.md references",
+      "description": "Update all references to bench.sh in BENCHMARKS.md from './wasm/bench.sh' to './scripts/bench.sh' (or the correct relative path from repo root)."
+    }
+  ],
+  "completed": [
+    "move-bench-script"
+  ],
+  "prs": [
+    "branch 'ai/move-bench-script-1768784199' set up to track 'origin/main'.\nDone. I've completed the task:\n\n1. **Moved** `bench.sh` from the repository root to `scripts/bench.sh`\n2. **Updated the path calculations**:\n   - `SCRIPT_DIR` now correctly points to `scripts/`\n   - `PROJECT_ROOT` now correctly goes up one level from `scripts/` to the repository root\n3. **Updated the Dockerfile path reference** in line 36: changed from `$SCRIPT_DIR/Dockerfile.bench` to `$PROJECT_ROOT/Dockerfile.bench` (since the Dockerfile is at the project root, not in scripts/)\n4. **Updated the usage comment** to reflect the new path: `./scripts/bench.sh`\n5. **Made the script executable**\n[ai/move-bench-script-1768784199 fff8d6d21] AI: Move bench.sh to scripts/bench.sh\n 2 files changed, 79 insertions(+), 62 deletions(-)\n create mode 100644 .github/.orchestrator-state.json\n rename bench.sh => scripts/bench.sh (85%)\nbranch 'ai/move-bench-script-1768784199' set up to track 'origin/ai/move-bench-script-1768784199'.\nYour branch is up to date with 'origin/main'.\nhttps://github.com/mohsen1/tsz/pull/48"
+  ]
+}
