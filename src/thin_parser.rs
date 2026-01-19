@@ -1258,7 +1258,7 @@ impl ThinParserState {
                 statements,
                 end_of_file_token: eof_token,
                 file_name: self.file_name.clone(),
-                text: self.scanner.source_text().to_string(), // Clone only when storing in AST
+                text: self.scanner.source_text_arc(),
                 language_version: 99,
                 language_variant: 0,
                 script_kind: 3,

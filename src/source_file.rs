@@ -18,6 +18,7 @@
 
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::span::Span;
+use std::sync::Arc;
 
 // =============================================================================
 // SourceFile
@@ -35,7 +36,7 @@ pub struct SourceFile {
     /// The file name (not necessarily a path)
     file_name: String,
     /// The source text content
-    text: String,
+    text: Arc<str>,
     /// Line map for efficient position conversion (lazy initialized)
     line_map: Option<LineMap>,
     /// Length of the text in bytes
@@ -45,8 +46,9 @@ pub struct SourceFile {
 impl SourceFile {
     /// Create a new SourceFile from a file name and source text.
     pub fn new(file_name: impl Into<String>, text: impl Into<String>) -> Self {
-        let text = text.into();
+        let text: String = text.into();
         let len = text.len() as u32;
+        let text: Arc<str> = Arc::from(text.into_boxed_str());
         SourceFile {
             file_name: file_name.into(),
             text,
@@ -57,9 +59,10 @@ impl SourceFile {
 
     /// Create a SourceFile with pre-built line map.
     pub fn with_line_map(file_name: impl Into<String>, text: impl Into<String>) -> Self {
-        let text = text.into();
+        let text: String = text.into();
         let len = text.len() as u32;
         let line_map = Some(LineMap::build(&text));
+        let text: Arc<str> = Arc::from(text.into_boxed_str());
         SourceFile {
             file_name: file_name.into(),
             text,
@@ -228,12 +231,12 @@ impl SourceFile {
     // =========================================================================
 
     /// Take ownership of the source text, consuming the SourceFile.
-    pub fn into_text(self) -> String {
+    pub fn into_text(self) -> Arc<str> {
         self.text
     }
 
     /// Take the file name, consuming the SourceFile.
-    pub fn into_parts(self) -> (String, String) {
+    pub fn into_parts(self) -> (String, Arc<str>) {
         (self.file_name, self.text)
     }
 }
@@ -278,7 +281,7 @@ impl<'a> SourceFileRef<'a> {
     pub fn from_source_file(source_file: &'a SourceFile) -> Self {
         SourceFileRef {
             file_name: &source_file.file_name,
-            text: &source_file.text,
+            text: source_file.text(),
         }
     }
 
@@ -567,7 +570,7 @@ mod tests {
         let source = SourceFile::new("test.ts", "content");
         let (name, text) = source.into_parts();
         assert_eq!(name, "test.ts");
-        assert_eq!(text, "content");
+        assert_eq!(text.as_ref(), "content");
     }
 
     #[test]

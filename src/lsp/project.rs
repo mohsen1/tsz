@@ -325,7 +325,7 @@ impl ProjectFile {
 
             source_file.statements = new_statements;
             source_file.end_of_file_token = parse_result.end_of_file_token;
-            source_file.text = new_text;
+            source_file.text = std::sync::Arc::from(new_text.into_boxed_str());
             source_file.comments = comments;
         }
 

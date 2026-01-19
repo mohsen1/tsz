@@ -169,9 +169,9 @@ const COMMON_STRINGS: &[&str] = &[
 #[derive(Default)]
 pub struct Interner {
     /// Map from string to atom index
-    map: FxHashMap<String, Atom>,
+    map: FxHashMap<Arc<str>, Atom>,
     /// Vector of all interned strings (index 0 is empty string)
-    strings: Vec<String>,
+    strings: Vec<Arc<str>>,
 }
 
 impl Interner {
@@ -182,8 +182,9 @@ impl Interner {
             strings: Vec::with_capacity(1024), // Pre-allocate for common case
         };
         // Index 0 is reserved for empty/none
-        interner.strings.push(String::new());
-        interner.map.insert(String::new(), Atom::NONE);
+        let empty: Arc<str> = Arc::from("");
+        interner.strings.push(empty.clone());
+        interner.map.insert(empty, Atom::NONE);
         interner
     }
 
@@ -195,7 +196,7 @@ impl Interner {
             return atom;
         }
         let atom = Atom(self.strings.len() as u32);
-        let owned = s.to_string();
+        let owned: Arc<str> = Arc::from(s);
         self.strings.push(owned.clone());
         self.map.insert(owned, atom);
         atom
@@ -204,12 +205,13 @@ impl Interner {
     /// Intern an owned String, avoiding allocation if possible.
     #[inline]
     pub fn intern_owned(&mut self, s: String) -> Atom {
-        if let Some(&atom) = self.map.get(&s) {
+        if let Some(&atom) = self.map.get(s.as_str()) {
             return atom;
         }
         let atom = Atom(self.strings.len() as u32);
-        self.strings.push(s.clone());
-        self.map.insert(s, atom);
+        let owned: Arc<str> = Arc::from(s.into_boxed_str());
+        self.strings.push(owned.clone());
+        self.map.insert(owned, atom);
         atom
     }
 
@@ -219,14 +221,14 @@ impl Interner {
     pub fn resolve(&self, atom: Atom) -> &str {
         self.strings
             .get(atom.0 as usize)
-            .map(|s| s.as_str())
+            .map(|s| s.as_ref())
             .unwrap_or("")
     }
 
     /// Try to resolve an Atom, returning None if invalid.
     #[inline]
     pub fn try_resolve(&self, atom: Atom) -> Option<&str> {
-        self.strings.get(atom.0 as usize).map(|s| s.as_str())
+        self.strings.get(atom.0 as usize).map(|s| s.as_ref())
     }
 
     /// Get the number of interned strings.

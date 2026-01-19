@@ -27,6 +27,7 @@
 
 use super::base::{NodeIndex, NodeList};
 use serde::Serialize;
+use std::sync::Arc;
 
 /// A thin 16-byte node header for cache-efficient AST storage.
 ///
@@ -856,7 +857,7 @@ pub struct SourceFileData {
     pub statements: NodeList,
     pub end_of_file_token: NodeIndex,
     pub file_name: String,
-    pub text: String,
+    pub text: Arc<str>,
     pub language_version: u32,
     pub language_variant: u32,
     pub script_kind: u32,
