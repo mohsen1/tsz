@@ -1,0 +1,17 @@
+{
+  "goal": "Move bench.sh from root to scripts/bench.sh. Update any references.",
+  "tasks": [
+    {
+      "id": "move-bench-script",
+      "title": "Move bench.sh to scripts/bench.sh",
+      "description": "Move bench.sh from the repository root to scripts/bench.sh. Update the script's internal path calculations (SCRIPT_DIR and PROJECT_ROOT) to reflect the new location. Create the scripts/ directory if it doesn't exist."
+    },
+    {
+      "id": "update-benchmarks-docs",
+      "title": "Update BENCHMARKS.md references",
+      "description": "Update all references to bench.sh in BENCHMARKS.md from './wasm/bench.sh' to './scripts/bench.sh' (or the correct relative path from repo root)."
+    }
+  ],
+  "completed": [],
+  "prs": []
+}
