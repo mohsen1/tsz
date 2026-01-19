@@ -424,20 +424,25 @@ async function main() {
   const args = process.argv.slice(2);
   const maxTests = parseInt(args.find(a => a.startsWith('--max='))?.split('=')[1] || '200', 10);
   const verbose = args.includes('--verbose') || args.includes('-v');
-  const category = args.find(a => !a.startsWith('-'))?.toLowerCase();
+  const categoryArg = args.find(a => a.startsWith('--category='))?.split('=')[1];
+  const categories = categoryArg ? categoryArg.split(',') : ['conformance'];
 
   log('Conformance Test Runner', colors.bold);
   log('═'.repeat(60), colors.dim);
-
-  let testDir = CONFIG.conformanceDir;
-  if (category) {
-    testDir = join(CONFIG.conformanceDir, category);
-    log(`\nCategory: ${category}`, colors.cyan);
-  }
+  log(`  Categories: ${categories.join(', ')}`, colors.cyan);
 
   log(`\nCollecting test files (max ${maxTests})...`, colors.cyan);
-  const testFiles = getTestFiles(testDir, maxTests);
-  log(`  Found ${testFiles.length} test files`, colors.dim);
+  const testFiles = [];
+  const testsBasePath = resolve(__dirname, '../../tests/cases');
+
+  for (const category of categories) {
+    const testDir = join(testsBasePath, category);
+    const files = getTestFiles(testDir, maxTests - testFiles.length);
+    testFiles.push(...files);
+    log(`  ${category}: ${files.length} files`, colors.dim);
+  }
+
+  log(`  Total: ${testFiles.length} test files`, colors.dim);
 
   const stats = {
     total: 0,
@@ -459,7 +464,7 @@ async function main() {
   for (let i = 0; i < testFiles.length; i++) {
     const filePath = testFiles[i];
     const fileName = basename(filePath);
-    const relPath = filePath.replace(CONFIG.conformanceDir + '/', '');
+    const relPath = filePath.replace(testsBasePath + '/', '');
     const cat = relPath.split('/')[0];
 
     if (!verbose) {
