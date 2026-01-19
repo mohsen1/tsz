@@ -437,12 +437,14 @@ impl<'a> EnumTransformer<'a> {
 /// Inline const enum usages in a source file
 pub struct ConstEnumInliner<'a> {
     transformer: EnumTransformer<'a>,
-    #[allow(dead_code)]
     source_text: &'a str,
 }
 
 impl<'a> ConstEnumInliner<'a> {
-    pub fn new(arena: &'a ThinNodeArena, source_text: &'a str) -> Self {
+    pub fn new(
+        arena: &'a ThinNodeArena,
+        source_text: &'a str,
+    ) -> Self {
         ConstEnumInliner {
             transformer: EnumTransformer::new(arena),
             source_text,
@@ -483,20 +485,20 @@ impl<'a> ConstEnumInliner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
     use crate::parser::NodeIndex;
+    use crate::thin_parser::ThinParserState;
 
-    fn parse_source(source: &str) -> (ThinParserState, NodeIndex) {
+    fn create_parser(source: &str) -> (ThinParserState, NodeIndex) {
         let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        (parser, root)
+        let root_idx = parser.parse_source_file();
+        (parser, root_idx)
     }
 
     #[test]
     fn test_numeric_enum_es5() {
-        let (parser, root) = parse_source("enum E { A, B, C }");
+        let (parser, root_idx) = create_parser("enum E { A, B, C }");
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut transformer = EnumTransformer::new(&parser.arena);
@@ -515,9 +517,9 @@ mod tests {
 
     #[test]
     fn test_string_enum_no_reverse_mapping() {
-        let (parser, root) = parse_source(r#"enum S { A = "alpha", B = "beta" }"#);
+        let (parser, root_idx) = create_parser(r#"enum S { A = "alpha", B = "beta" }"#);
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut transformer = EnumTransformer::new(&parser.arena);
@@ -538,9 +540,9 @@ mod tests {
 
     #[test]
     fn test_const_enum_erased() {
-        let (parser, root) = parse_source("const enum CE { A = 1, B = 2 }");
+        let (parser, root_idx) = create_parser("const enum CE { A = 1, B = 2 }");
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut transformer = EnumTransformer::new(&parser.arena);
@@ -558,9 +560,9 @@ mod tests {
 
     #[test]
     fn test_const_enum_preserved() {
-        let (parser, root) = parse_source("const enum CE { A = 1, B = 2 }");
+        let (parser, root_idx) = create_parser("const enum CE { A = 1, B = 2 }");
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let options = EnumTransformOptions {
@@ -584,9 +586,9 @@ mod tests {
 
     #[test]
     fn test_const_enum_inlining() {
-        let (parser, root) = parse_source("const enum Direction { Up = 1, Down = 2 }");
+        let (parser, root_idx) = create_parser("const enum Direction { Up = 1, Down = 2 }");
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut transformer = EnumTransformer::new(&parser.arena);
@@ -608,9 +610,9 @@ mod tests {
 
     #[test]
     fn test_const_enum_inlining_with_comments() {
-        let (parser, root) = parse_source("const enum Flags { None = 0, Read = 1 }");
+        let (parser, root_idx) = create_parser("const enum Flags { None = 0, Read = 1 }");
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let options = EnumTransformOptions {
@@ -631,9 +633,9 @@ mod tests {
 
     #[test]
     fn test_ambient_enum_erased() {
-        let (parser, root) = parse_source("declare enum E { A, B }");
+        let (parser, root_idx) = create_parser("declare enum E { A, B }");
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut transformer = EnumTransformer::new(&parser.arena);
@@ -648,9 +650,9 @@ mod tests {
 
     #[test]
     fn test_computed_enum_values() {
-        let (parser, root) = parse_source("enum E { A = 1 << 2, B = 3 | 4 }");
+        let (parser, root_idx) = create_parser("enum E { A = 1 << 2, B = 3 | 4 }");
 
-        if let Some(root_node) = parser.arena.get(root) {
+        if let Some(root_node) = parser.arena.get(root_idx) {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut transformer = EnumTransformer::new(&parser.arena);
