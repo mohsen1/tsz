@@ -1031,9 +1031,7 @@ impl<'a> ThinPrinter<'a> {
     /// Emit a node using default logic (no transforms).
     /// This is the old emit_node logic extracted for reuse.
     fn emit_node_default(&mut self, node: &ThinNode, idx: NodeIndex) {
-        // This will be populated by moving the match statement from emit_node
-        // For now, just recursively call emit_node which will use the match
-        // We'll refactor this properly in the next step
+        // Emit the node without consulting transform directives.
         let kind = node.kind;
         self.emit_node_by_kind(node, idx, kind);
     }

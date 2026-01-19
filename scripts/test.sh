@@ -8,6 +8,8 @@
 # Usage:
 #   ./scripts/test.sh                          # Run all Rust unit tests
 #   ./scripts/test.sh test_name                # Run specific test
+#   ./scripts/test.sh --ignored test_name      # Run ignored tests too (nextest: --run-ignored all)
+#   ./scripts/test.sh --timeout=60 test_name   # Kill the test run after N seconds (inside container)
 #   ./scripts/test.sh --rebuild                # Force rebuild Docker image
 #   ./scripts/test.sh --clean                  # Clean cached volumes
 #   ./scripts/test.sh --bench                  # Run benchmarks
@@ -21,7 +23,7 @@
 # Source code is always mounted fresh (not baked into image), so file changes
 # are immediately visible without needing to rebuild the Docker image.
 
-set -e
+set -euo pipefail
 
 IMAGE_NAME="rust-wasm-base"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

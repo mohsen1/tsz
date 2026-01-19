@@ -152,6 +152,23 @@ impl SourceWriter {
         self.raw_write(text);
     }
 
+    /// Write an unsigned integer derived from a source node (maps to original position).
+    pub fn write_node_usize(&mut self, value: usize, source_pos: SourcePosition) {
+        self.ensure_indent();
+
+        if let Some(ref mut sm) = self.source_map {
+            sm.add_simple_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column,
+            );
+        }
+
+        self.raw_write_usize_digits(value);
+    }
+
     /// Write text with a name reference (for identifiers)
     pub fn write_node_with_name(&mut self, text: &str, source_pos: SourcePosition, name: &str) {
         self.ensure_indent();
@@ -194,23 +211,7 @@ impl SourceWriter {
     pub fn write_usize(&mut self, mut value: usize) {
         self.ensure_indent();
 
-        if value == 0 {
-            self.raw_write("0");
-            return;
-        }
-
-        let mut buf = [0u8; 20];
-        let mut i = buf.len();
-        while value > 0 {
-            let digit = (value % 10) as u8;
-            i -= 1;
-            buf[i] = b'0' + digit;
-            value /= 10;
-        }
-
-        // SAFETY: buffer only contains ASCII digits.
-        let digits = unsafe { std::str::from_utf8_unchecked(&buf[i..]) };
-        self.raw_write(digits);
+        self.raw_write_usize_digits(value);
     }
 
     // =========================================================================
@@ -428,6 +429,26 @@ impl SourceWriter {
                     break;
                 }
             }
+        }
+    }
+
+    fn raw_write_usize_digits(&mut self, mut value: usize) {
+        if value == 0 {
+            self.raw_write_char('0');
+            return;
+        }
+
+        let mut buf = [0u8; 20];
+        let mut i = buf.len();
+        while value > 0 {
+            let digit = (value % 10) as u8;
+            i -= 1;
+            buf[i] = b'0' + digit;
+            value /= 10;
+        }
+
+        for &b in &buf[i..] {
+            self.raw_write_char(b as char);
         }
     }
 
