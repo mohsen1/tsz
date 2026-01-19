@@ -271,6 +271,58 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    /// Infer and cache parameter types using contextual typing.
+    ///
+    /// This is needed for cases like:
+    /// `export function filter<T>(arr: T[], predicate: (item: T) => boolean) { for (const item of arr) { ... } }`
+    /// where `item`'s type comes from the contextual type of `arr`.
+    fn infer_parameter_types_from_context(&mut self, params: &[NodeIndex]) {
+        for &param_idx in params {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Only infer when there's no annotation and no default value.
+            if !param.type_annotation.is_none() || !param.initializer.is_none() {
+                continue;
+            }
+
+            let Some(sym_id) = self
+                .ctx
+                .binder
+                .get_node_symbol(param.name)
+                .or_else(|| self.ctx.binder.get_node_symbol(param_idx))
+            else {
+                continue;
+            };
+
+            // Skip destructuring parameters here (they are handled separately by binding pattern inference).
+            if let Some(name_node) = self.ctx.arena.get(param.name) {
+                if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                {
+                    continue;
+                }
+            }
+
+            // If we already have a concrete cached type, keep it.
+            if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
+                if cached != TypeId::UNKNOWN && cached != TypeId::ANY && cached != TypeId::ERROR {
+                    continue;
+                }
+            }
+
+            // Use contextual typing by resolving the parameter's identifier in its function scope.
+            let inferred = self.get_type_of_identifier(param.name);
+            if inferred != TypeId::UNKNOWN && inferred != TypeId::ERROR {
+                self.cache_symbol_type(sym_id, inferred);
+            }
+        }
+    }
+
     /// Push an expected return type onto the stack (when entering a function).
     pub fn push_return_type(&mut self, return_type: TypeId) {
         self.ctx.push_return_type(return_type);
@@ -852,6 +904,34 @@ impl<'a> ThinCheckerState<'a> {
                 } else {
                     // Return UNKNOWN instead of ANY when parenthesized expression cannot be resolved
                     TypeId::UNKNOWN
+                }
+            }
+
+            // Type assertions / `as` / `satisfies`
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION =>
+            {
+                if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
+                    // Always type-check the expression for side effects / diagnostics.
+                    let expr_type = self.get_type_of_node(assertion.expression);
+
+                    // In recovery scenarios we may not have a type node; fall back to the expression type.
+                    if assertion.type_node.is_none() {
+                        expr_type
+                    } else {
+                        let asserted_type = self.get_type_from_type_node(assertion.type_node);
+                        if k == syntax_kind_ext::SATISFIES_EXPRESSION {
+                            // `satisfies` keeps the expression type at runtime.
+                            // (Assignability checking + correct TS1360/TS1361 diagnostics are TODO.)
+                            expr_type
+                        } else {
+                            // `expr as T` / `<T>expr` yields `T`.
+                            asserted_type
+                        }
+                    }
+                } else {
+                    TypeId::ERROR
                 }
             }
 
@@ -1656,6 +1736,22 @@ impl<'a> ThinCheckerState<'a> {
         }
         visited_aliases.push(sym_id);
 
+        // Handle ES6 imports: import { X } from 'module' or import X from 'module'
+        // The binder sets import_module and import_name for these
+        if let Some(ref module_name) = symbol.import_module {
+            let export_name = symbol.import_name.as_deref().unwrap_or(&symbol.escaped_name);
+            // Look up the exported symbol in module_exports
+            if let Some(exports) = self.ctx.binder.module_exports.get(module_name) {
+                if let Some(target_sym_id) = exports.get(export_name) {
+                    // Recursively resolve if the target is also an alias
+                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+                }
+            }
+            // For ES6 imports, if we can't find the export, return the alias symbol itself
+            // This allows the type checker to use the symbol reference
+            return Some(sym_id);
+        }
+
         let decl_idx = if !symbol.value_declaration.is_none() {
             symbol.value_declaration
         } else {
@@ -1672,6 +1768,8 @@ impl<'a> ThinCheckerState<'a> {
             return self
                 .resolve_require_call_symbol(import.module_specifier, Some(visited_aliases));
         }
+        // For other alias symbols (not ES6 imports or import equals), return None
+        // to indicate we couldn't resolve the alias
         None
     }
 
@@ -6540,6 +6638,23 @@ impl<'a> ThinCheckerState<'a> {
     ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
         use crate::solver::{SymbolRef, TypeKey, TypeLowering};
 
+        // Handle cross-file symbol resolution: if this symbol's arena is different
+        // from the current arena, delegate to a checker using the correct arena.
+        if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+            if !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena) {
+                let mut checker = ThinCheckerState::new(
+                    symbol_arena.as_ref(),
+                    self.ctx.binder,
+                    self.ctx.types,
+                    self.ctx.file_name.clone(),
+                    self.ctx.compiler_options.clone(),
+                );
+                // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
+                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+                return checker.compute_type_of_symbol(sym_id);
+            }
+        }
+
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return (TypeId::UNKNOWN, Vec::new());
         };
@@ -6659,6 +6774,14 @@ impl<'a> ThinCheckerState<'a> {
                         if let Some(interface) = self.ctx.arena.get_interface(node) {
                             (params, updates) = self.push_type_parameters(&interface.type_parameters);
                         }
+                    } else if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
+                        eprintln!(
+                            "[DEBUG] Interface {} (sym_id={}): first_decl={:?} NOT FOUND in arena (arena has {} nodes)",
+                            symbol.escaped_name,
+                            sym_id.0,
+                            first_decl,
+                            self.ctx.arena.len()
+                        );
                     }
                 }
 
@@ -6798,7 +6921,17 @@ impl<'a> ThinCheckerState<'a> {
                 let export_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
                 if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name) {
                     if let Some(export_sym_id) = exports_table.get(export_name) {
-                        return (self.get_type_of_symbol(export_sym_id), Vec::new());
+                        let result = self.get_type_of_symbol(export_sym_id);
+                        if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
+                            eprintln!(
+                                "[DEBUG] ALIAS '{}' from '{}': export_sym_id={}, result_type_id={}",
+                                export_name,
+                                module_name,
+                                export_sym_id.0,
+                                result.0
+                            );
+                        }
+                        return (result, Vec::new());
                     }
                 }
                 // Module not found in exports - fall through to UNKNOWN
@@ -8243,6 +8376,13 @@ impl<'a> ThinCheckerState<'a> {
 
         // Get the type of the constructor expression
         let constructor_type = self.get_type_of_node(new_expr.expression);
+        // If the `new` expression provides explicit type arguments (`new Foo<T>()`),
+        // instantiate the constructor signatures with those args so we don't fall back to
+        // inference (and so we match tsc behavior).
+        let constructor_type = self.apply_type_arguments_to_constructor_type(
+            constructor_type,
+            new_expr.type_arguments.as_ref(),
+        );
 
         // Check if the constructor type contains any abstract classes (for union types)
         // e.g., `new cls()` where `cls: typeof AbstractA | typeof AbstractB`
@@ -10369,7 +10509,14 @@ impl<'a> ThinCheckerState<'a> {
             let elem_is_spread = elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT;
             let elem_type = if elem_is_spread {
                 if let Some(spread_data) = self.ctx.arena.get_spread(elem_node) {
-                    self.get_type_of_node(spread_data.expression)
+                    let spread_expr_type = self.get_type_of_node(spread_data.expression);
+                    // In array context (`[...a]`), a spread contributes its *element* type, not the
+                    // array/tuple type itself. Otherwise we'd infer `number[][]` for `[...number[]]`.
+                    if tuple_context.is_some() {
+                        spread_expr_type
+                    } else {
+                        self.for_of_element_type(spread_expr_type)
+                    }
                 } else {
                     TypeId::ANY
                 }
@@ -14236,23 +14383,62 @@ impl<'a> ThinCheckerState<'a> {
     /// base class constructor type. When used in property access (e.g., `super.method()`),
     /// the type is resolved through the normal property access mechanism.
     ///
-    /// Returns the base class constructor type if in a derived class, otherwise ERROR.
-    fn get_type_of_super_keyword(&mut self, _idx: NodeIndex) -> TypeId {
-        // Check if we're in a class context
-        if let Some(ref class_info) = self.ctx.enclosing_class {
-            // Get the base class
-            if let Some(base_class_idx) = self.get_base_class_idx(class_info.class_idx) {
-                // Get the base class node and class data
-                if let Some(base_node) = self.ctx.arena.get(base_class_idx) {
-                    if let Some(base_class) = self.ctx.arena.get_class(base_node) {
-                        // Return the constructor type of the base class
-                        return self.get_class_constructor_type(base_class_idx, base_class);
-                    }
+    /// Returns the appropriate `super` type for the current context.
+    ///
+    /// - In `super(...)` constructor calls: base class constructor type (for argument checking)
+    /// - In static members: base class constructor type (`super.staticMember`)
+    /// - In instance members: base class instance type (`super.method()`)
+    fn get_type_of_super_keyword(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+            return TypeId::ERROR;
+        };
+
+        let Some(base_class_idx) = self.get_base_class_idx(class_info.class_idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(base_node) = self.ctx.arena.get(base_class_idx) else {
+            return TypeId::ERROR;
+        };
+        let Some(base_class) = self.ctx.arena.get_class(base_node) else {
+            return TypeId::ERROR;
+        };
+
+        // Detect `super(...)` usage by checking if the parent is a CallExpression whose callee is `super`.
+        let is_super_call = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n)))
+            .and_then(|(parent_idx, parent_node)| {
+                if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                    return None;
                 }
+                let call = self.ctx.arena.get_call_expr(parent_node)?;
+                Some(call.expression == idx && parent_idx.is_some())
+            })
+            .unwrap_or(false);
+
+        // Static context: the current `this` type is the current class constructor type.
+        let is_static_context = self.current_this_type().is_some_and(|this_ty| {
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_info.class_idx) {
+                this_ty == self.get_type_of_symbol(sym_id)
+            } else if let Some(class_node) = self.ctx.arena.get(class_info.class_idx) {
+                if let Some(class) = self.ctx.arena.get_class(class_node) {
+                    this_ty == self.get_class_constructor_type(class_info.class_idx, class)
+                } else {
+                    false
+                }
+            } else {
+                false
             }
+        });
+
+        if is_super_call || is_static_context {
+            return self.get_class_constructor_type(base_class_idx, base_class);
         }
-        // Not in a class or no base class - return ERROR
-        TypeId::ERROR
+
+        self.get_class_instance_type(base_class_idx, base_class)
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
@@ -15290,7 +15476,10 @@ impl<'a> ThinCheckerState<'a> {
                             TypeId::UNKNOWN
                         };
 
+                        // Cache parameter types from annotations (so for-of binding uses correct types)
+                        // and then infer for any remaining unknown parameters using contextual information.
                         self.cache_parameter_types(&func.parameters.nodes, None);
+                        self.infer_parameter_types_from_context(&func.parameters.nodes);
 
                         // Check that parameter default values are assignable to declared types (TS2322)
                         self.check_parameter_initializers(&func.parameters.nodes);
@@ -15488,15 +15677,25 @@ impl<'a> ThinCheckerState<'a> {
             }
             syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
                 if let Some(for_data) = self.ctx.arena.get_for_in_of(node) {
+                    // Determine the element type for the loop variable (for-of) or key type (for-in).
+                    // This must happen before checking the body so the loop variable has the correct type.
+                    let expr_type = self.get_type_of_node(for_data.expression);
+                    let loop_var_type = if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
+                        self.for_of_element_type(expr_type)
+                    } else {
+                        // `for (x in obj)` iterates keys (string in TS).
+                        TypeId::STRING
+                    };
+
                     // Check if initializer is a variable declaration
                     if let Some(init_node) = self.ctx.arena.get(for_data.initializer) {
                         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                            self.assign_for_in_of_initializer_types(for_data.initializer, loop_var_type);
                             self.check_variable_declaration_list(for_data.initializer);
                         } else {
                             self.get_type_of_node(for_data.initializer);
                         }
                     }
-                    self.get_type_of_node(for_data.expression);
                     self.check_statement(for_data.statement);
                 }
             }
@@ -15612,6 +15811,99 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    /// Compute the element type produced by a `for (... of expr)` loop.
+    ///
+    /// This is a best-effort implementation for common cases (arrays/tuples/unions).
+    fn for_of_element_type(&mut self, iterable_type: TypeId) -> TypeId {
+        use crate::solver::TypeKey;
+
+        if iterable_type == TypeId::ANY
+            || iterable_type == TypeId::UNKNOWN
+            || iterable_type == TypeId::ERROR
+        {
+            return iterable_type;
+        }
+
+        // Unwrap readonly wrappers.
+        let mut ty = iterable_type;
+        loop {
+            match self.ctx.types.lookup(ty) {
+                Some(TypeKey::ReadonlyType(inner)) => {
+                    ty = inner;
+                    continue;
+                }
+                _ => break,
+            }
+        }
+
+        match self.ctx.types.lookup(ty) {
+            Some(TypeKey::Array(elem)) => elem,
+            Some(TypeKey::Tuple(tuple_id)) => {
+                let elems = self.ctx.types.tuple_list(tuple_id);
+                let mut member_types: Vec<TypeId> =
+                    elems.iter().map(|e| e.type_id).collect();
+                if member_types.is_empty() {
+                    TypeId::NEVER
+                } else if member_types.len() == 1 {
+                    member_types.pop().unwrap_or(TypeId::ANY)
+                } else {
+                    self.ctx.types.union(member_types)
+                }
+            }
+            Some(TypeKey::Union(members_id)) => {
+                let members = self.ctx.types.type_list(members_id);
+                let mut element_types = Vec::with_capacity(members.len());
+                for &member in members.iter() {
+                    element_types.push(self.for_of_element_type(member));
+                }
+                self.ctx.types.union(element_types)
+            }
+            _ => TypeId::ANY,
+        }
+    }
+
+    /// Assign the inferred loop-variable type for `for-in` / `for-of` initializers.
+    ///
+    /// The initializer is a `VariableDeclarationList` in the Thin AST.
+    fn assign_for_in_of_initializer_types(&mut self, decl_list_idx: NodeIndex, element_type: TypeId) {
+        let Some(list_node) = self.ctx.arena.get(decl_list_idx) else {
+            return;
+        };
+        let Some(list) = self.ctx.arena.get_variable(list_node) else {
+            return;
+        };
+
+        for &decl_idx in &list.declarations.nodes {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+
+            let declared = if !var_decl.type_annotation.is_none() {
+                self.get_type_from_type_node(var_decl.type_annotation)
+            } else {
+                element_type
+            };
+
+            // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
+            if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+                if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                {
+                    self.assign_binding_pattern_symbol_types(var_decl.name, declared);
+                }
+            }
+
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
+                self.cache_symbol_type(sym_id, declared);
+            } else if let Some(sym_id) = self.ctx.binder.get_node_symbol(var_decl.name) {
+                self.cache_symbol_type(sym_id, declared);
+            }
+        }
+    }
+
     /// Check a single variable declaration.
     fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -15723,8 +16015,23 @@ impl<'a> ThinCheckerState<'a> {
 
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
             self.push_symbol_dependency(sym_id, true);
-            let final_type = compute_final_type(self);
+            let mut final_type = compute_final_type(self);
             self.pop_symbol_dependency();
+
+            // Variables without an initializer/annotation can still get a contextual type in some
+            // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
+            // type may already be cached from the contextual typing logic; prefer that over the
+            // default `any` so we match tsc and avoid spurious noImplicitAny errors.
+            if var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
+                && final_type == TypeId::ANY
+            {
+                if let Some(inferred) = self.ctx.symbol_types.get(&sym_id).copied() {
+                    if inferred != TypeId::ERROR {
+                        final_type = inferred;
+                    }
+                }
+            }
 
             // TS7005: Variable implicitly has an 'any' type
             // Report this error when noImplicitAny is enabled and the variable has no type annotation
@@ -15733,7 +16040,9 @@ impl<'a> ThinCheckerState<'a> {
             // because binding elements with default values can infer their types
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_none()
                 && final_type == TypeId::ANY
+                && !self.ctx.symbol_types.contains_key(&sym_id)
             {
                 // Check if the variable name is a destructuring pattern
                 let is_destructuring_pattern = self.ctx.arena.get(var_decl.name)
@@ -15812,13 +16121,21 @@ impl<'a> ThinCheckerState<'a> {
             if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             {
+                // Prefer explicit type annotation; otherwise infer from initializer (matching tsc).
+                // This type is used for both default-value checking and for assigning types to
+                // binding element symbols created by the binder.
                 let pattern_type = if !var_decl.type_annotation.is_none() {
                     self.get_type_from_type_node(var_decl.type_annotation)
+                } else if !var_decl.initializer.is_none() {
+                    self.get_type_of_node(var_decl.initializer)
                 } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
                     TypeId::UNKNOWN
                 } else {
                     TypeId::ANY
                 };
+
+                // Ensure binding element identifiers get the correct inferred types.
+                self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
                 self.check_binding_pattern(var_decl.name, pattern_type);
             }
         }
@@ -15838,16 +16155,28 @@ impl<'a> ThinCheckerState<'a> {
         };
 
         // Traverse binding elements
-        for &element_idx in &pattern_data.elements.nodes {
-            self.check_binding_element(element_idx, pattern_type);
+        let pattern_kind = pattern_node.kind;
+        for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
+            self.check_binding_element(element_idx, pattern_kind, i, pattern_type);
         }
     }
 
     /// Check a single binding element for default value assignability.
-    fn check_binding_element(&mut self, element_idx: NodeIndex, parent_type: TypeId) {
+    fn check_binding_element(
+        &mut self,
+        element_idx: NodeIndex,
+        pattern_kind: u16,
+        element_index: usize,
+        parent_type: TypeId,
+    ) {
         let Some(element_node) = self.ctx.arena.get(element_idx) else {
             return;
         };
+
+        // Handle holes in array destructuring: [a, , b]
+        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+            return;
+        }
 
         let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
             return;
@@ -15857,8 +16186,7 @@ impl<'a> ThinCheckerState<'a> {
         let element_type = if parent_type != TypeId::ANY {
             // For object binding patterns, look up the property type
             // For array binding patterns, look up the tuple element type
-            // For now, we'll use a simplified approach
-            self.get_binding_element_type(element_idx, parent_type, element_data)
+            self.get_binding_element_type(pattern_kind, element_index, parent_type, element_data)
         } else {
             TypeId::ANY
         };
@@ -15888,14 +16216,118 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
+    /// Assign inferred types to binding element symbols (destructuring).
+    ///
+    /// The binder creates symbols for identifiers inside binding patterns (e.g., `const [x] = arr;`),
+    /// but their `value_declaration` is the identifier node, not the enclosing variable declaration.
+    /// We infer the binding element type from the destructured value type and cache it on the symbol.
+    fn assign_binding_pattern_symbol_types(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) {
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        let pattern_kind = pattern_node.kind;
+        for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
+            if element_idx.is_none() {
+                continue;
+            }
+
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+
+            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+
+            let element_type = if parent_type == TypeId::ANY {
+                TypeId::ANY
+            } else {
+                self.get_binding_element_type(pattern_kind, i, parent_type, element_data)
+            };
+
+            let Some(name_node) = self.ctx.arena.get(element_data.name) else {
+                continue;
+            };
+
+            // Identifier binding: cache the inferred type on the symbol.
+            if name_node.kind == SyntaxKind::Identifier as u16 {
+                if let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name) {
+                    self.cache_symbol_type(sym_id, element_type);
+                }
+            }
+
+            // Nested binding patterns: recurse with the element type.
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                self.assign_binding_pattern_symbol_types(element_data.name, element_type);
+            }
+        }
+    }
+
     /// Get the expected type for a binding element from its parent type.
     fn get_binding_element_type(
         &mut self,
-        element_idx: NodeIndex,
+        pattern_kind: u16,
+        element_index: usize,
         parent_type: TypeId,
         element_data: &crate::parser::thin_node::BindingElementData,
     ) -> TypeId {
         use crate::solver::TypeKey;
+
+        // Array binding patterns use the element position.
+        if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            if parent_type == TypeId::UNKNOWN || parent_type == TypeId::ERROR {
+                return parent_type;
+            }
+
+            // Unwrap readonly wrappers for destructuring element access.
+            let mut array_like = parent_type;
+            loop {
+                match self.ctx.types.lookup(array_like) {
+                    Some(TypeKey::ReadonlyType(inner)) => {
+                        array_like = inner;
+                        continue;
+                    }
+                    _ => break,
+                }
+            }
+
+            // Rest element: ...rest
+            if element_data.dot_dot_dot_token {
+                let elem_type = match self.ctx.types.lookup(array_like) {
+                    Some(TypeKey::Array(elem)) => elem,
+                    Some(TypeKey::Tuple(tuple_id)) => {
+                        let elems = self.ctx.types.tuple_list(tuple_id);
+                        // Best-effort: if the tuple has a rest element, use it; otherwise, fall back to last.
+                        elems
+                            .iter()
+                            .find(|e| e.rest)
+                            .or_else(|| elems.last())
+                            .map(|e| e.type_id)
+                            .unwrap_or(TypeId::ANY)
+                    }
+                    _ => TypeId::ANY,
+                };
+                return self.ctx.types.array(elem_type);
+            }
+
+            return match self.ctx.types.lookup(array_like) {
+                Some(TypeKey::Array(elem)) => elem,
+                Some(TypeKey::Tuple(tuple_id)) => {
+                    let elems = self.ctx.types.tuple_list(tuple_id);
+                    elems.get(element_index).map(|e| e.type_id).unwrap_or(TypeId::ANY)
+                }
+                _ => TypeId::ANY,
+            };
+        }
 
         // Get the property name or index
         let property_name = if !element_data.property_name.is_none() {
@@ -15929,7 +16361,7 @@ impl<'a> ThinCheckerState<'a> {
                 } else if !element_data.name.is_none() {
                     element_data.name
                 } else {
-                    element_idx
+                    NodeIndex::NONE
                 };
                 self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
             }

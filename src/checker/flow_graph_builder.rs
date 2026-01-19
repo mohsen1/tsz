@@ -321,6 +321,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 // Get the expression from the expression statement
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
                     self.handle_expression_for_suspension_points(expr_stmt.expression);
+                    self.handle_expression_for_assignments(expr_stmt.expression);
                 }
                 self.record_node_flow(stmt_idx);
             }
@@ -951,6 +952,12 @@ impl<'a> FlowGraphBuilder<'a> {
         antecedent: FlowNodeId,
         node: NodeIndex,
     ) -> FlowNodeId {
+        // If the antecedent is unreachable, this flow node is also unreachable.
+        // Preserve the unreachable sentinel so later statements remain marked unreachable.
+        if antecedent == self.graph.unreachable_flow {
+            return self.graph.unreachable_flow;
+        }
+
         let id = self.graph.nodes.alloc(flags);
         if let Some(flow) = self.graph.nodes.get_mut(id) {
             if !antecedent.is_none() && antecedent != self.graph.unreachable_flow {
@@ -1144,6 +1151,18 @@ impl<'a> FlowGraphBuilder<'a> {
             return;
         };
 
+        // Robustness: if we're analyzing inside an async function context but the parser represented
+        // `await` as an identifier (e.g., due to recovery or when the analysis context is injected),
+        // still treat it as an await suspension point.
+        if self.in_async_function() && node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.arena.get_identifier(node) {
+                if ident.escaped_text == "await" {
+                    self.handle_await_expression(expr_idx);
+                    return;
+                }
+            }
+        }
+
         // Check if this is an await expression
         if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
             self.handle_await_expression(expr_idx);
@@ -1157,10 +1176,10 @@ impl<'a> FlowGraphBuilder<'a> {
         // Check if this is a yield expression
         if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
             self.handle_yield_expression(expr_idx);
-            // Also check the operand of the yield expression (stored as UnaryExprData)
-            if let Some(unary_data) = self.arena.get_unary_expr(node) {
-                if !unary_data.operand.is_none() {
-                    self.handle_expression_for_suspension_points(unary_data.operand);
+            // Also check the operand of the yield expression (stored as UnaryExprDataEx)
+            if let Some(unary_data) = self.arena.get_unary_expr_ex(node) {
+                if !unary_data.expression.is_none() {
+                    self.handle_expression_for_suspension_points(unary_data.expression);
                 }
             }
             return;
@@ -1208,6 +1227,82 @@ impl<'a> FlowGraphBuilder<'a> {
             }
         }
     }
+
+    /// Recursively traverse an expression to create ASSIGNMENT flow nodes.
+    ///
+    /// This is used for definite assignment and narrowing invalidation logic.
+    fn handle_expression_for_assignments(&mut self, expr_idx: NodeIndex) {
+        let Some(node) = self.arena.get(expr_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::BINARY_EXPRESSION => {
+                let Some(binary) = self.arena.get_binary_expr(node) else {
+                    return;
+                };
+
+                if Self::is_assignment_operator_token(binary.operator_token) {
+                    let flow =
+                        self.create_flow_node(flow_flags::ASSIGNMENT, self.current_flow, expr_idx);
+                    self.current_flow = flow;
+                }
+
+                self.handle_expression_for_assignments(binary.left);
+                self.handle_expression_for_assignments(binary.right);
+            }
+            syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.arena.get_conditional_expr(node) {
+                    self.handle_expression_for_assignments(cond.condition);
+                    self.handle_expression_for_assignments(cond.when_true);
+                    self.handle_expression_for_assignments(cond.when_false);
+                }
+            }
+            syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.arena.get_call_expr(node) {
+                    self.handle_expression_for_assignments(call.expression);
+                    if let Some(args) = &call.arguments {
+                        for &arg in &args.nodes {
+                            if !arg.is_none() {
+                                self.handle_expression_for_assignments(arg);
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    self.handle_expression_for_assignments(access.expression);
+                    if !access.name_or_argument.is_none() {
+                        self.handle_expression_for_assignments(access.name_or_argument);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+fn is_assignment_operator_token(operator_token: u16) -> bool {
+    matches!(
+        operator_token,
+        x if x == SyntaxKind::EqualsToken as u16
+            || x == SyntaxKind::PlusEqualsToken as u16
+            || x == SyntaxKind::MinusEqualsToken as u16
+            || x == SyntaxKind::AsteriskEqualsToken as u16
+            || x == SyntaxKind::SlashEqualsToken as u16
+            || x == SyntaxKind::PercentEqualsToken as u16
+            || x == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+            || x == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || x == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || x == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || x == SyntaxKind::AmpersandEqualsToken as u16
+            || x == SyntaxKind::CaretEqualsToken as u16
+            || x == SyntaxKind::BarEqualsToken as u16
+            || x == SyntaxKind::BarBarEqualsToken as u16
+            || x == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || x == SyntaxKind::QuestionQuestionEqualsToken as u16
+    )
+}
 
     /// Handle an await expression by creating an AWAIT_POINT flow node.
     fn handle_await_expression(&mut self, await_node: NodeIndex) {

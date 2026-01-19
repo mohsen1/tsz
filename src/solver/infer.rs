@@ -175,6 +175,14 @@ impl<'a> InferenceContext<'a> {
         var
     }
 
+    /// Register an existing inference variable as representing a type parameter.
+    ///
+    /// This is useful when the caller needs to compute a unique placeholder name
+    /// (and corresponding placeholder TypeId) after allocating the inference variable.
+    pub fn register_type_param(&mut self, name: Atom, var: InferenceVar) {
+        self.type_params.push((name, var));
+    }
+
     /// Look up an inference variable by type parameter name
     pub fn find_type_param(&self, name: Atom) -> Option<InferenceVar> {
         self.type_params.iter()

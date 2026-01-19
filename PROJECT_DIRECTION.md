@@ -20,7 +20,8 @@ This is a harsh, architectural-level code review of Project Zang. The goal is to
 *   **SourceFile is cheap to clone**: `src/source_file.rs` now stores `text: Arc<str>` instead of `String`.
 *   **Interner storage duplication removed**: `src/interner.rs` now stores interned strings as `Arc<str>` so bytes are not duplicated between the map and vector.
 *   **ThinPrinter output**: `take_output` returning `String` is expected (output must be owned).
-*   **AST Duality (legacy)**: The fat AST (`src/parser/ast/*`) and legacy wasm binder are now behind Cargo feature `legacy_ast` (default builds are thin-only). Decide whether to delete the legacy AST entirely once no consumers remain.
+*   **AST Duality (fixed)**: The fat AST (`src/parser/ast/*`) and `NodeArena` have been deleted. `ThinNodeArena` is the only AST representation.
+*   **Multi-file type resolution (fixed)**: ES6 imports (both named and default) now correctly resolve types across files. The checker's `resolve_alias_symbol` handles `import_module` and `import_name` to look up exported symbols in `module_exports`. This enabled 39 additional driver tests to pass (from 64 to 103).
 
 #### 2. The Concurrency Bottleneck
 
@@ -67,7 +68,7 @@ The transformation logic (ES5 downleveling) in `src/transforms/` is mixing AST m
 2.  **String Ownership**: Refactor `Scanner` and `Parser` to hold a reference to source text (`&str`) managed by a `SourceFile` struct. Stop cloning source text.
 3.  **Transform Pipeline**: Stop emitting strings in `transforms/*.rs`. Create a `SyntheticNode` variant in `ThinNode` if necessary, or map to a Lowered AST, then print.
 4.  **Flow Analysis**: Rewrite `check_flow` to be iterative.
-5.  **Cleanup**: Delete `src/parser/ast` (Fat Nodes) if `src/parser/thin_node.rs` is the future. Having both is confusing and doubles the maintenance surface.
+5.  **Cleanup**: Done — fat AST deleted; the compiler is ThinNode-only.
 
 #### Verdict
 
@@ -91,11 +92,13 @@ Finish implementing the unified test runner to handle `compiler/` and `projects/
 
 ### Improve code hygiene
 
+- Ensure dependencies are recent and up to date
 - Move all scripts to `scripts/` directory. no scripts in root.
 - Update AGENTS.md so agents do not produce .md files for results of their work.
 - Update .gitignore to not allow any new files in root.
 - Revisit scripts/ and conformance/ scripts and clean up as needed.
 - Move docker files to scripts/docker/ or similar.
+- A solid tracing infrastrucutre to make debuging easier. The production build should have a tracing flag too. no print statements. Solid tracing using a crate.
 
 
 ## Merge Criteria

@@ -16,10 +16,6 @@
 //! - ThinNode is 16 bytes (4 nodes/cache-line) - 13x better cache locality
 
 pub mod base;
-#[cfg(feature = "legacy_ast")]
-pub mod arena;
-#[cfg(feature = "legacy_ast")]
-pub mod ast;
 pub mod flags;
 pub mod thin_node;
 
@@ -32,13 +28,7 @@ pub use flags::{modifier_flags, node_flags, transform_flags};
 // Re-export base types used throughout the thin pipeline
 pub use base::{NodeIndex, NodeList, TextRange};
 
-// Re-export legacy AST (fat nodes) when enabled.
-#[cfg(feature = "legacy_ast")]
-pub use ast::*;
-
-// Re-export arena
-#[cfg(feature = "legacy_ast")]
-pub use arena::NodeArena;
+// Legacy fat AST has been removed; ThinNodeArena is the only AST representation.
 pub use thin_node::ThinNodeArena;
 
 /// Extended SyntaxKind values for AST nodes that are not tokens.

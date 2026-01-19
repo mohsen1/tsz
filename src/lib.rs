@@ -159,18 +159,6 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 }
 
 // =============================================================================
-// Binder Factory Function
-// =============================================================================
-
-/// Create a new binder for binding AST nodes to symbols.
-/// This is the wasm-bindgen entry point for creating binders from JavaScript.
-#[cfg(feature = "legacy_ast")]
-#[wasm_bindgen(js_name = createBinder)]
-pub fn create_binder() -> binder::BinderState {
-    binder::BinderState::new()
-}
-
-// =============================================================================
 // ThinParser WASM Interface (High-Performance Parser)
 // =============================================================================
 
@@ -2336,9 +2324,6 @@ pub fn is_word_character(ch: u32) -> bool {
 // =============================================================================
 // Unit Tests
 // =============================================================================
-
-#[cfg(all(test, feature = "legacy_ast"))]
-mod lib_tests;
 
 // ASI Conformance tests for verifying TS1005/TS1109 patterns
 #[cfg(test)]

@@ -4637,7 +4637,7 @@ impl NodeInfo {
 
 /// Trait for unified access to AST nodes across different arena implementations.
 /// This allows consumers (binder, checker, emitter) to work with either
-/// NodeArena or ThinNodeArena without code changes.
+/// different arena implementations without code changes.
 pub trait NodeAccess {
     /// Get basic node information by index
     fn node_info(&self, index: NodeIndex) -> Option<NodeInfo>;
