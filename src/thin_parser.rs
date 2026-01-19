@@ -345,12 +345,13 @@ impl ThinParserState {
                     false // Never suppress forced errors
                 } else {
                     match kind {
-                        SyntaxKind::CloseBraceToken | SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken => {
-                            // At EOF, clearly the file ended before this closing token
-                            // However, for closing parens, this is more likely to be a real error
-                            // Only suppress for closing braces/brackets
+                        SyntaxKind::CloseBraceToken
+                        | SyntaxKind::CloseParenToken
+                        | SyntaxKind::CloseBracketToken => {
+                            // At EOF, the file ended before this closing token. TypeScript reports
+                            // these missing closing delimiters, so do not suppress at EOF.
                             if self.is_token(SyntaxKind::EndOfFileToken) {
-                                kind != SyntaxKind::CloseParenToken
+                                false
                             }
                             // For closing parentheses, be more strict when we see { or if
                             // These are common cases of missing ) in parameters or conditions
@@ -547,13 +548,6 @@ impl ThinParserState {
                 return;
             }
 
-            // NEW: Suppress error if we're at a natural expression end point
-            // This handles cases like `let x =` where the user forgot the expression
-            // but it's clear they've moved on to the next statement/context
-            if self.is_at_expression_end() {
-                return;
-            }
-
             // Decrement budget - we're about to emit an error
             self.ts1109_statement_budget -= 1;
 
@@ -625,14 +619,6 @@ impl ThinParserState {
             // This reduces false-positive TS1005 errors in complex expressions
             // Exception: Don't suppress ')' expected when we see '{' - this is likely a real error
             if self.can_recover_from_error() && !(token == ")" && self.is_token(SyntaxKind::OpenBraceToken)) {
-                return;
-            }
-
-            // Suppress TS1005 if we're at a closing delimiter or EOF
-            // If we're at a position that naturally ends expressions (closing brace, paren, bracket, EOF),
-            // suppress the TS1005 error because we've clearly moved on to the next construct.
-            // This was previously only used for TS1109 suppression but is also applicable to TS1005.
-            if self.is_at_expression_end() {
                 return;
             }
 
@@ -1102,6 +1088,8 @@ impl ThinParserState {
                 || self.is_token(SyntaxKind::CloseBraceToken)
                 || self.is_token(SyntaxKind::CloseParenToken)
                 || self.is_token(SyntaxKind::CloseBracketToken)
+                || self.is_token(SyntaxKind::CaseKeyword)
+                || self.is_token(SyntaxKind::DefaultKeyword)
             {
                 break;
             }
@@ -6841,6 +6829,8 @@ impl ThinParserState {
                 let right = if is_assignment {
                     let result = self.parse_assignment_expression();
                     if result.is_none() {
+                        // Emit TS1109 for incomplete assignment RHS: a = [missing]
+                        self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
                         // Break out of binary expression loop when parsing fails to prevent infinite loops
                         return left;
@@ -6854,6 +6844,8 @@ impl ThinParserState {
                     };
                     let result = self.parse_binary_expression(next_min);
                     if result.is_none() {
+                        // Emit TS1109 for incomplete binary expression: a + [missing]
+                        self.error_expression_expected();
                         self.resync_to_next_expression_boundary();
                         // Break out of binary expression loop when parsing fails to prevent infinite loops
                         return left;
@@ -7034,7 +7026,10 @@ impl ThinParserState {
                 self.next_token();
 
                 // Check for missing operand (e.g., just "await" with nothing after it)
-                if self.can_parse_semicolon() || self.is_token(SyntaxKind::SemicolonToken) {
+                if self.can_parse_semicolon()
+                    || self.is_token(SyntaxKind::SemicolonToken)
+                    || !self.is_expression_start()
+                {
                     self.error_expression_expected();
                 }
 
@@ -7408,14 +7403,11 @@ impl ThinParserState {
                     self.error_expression_expected();
                 }
                 let spread_end = self.token_end();
-                let spread = self.arena.add_unary_expr_ex(
+                let spread = self.arena.add_spread(
                     syntax_kind_ext::SPREAD_ELEMENT,
                     spread_start,
                     spread_end,
-                    crate::parser::thin_node::UnaryExprDataEx {
-                        expression,
-                        asterisk_token: false,
-                    },
+                    crate::parser::thin_node::SpreadData { expression },
                 );
                 args.push(spread);
             } else {
@@ -7490,6 +7482,16 @@ impl ThinParserState {
             | SyntaxKind::AwaitKeyword
             | SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier(),
             _ => {
+                // Don't consume clause boundaries or expression terminators here.
+                // Let callers decide how to recover so constructs like `switch` can resynchronize
+                // without losing `case`/`default` tokens.
+                if self.is_at_expression_end()
+                    || self.is_token(SyntaxKind::CaseKeyword)
+                    || self.is_token(SyntaxKind::DefaultKeyword)
+                {
+                    return NodeIndex::NONE;
+                }
+
                 if self.is_identifier_or_keyword() {
                     self.parse_identifier_name()
                 } else {
@@ -7497,15 +7499,7 @@ impl ThinParserState {
                     let start_pos = self.token_pos();
                     let end_pos = self.token_end();
 
-                    // More precise TS1109 suppression: Only suppress at clear expression boundaries
-                    // Don't suppress when we see statement keywords - those are genuine expression errors
-                    // This helps catch the 22 missing TS1109 errors we need to emit
-                    let should_emit_error = !self.is_at_expression_end()
-                        && !self.is_token(SyntaxKind::EndOfFileToken);
-
-                    if should_emit_error {
-                        self.error_expression_expected();
-                    }
+                    self.error_expression_expected();
 
                     self.next_token();
                     self.arena
@@ -8224,14 +8218,11 @@ impl ThinParserState {
                     self.error_expression_expected();
                 }
                 let spread_end = self.token_end();
-                let spread = self.arena.add_unary_expr_ex(
+                let spread = self.arena.add_spread(
                     syntax_kind_ext::SPREAD_ELEMENT,
                     spread_start,
                     spread_end,
-                    crate::parser::thin_node::UnaryExprDataEx {
-                        expression,
-                        asterisk_token: false,
-                    },
+                    crate::parser::thin_node::SpreadData { expression },
                 );
                 elements.push(spread);
             } else {
@@ -8351,14 +8342,11 @@ impl ThinParserState {
                 self.error_expression_expected();
             }
             let end_pos = self.token_end();
-            return self.arena.add_unary_expr_ex(
-                syntax_kind_ext::SPREAD_ELEMENT,
+            return self.arena.add_spread(
+                syntax_kind_ext::SPREAD_ASSIGNMENT,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::UnaryExprDataEx {
-                    expression,
-                    asterisk_token: false,
-                },
+                crate::parser::thin_node::SpreadData { expression },
             );
         }
 

@@ -269,6 +269,7 @@ impl ThinBinderState {
             FxHashMap::default(),
             FxHashMap::default(),
             FxHashMap::default(),
+            FxHashMap::default(),
         )
     }
 
@@ -286,6 +287,7 @@ impl ThinBinderState {
         global_augmentations: FxHashMap<String, Vec<crate::parser::NodeIndex>>,
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+        symbol_arenas: FxHashMap<SymbolId, Arc<ThinNodeArena>>,
     ) -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
@@ -303,7 +305,7 @@ impl ThinBinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols,
-            symbol_arenas: FxHashMap::default(),
+            symbol_arenas,
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
@@ -3049,6 +3051,9 @@ impl ThinBinderState {
                                 // Track module for cross-file resolution
                                 if let Some(ref specifier) = module_specifier {
                                     sym.import_module = Some(specifier.clone());
+                                    // Default imports (`import X from "mod"`) resolve the module's
+                                    // **default** export, regardless of the local binding name.
+                                    sym.import_name = Some("default".to_string());
                                 }
                             }
                             self.current_scope.set(name.to_string(), sym_id);
@@ -3228,6 +3233,41 @@ impl ThinBinderState {
             // Check if the entire export declaration is type-only: export type { ... }
             let export_type_only = export.is_type_only;
 
+            // export default ...
+            //
+            // Note: the parser represents `export default ...` as an EXPORT_DECLARATION with
+            // `is_default_export = true`, so we must handle it *before* the "namespace export"
+            // fallback that matches any identifier clause.
+            if export.is_default_export {
+                // Always bind the exported expression/declaration so inner references are visited.
+                self.bind_node(arena, export.export_clause);
+
+                // Best-effort: if the default export is an identifier referring to an existing
+                // local symbol (e.g. `export default CONFIG;`), mark that symbol as exported so
+                // cross-file import resolution can see it.
+                //
+                // This is intentionally conservative and doesn't attempt to synthesize a separate
+                // "default" export symbol yet.
+                if let Some(name) = self.get_identifier_name(arena, export.export_clause) {
+                    if let Some(sym_id) = self
+                        .current_scope
+                        .get(name)
+                        .or_else(|| self.file_locals.get(name))
+                    {
+                        if let Some(sym) = self.symbols.get_mut(sym_id) {
+                            sym.is_exported = true;
+                            sym.is_type_only = export_type_only;
+                        }
+                    }
+                } else if let Some(clause_node) = arena.get(export.export_clause) {
+                    if self.is_declaration(clause_node.kind) {
+                        self.mark_exported_symbols(arena, export.export_clause);
+                    }
+                }
+
+                return;
+            }
+
             if !export.export_clause.is_none() {
                 if let Some(clause_node) = arena.get(export.export_clause) {
                     // Check if it's named exports { foo, bar }
@@ -3336,9 +3376,6 @@ impl ThinBinderState {
                         }
                         self.current_scope.set(name.to_string(), sym_id);
                         self.node_symbols.insert(export.export_clause.0, sym_id);
-                    } else if export.is_default_export {
-                        // export default <expression> should still bind inner locals.
-                        self.bind_node(arena, export.export_clause);
                     }
                 }
             }
@@ -3673,20 +3710,20 @@ impl ThinBinderState {
         &'a self,
         id: SymbolId,
         lib_binders: &'a [Arc<ThinBinderState>],
-) -> Option<&'a Symbol> {
-    // First try local symbols
-    if let Some(sym) = self.symbols.get(id) {
-        return Some(sym);
-    }
-
-    // Then try lib binders
-    for lib_binder in lib_binders {
-        if let Some(sym) = lib_binder.symbols.get(id) {
+    ) -> Option<&'a Symbol> {
+        // First try local symbols
+        if let Some(sym) = self.symbols.get(id) {
             return Some(sym);
         }
-    }
 
-    None
+        // Then try lib binders
+        for lib_binder in lib_binders {
+            if let Some(sym) = lib_binder.symbols.get(id) {
+                return Some(sym);
+            }
+        }
+
+        None
     }
 
     pub fn get_node_symbol(&self, node: NodeIndex) -> Option<SymbolId> {

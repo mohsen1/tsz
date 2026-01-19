@@ -2386,10 +2386,13 @@ fn collect_diagnostics(
     let mut cache = cache;
     let mut resolution_cache = ModuleResolutionCache::default();
     let mut program_paths = HashSet::new();
+    let mut canonical_to_file_name: HashMap<PathBuf, String> = HashMap::new();
 
     for file in &program.files {
         let canonical = canonicalize_or_owned(Path::new(&file.file_name));
         program_paths.insert(canonical);
+        canonical_to_file_name
+            .insert(canonicalize_or_owned(Path::new(&file.file_name)), file.file_name.clone());
     }
 
     // Load lib.d.ts files for global symbol resolution (console, Array, Promise, etc.)
@@ -2406,7 +2409,31 @@ fn collect_diagnostics(
             continue;
         }
 
-        let binder = create_binder_from_bound_file(file, program, file_idx);
+        let mut binder = create_binder_from_bound_file(file, program, file_idx);
+        let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
+
+        // Bridge multi-file module resolution for ES module imports.
+        //
+        // `MergedProgram.module_exports` is keyed by *file paths*, but import symbols store the raw
+        // module specifier string (e.g. "./math", "../utils/helpers"). For this file's checker
+        // run, add additional `module_exports` entries keyed by the raw specifiers, pointing at
+        // the resolved target file's export table.
+        for (specifier, _) in &module_specifiers {
+            if let Some(resolved) = resolve_module_specifier(
+                Path::new(&file.file_name),
+                specifier,
+                options,
+                base_dir,
+                &mut resolution_cache,
+            ) {
+                let canonical = canonicalize_or_owned(&resolved);
+                if let Some(target_file_name) = canonical_to_file_name.get(&canonical) {
+                    if let Some(exports) = binder.module_exports.get(target_file_name).cloned() {
+                        binder.module_exports.insert(specifier.clone(), exports);
+                    }
+                }
+            }
+        }
         let cached = cache
             .as_deref_mut()
             .and_then(|cache| cache.type_caches.remove(&file_path));
@@ -2434,7 +2461,6 @@ fn collect_diagnostics(
         if !lib_contexts.is_empty() {
             checker.ctx.set_lib_contexts(lib_contexts.clone());
         }
-        let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
         let mut resolved_modules = HashSet::new();
         for (specifier, _) in &module_specifiers {
             if let Some(resolved) = resolve_module_specifier(
@@ -3045,6 +3071,7 @@ fn create_binder_from_bound_file(
         file.global_augmentations.clone(),
         program.module_exports.clone(),
         program.reexports.clone(),
+        program.symbol_arenas.clone(),
     );
 
     binder.declared_modules = program.declared_modules.clone();

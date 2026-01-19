@@ -356,7 +356,9 @@ fn test_yield_ts1109() {
         eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
     }
 
-    assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 for yield with line break");
+    // `yield` is a restricted production: a line break after `yield` means the yield expression
+    // has no operand (`yield;`) and the next line starts a new statement.
+    assert_eq!(ts1109_count, 0, "Yield with line break should not emit TS1109");
 }
 
 /// Test other ASI edge cases that might need TS1109

@@ -274,14 +274,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // 1. Create inference variables and placeholders for each type parameter
         for tp in &func.type_params {
-            let var = infer_ctx.fresh_type_param(tp.name);
+            // Allocate an inference variable first, then create a *unique* placeholder type
+            // for that variable. We register the placeholder name (not the original type
+            // parameter name) with the inference context so occurs-checks don't get confused
+            // by identically-named type parameters from outer scopes (e.g., `T` inside `T`).
+            let var = infer_ctx.fresh_var();
             type_param_vars.push(var);
 
             // Create a unique placeholder type for this inference variable
             // We use a TypeParameter with a special name to track it during constraint collection
             let placeholder_name = format!("__infer_{}", var.0);
+            let placeholder_atom = self.interner.intern_string(&placeholder_name);
+            infer_ctx.register_type_param(placeholder_atom, var);
             let placeholder_key = TypeKey::TypeParameter(TypeParamInfo {
-                name: self.interner.intern_string(&placeholder_name),
+                name: placeholder_atom,
                 constraint: tp.constraint,
                 default: None,
             });
@@ -461,9 +467,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
 
-            // Expand TypeParameters to their constraints for assignability checking
-            // This handles the case where a TypeParameter from an outer scope is used as an argument
-            let expanded_arg_type = self.expand_type_param(*arg_type);
+            // Expand TypeParameters to their constraints for assignability checking when the
+            // *parameter* expects a concrete type (e.g. `object`) but the argument is an outer
+            // type parameter with a compatible constraint.
+            //
+            // IMPORTANT: Do **not** expand when the parameter type is itself a type parameter;
+            // otherwise a call like `freeze(obj)` where `obj: T extends object` can incorrectly
+            // compare `object` (expanded) against `T` and fail, even though inference would (and
+            // tsc does) infer the inner `T` to the outer `T`.
+            let expanded_arg_type = match self.interner.lookup(param_type) {
+                Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_)) => *arg_type,
+                _ => self.expand_type_param(*arg_type),
+            };
 
             let assignable = if strict {
                 self.checker

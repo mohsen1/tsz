@@ -3506,7 +3506,8 @@ export function reduce<T, U>(arr: T[], fn: (acc: U, item: T) => U, initial: U): 
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors: {:?}",
+        result.diagnostics
     );
     assert!(
         base.join("dist/src/array.js").is_file(),
@@ -3624,7 +3625,8 @@ export function isNonNull<T>(value: T | null | undefined): value is T {
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",   
+        result.diagnostics
     );
     assert!(
         base.join("dist/src/types.js").is_file(),
@@ -3741,7 +3743,8 @@ export { identity, constant, noop } from "./function";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors: {:?}",
+        result.diagnostics
     );
 
     // All JS files should exist
@@ -3837,7 +3840,8 @@ export function wrap<T>(value: T, count: number = 1): T[] {
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     let js = std::fs::read_to_string(base.join("dist/src/constrained.js")).expect("read js");
@@ -3971,7 +3975,8 @@ export class Result<T, E> {
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors: {:?}",
+        result.diagnostics
     );
 
     let js = std::fs::read_to_string(base.join("dist/src/collections.js")).expect("read js");
@@ -4048,7 +4053,8 @@ export { add, multiply, PI } from "./utils";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
     assert!(base.join("dist/src/utils.js").is_file());
     assert!(base.join("dist/src/index.js").is_file());
@@ -4104,7 +4110,8 @@ export { internalHelper as helper, internalValue as value } from "./internal";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     let index_dts = std::fs::read_to_string(base.join("dist/src/index.d.ts")).expect("read dts");
@@ -4158,7 +4165,8 @@ export * from "./math";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     let index_dts = std::fs::read_to_string(base.join("dist/src/index.d.ts")).expect("read dts");
@@ -4222,7 +4230,8 @@ export { coreFunction, CORE_VERSION, intermediateFunction } from "./intermediate
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     // All files should be compiled
@@ -4291,7 +4300,8 @@ export const LOCAL_CONSTANT = "local";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     let index_js = std::fs::read_to_string(base.join("dist/src/index.js")).expect("read js");
@@ -4361,7 +4371,8 @@ export { createId } from "./types";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     let index_js = std::fs::read_to_string(base.join("dist/src/index.js")).expect("read js");
@@ -4422,7 +4433,8 @@ export { default, version } from "./component";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     let index_dts = std::fs::read_to_string(base.join("dist/src/index.d.ts")).expect("read dts");
@@ -4500,7 +4512,8 @@ export { login, logout, fetchData, saveData } from "./features";
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     // All files should be compiled
@@ -4569,7 +4582,8 @@ export class Builder<T> {
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors"
+        "Should compile without errors {:?}",
+        result.diagnostics
     );
 
     let js = std::fs::read_to_string(base.join("dist/src/builder.js")).expect("read js");
