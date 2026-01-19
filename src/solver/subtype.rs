@@ -1498,10 +1498,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         match &source_key {
             TypeKey::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                // Empty objects don't violate weak types - they have no extra properties
+                // that would indicate a mismatch. Only objects with properties that
+                // have NONE in common with the target are weak type violations.
+                // e.g., { b: 1 } assigned to { a?: string } is a violation (TS2559)
+                //       {} assigned to { a?: string } is NOT a violation
+                if shape.properties.is_empty() {
+                    return false;
+                }
                 !self.has_common_property(shape.properties.as_slice(), target_props)
             }
             TypeKey::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
+                // Empty objects with index signatures also don't violate weak types
+                if shape.properties.is_empty() {
+                    return false;
+                }
                 !self.has_common_property(shape.properties.as_slice(), target_props)
             }
             TypeKey::Union(members) => {
