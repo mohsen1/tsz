@@ -1647,6 +1647,11 @@ impl<'a> ThinPrinter<'a> {
     // =========================================================================
 
     fn emit_decorator(&mut self, node: &ThinNode) {
+        // In ES5 mode, decorators are not supported - skip them entirely
+        if self.ctx.target_es5 {
+            return;
+        }
+
         let Some(decorator) = self.arena.get_decorator(node) else {
             return;
         };

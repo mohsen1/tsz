@@ -82,7 +82,7 @@ The project mimics TypeScript's architecture *too* closely in some places (like 
 
 ### 1. Fix Hanging Tests
 
-Several tests have infinite loops and hang forever. These must be identified and marked with `#[ignore]` before any other work.
+Several tests have infinite loops and hang forever. These must be fixed before any other work.
 
 **Currently Ignored (infinite loops):**
 - `test_class_es5_commonjs_class_exports` (transforms/class_es5_tests.rs)

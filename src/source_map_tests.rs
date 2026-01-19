@@ -22957,7 +22957,7 @@ class Child extends Parent {
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - Root cause: Decorators on class members (@prop field decorator, @inject parameter decorator) are not properly transformed to ES5. The ThinPrinter still emits decorator syntax (@) in ES5 mode, which then causes infinite recursion when ClassES5Emitter tries to process the decorator expressions. Decorators need to be stripped or transformed during the ES5 lowering pass."]
+#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_combined_advanced() {
     // Test combined advanced decorator patterns
     let source = r#"function controller(path: string) {
@@ -44765,7 +44765,7 @@ console.log(getMetadata("column", service, "name"));"#;
 }
 
 #[test]
-#[ignore = "ES5 parameter decorator transforms not yet implemented - protected by MAX_EMIT_DEPTH"]
+#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_metadata_es5_parameter_decorators() {
     let source = r#"const paramMetadata = new Map<string, Map<number, any>>();
 
@@ -55133,7 +55133,7 @@ console.log(getMetadata("author", Component));"#;
 }
 
 #[test]
-#[ignore = "ES5 parameter decorator transforms not yet implemented - protected by MAX_EMIT_DEPTH"]
+#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_composition_es5_method_params() {
     let source = r#"const paramMetadata = new Map<any, Map<string, any[]>>();
 
@@ -55707,7 +55707,8 @@ admin.save();"#;
 }
 
 #[test]
-#[ignore = "INFINITE LOOP - Root cause: Similar to test_source_map_decorator_combined_advanced - decorators (@log, @sealed, @validate) on class methods and properties are not transformed for ES5. The decorator expressions contain complex call chains that cause infinite recursion when ClassES5Emitter::emit_expression processes them. Need to either (1) strip decorators entirely in ES5 mode, or (2) transform them to decorator application calls."]
+#[test]
+#[ignore = "INFINITE LOOP - Partial fix: Decorators are now skipped in ES5 mode (emit_decorator). Test still hangs - likely due to interaction between decorators, classes, and ES5 lowering. Requires deeper investigation of the transformation pipeline."]
 fn test_source_map_decorator_composition_es5_comprehensive() {
     let source = r#"// Comprehensive decorator composition patterns for ES5 transform testing
 
