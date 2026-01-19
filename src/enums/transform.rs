@@ -443,11 +443,10 @@ pub struct ConstEnumInliner<'a> {
 impl<'a> ConstEnumInliner<'a> {
     pub fn new(
         arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
         source_text: &'a str,
     ) -> Self {
         ConstEnumInliner {
-            transformer: EnumTransformer::new(arena, binder),
+            transformer: EnumTransformer::new(arena),
             source_text,
         }
     }

@@ -24,6 +24,7 @@ pub mod arrow_es5;
 pub mod async_es5;
 pub mod block_scoping_es5;
 pub mod class_es5;
+pub mod decorators;
 mod emit_utils;
 pub mod enum_es5;
 pub mod es5;
