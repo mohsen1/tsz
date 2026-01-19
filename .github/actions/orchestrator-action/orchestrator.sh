@@ -114,8 +114,9 @@ Important: Only make changes directly related to this task. Keep changes minimal
     return 1
   fi
 
-  # Commit and push
+  # Commit and push (excluding orchestrator state file)
   git add -A
+  git reset HEAD -- .github/.orchestrator-state.json 2>/dev/null || true
   git commit -m "AI: $task_title"
   git push -u origin "$branch"
 
