@@ -107,6 +107,10 @@ pub mod lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 
+// WASM integration module - parallel type checking exports
+pub mod wasm;
+pub use wasm::{WasmTypeInterner, WasmParallelParser, WasmParallelChecker};
+
 // =============================================================================
 // Scanner Factory Function
 // =============================================================================
