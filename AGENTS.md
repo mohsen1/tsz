@@ -412,6 +412,115 @@ When writing code:
 
 ---
 
+## Section 7: Test Infrastructure
+
+### 7.1 Test Organization
+
+Tests are organized in three tiers:
+
+1. **Unit Tests** (`src/*_tests.rs`)
+   - Fast, focused tests for individual components
+   - Located alongside the module being tested
+   - Run with `cargo test --lib`
+
+2. **Integration Tests** (`tests/`)
+   - End-to-end tests for the compiler pipeline
+   - Test interaction between components
+   - Run with `cargo test --test integration_tests`
+
+3. **Conformance Tests** (`conformance/`)
+   - Compare output against TypeScript compiler
+   - Large-scale validation against official tests
+   - Run with `./conformance/run-conformance.sh`
+
+### 7.2 Test Harness
+
+The `src/test_harness.rs` module provides utilities for:
+
+```rust
+// Run a test with timeout to prevent hanging
+use crate::test_harness::{run_with_timeout, DEFAULT_TEST_TIMEOUT};
+
+let result = run_with_timeout(DEFAULT_TEST_TIMEOUT, || {
+    // Test code here
+});
+assert!(result.is_passed());
+
+// Use test fixtures for common setups
+use crate::test_harness::ParserTestFixture;
+
+let fixture = ParserTestFixture::new("const x = 1;");
+let parser = fixture.parse();
+```
+
+### 7.3 Timeout Constants
+
+| Context | Timeout | Constant |
+|---------|---------|----------|
+| Unit tests | 10 seconds | `DEFAULT_TEST_TIMEOUT` |
+| Parser tests | 30 seconds | `PARSER_TEST_TIMEOUT` |
+| Checker tests | 60 seconds | `CHECKER_TEST_TIMEOUT` |
+| Conformance tests | 30 seconds | Per-test in runner |
+
+### 7.4 Writing Good Tests
+
+**DO:**
+- Use descriptive test names that explain the behavior being tested
+- Include edge cases and boundary conditions
+- Use the test harness timeout wrappers for potentially slow tests
+- Test both positive and negative cases
+
+**DON'T:**
+- Write tests that depend on file system layout
+- Create tests that only pass with specific test file names
+- Skip proper cleanup of test resources
+- Ignore test failures by commenting them out
+
+### 7.5 Conformance Test Runner
+
+The Rust-side conformance runner (`tests/conformance_runner.rs`) provides:
+
+```rust
+// Parse test directives from conformance files
+let directives = parse_directives(source);
+
+// Run a single conformance test
+let result = run_conformance_test(source, "test.ts");
+
+// Check results
+assert!(result.parse_errors.is_empty());
+assert!(!result.timed_out);
+```
+
+### 7.6 Adding New Tests
+
+When adding new functionality:
+
+1. **First**: Add unit tests in the module's `*_tests.rs` file
+2. **Then**: Add integration tests if the feature spans multiple components
+3. **Finally**: Verify against TypeScript conformance tests if applicable
+
+### 7.7 Test Commands
+
+```bash
+# Run all unit tests
+cargo test --lib
+
+# Run specific test module
+cargo test --lib thin_parser_tests
+
+# Run integration tests
+cargo test --test integration_tests
+
+# Run conformance tests (JavaScript runner)
+./conformance/run-conformance.sh --max=1000
+
+# Run with verbose output
+cargo test --lib -- --nocapture
+```
+
+---
+
 ## Summary
 
 **Core Principle**: Write test-agnostic, configuration-driven code that correctly implements TypeScript semantics for all inputs.
