@@ -105,7 +105,9 @@ pub fn parse_directives(source: &str) -> TestDirectives {
                     "strict" => directives.strict = Some(value == "true"),
                     "noimplicitany" => directives.no_implicit_any = Some(value == "true"),
                     "strictnullchecks" => directives.strict_null_checks = Some(value == "true"),
-                    "strictfunctiontypes" => directives.strict_function_types = Some(value == "true"),
+                    "strictfunctiontypes" => {
+                        directives.strict_function_types = Some(value == "true")
+                    }
                     "target" => directives.target = Some(value.to_string()),
                     "module" => directives.module = Some(value.to_string()),
                     _ => {
@@ -358,7 +360,8 @@ fn test_conformance_files() {
 
     for file in files {
         if let Ok(source) = fs::read_to_string(&file) {
-            let file_name = file.file_name()
+            let file_name = file
+                .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown.ts".to_string());
 

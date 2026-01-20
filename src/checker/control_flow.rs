@@ -290,7 +290,8 @@ impl<'a> FlowAnalyzer<'a> {
                 )
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
                 // Assignment - check if it targets our reference
-                let targets_reference = self.assignment_targets_reference_node(flow.node, reference);
+                let targets_reference =
+                    self.assignment_targets_reference_node(flow.node, reference);
 
                 if targets_reference {
                     if self.is_direct_assignment_to_reference(flow.node, reference) {
@@ -396,10 +397,15 @@ impl<'a> FlowAnalyzer<'a> {
             // we can finalize the result by unioning
             if flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL) {
                 // Check if all antecedents have been processed
-                let all_processed = flow.antecedent.iter().all(|&ant| visited.contains(&ant) || results.contains_key(&ant));
+                let all_processed = flow
+                    .antecedent
+                    .iter()
+                    .all(|&ant| visited.contains(&ant) || results.contains_key(&ant));
                 if all_processed {
                     // Union all antecedent types
-                    let ant_types: Vec<TypeId> = flow.antecedent.iter()
+                    let ant_types: Vec<TypeId> = flow
+                        .antecedent
+                        .iter()
                         .filter_map(|&ant| results.get(&ant).copied())
                         .collect();
 

@@ -445,12 +445,11 @@ impl DiagnosticBag {
 
     /// Sort diagnostics by file, then by position.
     pub fn sort(&mut self) {
-        self.diagnostics.sort_by(|a, b| {
-            match a.file_name.cmp(&b.file_name) {
+        self.diagnostics
+            .sort_by(|a, b| match a.file_name.cmp(&b.file_name) {
                 std::cmp::Ordering::Equal => a.span.start.cmp(&b.span.start),
                 other => other,
-            }
-        });
+            });
     }
 
     /// Clear all diagnostics.
@@ -573,7 +572,9 @@ pub fn format_code_snippet(text: &str, span: Span, _context_lines: usize) -> Str
 
     // Create underline
     let col = span.start as usize - line_start;
-    let underline_len = (span.len() as usize).min(line_end - span.start as usize).max(1);
+    let underline_len = (span.len() as usize)
+        .min(line_end - span.start as usize)
+        .max(1);
     result.push_str(&" ".repeat(col));
     result.push_str(&"^".repeat(underline_len));
 
@@ -608,12 +609,10 @@ mod tests {
 
     #[test]
     fn test_diagnostic_with_related() {
-        let diag = Diagnostic::error("test.ts", Span::new(10, 20), "Test error", 2304)
-            .with_related(DiagnosticRelatedInfo::new(
-                "other.ts",
-                Span::new(5, 10),
-                "See here",
-            ));
+        let diag =
+            Diagnostic::error("test.ts", Span::new(10, 20), "Test error", 2304).with_related(
+                DiagnosticRelatedInfo::new("other.ts", Span::new(5, 10), "See here"),
+            );
 
         assert_eq!(diag.related.len(), 1);
         assert_eq!(diag.related[0].file_name, "other.ts");

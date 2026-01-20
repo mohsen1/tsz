@@ -367,8 +367,10 @@ impl ThinBinderState {
                 if let Some(scope) = self.scopes.get(scope_id.0 as usize) {
                     if let Some(sym_id) = scope.table.get(name) {
                         if debug_enabled {
-                            eprintln!("[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
-                                name, scope_depth, sym_id.0);
+                            eprintln!(
+                                "[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
+                                name, scope_depth, sym_id.0
+                            );
                         }
                         // Resolve import if this symbol is imported from another module
                         if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
@@ -387,8 +389,10 @@ impl ThinBinderState {
         // Fallback for bound-state binders without persistent scopes.
         if let Some(sym_id) = self.resolve_parameter_fallback(arena, node_idx, name) {
             if debug_enabled {
-                eprintln!("[RESOLVE] '{}' FOUND via parameter fallback (id={})",
-                    name, sym_id.0);
+                eprintln!(
+                    "[RESOLVE] '{}' FOUND via parameter fallback (id={})",
+                    name, sym_id.0
+                );
             }
             // Resolve import if this symbol is imported from another module
             if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
@@ -400,8 +404,10 @@ impl ThinBinderState {
         // Finally check file locals / globals
         if let Some(sym_id) = self.file_locals.get(name) {
             if debug_enabled {
-                eprintln!("[RESOLVE] '{}' FOUND in file_locals (id={})",
-                    name, sym_id.0);
+                eprintln!(
+                    "[RESOLVE] '{}' FOUND in file_locals (id={})",
+                    name, sym_id.0
+                );
             }
             // Resolve import if this symbol is imported from another module
             if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
@@ -415,8 +421,10 @@ impl ThinBinderState {
         for (i, lib_binder) in self.lib_binders.iter().enumerate() {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 if debug_enabled {
-                    eprintln!("[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
-                        name, i, sym_id.0);
+                    eprintln!(
+                        "[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
+                        name, i, sym_id.0
+                    );
                 }
                 // Note: lib symbols are not imports, so no need to resolve
                 return Some(sym_id);
@@ -425,8 +433,11 @@ impl ThinBinderState {
 
         // Symbol not found - log the failure
         if debug_enabled {
-            eprintln!("[RESOLVE] '{}' NOT FOUND - searched scopes, file_locals, and {} lib binders",
-                name, self.lib_binders.len());
+            eprintln!(
+                "[RESOLVE] '{}' NOT FOUND - searched scopes, file_locals, and {} lib binders",
+                name,
+                self.lib_binders.len()
+            );
         }
 
         None
@@ -2234,7 +2245,8 @@ impl ThinBinderState {
             };
 
             // Record merge event for debugging
-            self.debugger.record_merge(name, existing_id, existing_flags, flags, combined_flags);
+            self.debugger
+                .record_merge(name, existing_id, existing_flags, flags, combined_flags);
 
             if let Some(sym) = self.symbols.get_mut(existing_id) {
                 if can_merge {
@@ -2252,7 +2264,13 @@ impl ThinBinderState {
                 }
 
                 // Record declaration event (merge)
-                self.debugger.record_declaration(name, existing_id, combined_flags, sym.declarations.len(), true);
+                self.debugger.record_declaration(
+                    name,
+                    existing_id,
+                    combined_flags,
+                    sym.declarations.len(),
+                    true,
+                );
             }
 
             self.node_symbols.insert(declaration.0, existing_id);
@@ -2273,7 +2291,8 @@ impl ThinBinderState {
         self.declare_in_persistent_scope(name.to_string(), sym_id);
 
         // Record declaration event (new symbol)
-        self.debugger.record_declaration(name, sym_id, flags, 1, false);
+        self.debugger
+            .record_declaration(name, sym_id, flags, 1, false);
 
         sym_id
     }
@@ -2322,10 +2341,12 @@ impl ThinBinderState {
 
         // Allow INTERFACE to merge with VALUE symbols (e.g., `interface Object` + `declare var Object`)
         // This enables global types like Object, Array, Promise to be used as both types and constructors
-        if (existing_flags & symbol_flags::INTERFACE) != 0 && (new_flags & symbol_flags::VALUE) != 0 {
+        if (existing_flags & symbol_flags::INTERFACE) != 0 && (new_flags & symbol_flags::VALUE) != 0
+        {
             return true;
         }
-        if (new_flags & symbol_flags::INTERFACE) != 0 && (existing_flags & symbol_flags::VALUE) != 0 {
+        if (new_flags & symbol_flags::INTERFACE) != 0 && (existing_flags & symbol_flags::VALUE) != 0
+        {
             return true;
         }
 
@@ -3018,7 +3039,8 @@ impl ThinBinderState {
         if let Some(import) = arena.get_import_decl(node) {
             // Get module specifier for cross-file module resolution
             let module_specifier = if !import.module_specifier.is_none() {
-                arena.get(import.module_specifier)
+                arena
+                    .get(import.module_specifier)
                     .and_then(|spec_node| arena.get_literal(spec_node))
                     .map(|lit| lit.text.clone())
             } else {
@@ -3071,8 +3093,7 @@ impl ThinBinderState {
                             } else if let Some(named) = arena.get_named_imports(bindings_node) {
                                 // Handle namespace import: import * as ns from 'module'
                                 if !named.name.is_none() {
-                                    if let Some(name) =
-                                        self.get_identifier_name(arena, named.name)
+                                    if let Some(name) = self.get_identifier_name(arena, named.name)
                                     {
                                         let sym_id = self
                                             .symbols
@@ -3087,8 +3108,7 @@ impl ThinBinderState {
                                         }
                                         self.current_scope.set(name.to_string(), sym_id);
                                         self.node_symbols.insert(named.name.0, sym_id);
-                                        self.node_symbols
-                                            .insert(clause.named_bindings.0, sym_id);
+                                        self.node_symbols.insert(clause.named_bindings.0, sym_id);
                                     }
                                 }
                                 // Handle named imports: import { foo, bar } from 'module'
@@ -3111,8 +3131,13 @@ impl ThinBinderState {
                                                     .alloc(symbol_flags::ALIAS, name.to_string());
 
                                                 // Get property name before mutable borrow to avoid borrow checker error
-                                                let prop_name = if !spec.name.is_none() && !spec.property_name.is_none() {
-                                                    self.get_identifier_name(arena, spec.property_name)
+                                                let prop_name = if !spec.name.is_none()
+                                                    && !spec.property_name.is_none()
+                                                {
+                                                    self.get_identifier_name(
+                                                        arena,
+                                                        spec.property_name,
+                                                    )
                                                 } else {
                                                     None
                                                 };
@@ -3125,7 +3150,8 @@ impl ThinBinderState {
                                                         sym.import_module = Some(specifier.clone());
                                                         // For renamed imports (import { foo as bar }), track original name
                                                         if let Some(prop_name) = prop_name {
-                                                            sym.import_name = Some(prop_name.to_string());
+                                                            sym.import_name =
+                                                                Some(prop_name.to_string());
                                                         }
                                                     }
                                                 }
@@ -3264,7 +3290,9 @@ impl ThinBinderState {
                             // Get the module name from module_specifier
                             let module_name = if export.module_specifier.is_some() {
                                 let idx = export.module_specifier;
-                                arena.get(idx).and_then(|node| arena.get_literal(node))
+                                arena
+                                    .get(idx)
+                                    .and_then(|node| arena.get_literal(node))
                                     .map(|lit| lit.text.clone())
                             } else {
                                 None
@@ -3275,7 +3303,8 @@ impl ThinBinderState {
 
                                 // Collect all the export mappings first (before mutable borrow)
                                 // Also collect node indices and names for creating symbols
-                                let mut export_mappings: Vec<(String, Option<String>, NodeIndex)> = Vec::new();
+                                let mut export_mappings: Vec<(String, Option<String>, NodeIndex)> =
+                                    Vec::new();
                                 for &spec_idx in &named.elements.nodes {
                                     if let Some(spec_node) = arena.get(spec_idx) {
                                         if let Some(spec) = arena.get_specifier(spec_node) {
@@ -3291,7 +3320,8 @@ impl ThinBinderState {
                                                 None
                                             };
 
-                                            if let Some(exported) = exported_name.or(original_name) {
+                                            if let Some(exported) = exported_name.or(original_name)
+                                            {
                                                 export_mappings.push((
                                                     exported.to_string(),
                                                     original_name.map(|s| s.to_string()),
@@ -3316,9 +3346,11 @@ impl ThinBinderState {
                                 }
 
                                 // Now apply the mutable borrow to insert the mappings
-                                let file_reexports = self.reexports.entry(current_file).or_default();
+                                let file_reexports =
+                                    self.reexports.entry(current_file).or_default();
                                 for (exported, original, _) in export_mappings {
-                                    file_reexports.insert(exported, (source_module.clone(), original));
+                                    file_reexports
+                                        .insert(exported, (source_module.clone(), original));
                                 }
                             }
                         } else {
@@ -3342,9 +3374,10 @@ impl ThinBinderState {
                                         if let Some(name) = exported_name {
                                             // Create export symbol (EXPORT_VALUE for value exports)
                                             // This marks the name as exported from this module
-                                            let sym_id = self
-                                                .symbols
-                                                .alloc(symbol_flags::EXPORT_VALUE, name.to_string());
+                                            let sym_id = self.symbols.alloc(
+                                                symbol_flags::EXPORT_VALUE,
+                                                name.to_string(),
+                                            );
                                             // Set is_type_only and is_exported on the symbol
                                             if let Some(sym) = self.symbols.get_mut(sym_id) {
                                                 sym.is_exported = true;
@@ -3387,7 +3420,9 @@ impl ThinBinderState {
             if export.export_clause.is_none() && !export.module_specifier.is_none() {
                 let module_name = if export.module_specifier.is_some() {
                     let idx = export.module_specifier;
-                    arena.get(idx).and_then(|node| arena.get_literal(node))
+                    arena
+                        .get(idx)
+                        .and_then(|node| arena.get_literal(node))
                         .map(|lit| lit.text.clone())
                 } else {
                     None
@@ -4232,19 +4267,42 @@ impl ThinBinderState {
     /// These are core ECMAScript globals that should always be present.
     const EXPECTED_GLOBAL_SYMBOLS: &'static [&'static str] = &[
         // Core types
-        "Object", "Function", "Array", "String", "Number", "Boolean", "Symbol", "BigInt",
+        "Object",
+        "Function",
+        "Array",
+        "String",
+        "Number",
+        "Boolean",
+        "Symbol",
+        "BigInt",
         // Error types
-        "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError",
+        "Error",
+        "EvalError",
+        "RangeError",
+        "ReferenceError",
+        "SyntaxError",
+        "TypeError",
+        "URIError",
         // Collections
-        "Map", "Set", "WeakMap", "WeakSet",
+        "Map",
+        "Set",
+        "WeakMap",
+        "WeakSet",
         // Promises and async
         "Promise",
         // Object reflection
-        "Reflect", "Proxy",
+        "Reflect",
+        "Proxy",
         // Global functions
-        "eval", "isNaN", "isFinite", "parseFloat", "parseInt",
+        "eval",
+        "isNaN",
+        "isFinite",
+        "parseFloat",
+        "parseInt",
         // Global values
-        "Infinity", "NaN", "undefined",
+        "Infinity",
+        "NaN",
+        "undefined",
         // Console (if DOM lib is loaded)
         "console",
     ];
@@ -4270,8 +4328,11 @@ impl ThinBinderState {
         for &symbol_name in Self::EXPECTED_GLOBAL_SYMBOLS {
             // Check if the symbol is available via resolve_identifier
             // (which checks both file_locals and lib_binders)
-            let is_available = self.file_locals.has(symbol_name) ||
-                self.lib_binders.iter().any(|b| b.file_locals.has(symbol_name));
+            let is_available = self.file_locals.has(symbol_name)
+                || self
+                    .lib_binders
+                    .iter()
+                    .any(|b| b.file_locals.has(symbol_name));
 
             if !is_available {
                 missing.push(symbol_name.to_string());
@@ -4293,21 +4354,25 @@ impl ThinBinderState {
 
         // Count total symbols
         let file_local_count = self.file_locals.len();
-        let lib_binder_count: usize = self.lib_binders.iter()
-            .map(|b| b.file_locals.len())
-            .sum();
+        let lib_binder_count: usize = self.lib_binders.iter().map(|b| b.file_locals.len()).sum();
 
         report.push_str(&format!("File locals: {} symbols\n", file_local_count));
-        report.push_str(&format!("Lib binders: {} symbols ({} binders)\n\n",
-            lib_binder_count, self.lib_binders.len()));
+        report.push_str(&format!(
+            "Lib binders: {} symbols ({} binders)\n\n",
+            lib_binder_count,
+            self.lib_binders.len()
+        ));
 
         // Check each expected symbol
         let mut present = Vec::new();
         let mut missing = Vec::new();
 
         for &symbol_name in Self::EXPECTED_GLOBAL_SYMBOLS {
-            let is_available = self.file_locals.has(symbol_name) ||
-                self.lib_binders.iter().any(|b| b.file_locals.has(symbol_name));
+            let is_available = self.file_locals.has(symbol_name)
+                || self
+                    .lib_binders
+                    .iter()
+                    .any(|b| b.file_locals.has(symbol_name));
 
             if is_available {
                 present.push(symbol_name);
@@ -4316,7 +4381,11 @@ impl ThinBinderState {
             }
         }
 
-        report.push_str(&format!("Expected symbols present: {}/{}\n", present.len(), Self::EXPECTED_GLOBAL_SYMBOLS.len()));
+        report.push_str(&format!(
+            "Expected symbols present: {}/{}\n",
+            present.len(),
+            Self::EXPECTED_GLOBAL_SYMBOLS.len()
+        ));
         if !missing.is_empty() {
             report.push_str(&format!("\nMissing symbols:\n"));
             for name in &missing {
@@ -4328,8 +4397,11 @@ impl ThinBinderState {
         if !self.lib_binders.is_empty() {
             report.push_str("\nLib binder contributions:\n");
             for (i, lib_binder) in self.lib_binders.iter().enumerate() {
-                report.push_str(&format!("  Lib binder {}: {} symbols\n",
-                    i, lib_binder.file_locals.len()));
+                report.push_str(&format!(
+                    "  Lib binder {}: {} symbols\n",
+                    i,
+                    lib_binder.file_locals.len()
+                ));
             }
         }
 
@@ -4346,15 +4418,24 @@ impl ThinBinderState {
         let missing = self.validate_global_symbols();
 
         if !missing.is_empty() {
-            eprintln!("[LIB_SYMBOL_WARNING] Missing {} expected global symbols: {:?}",
-                missing.len(), missing);
-            eprintln!("[LIB_SYMBOL_WARNING] This may cause test failures due to unresolved symbols.");
-            eprintln!("[LIB_SYMBOL_WARNING] Ensure lib.d.ts is loaded via addLibFile() before binding.");
+            eprintln!(
+                "[LIB_SYMBOL_WARNING] Missing {} expected global symbols: {:?}",
+                missing.len(),
+                missing
+            );
+            eprintln!(
+                "[LIB_SYMBOL_WARNING] This may cause test failures due to unresolved symbols."
+            );
+            eprintln!(
+                "[LIB_SYMBOL_WARNING] Ensure lib.d.ts is loaded via addLibFile() before binding."
+            );
             true
         } else {
             if crate::module_resolution_debug::is_debug_enabled() {
-                eprintln!("[LIB_SYMBOL_INFO] All {} expected global symbols are present.",
-                    Self::EXPECTED_GLOBAL_SYMBOLS.len());
+                eprintln!(
+                    "[LIB_SYMBOL_INFO] All {} expected global symbols are present.",
+                    Self::EXPECTED_GLOBAL_SYMBOLS.len()
+                );
             }
             false
         }
@@ -4379,8 +4460,12 @@ impl ThinBinderState {
             let mut has_accessible_symbols = false;
             for (name, &_sym_id) in lib_file.binder.file_locals.iter() {
                 // Try to resolve the symbol through our binder
-                if self.file_locals.get(name).is_some() ||
-                   self.lib_binders.iter().any(|b| b.file_locals.get(name).is_some()) {
+                if self.file_locals.get(name).is_some()
+                    || self
+                        .lib_binders
+                        .iter()
+                        .any(|b| b.file_locals.get(name).is_some())
+                {
                     has_accessible_symbols = true;
                     break;
                 }
@@ -4406,13 +4491,13 @@ impl ThinBinderState {
     /// - Potential resolution paths
     pub fn get_resolution_stats(&self) -> ResolutionStats {
         // Count symbols in each resolution tier
-        let scope_symbols: u64 = self.scopes.iter()
-            .map(|s| s.table.len() as u64)
-            .sum();
+        let scope_symbols: u64 = self.scopes.iter().map(|s| s.table.len() as u64).sum();
 
         let file_local_symbols = self.file_locals.len() as u64;
 
-        let lib_binder_symbols: u64 = self.lib_binders.iter()
+        let lib_binder_symbols: u64 = self
+            .lib_binders
+            .iter()
             .map(|b| b.file_locals.len() as u64)
             .sum();
 

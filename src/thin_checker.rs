@@ -15,11 +15,11 @@
 //! Phase 7.5 integration - using solver type system for type checking.
 
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
+use crate::checker::context::CheckerOptions;
 use crate::checker::types::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation,
 };
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
-use crate::checker::context::CheckerOptions;
 use crate::interner::Atom;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::{ImportDeclData, ThinNodeArena};
@@ -142,7 +142,14 @@ impl<'a> ThinCheckerState<'a> {
         compiler_options: CheckerOptions,
     ) -> Self {
         ThinCheckerState {
-            ctx: CheckerContext::with_cache(arena, binder, types, file_name, cache, compiler_options),
+            ctx: CheckerContext::with_cache(
+                arena,
+                binder,
+                types,
+                file_name,
+                cache,
+                compiler_options,
+            ),
         }
     }
 
@@ -162,13 +169,7 @@ impl<'a> ThinCheckerState<'a> {
         compiler_options: &CheckerOptions,
     ) -> Self {
         ThinCheckerState {
-            ctx: CheckerContext::with_options(
-                arena,
-                binder,
-                types,
-                file_name,
-                compiler_options,
-            ),
+            ctx: CheckerContext::with_options(arena, binder, types, file_name, compiler_options),
         }
     }
 
@@ -406,8 +407,12 @@ impl<'a> ThinCheckerState<'a> {
         let name = self.ctx.arena.get_identifier(node)?.escaped_text.as_str();
 
         // Collect lib binders for cross-arena symbol lookup
-        let lib_binders: Vec<Arc<crate::thin_binder::ThinBinderState>> =
-            self.ctx.lib_contexts.iter().map(|lc| Arc::clone(&lc.binder)).collect();
+        let lib_binders: Vec<Arc<crate::thin_binder::ThinBinderState>> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| Arc::clone(&lc.binder))
+            .collect();
 
         let debug = std::env::var("BIND_DEBUG").is_ok();
 
@@ -416,10 +421,22 @@ impl<'a> ThinCheckerState<'a> {
             eprintln!("\n[BIND_RESOLVE] ========================================");
             eprintln!("[BIND_RESOLVE] Looking up identifier '{}'", name);
             eprintln!("[BIND_RESOLVE]   Node index: {:?}", idx);
-            eprintln!("[BIND_RESOLVE]   Lib contexts available: {}", self.ctx.lib_contexts.len());
-            eprintln!("[BIND_RESOLVE]   Lib binders collected: {}", lib_binders.len());
-            eprintln!("[BIND_RESOLVE]   Total scopes in binder: {}", self.ctx.binder.scopes.len());
-            eprintln!("[BIND_RESOLVE]   file_locals size: {}", self.ctx.binder.file_locals.len());
+            eprintln!(
+                "[BIND_RESOLVE]   Lib contexts available: {}",
+                self.ctx.lib_contexts.len()
+            );
+            eprintln!(
+                "[BIND_RESOLVE]   Lib binders collected: {}",
+                lib_binders.len()
+            );
+            eprintln!(
+                "[BIND_RESOLVE]   Total scopes in binder: {}",
+                self.ctx.binder.scopes.len()
+            );
+            eprintln!(
+                "[BIND_RESOLVE]   file_locals size: {}",
+                self.ctx.binder.file_locals.len()
+            );
         }
 
         // === PHASE 2: Scope chain traversal (local -> parent -> ... -> module) ===
@@ -433,84 +450,136 @@ impl<'a> ThinCheckerState<'a> {
                 scope_depth += 1;
                 if let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) {
                     if debug {
-                        eprintln!("[BIND_RESOLVE]   [Scope {}] id={:?}, kind={:?}, parent={:?}, table_size={}",
-                            scope_depth, scope_id, scope.kind, scope.parent, scope.table.len());
+                        eprintln!(
+                            "[BIND_RESOLVE]   [Scope {}] id={:?}, kind={:?}, parent={:?}, table_size={}",
+                            scope_depth,
+                            scope_id,
+                            scope.kind,
+                            scope.parent,
+                            scope.table.len()
+                        );
                     }
 
                     // Check scope's local symbol table
                     if let Some(sym_id) = scope.table.get(name) {
                         if debug {
-                            eprintln!("[BIND_RESOLVE]     -> Found '{}' in scope table as {:?}", name, sym_id);
+                            eprintln!(
+                                "[BIND_RESOLVE]     -> Found '{}' in scope table as {:?}",
+                                name, sym_id
+                            );
                         }
                         // Use get_symbol_with_libs to check lib binders
-                        if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                        if let Some(symbol) =
+                            self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                        {
                             let export_ok = !require_export
                                 || scope.kind != ContainerKind::Module
                                 || symbol.is_exported
                                 || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
                             let is_class_member = Self::is_class_member_symbol(symbol.flags);
                             if debug {
-                                eprintln!("[BIND_RESOLVE]        Symbol flags: 0x{:x}", symbol.flags);
-                                eprintln!("[BIND_RESOLVE]        is_exported: {}, export_ok: {}, is_class_member: {}",
-                                    symbol.is_exported, export_ok, is_class_member);
+                                eprintln!(
+                                    "[BIND_RESOLVE]        Symbol flags: 0x{:x}",
+                                    symbol.flags
+                                );
+                                eprintln!(
+                                    "[BIND_RESOLVE]        is_exported: {}, export_ok: {}, is_class_member: {}",
+                                    symbol.is_exported, export_ok, is_class_member
+                                );
                             }
                             if export_ok && !is_class_member {
                                 if debug {
-                                    eprintln!("[BIND_RESOLVE]     -> SUCCESS: Returning {:?} from scope {:?}", sym_id, scope_id);
+                                    eprintln!(
+                                        "[BIND_RESOLVE]     -> SUCCESS: Returning {:?} from scope {:?}",
+                                        sym_id, scope_id
+                                    );
                                 }
                                 return Some(sym_id);
                             } else if debug {
-                                eprintln!("[BIND_RESOLVE]        SKIPPED: export_ok={}, is_class_member={}", export_ok, is_class_member);
+                                eprintln!(
+                                    "[BIND_RESOLVE]        SKIPPED: export_ok={}, is_class_member={}",
+                                    export_ok, is_class_member
+                                );
                             }
                         } else if !require_export || scope.kind != ContainerKind::Module {
                             if debug {
-                                eprintln!("[BIND_RESOLVE]     -> SUCCESS: Found '{}' in scope {:?} (no symbol data, returning anyway)", name, scope_id);
+                                eprintln!(
+                                    "[BIND_RESOLVE]     -> SUCCESS: Found '{}' in scope {:?} (no symbol data, returning anyway)",
+                                    name, scope_id
+                                );
                             }
                             return Some(sym_id);
                         } else if debug {
-                            eprintln!("[BIND_RESOLVE]        SKIPPED: No symbol data and require_export or module scope");
+                            eprintln!(
+                                "[BIND_RESOLVE]        SKIPPED: No symbol data and require_export or module scope"
+                            );
                         }
                     }
 
                     // Check module exports
                     if scope.kind == ContainerKind::Module {
                         if debug {
-                            eprintln!("[BIND_RESOLVE]     Checking module exports (container_node: {:?})", scope.container_node);
+                            eprintln!(
+                                "[BIND_RESOLVE]     Checking module exports (container_node: {:?})",
+                                scope.container_node
+                            );
                         }
                         if let Some(container_sym_id) =
                             self.ctx.binder.get_node_symbol(scope.container_node)
                         {
                             if debug {
-                                eprintln!("[BIND_RESOLVE]       Container symbol: {:?}", container_sym_id);
+                                eprintln!(
+                                    "[BIND_RESOLVE]       Container symbol: {:?}",
+                                    container_sym_id
+                                );
                             }
-                            if let Some(container_symbol) =
-                                self.ctx.binder.get_symbol_with_libs(container_sym_id, &lib_binders)
+                            if let Some(container_symbol) = self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(container_sym_id, &lib_binders)
                             {
                                 if let Some(exports) = container_symbol.exports.as_ref() {
                                     if debug {
-                                        eprintln!("[BIND_RESOLVE]       Module has {} exports", exports.len());
+                                        eprintln!(
+                                            "[BIND_RESOLVE]       Module has {} exports",
+                                            exports.len()
+                                        );
                                     }
                                     if let Some(member_id) = exports.get(name) {
                                         if debug {
-                                            eprintln!("[BIND_RESOLVE]       -> Found '{}' in exports as {:?}", name, member_id);
+                                            eprintln!(
+                                                "[BIND_RESOLVE]       -> Found '{}' in exports as {:?}",
+                                                name, member_id
+                                            );
                                         }
-                                        if let Some(member_symbol) =
-                                            self.ctx.binder.get_symbol_with_libs(member_id, &lib_binders)
+                                        if let Some(member_symbol) = self
+                                            .ctx
+                                            .binder
+                                            .get_symbol_with_libs(member_id, &lib_binders)
                                         {
-                                            let is_class_member = Self::is_class_member_symbol(member_symbol.flags);
+                                            let is_class_member =
+                                                Self::is_class_member_symbol(member_symbol.flags);
                                             if debug {
-                                                eprintln!("[BIND_RESOLVE]          Member flags: 0x{:x}, is_class_member: {}",
-                                                    member_symbol.flags, is_class_member);
+                                                eprintln!(
+                                                    "[BIND_RESOLVE]          Member flags: 0x{:x}, is_class_member: {}",
+                                                    member_symbol.flags, is_class_member
+                                                );
                                             }
                                             if !is_class_member {
                                                 if debug {
-                                                    eprintln!("[BIND_RESOLVE]       -> SUCCESS: Returning {:?} from module exports", member_id);
+                                                    eprintln!(
+                                                        "[BIND_RESOLVE]       -> SUCCESS: Returning {:?} from module exports",
+                                                        member_id
+                                                    );
                                                 }
                                                 return Some(member_id);
                                             }
                                         } else {
                                             if debug {
-                                                eprintln!("[BIND_RESOLVE]       -> SUCCESS: Found '{}' in module exports (no symbol data)", name);
+                                                eprintln!(
+                                                    "[BIND_RESOLVE]       -> SUCCESS: Found '{}' in module exports (no symbol data)",
+                                                    name
+                                                );
                                             }
                                             return Some(member_id);
                                         }
@@ -519,7 +588,9 @@ impl<'a> ThinCheckerState<'a> {
                                     eprintln!("[BIND_RESOLVE]       Container has no exports");
                                 }
                             } else if debug {
-                                eprintln!("[BIND_RESOLVE]       Could not get container symbol data");
+                                eprintln!(
+                                    "[BIND_RESOLVE]       Could not get container symbol data"
+                                );
                             }
                         } else if debug {
                             eprintln!("[BIND_RESOLVE]       No container symbol for module");
@@ -531,13 +602,19 @@ impl<'a> ThinCheckerState<'a> {
                     scope_id = parent_id;
                 } else {
                     if debug {
-                        eprintln!("[BIND_RESOLVE]   [Scope {}] INVALID scope_id={:?} - breaking", scope_depth, scope_id);
+                        eprintln!(
+                            "[BIND_RESOLVE]   [Scope {}] INVALID scope_id={:?} - breaking",
+                            scope_depth, scope_id
+                        );
                     }
                     break;
                 }
             }
             if debug {
-                eprintln!("[BIND_RESOLVE] Exhausted scope chain after {} scopes", scope_depth);
+                eprintln!(
+                    "[BIND_RESOLVE] Exhausted scope chain after {} scopes",
+                    scope_depth
+                );
             }
         } else if debug {
             eprintln!("[BIND_RESOLVE] No enclosing scope found for node {:?}", idx);
@@ -545,22 +622,34 @@ impl<'a> ThinCheckerState<'a> {
 
         // === PHASE 3: Check file_locals (global scope from lib.d.ts) ===
         if debug {
-            eprintln!("[BIND_RESOLVE] Checking file_locals ({} symbols)", self.ctx.binder.file_locals.len());
+            eprintln!(
+                "[BIND_RESOLVE] Checking file_locals ({} symbols)",
+                self.ctx.binder.file_locals.len()
+            );
         }
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             if debug {
-                eprintln!("[BIND_RESOLVE]   -> Found '{}' in file_locals as {:?}", name, sym_id);
+                eprintln!(
+                    "[BIND_RESOLVE]   -> Found '{}' in file_locals as {:?}",
+                    name, sym_id
+                );
             }
             // Use get_symbol_with_libs to check lib binders
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                 let is_class_member = Self::is_class_member_symbol(symbol.flags);
                 if debug {
-                    eprintln!("[BIND_RESOLVE]      Symbol flags: 0x{:x}, is_class_member: {}", symbol.flags, is_class_member);
+                    eprintln!(
+                        "[BIND_RESOLVE]      Symbol flags: 0x{:x}, is_class_member: {}",
+                        symbol.flags, is_class_member
+                    );
                 }
                 if !is_class_member {
                     if debug {
-                        eprintln!("[BIND_RESOLVE]   -> SUCCESS: Returning {:?} from file_locals", sym_id);
+                        eprintln!(
+                            "[BIND_RESOLVE]   -> SUCCESS: Returning {:?} from file_locals",
+                            sym_id
+                        );
                     }
                     return Some(sym_id);
                 } else if debug {
@@ -568,7 +657,10 @@ impl<'a> ThinCheckerState<'a> {
                 }
             } else {
                 if debug {
-                    eprintln!("[BIND_RESOLVE]   -> SUCCESS: Found '{}' in file_locals (no symbol data)", name);
+                    eprintln!(
+                        "[BIND_RESOLVE]   -> SUCCESS: Found '{}' in file_locals (no symbol data)",
+                        name
+                    );
                 }
                 return Some(sym_id);
             }
@@ -576,15 +668,25 @@ impl<'a> ThinCheckerState<'a> {
 
         // === PHASE 4: Check lib binders' file_locals directly ===
         if debug {
-            eprintln!("[BIND_RESOLVE] Checking {} lib binders' file_locals...", lib_binders.len());
+            eprintln!(
+                "[BIND_RESOLVE] Checking {} lib binders' file_locals...",
+                lib_binders.len()
+            );
         }
         for (i, lib_binder) in lib_binders.iter().enumerate() {
             if debug {
-                eprintln!("[BIND_RESOLVE]   [Lib {}] file_locals size: {}", i, lib_binder.file_locals.len());
+                eprintln!(
+                    "[BIND_RESOLVE]   [Lib {}] file_locals size: {}",
+                    i,
+                    lib_binder.file_locals.len()
+                );
             }
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 if debug {
-                    eprintln!("[BIND_RESOLVE]     -> Found '{}' in lib binder {} as {:?}", name, i, sym_id);
+                    eprintln!(
+                        "[BIND_RESOLVE]     -> Found '{}' in lib binder {} as {:?}",
+                        name, i, sym_id
+                    );
                 }
 
                 // Try to get symbol data with cross-arena resolution
@@ -594,24 +696,35 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(symbol) = symbol_opt {
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if debug {
-                        eprintln!("[BIND_RESOLVE]        Symbol flags: 0x{:x}, is_class_member: {}", symbol.flags, is_class_member);
+                        eprintln!(
+                            "[BIND_RESOLVE]        Symbol flags: 0x{:x}, is_class_member: {}",
+                            symbol.flags, is_class_member
+                        );
                     }
                     // For lib binders, be more permissive with class members
                     // Intrinsic types (Object, Array, etc.) may have class member flags
                     // but should still be accessible as global values
                     if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
                         if debug {
-                            eprintln!("[BIND_RESOLVE]     -> SUCCESS: Returning {:?} from lib binder {}", sym_id, i);
+                            eprintln!(
+                                "[BIND_RESOLVE]     -> SUCCESS: Returning {:?} from lib binder {}",
+                                sym_id, i
+                            );
                         }
                         return Some(sym_id);
                     } else if debug {
-                        eprintln!("[BIND_RESOLVE]        SKIPPED: is_class_member without EXPORT_VALUE");
+                        eprintln!(
+                            "[BIND_RESOLVE]        SKIPPED: is_class_member without EXPORT_VALUE"
+                        );
                     }
                 } else {
                     // No symbol data available - return sym_id anyway
                     // This handles cross-arena references and ambient declarations
                     if debug {
-                        eprintln!("[BIND_RESOLVE]     -> SUCCESS: Found '{}' in lib binder {} (no symbol data)", name, i);
+                        eprintln!(
+                            "[BIND_RESOLVE]     -> SUCCESS: Found '{}' in lib binder {} (no symbol data)",
+                            name, i
+                        );
                     }
                     return Some(sym_id);
                 }
@@ -620,9 +733,13 @@ impl<'a> ThinCheckerState<'a> {
 
         // === PHASE 5: Symbol not found - diagnostic dump ===
         if debug {
-            eprintln!("[BIND_RESOLVE] FAILED: '{}' NOT FOUND in any location", name);
+            eprintln!(
+                "[BIND_RESOLVE] FAILED: '{}' NOT FOUND in any location",
+                name
+            );
             eprintln!("[BIND_RESOLVE] Diagnostic dump:");
-            eprintln!("[BIND_RESOLVE]   - Searched {} scope chain levels",
+            eprintln!(
+                "[BIND_RESOLVE]   - Searched {} scope chain levels",
                 self.find_enclosing_scope(idx).map_or(0, |s| {
                     let mut count = 0;
                     let mut sid = s;
@@ -635,9 +752,16 @@ impl<'a> ThinCheckerState<'a> {
                         }
                     }
                     count
-                }));
-            eprintln!("[BIND_RESOLVE]   - Searched file_locals ({} entries)", self.ctx.binder.file_locals.len());
-            eprintln!("[BIND_RESOLVE]   - Searched {} lib binders", lib_binders.len());
+                })
+            );
+            eprintln!(
+                "[BIND_RESOLVE]   - Searched file_locals ({} entries)",
+                self.ctx.binder.file_locals.len()
+            );
+            eprintln!(
+                "[BIND_RESOLVE]   - Searched {} lib binders",
+                lib_binders.len()
+            );
 
             // Dump file_locals for debugging (if not too large)
             if self.ctx.binder.file_locals.len() < 50 {
@@ -646,7 +770,10 @@ impl<'a> ThinCheckerState<'a> {
                     eprintln!("     - {} -> {:?}", n, id);
                 }
             } else {
-                eprintln!("[BIND_RESOLVE]   (file_locals too large to dump: {} entries)", self.ctx.binder.file_locals.len());
+                eprintln!(
+                    "[BIND_RESOLVE]   (file_locals too large to dump: {} entries)",
+                    self.ctx.binder.file_locals.len()
+                );
             }
 
             // Sample lib binder file_locals
@@ -657,7 +784,11 @@ impl<'a> ThinCheckerState<'a> {
                         eprintln!("     - {} -> {:?}", n, id);
                     }
                 } else {
-                    eprintln!("[BIND_RESOLVE]   Lib binder {} has {} file_locals (sampling first 10):", i, lib_binder.file_locals.len());
+                    eprintln!(
+                        "[BIND_RESOLVE]   Lib binder {} has {} file_locals (sampling first 10):",
+                        i,
+                        lib_binder.file_locals.len()
+                    );
                     for (n, id) in lib_binder.file_locals.iter().take(10) {
                         eprintln!("     - {} -> {:?}", n, id);
                     }
@@ -760,7 +891,9 @@ impl<'a> ThinCheckerState<'a> {
                     // Arrow functions capture `this` from their enclosing scope, so they
                     // should NOT trigger TS2683. We need to skip past arrow functions
                     // to find the actual enclosing function that defines the `this` context.
-                    if self.ctx.no_implicit_this() && self.find_enclosing_non_arrow_function(idx).is_some() {
+                    if self.ctx.no_implicit_this()
+                        && self.find_enclosing_non_arrow_function(idx).is_some()
+                    {
                         // TS2683: 'this' implicitly has type 'any'
                         // Only emit when noImplicitThis is enabled
                         use crate::checker::types::diagnostics::{
@@ -1102,7 +1235,10 @@ impl<'a> ThinCheckerState<'a> {
                                     if !type_args.is_empty() {
                                         // Create a Promise application with the type args
                                         // We use PROMISE_BASE which is recognized as Promise-like
-                                        return self.ctx.types.application(TypeId::PROMISE_BASE, type_args);
+                                        return self
+                                            .ctx
+                                            .types
+                                            .application(TypeId::PROMISE_BASE, type_args);
                                     }
                                 }
                             }
@@ -1522,7 +1658,8 @@ impl<'a> ThinCheckerState<'a> {
                     let lowering = TypeLowering::new(lib_ctx.arena.as_ref(), self.ctx.types);
                     // For interfaces, use all declarations (handles declaration merging)
                     if !symbol.declarations.is_empty() {
-                        lib_type_id = Some(lowering.lower_interface_declarations(&symbol.declarations));
+                        lib_type_id =
+                            Some(lowering.lower_interface_declarations(&symbol.declarations));
                         break;
                     }
                     // For type aliases and other single-declaration types
@@ -1775,7 +1912,10 @@ impl<'a> ThinCheckerState<'a> {
         // Handle ES6 imports: import { X } from 'module' or import X from 'module'
         // The binder sets import_module and import_name for these
         if let Some(ref module_name) = symbol.import_module {
-            let export_name = symbol.import_name.as_deref().unwrap_or(&symbol.escaped_name);
+            let export_name = symbol
+                .import_name
+                .as_deref()
+                .unwrap_or(&symbol.escaped_name);
             // Look up the exported symbol in module_exports
             if let Some(exports) = self.ctx.binder.module_exports.get(module_name) {
                 if let Some(target_sym_id) = exports.get(export_name) {
@@ -1957,7 +2097,10 @@ impl<'a> ThinCheckerState<'a> {
                 let mut args = type_args.clone();
                 if args.len() < sig.type_params.len() {
                     for param in sig.type_params.iter().skip(args.len()) {
-                        let fallback = param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                        let fallback = param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN);
                         args.push(fallback);
                     }
                 }
@@ -2029,9 +2172,18 @@ impl<'a> ThinCheckerState<'a> {
             // Filter out primitive types and literals that cannot be used in class extends
             if matches!(
                 name.as_str(),
-                "null" | "undefined" | "true" | "false" | "void" | "0"
-                    | "number" | "string" | "boolean"
-                    | "never" | "unknown" | "any"
+                "null"
+                    | "undefined"
+                    | "true"
+                    | "false"
+                    | "void"
+                    | "0"
+                    | "number"
+                    | "string"
+                    | "boolean"
+                    | "never"
+                    | "unknown"
+                    | "any"
             ) {
                 return None;
             }
@@ -2745,7 +2897,10 @@ impl<'a> ThinCheckerState<'a> {
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
                 // Wrap the inner type in ReadonlyType
-                return self.ctx.types.intern(crate::solver::TypeKey::ReadonlyType(inner_type));
+                return self
+                    .ctx
+                    .types
+                    .intern(crate::solver::TypeKey::ReadonlyType(inner_type));
             }
 
             // Handle unique operator
@@ -3397,7 +3552,9 @@ impl<'a> ThinCheckerState<'a> {
                 let default_type = self.get_type_from_type_node(data.default);
                 // Validate that default satisfies constraint if present
                 if let Some(constraint_type) = constraint {
-                    if default_type != TypeId::ERROR && !self.is_assignable_to(default_type, constraint_type) {
+                    if default_type != TypeId::ERROR
+                        && !self.is_assignable_to(default_type, constraint_type)
+                    {
                         self.error_at_node(
                             data.default,
                             crate::checker::types::diagnostics::diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
@@ -3909,8 +4066,10 @@ impl<'a> ThinCheckerState<'a> {
 
                     if type_args.len() < base_type_params.len() {
                         for param in base_type_params.iter().skip(type_args.len()) {
-                            let fallback =
-                                param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
                             type_args.push(fallback);
                         }
                     }
@@ -4695,7 +4854,10 @@ impl<'a> ThinCheckerState<'a> {
             if methods.contains_key(&name) {
                 continue;
             }
-            let read_type = accessor.getter.or(accessor.setter).unwrap_or(TypeId::UNKNOWN);
+            let read_type = accessor
+                .getter
+                .or(accessor.setter)
+                .unwrap_or(TypeId::UNKNOWN);
             let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
@@ -4859,7 +5021,10 @@ impl<'a> ThinCheckerState<'a> {
 
                 if type_args.len() < base_type_params.len() {
                     for param in base_type_params.iter().skip(type_args.len()) {
-                        let fallback = param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                        let fallback = param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN);
                         type_args.push(fallback);
                     }
                 }
@@ -4941,8 +5106,10 @@ impl<'a> ThinCheckerState<'a> {
 
                     if type_args.len() < interface_type_params.len() {
                         for param in interface_type_params.iter().skip(type_args.len()) {
-                            let fallback =
-                                param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
                             type_args.push(fallback);
                         }
                     }
@@ -5319,7 +5486,10 @@ impl<'a> ThinCheckerState<'a> {
             if methods.contains_key(&name) {
                 continue;
             }
-            let read_type = accessor.getter.or(accessor.setter).unwrap_or(TypeId::UNKNOWN);
+            let read_type = accessor
+                .getter
+                .or(accessor.setter)
+                .unwrap_or(TypeId::UNKNOWN);
             let write_type = accessor.setter.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
@@ -5458,7 +5628,10 @@ impl<'a> ThinCheckerState<'a> {
 
                 if type_args.len() < base_type_params.len() {
                     for param in base_type_params.iter().skip(type_args.len()) {
-                        let fallback = param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                        let fallback = param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN);
                         type_args.push(fallback);
                     }
                 }
@@ -5660,7 +5833,9 @@ impl<'a> ThinCheckerState<'a> {
                 }
                 // TS2524: 'await' in default parameter - emit specific error
                 if name == "await" && self.is_in_default_parameter(idx) {
-                    use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages,
+                    };
                     self.error_at_node(
                         idx,
                         diagnostic_messages::AWAIT_IN_PARAMETER_DEFAULT,
@@ -6264,7 +6439,7 @@ impl<'a> ThinCheckerState<'a> {
             if parent_idx.is_none() {
                 return false;
             }
-            
+
             // Check if parent is a parameter and we're in its initializer
             if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
                 if parent_node.kind == syntax_kind_ext::PARAMETER {
@@ -6292,7 +6467,7 @@ impl<'a> ThinCheckerState<'a> {
                     return false;
                 }
             }
-            
+
             current = parent_idx;
         }
     }
@@ -6886,11 +7061,16 @@ impl<'a> ThinCheckerState<'a> {
                 let mut updates = Vec::new();
 
                 // Try to get type parameters from the interface declaration
-                let first_decl = symbol.declarations.first().copied().unwrap_or(NodeIndex::NONE);
+                let first_decl = symbol
+                    .declarations
+                    .first()
+                    .copied()
+                    .unwrap_or(NodeIndex::NONE);
                 if !first_decl.is_none() {
                     if let Some(node) = self.ctx.arena.get(first_decl) {
                         if let Some(interface) = self.ctx.arena.get_interface(node) {
-                            (params, updates) = self.push_type_parameters(&interface.type_parameters);
+                            (params, updates) =
+                                self.push_type_parameters(&interface.type_parameters);
                         }
                     } else if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
                         eprintln!(
@@ -7057,10 +7237,15 @@ impl<'a> ThinCheckerState<'a> {
             if let Some(ref module_name) = symbol.import_module {
                 // Check if this is a shorthand ambient module (declare module "foo" without body)
                 // Imports from shorthand ambient modules are typed as `any`
-                if self.ctx.binder.shorthand_ambient_modules.contains(module_name) {
+                if self
+                    .ctx
+                    .binder
+                    .shorthand_ambient_modules
+                    .contains(module_name)
+                {
                     return (TypeId::ANY, Vec::new());
                 }
-                
+
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
                 let export_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
                 if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name) {
@@ -7069,10 +7254,7 @@ impl<'a> ThinCheckerState<'a> {
                         if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
                             eprintln!(
                                 "[DEBUG] ALIAS '{}' from '{}': export_sym_id={}, result_type_id={}",
-                                export_name,
-                                module_name,
-                                export_sym_id.0,
-                                result.0
+                                export_name, module_name, export_sym_id.0, result.0
                             );
                         }
                         return (result, Vec::new());
@@ -7659,7 +7841,8 @@ impl<'a> ThinCheckerState<'a> {
             return self.get_type_from_type_node(var_decl.type_annotation);
         }
 
-        if self.is_catch_clause_variable_declaration(idx) && self.ctx.use_unknown_in_catch_variables()
+        if self.is_catch_clause_variable_declaration(idx)
+            && self.ctx.use_unknown_in_catch_variables()
         {
             return TypeId::UNKNOWN;
         }
@@ -9674,8 +9857,12 @@ impl<'a> ThinCheckerState<'a> {
                         PropertyAccessResult::PropertyNotFound { .. } => {
                             report_no_index = true;
                             // Generate TS2339 for property not found during element access
-                            self.error_property_not_exist_at(&property_name.to_string(), object_type_for_access, access.name_or_argument);
-                            TypeId::ERROR  // Return ERROR instead of ANY to expose the error
+                            self.error_property_not_exist_at(
+                                &property_name.to_string(),
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                            TypeId::ERROR // Return ERROR instead of ANY to expose the error
                         }
                     });
                 }
@@ -10371,7 +10558,10 @@ impl<'a> ThinCheckerState<'a> {
                         // - Regular functions: use ANY (will trigger TS2683 when used, not TS2571)
                         // - Contextual type: if provided, use it (for function types with explicit `this`)
                         if let Some(ref helper) = ctx_helper {
-                            helper.get_this_type().or(outer_this_type).unwrap_or(TypeId::ANY)
+                            helper
+                                .get_this_type()
+                                .or(outer_this_type)
+                                .unwrap_or(TypeId::ANY)
                         } else {
                             outer_this_type.unwrap_or(TypeId::ANY)
                         }
@@ -10466,10 +10656,14 @@ impl<'a> ThinCheckerState<'a> {
             // Note: Async generators (async function* or async *method) should NOT trigger TS2705
             // because they return AsyncGenerator or AsyncIterator, not Promise
             if has_type_annotation {
-                let (is_async, is_generator) = if let Some(func) = self.ctx.arena.get_function(node) {
+                let (is_async, is_generator) = if let Some(func) = self.ctx.arena.get_function(node)
+                {
                     (func.is_async, func.asterisk_token)
                 } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                    (self.has_async_modifier(&method.modifiers), method.asterisk_token)
+                    (
+                        self.has_async_modifier(&method.modifiers),
+                        method.asterisk_token,
+                    )
                 } else {
                     (false, false)
                 };
@@ -10482,7 +10676,7 @@ impl<'a> ThinCheckerState<'a> {
                     let should_emit_ts2705 = !self.is_promise_type(return_type)
                         && return_type != TypeId::ERROR
                         && !self.return_type_annotation_looks_like_promise(type_annotation);
-                    
+
                     if should_emit_ts2705 {
                         use crate::checker::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages,
@@ -10778,7 +10972,10 @@ impl<'a> ThinCheckerState<'a> {
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
                     // and the property value type is 'any'
-                    if self.ctx.no_implicit_any() && prev_context.is_some() && value_type == TypeId::ANY {
+                    if self.ctx.no_implicit_any()
+                        && prev_context.is_some()
+                        && value_type == TypeId::ANY
+                    {
                         let message = format_message(
                             diagnostic_messages::MEMBER_IMPLICIT_ANY,
                             &[&name, "any"],
@@ -11356,7 +11553,6 @@ impl<'a> ThinCheckerState<'a> {
     /// Get the type of an enum member (STRING or NUMBER) by finding its parent enum.
     /// This is used when enum members are accessed through namespace exports.
     fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
-
         // Get the extended node to find parent
         let Some(ext) = self.ctx.arena.get_extended(member_decl) else {
             return TypeId::ERROR; // Missing extended node data - propagate error
@@ -12228,7 +12424,8 @@ impl<'a> ThinCheckerState<'a> {
         if let Some(result) = self.constructor_accessibility_override(source, target, Some(&*env)) {
             return result;
         }
-        if let Some(result) = self.private_brand_assignability_override(source, target, Some(&*env)) {
+        if let Some(result) = self.private_brand_assignability_override(source, target, Some(&*env))
+        {
             return result;
         }
         if let Some(result) = self.enum_assignability_override(source, target, Some(&*env)) {
@@ -14174,7 +14371,8 @@ impl<'a> ThinCheckerState<'a> {
             let suggestions_text = if suggestions.len() == 1 {
                 format!("'{}'", suggestions[0])
             } else {
-                let formatted: Vec<String> = suggestions.iter().map(|s| format!("'{}", s)).collect();
+                let formatted: Vec<String> =
+                    suggestions.iter().map(|s| format!("'{}", s)).collect();
                 formatted.join(", ")
             };
 
@@ -14326,10 +14524,14 @@ impl<'a> ThinCheckerState<'a> {
         // Fill the matrix
         for i in 1..=a_len {
             for j in 1..=b_len {
-                let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+                let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                    0
+                } else {
+                    1
+                };
                 matrix[i][j] = [
-                    matrix[i - 1][j] + 1,      // deletion
-                    matrix[i][j - 1] + 1,      // insertion
+                    matrix[i - 1][j] + 1,        // deletion
+                    matrix[i][j - 1] + 1,        // insertion
                     matrix[i - 1][j - 1] + cost, // substitution
                 ]
                 .iter()
@@ -14961,7 +15163,10 @@ impl<'a> ThinCheckerState<'a> {
         };
 
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(diagnostic_messages::CANNOT_ASSIGN_PRIVATE_METHOD, &[prop_name]);
+            let message = format_message(
+                diagnostic_messages::CANNOT_ASSIGN_PRIVATE_METHOD,
+                &[prop_name],
+            );
             let diag = Diagnostic::error(
                 self.ctx.file_name.clone(),
                 loc.start,
@@ -15154,8 +15359,10 @@ impl<'a> ThinCheckerState<'a> {
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
-            self.ctx.compiler_options.no_implicit_any = self.resolve_no_implicit_any_from_source(&sf.text);
-            self.ctx.compiler_options.no_implicit_returns = self.resolve_no_implicit_returns_from_source(&sf.text);
+            self.ctx.compiler_options.no_implicit_any =
+                self.resolve_no_implicit_any_from_source(&sf.text);
+            self.ctx.compiler_options.no_implicit_returns =
+                self.resolve_no_implicit_returns_from_source(&sf.text);
             self.ctx.compiler_options.use_unknown_in_catch_variables =
                 self.resolve_use_unknown_in_catch_variables_from_source(&sf.text);
 
@@ -15320,7 +15527,7 @@ impl<'a> ThinCheckerState<'a> {
         if a_is_static != b_is_static {
             return false;
         }
-        
+
         let excludes_a = Self::excluded_symbol_flags(flags_a);
         let excludes_b = Self::excluded_symbol_flags(flags_b);
         (flags_a & excludes_b) != 0 || (flags_b & excludes_a) != 0
@@ -15406,13 +15613,13 @@ impl<'a> ThinCheckerState<'a> {
                 for j in (i + 1)..declarations.len() {
                     let (decl_idx, decl_flags) = declarations[i];
                     let (other_idx, other_flags) = declarations[j];
-                    
+
                     // Skip conflict check if declarations are in different files
                     // (external modules are isolated, same-name declarations don't conflict)
                     // Check by comparing if both nodes exist in our arena
-                    let both_in_same_file = self.ctx.arena.get(decl_idx).is_some() 
+                    let both_in_same_file = self.ctx.arena.get(decl_idx).is_some()
                         && self.ctx.arena.get(other_idx).is_some();
-                    
+
                     if both_in_same_file && Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
@@ -15435,19 +15642,24 @@ impl<'a> ThinCheckerState<'a> {
             let name = symbol.escaped_name.clone();
             let (message, code) = if !has_non_block_scoped {
                 // Pure block-scoped duplicates (let/const/import conflicts) emit TS2451
-                (format_message(diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE, &[&name]), diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE)
+                (
+                    format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        &[&name],
+                    ),
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                )
             } else {
                 // Mixed or non-block-scoped duplicates emit TS2300
-                (format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]), diagnostic_codes::DUPLICATE_IDENTIFIER)
+                (
+                    format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                )
             };
             for (decl_idx, _) in declarations {
                 if conflicts.contains(&decl_idx) {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    self.error_at_node(
-                        error_node,
-                        &message,
-                        code,
-                    );
+                    self.error_at_node(error_node, &message, code);
                 }
             }
         }
@@ -15496,162 +15708,165 @@ impl<'a> ThinCheckerState<'a> {
 
         #[allow(unreachable_code)]
         {
-        use crate::binder::symbol_flags;
-        use crate::checker::types::diagnostics::diagnostic_codes;
+            use crate::binder::symbol_flags;
+            use crate::checker::types::diagnostics::diagnostic_codes;
 
-        // Collect all declared symbols
-        let mut symbol_ids = FxHashSet::default();
-        if !self.ctx.binder.scopes.is_empty() {
-            for scope in &self.ctx.binder.scopes {
-                for (_, &id) in scope.table.iter() {
+            // Collect all declared symbols
+            let mut symbol_ids = FxHashSet::default();
+            if !self.ctx.binder.scopes.is_empty() {
+                for scope in &self.ctx.binder.scopes {
+                    for (_, &id) in scope.table.iter() {
+                        symbol_ids.insert(id);
+                    }
+                }
+            } else {
+                for (_, &id) in self.ctx.binder.file_locals.iter() {
                     symbol_ids.insert(id);
                 }
             }
-        } else {
-            for (_, &id) in self.ctx.binder.file_locals.iter() {
-                symbol_ids.insert(id);
-            }
-        }
 
-        // Build a set of all referenced symbols
-        let mut referenced_symbols = FxHashSet::default();
-        for deps in self.ctx.symbol_dependencies.values() {
-            for &sym_id in deps {
-                referenced_symbols.insert(sym_id);
-            }
-        }
-
-        // Check each symbol for usage
-        for sym_id in symbol_ids {
-            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                continue;
-            };
-
-            // Skip exported symbols - they're part of the public API
-            if symbol.is_exported {
-                continue;
-            }
-
-            // Skip special symbols like constructors, default exports, etc.
-            if symbol.escaped_name == "constructor"
-                || symbol.escaped_name == "default"
-                || symbol.escaped_name == "__esModule"
-            {
-                continue;
-            }
-
-            // Skip imported symbols - they're tracked separately (UNUSED_IMPORT)
-            if symbol.import_module.is_some() {
-                continue;
-            }
-
-            // Skip symbols with underscore prefix - conventional "intentionally unused"
-            if symbol.escaped_name.starts_with('_') {
-                continue;
-            }
-
-            // Skip symbols that look like they might be used by external tools or in computed properties
-            let name_str = &symbol.escaped_name;
-
-            // Check if this variable is declared in an ambient context
-            // Use the symbol's first declaration node if available
-            if !symbol.declarations.is_empty() && self.is_ambient_declaration(symbol.declarations[0]) {
-                continue;
-            }
-
-            // Skip module/namespace variables that are often accessed dynamically
-            if (symbol.flags & symbol_flags::MODULE) != 0
-                || (symbol.flags & symbol_flags::NAMESPACE) != 0
-                || name_str.len() == 1  // Single letter variables are often used in computed contexts
-            {
-                continue;
-            }
-
-            // Skip exported symbols as they might be used externally
-            if (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
-                continue;
-            }
-
-            // Skip symbols without declarations (shouldn't happen, but be safe)
-            if symbol.declarations.is_empty() {
-                continue;
-            }
-
-            // Check if this is a declaration type we want to check
-            // We check: variables, functions, classes, enums, type aliases
-            // We skip: interfaces, type parameters, namespaces (they're used structurally)
-            let flags = symbol.flags;
-            let is_checkable = (flags & symbol_flags::VARIABLE) != 0
-                || (flags & symbol_flags::FUNCTION) != 0
-                || (flags & symbol_flags::CLASS) != 0
-                || (flags & symbol_flags::ENUM) != 0
-                || (flags & symbol_flags::TYPE_ALIAS) != 0;
-
-            // Skip ambient declarations - they are type-only and don't need to be "used"
-            let is_ambient = symbol.declarations.iter().any(|&decl_idx| {
-                if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                    // Check node flags for ambient context
-                    (decl_node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
-                } else {
-                    false
+            // Build a set of all referenced symbols
+            let mut referenced_symbols = FxHashSet::default();
+            for deps in self.ctx.symbol_dependencies.values() {
+                for &sym_id in deps {
+                    referenced_symbols.insert(sym_id);
                 }
-            });
-
-            if is_ambient {
-                continue;
             }
 
-            // Skip certain types that are used structurally
-            if (flags & symbol_flags::TYPE_PARAMETER) != 0
-                || (flags & symbol_flags::INTERFACE) != 0
-                || (flags & symbol_flags::SIGNATURE) != 0
-            {
-                continue;
-            }
+            // Check each symbol for usage
+            for sym_id in symbol_ids {
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    continue;
+                };
 
-            if !is_checkable {
-                continue;
-            }
+                // Skip exported symbols - they're part of the public API
+                if symbol.is_exported {
+                    continue;
+                }
 
-            // Check if this symbol is referenced anywhere
-            if referenced_symbols.contains(&sym_id) {
-                continue;
-            }
+                // Skip special symbols like constructors, default exports, etc.
+                if symbol.escaped_name == "constructor"
+                    || symbol.escaped_name == "default"
+                    || symbol.escaped_name == "__esModule"
+                {
+                    continue;
+                }
 
-            // Check if any declaration has an initializer or is ambient
-            // Variables with initializers should not be reported as unused because
-            // the act of declaration + initialization is meaningful usage.
-            // Ambient declarations (declare) also should not be reported as unused.
-            let should_skip = symbol.declarations.iter().any(|&decl_idx| {
-                if let Some(node) = self.ctx.arena.get(decl_idx) {
-                    if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
-                        // Skip if has initializer
-                        if !var_decl.initializer.is_none() {
+                // Skip imported symbols - they're tracked separately (UNUSED_IMPORT)
+                if symbol.import_module.is_some() {
+                    continue;
+                }
+
+                // Skip symbols with underscore prefix - conventional "intentionally unused"
+                if symbol.escaped_name.starts_with('_') {
+                    continue;
+                }
+
+                // Skip symbols that look like they might be used by external tools or in computed properties
+                let name_str = &symbol.escaped_name;
+
+                // Check if this variable is declared in an ambient context
+                // Use the symbol's first declaration node if available
+                if !symbol.declarations.is_empty()
+                    && self.is_ambient_declaration(symbol.declarations[0])
+                {
+                    continue;
+                }
+
+                // Skip module/namespace variables that are often accessed dynamically
+                if (symbol.flags & symbol_flags::MODULE) != 0
+                    || (symbol.flags & symbol_flags::NAMESPACE) != 0
+                    || name_str.len() == 1
+                // Single letter variables are often used in computed contexts
+                {
+                    continue;
+                }
+
+                // Skip exported symbols as they might be used externally
+                if (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
+                    continue;
+                }
+
+                // Skip symbols without declarations (shouldn't happen, but be safe)
+                if symbol.declarations.is_empty() {
+                    continue;
+                }
+
+                // Check if this is a declaration type we want to check
+                // We check: variables, functions, classes, enums, type aliases
+                // We skip: interfaces, type parameters, namespaces (they're used structurally)
+                let flags = symbol.flags;
+                let is_checkable = (flags & symbol_flags::VARIABLE) != 0
+                    || (flags & symbol_flags::FUNCTION) != 0
+                    || (flags & symbol_flags::CLASS) != 0
+                    || (flags & symbol_flags::ENUM) != 0
+                    || (flags & symbol_flags::TYPE_ALIAS) != 0;
+
+                // Skip ambient declarations - they are type-only and don't need to be "used"
+                let is_ambient = symbol.declarations.iter().any(|&decl_idx| {
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                        // Check node flags for ambient context
+                        (decl_node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
+                    } else {
+                        false
+                    }
+                });
+
+                if is_ambient {
+                    continue;
+                }
+
+                // Skip certain types that are used structurally
+                if (flags & symbol_flags::TYPE_PARAMETER) != 0
+                    || (flags & symbol_flags::INTERFACE) != 0
+                    || (flags & symbol_flags::SIGNATURE) != 0
+                {
+                    continue;
+                }
+
+                if !is_checkable {
+                    continue;
+                }
+
+                // Check if this symbol is referenced anywhere
+                if referenced_symbols.contains(&sym_id) {
+                    continue;
+                }
+
+                // Check if any declaration has an initializer or is ambient
+                // Variables with initializers should not be reported as unused because
+                // the act of declaration + initialization is meaningful usage.
+                // Ambient declarations (declare) also should not be reported as unused.
+                let should_skip = symbol.declarations.iter().any(|&decl_idx| {
+                    if let Some(node) = self.ctx.arena.get(decl_idx) {
+                        if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+                            // Skip if has initializer
+                            if !var_decl.initializer.is_none() {
+                                return true;
+                            }
+                        }
+                        // Skip if ambient declaration (has DeclareKeyword modifier)
+                        if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
                             return true;
                         }
                     }
-                    // Skip if ambient declaration (has DeclareKeyword modifier)
-                    if (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
-                        return true;
+                    false
+                });
+
+                if should_skip {
+                    continue; // Don't report initialized or ambient variables as unused
+                }
+
+                // Symbol is not referenced - emit diagnostic for each declaration
+                let name = symbol.escaped_name.clone();
+                let message = format!("'{}' is declared but its value is never read.", name);
+
+                for &decl_idx in &symbol.declarations {
+                    if let Some(name_node) = self.get_declaration_name_node(decl_idx) {
+                        self.error_at_node(name_node, &message, diagnostic_codes::UNUSED_VARIABLE);
                     }
                 }
-                false
-            });
-
-            if should_skip {
-                continue; // Don't report initialized or ambient variables as unused
             }
-
-            // Symbol is not referenced - emit diagnostic for each declaration
-            let name = symbol.escaped_name.clone();
-            let message = format!("'{}' is declared but its value is never read.", name);
-
-            for &decl_idx in &symbol.declarations {
-                if let Some(name_node) = self.get_declaration_name_node(decl_idx) {
-                    self.error_at_node(name_node, &message, diagnostic_codes::UNUSED_VARIABLE);
-                }
-            }
-        }
         } // End unreachable code block
     }
 
@@ -15919,14 +16134,13 @@ impl<'a> ThinCheckerState<'a> {
                         // Only check if there's an explicit return type annotation that is NOT Promise
                         // Skip this check if the return type is ERROR or the annotation looks like Promise
                         // Note: Async generators (async function*) return AsyncGenerator, not Promise
-                        if func.is_async
-                            && !func.asterisk_token
-                            && has_type_annotation
-                        {
+                        if func.is_async && !func.asterisk_token && has_type_annotation {
                             let should_emit_ts2705 = !self.is_promise_type(return_type)
                                 && return_type != TypeId::ERROR
-                                && !self.return_type_annotation_looks_like_promise(func.type_annotation);
-                            
+                                && !self.return_type_annotation_looks_like_promise(
+                                    func.type_annotation,
+                                );
+
                             if should_emit_ts2705 {
                                 use crate::checker::types::diagnostics::{
                                     diagnostic_codes, diagnostic_messages,
@@ -16077,7 +16291,10 @@ impl<'a> ThinCheckerState<'a> {
                     // Check if initializer is a variable declaration
                     if let Some(init_node) = self.ctx.arena.get(for_data.initializer) {
                         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                            self.assign_for_in_of_initializer_types(for_data.initializer, loop_var_type);
+                            self.assign_for_in_of_initializer_types(
+                                for_data.initializer,
+                                loop_var_type,
+                            );
                             self.check_variable_declaration_list(for_data.initializer);
                         } else {
                             self.get_type_of_node(for_data.initializer);
@@ -16232,8 +16449,7 @@ impl<'a> ThinCheckerState<'a> {
             Some(TypeKey::Array(elem)) => elem,
             Some(TypeKey::Tuple(tuple_id)) => {
                 let elems = self.ctx.types.tuple_list(tuple_id);
-                let mut member_types: Vec<TypeId> =
-                    elems.iter().map(|e| e.type_id).collect();
+                let mut member_types: Vec<TypeId> = elems.iter().map(|e| e.type_id).collect();
                 if member_types.is_empty() {
                     TypeId::NEVER
                 } else if member_types.len() == 1 {
@@ -16257,7 +16473,11 @@ impl<'a> ThinCheckerState<'a> {
     /// Assign the inferred loop-variable type for `for-in` / `for-of` initializers.
     ///
     /// The initializer is a `VariableDeclarationList` in the Thin AST.
-    fn assign_for_in_of_initializer_types(&mut self, decl_list_idx: NodeIndex, element_type: TypeId) {
+    fn assign_for_in_of_initializer_types(
+        &mut self,
+        decl_list_idx: NodeIndex,
+        element_type: TypeId,
+    ) {
         let Some(list_node) = self.ctx.arena.get(decl_list_idx) else {
             return;
         };
@@ -16437,11 +16657,14 @@ impl<'a> ThinCheckerState<'a> {
                 && !self.ctx.symbol_types.contains_key(&sym_id)
             {
                 // Check if the variable name is a destructuring pattern
-                let is_destructuring_pattern = self.ctx.arena.get(var_decl.name)
-                    .map_or(false, |name_node| {
-                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                    });
+                let is_destructuring_pattern =
+                    self.ctx
+                        .arena
+                        .get(var_decl.name)
+                        .map_or(false, |name_node| {
+                            name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        });
 
                 if !is_destructuring_pattern {
                     if let Some(ref name) = var_name {
@@ -16452,11 +16675,7 @@ impl<'a> ThinCheckerState<'a> {
                             diagnostic_messages::VARIABLE_IMPLICIT_ANY,
                             &[name, "any"],
                         );
-                        self.error_at_node(
-                            var_decl.name,
-                            &message,
-                            diagnostic_codes::IMPLICIT_ANY,
-                        );
+                        self.error_at_node(var_decl.name, &message, diagnostic_codes::IMPLICIT_ANY);
                     }
                 }
             }
@@ -16715,7 +16934,10 @@ impl<'a> ThinCheckerState<'a> {
                 Some(TypeKey::Array(elem)) => elem,
                 Some(TypeKey::Tuple(tuple_id)) => {
                     let elems = self.ctx.types.tuple_list(tuple_id);
-                    elems.get(element_index).map(|e| e.type_id).unwrap_or(TypeId::ANY)
+                    elems
+                        .get(element_index)
+                        .map(|e| e.type_id)
+                        .unwrap_or(TypeId::ANY)
                 }
                 _ => TypeId::ANY,
             };
@@ -17218,7 +17440,6 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check if a property is readonly in a class declaration (by looking at AST).
     fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
-
         // Find the class declaration by name
         if let Some(sym_id) = self.ctx.binder.file_locals.get(class_name) {
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -17517,7 +17738,11 @@ impl<'a> ThinCheckerState<'a> {
         // This is correct because WASM checker operates on individual files
         // without access to the module graph (aside from ambient module declarations).
         let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-        self.error_at_node(import.module_specifier, &message, diagnostic_codes::CANNOT_FIND_MODULE);
+        self.error_at_node(
+            import.module_specifier,
+            &message,
+            diagnostic_codes::CANNOT_FIND_MODULE,
+        );
     }
 
     /// Check if individual imported members exist in the module's exports.
@@ -17593,9 +17818,13 @@ impl<'a> ThinCheckerState<'a> {
                     // Emit TS2305: Module has no exported member
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        &[module_name, import_name]
+                        &[module_name, import_name],
                     );
-                    self.error_at_node(specifier.name, &message, diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER);
+                    self.error_at_node(
+                        specifier.name,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                    );
                 }
             }
         }
@@ -17643,7 +17872,11 @@ impl<'a> ThinCheckerState<'a> {
 
         // Emit TS2792 for unresolved export module specifiers
         let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-        self.error_at_node(export_decl.module_specifier, &message, diagnostic_codes::CANNOT_FIND_MODULE);
+        self.error_at_node(
+            export_decl.module_specifier,
+            &message,
+            diagnostic_codes::CANNOT_FIND_MODULE,
+        );
     }
 
     /// Check heritage clauses (extends/implements) for unresolved names.
@@ -17694,7 +17927,9 @@ impl<'a> ThinCheckerState<'a> {
                     // Symbol was resolved - check if it represents a constructor type for extends clauses
                     if is_extends_clause {
                         let symbol_type = self.get_type_of_symbol(heritage_sym);
-                        if !self.is_constructor_type(symbol_type) && !self.is_class_symbol(heritage_sym) {
+                        if !self.is_constructor_type(symbol_type)
+                            && !self.is_class_symbol(heritage_sym)
+                        {
                             // Resolved to a non-constructor type - emit TS2507
                             if let Some(name) = self.heritage_name_text(expr_idx) {
                                 use crate::checker::types::diagnostics::{
@@ -18079,7 +18314,9 @@ impl<'a> ThinCheckerState<'a> {
                     PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{}\"]", s),
                     PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{}]", n),
                     PropertyKey::Computed(ComputedKey::Qualified(q)) => format!("[{}]", q),
-                    PropertyKey::Computed(ComputedKey::Symbol(Some(s))) => format!("[Symbol({})]", s),
+                    PropertyKey::Computed(ComputedKey::Symbol(Some(s))) => {
+                        format!("[Symbol({})]", s)
+                    }
                     PropertyKey::Computed(ComputedKey::Symbol(None)) => "[Symbol()]".to_string(),
                     PropertyKey::Private(s) => format!("#{}", s),
                     PropertyKey::Ident(s) => s.clone(),
@@ -18123,11 +18360,7 @@ impl<'a> ThinCheckerState<'a> {
                 )
             };
 
-            self.error_at_node(
-                name_node,
-                &format_message(message, &[&name]),
-                code,
-            );
+            self.error_at_node(name_node, &format_message(message, &[&name]), code);
         }
 
         // Check for TS2565 (Property used before being assigned in constructor)
@@ -18299,11 +18532,7 @@ impl<'a> ThinCheckerState<'a> {
 
         // Analyze statements in order, checking for property accesses before assignment
         for &stmt_idx in block.statements.nodes.iter().skip(start_idx) {
-            self.check_statement_for_early_property_access(
-                stmt_idx,
-                &mut assigned,
-                tracked,
-            );
+            self.check_statement_for_early_property_access(stmt_idx, &mut assigned, tracked);
         }
     }
 
@@ -18327,9 +18556,7 @@ impl<'a> ThinCheckerState<'a> {
             k if k == syntax_kind_ext::BLOCK => {
                 if let Some(block) = self.ctx.arena.get_block(node) {
                     for &stmt_idx in &block.statements.nodes {
-                        self.check_statement_for_early_property_access(
-                            stmt_idx, assigned, tracked,
-                        );
+                        self.check_statement_for_early_property_access(stmt_idx, assigned, tracked);
                     }
                 }
                 false
@@ -18337,7 +18564,9 @@ impl<'a> ThinCheckerState<'a> {
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
                     self.check_expression_for_early_property_access(
-                        expr_stmt.expression, assigned, tracked,
+                        expr_stmt.expression,
+                        assigned,
+                        tracked,
                     );
                 }
                 false
@@ -18346,17 +18575,23 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
                     // Check the condition expression for property accesses
                     self.check_expression_for_early_property_access(
-                        if_stmt.expression, assigned, tracked,
+                        if_stmt.expression,
+                        assigned,
+                        tracked,
                     );
                     // Check both branches
                     let mut then_assigned = assigned.clone();
                     let mut else_assigned = assigned.clone();
                     self.check_statement_for_early_property_access(
-                        if_stmt.then_statement, &mut then_assigned, tracked,
+                        if_stmt.then_statement,
+                        &mut then_assigned,
+                        tracked,
                     );
                     if !if_stmt.else_statement.is_none() {
                         self.check_statement_for_early_property_access(
-                            if_stmt.else_statement, &mut else_assigned, tracked,
+                            if_stmt.else_statement,
+                            &mut else_assigned,
+                            tracked,
                         );
                     }
                     // Properties assigned in both branches are considered assigned
@@ -18371,7 +18606,9 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(ret_stmt) = self.ctx.arena.get_return_statement(node) {
                     if !ret_stmt.expression.is_none() {
                         self.check_expression_for_early_property_access(
-                            ret_stmt.expression, assigned, tracked,
+                            ret_stmt.expression,
+                            assigned,
+                            tracked,
                         );
                     }
                 }
@@ -18390,7 +18627,9 @@ impl<'a> ThinCheckerState<'a> {
             k if k == syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_stmt) = self.ctx.arena.get_try(node) {
                     self.check_statement_for_early_property_access(
-                        try_stmt.try_block, assigned, tracked,
+                        try_stmt.try_block,
+                        assigned,
+                        tracked,
                     );
                     // Check catch and finally blocks
                     // ...
@@ -18404,7 +18643,9 @@ impl<'a> ThinCheckerState<'a> {
                             if let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node) {
                                 if !decl.initializer.is_none() {
                                     self.check_expression_for_early_property_access(
-                                        decl.initializer, assigned, tracked,
+                                        decl.initializer,
+                                        assigned,
+                                        tracked,
                                     );
                                 }
                             }
@@ -18458,11 +18699,15 @@ impl<'a> ThinCheckerState<'a> {
                 // Recursively check the expression part
                 if let Some(access) = self.ctx.arena.get_access_expr(node) {
                     self.check_expression_for_early_property_access(
-                        access.expression, assigned, tracked,
+                        access.expression,
+                        assigned,
+                        tracked,
                     );
                     if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
                         self.check_expression_for_early_property_access(
-                            access.name_or_argument, assigned, tracked,
+                            access.name_or_argument,
+                            assigned,
+                            tracked,
                         );
                     }
                 }
@@ -18470,12 +18715,8 @@ impl<'a> ThinCheckerState<'a> {
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
                     // Check both sides of the binary expression
-                    self.check_expression_for_early_property_access(
-                        bin.left, assigned, tracked,
-                    );
-                    self.check_expression_for_early_property_access(
-                        bin.right, assigned, tracked,
-                    );
+                    self.check_expression_for_early_property_access(bin.left, assigned, tracked);
+                    self.check_expression_for_early_property_access(bin.right, assigned, tracked);
                     // If this is an assignment, track the assignment
                     if self.is_assignment_operator(bin.operator_token) {
                         self.track_assignment_in_expression(bin.left, assigned, tracked);
@@ -18487,7 +18728,9 @@ impl<'a> ThinCheckerState<'a> {
             {
                 if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
                     self.check_expression_for_early_property_access(
-                        unary.operand, assigned, tracked,
+                        unary.operand,
+                        assigned,
+                        tracked,
                     );
                     // Track ++ and -- as both read and write
                     if unary.operator == SyntaxKind::PlusPlusToken as u16
@@ -18497,18 +18740,16 @@ impl<'a> ThinCheckerState<'a> {
                     }
                 }
             }
-            k if k == syntax_kind_ext::CALL_EXPRESSION
-                || k == syntax_kind_ext::NEW_EXPRESSION =>
-            {
+            k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
                 if let Some(call) = self.ctx.arena.get_call_expr(node) {
                     self.check_expression_for_early_property_access(
-                        call.expression, assigned, tracked,
+                        call.expression,
+                        assigned,
+                        tracked,
                     );
                     if let Some(ref args) = call.arguments {
                         for &arg in &args.nodes {
-                            self.check_expression_for_early_property_access(
-                                arg, assigned, tracked,
-                            );
+                            self.check_expression_for_early_property_access(arg, assigned, tracked);
                         }
                     }
                 }
@@ -18516,20 +18757,28 @@ impl<'a> ThinCheckerState<'a> {
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
                     self.check_expression_for_early_property_access(
-                        cond.condition, assigned, tracked,
+                        cond.condition,
+                        assigned,
+                        tracked,
                     );
                     self.check_expression_for_early_property_access(
-                        cond.when_true, assigned, tracked,
+                        cond.when_true,
+                        assigned,
+                        tracked,
                     );
                     self.check_expression_for_early_property_access(
-                        cond.when_false, assigned, tracked,
+                        cond.when_false,
+                        assigned,
+                        tracked,
                     );
                 }
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
                     self.check_expression_for_early_property_access(
-                        paren.expression, assigned, tracked,
+                        paren.expression,
+                        assigned,
+                        tracked,
                     );
                 }
             }
@@ -18539,14 +18788,18 @@ impl<'a> ThinCheckerState<'a> {
             {
                 if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
                     self.check_expression_for_early_property_access(
-                        assertion.expression, assigned, tracked,
+                        assertion.expression,
+                        assigned,
+                        tracked,
                     );
                 }
             }
             k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
                 if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
                     self.check_expression_for_early_property_access(
-                        unary.expression, assigned, tracked,
+                        unary.expression,
+                        assigned,
+                        tracked,
                     );
                 }
             }
@@ -18839,9 +19092,7 @@ impl<'a> ThinCheckerState<'a> {
                     return self.analyze_switch_statement(switch_data, assigned_in, tracked);
                 }
             }
-            k if k == syntax_kind_ext::WHILE_STATEMENT
-                || k == syntax_kind_ext::FOR_STATEMENT =>
-            {
+            k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::FOR_STATEMENT => {
                 // For while/for loops: body might not execute, so assignments
                 // in the body don't count for definite assignment
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
@@ -18885,13 +19136,13 @@ impl<'a> ThinCheckerState<'a> {
                     };
                 }
             }
-            k if k == syntax_kind_ext::DO_STATEMENT =>
-            {
+            k if k == syntax_kind_ext::DO_STATEMENT => {
                 // do-while loops always execute at least once
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     let mut assigned = assigned_in.clone();
                     // Analyze the loop body (executes at least once)
-                    let body_result = self.analyze_statement(loop_data.statement, &assigned, tracked);
+                    let body_result =
+                        self.analyze_statement(loop_data.statement, &assigned, tracked);
                     if !loop_data.condition.is_none() {
                         self.collect_assignments_in_expression(
                             loop_data.condition,
@@ -19351,8 +19602,7 @@ impl<'a> ThinCheckerState<'a> {
             // Handle nested destructuring (recursively)
             else if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 self.collect_destructuring_assignments(elem_idx, assigned, tracked);
-            }
-            else if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            } else if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
                 self.collect_array_destructuring_assignments(elem_idx, assigned, tracked);
             }
         }
@@ -19544,7 +19794,10 @@ impl<'a> ThinCheckerState<'a> {
                                 .and_then(|&first_arg| self.ctx.arena.get(first_arg))
                                 .and_then(|arg_node| {
                                     if arg_node.kind == SyntaxKind::StringLiteral as u16 {
-                                        self.ctx.arena.get_literal(arg_node).map(|lit| lit.text.clone())
+                                        self.ctx
+                                            .arena
+                                            .get_literal(arg_node)
+                                            .map(|lit| lit.text.clone())
                                     } else {
                                         None
                                     }
@@ -19938,7 +20191,10 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks() || self.ctx.strict_function_types() || self.ctx.no_implicit_any() {
+        if self.ctx.strict_null_checks()
+            || self.ctx.strict_function_types()
+            || self.ctx.no_implicit_any()
+        {
             return true;
         }
 
@@ -20398,7 +20654,10 @@ impl<'a> ThinCheckerState<'a> {
                         let receiver_class_idx =
                             self.resolve_receiver_class_for_access(object_expr, object_type);
                         receiver_class_idx
-                            .map(|receiver| receiver == current_class_idx || self.is_class_derived_from(receiver, current_class_idx))
+                            .map(|receiver| {
+                                receiver == current_class_idx
+                                    || self.is_class_derived_from(receiver, current_class_idx)
+                            })
                             .unwrap_or(false)
                     }
                 }
@@ -21456,7 +21715,10 @@ impl<'a> ThinCheckerState<'a> {
             self.push_type_parameters(&base_class.type_parameters);
         if type_args.len() < base_type_params.len() {
             for param in base_type_params.iter().skip(type_args.len()) {
-                let fallback = param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                let fallback = param
+                    .default
+                    .or(param.constraint)
+                    .unwrap_or(TypeId::UNKNOWN);
                 type_args.push(fallback);
             }
         }
@@ -21790,7 +22052,10 @@ impl<'a> ThinCheckerState<'a> {
 
                 if type_args.len() < base_type_params.len() {
                     for param in base_type_params.iter().skip(type_args.len()) {
-                        let fallback = param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                        let fallback = param
+                            .default
+                            .or(param.constraint)
+                            .unwrap_or(TypeId::UNKNOWN);
                         type_args.push(fallback);
                     }
                 }
@@ -22250,7 +22515,8 @@ impl<'a> ThinCheckerState<'a> {
                                 continue;
                             }
 
-                            let Some(interface_decl) = self.ctx.arena.get_interface(interface_node) else {
+                            let Some(interface_decl) = self.ctx.arena.get_interface(interface_node)
+                            else {
                                 continue;
                             };
 
@@ -22270,7 +22536,9 @@ impl<'a> ThinCheckerState<'a> {
                             if !missing_members.is_empty() {
                                 let class_name = if !class_data.name.is_none() {
                                     if let Some(name_node) = self.ctx.arena.get(class_data.name) {
-                                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                        if let Some(ident) =
+                                            self.ctx.arena.get_identifier(name_node)
+                                        {
                                             ident.escaped_text.clone()
                                         } else {
                                             String::from("<anonymous>")
@@ -22323,7 +22591,7 @@ impl<'a> ThinCheckerState<'a> {
                         let is_declared = self.has_declare_modifier(&func.modifiers);
                         // Use func.is_async as the parser stores async as a flag, not a modifier
                         let is_async = func.is_async;
-                        
+
                         // TS1040: 'async' modifier cannot be used in an ambient context
                         if is_declared && is_async {
                             self.error_at_node(
@@ -22334,7 +22602,7 @@ impl<'a> ThinCheckerState<'a> {
                             i += 1;
                             continue;
                         }
-                        
+
                         if is_declared {
                             i += 1;
                             continue;
@@ -22633,7 +22901,10 @@ impl<'a> ThinCheckerState<'a> {
             let declared_type = self.get_type_from_type_node(param.type_annotation);
 
             // Check if the initializer type is assignable to the declared type
-            if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) && !self.is_assignable_to(init_type, declared_type) {
+            if declared_type != TypeId::ANY
+                && !self.type_contains_error(declared_type)
+                && !self.is_assignable_to(init_type, declared_type)
+            {
                 self.error_type_not_assignable_with_reason_at(init_type, declared_type, param_idx);
             }
         }
@@ -22655,12 +22926,12 @@ impl<'a> ThinCheckerState<'a> {
         let Some(node) = self.ctx.arena.get(init_idx) else {
             return false;
         };
-        
+
         // Check if this is a direct identifier reference
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
             return ident.escaped_text == name;
         }
-        
+
         // For more complex cases, we'd need to recursively check
         // but for the simple case of `function f(x = x)`, this suffices
         false
@@ -22893,7 +23164,8 @@ impl<'a> ThinCheckerState<'a> {
                             continue;
                         }
 
-                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
+                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
+                        {
                             // Check if this binding element has an initializer
                             let has_initializer = !binding_elem.initializer.is_none();
 
@@ -22948,7 +23220,8 @@ impl<'a> ThinCheckerState<'a> {
                         }
 
                         // Check if this element is a binding element with initializer
-                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
+                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
+                        {
                             let has_initializer = !binding_elem.initializer.is_none();
 
                             if !has_initializer {
@@ -23036,9 +23309,7 @@ impl<'a> ThinCheckerState<'a> {
         // If this is an await expression, check if we're in async context
         if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
             if !self.ctx.in_async_context() {
-                use crate::checker::types::diagnostics::{
-                    diagnostic_codes, diagnostic_messages,
-                };
+                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     expr_idx,
                     diagnostic_messages::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
@@ -23055,7 +23326,8 @@ impl<'a> ThinCheckerState<'a> {
                     self.check_await_expression(bin_expr.right);
                 }
             }
-            syntax_kind_ext::PREFIX_UNARY_EXPRESSION | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
+            syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
                 if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
                     self.check_await_expression(unary_expr.expression);
                 }
@@ -23208,7 +23480,8 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         // Try to get the private field name from the source type
-        let field_name = self.get_private_field_name_from_brand(source)
+        let field_name = self
+            .get_private_field_name_from_brand(source)
             .unwrap_or_else(|| "[private field]".to_string());
 
         Some(format!(
@@ -23609,7 +23882,10 @@ impl<'a> ThinCheckerState<'a> {
         // TS7008: Member implicitly has an 'any' type
         // Report this error when noImplicitAny is enabled and the property has no type annotation
         // AND no initializer (if there's an initializer, TypeScript can infer the type)
-        if self.ctx.no_implicit_any() && prop.type_annotation.is_none() && prop.initializer.is_none() {
+        if self.ctx.no_implicit_any()
+            && prop.type_annotation.is_none()
+            && prop.initializer.is_none()
+        {
             if let Some(member_name) = self.get_property_name(prop.name) {
                 use crate::checker::types::diagnostics::{
                     diagnostic_codes, diagnostic_messages, format_message,
@@ -23618,11 +23894,7 @@ impl<'a> ThinCheckerState<'a> {
                     diagnostic_messages::MEMBER_IMPLICIT_ANY,
                     &[&member_name, "any"],
                 );
-                self.error_at_node(
-                    prop.name,
-                    &message,
-                    diagnostic_codes::IMPLICIT_ANY_MEMBER,
-                );
+                self.error_at_node(prop.name, &message, diagnostic_codes::IMPLICIT_ANY_MEMBER);
             }
         }
     }
@@ -25545,9 +25817,12 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
-
     /// Check if a property in a derived class is redeclaring a base class property
-    fn is_derived_property_redeclaration(&self, member_idx: NodeIndex, _property_name: &str) -> bool {
+    fn is_derived_property_redeclaration(
+        &self,
+        member_idx: NodeIndex,
+        _property_name: &str,
+    ) -> bool {
         // Find the containing class for this member
         if let Some(class_idx) = self.find_containing_class(member_idx) {
             if let Some(class_node) = self.ctx.arena.get(class_idx) {
@@ -25574,7 +25849,7 @@ impl<'a> ThinCheckerState<'a> {
         // For now, assume the member is in a class context if we're checking properties
         // The actual class detection would require traversing the full AST
         // This is sufficient for the TS2524 definite assignment checking we need
-        None  // Simplified implementation - could be enhanced with full parent tracking
+        None // Simplified implementation - could be enhanced with full parent tracking
     }
 
     /// Check if a function node is a class method (instance or static)
@@ -25585,10 +25860,10 @@ impl<'a> ThinCheckerState<'a> {
         // to see if we're inside a class declaration.
 
         // Conservative approach: check file name patterns that suggest class context
-        self.ctx.file_name.contains("class") ||
-        self.ctx.file_name.contains("Class") ||
-        self.ctx.file_name.contains("method") ||
-        self.ctx.file_name.contains("Method")
+        self.ctx.file_name.contains("class")
+            || self.ctx.file_name.contains("Class")
+            || self.ctx.file_name.contains("method")
+            || self.ctx.file_name.contains("Method")
     }
 
     /// Check if a function is within a namespace or module context.

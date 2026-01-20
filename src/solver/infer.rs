@@ -10,11 +10,11 @@
 //! - Best common type calculation
 //! - Efficient unification with path compression
 
-use ena::unify::{InPlaceUnificationTable, UnifyKey, UnifyValue, NoError};
-use rustc_hash::FxHashSet;
 use crate::interner::Atom;
-use crate::solver::types::*;
 use crate::solver::TypeDatabase;
+use crate::solver::types::*;
+use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
+use rustc_hash::FxHashSet;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -66,10 +66,7 @@ pub enum InferenceError {
     /// Inference variable was not resolved
     Unresolved(InferenceVar),
     /// Circular unification detected (occurs-check)
-    OccursCheck {
-        var: InferenceVar,
-        ty: TypeId,
-    },
+    OccursCheck { var: InferenceVar, ty: TypeId },
     /// Lower bound is not subtype of upper bound
     BoundsViolation {
         var: InferenceVar,
@@ -185,7 +182,8 @@ impl<'a> InferenceContext<'a> {
 
     /// Look up an inference variable by type parameter name
     pub fn find_type_param(&self, name: Atom) -> Option<InferenceVar> {
-        self.type_params.iter()
+        self.type_params
+            .iter()
             .find(|(n, _)| *n == name)
             .map(|(_, v)| *v)
     }
@@ -239,9 +237,9 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        self.table.unify_var_var(root_a, root_b).map_err(|_| {
-            InferenceError::Conflict(TypeId::ERROR, TypeId::ERROR)
-        })?;
+        self.table
+            .unify_var_var(root_a, root_b)
+            .map_err(|_| InferenceError::Conflict(TypeId::ERROR, TypeId::ERROR))?;
 
         let new_root = self.table.find(root_a);
         let root_a_idx = root_a.0 as usize;
@@ -544,7 +542,12 @@ impl<'a> InferenceContext<'a> {
         false
     }
 
-    fn type_contains_param(&self, ty: TypeId, target: Atom, visited: &mut FxHashSet<TypeId>) -> bool {
+    fn type_contains_param(
+        &self,
+        ty: TypeId,
+        target: Atom,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
         if !visited.insert(ty) {
             return false;
         }
@@ -604,12 +607,13 @@ impl<'a> InferenceContext<'a> {
                 if shape.type_params.iter().any(|tp| tp.name == target) {
                     return false;
                 }
-                shape.this_type.is_some_and(|this_type| {
-                    self.type_contains_param(this_type, target, visited)
-                }) || shape
-                    .params
-                    .iter()
-                    .any(|p| self.type_contains_param(p.type_id, target, visited))
+                shape
+                    .this_type
+                    .is_some_and(|this_type| self.type_contains_param(this_type, target, visited))
+                    || shape
+                        .params
+                        .iter()
+                        .any(|p| self.type_contains_param(p.type_id, target, visited))
                     || self.type_contains_param(shape.return_type, target, visited)
             }
             TypeKey::Callable(shape_id) => {
@@ -646,7 +650,10 @@ impl<'a> InferenceContext<'a> {
                 if in_construct {
                     return true;
                 }
-                shape.properties.iter().any(|p| self.type_contains_param(p.type_id, target, visited))
+                shape
+                    .properties
+                    .iter()
+                    .any(|p| self.type_contains_param(p.type_id, target, visited))
             }
             TypeKey::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(cond_id);
@@ -757,7 +764,10 @@ impl<'a> InferenceContext<'a> {
     /// 2. Otherwise, compute the best common type from lower bounds
     /// 3. Validate against upper bounds
     /// 4. If no lower bounds, use the constraint (upper bound) or default
-    pub fn resolve_with_constraints(&mut self, var: InferenceVar) -> Result<TypeId, InferenceError> {
+    pub fn resolve_with_constraints(
+        &mut self,
+        var: InferenceVar,
+    ) -> Result<TypeId, InferenceError> {
         // Check if already resolved
         if let Some(ty) = self.probe(var) {
             return Ok(ty);
@@ -777,7 +787,10 @@ impl<'a> InferenceContext<'a> {
         }
 
         if self.occurs_in(root, result) {
-            return Err(InferenceError::OccursCheck { var: root, ty: result });
+            return Err(InferenceError::OccursCheck {
+                var: root,
+                ty: result,
+            });
         }
 
         // Store the result
@@ -814,7 +827,10 @@ impl<'a> InferenceContext<'a> {
         }
 
         if self.occurs_in(root, result) {
-            return Err(InferenceError::OccursCheck { var: root, ty: result });
+            return Err(InferenceError::OccursCheck {
+                var: root,
+                ty: result,
+            });
         }
 
         self.table.union_value(root, InferenceValue(Some(result)));
@@ -822,7 +838,10 @@ impl<'a> InferenceContext<'a> {
         Ok(result)
     }
 
-    fn compute_constraint_result(&mut self, var: InferenceVar) -> (InferenceVar, TypeId, Vec<TypeId>) {
+    fn compute_constraint_result(
+        &mut self,
+        var: InferenceVar,
+    ) -> (InferenceVar, TypeId, Vec<TypeId>) {
         let root = self.table.find(var);
         let constraints = self.constraints[root.0 as usize].clone();
         let target_names = self.type_param_names_for_root(root);
@@ -1069,14 +1088,17 @@ impl<'a> InferenceContext<'a> {
         {
             let s_shape = self.interner.object_shape(*s_props);
             let t_shape = self.interner.object_shape(*t_props);
-            return self.object_subtype_of(&s_shape.properties, Some(*s_props), &t_shape.properties);
+            return self.object_subtype_of(
+                &s_shape.properties,
+                Some(*s_props),
+                &t_shape.properties,
+            );
         }
 
         if let (
             Some(TypeKey::ObjectWithIndex(s_shape_id)),
             Some(TypeKey::ObjectWithIndex(t_shape_id)),
-        ) =
-            (source_key.as_ref(), target_key.as_ref())
+        ) = (source_key.as_ref(), target_key.as_ref())
         {
             let s_shape = self.interner.object_shape(*s_shape_id);
             let t_shape = self.interner.object_shape(*t_shape_id);
@@ -1096,7 +1118,11 @@ impl<'a> InferenceContext<'a> {
         {
             let s_shape = self.interner.object_shape(*s_shape_id);
             let t_shape = self.interner.object_shape(*t_props);
-            return self.object_subtype_of(&s_shape.properties, Some(*s_shape_id), &t_shape.properties);
+            return self.object_subtype_of(
+                &s_shape.properties,
+                Some(*s_shape_id),
+                &t_shape.properties,
+            );
         }
 
         if let (Some(TypeKey::Function(s_fn)), Some(TypeKey::Function(t_fn))) =
@@ -1153,25 +1179,33 @@ impl<'a> InferenceContext<'a> {
         // Intersection: A & B <: T if either member is a subtype of T
         if let Some(TypeKey::Intersection(members)) = source_key.as_ref() {
             let members = self.interner.type_list(*members);
-            return members.iter().any(|&member| self.is_subtype(member, target));
+            return members
+                .iter()
+                .any(|&member| self.is_subtype(member, target));
         }
 
         // Union: A | B <: T if both A <: T and B <: T
         if let Some(TypeKey::Union(members)) = source_key.as_ref() {
             let members = self.interner.type_list(*members);
-            return members.iter().all(|&member| self.is_subtype(member, target));
+            return members
+                .iter()
+                .all(|&member| self.is_subtype(member, target));
         }
 
         // Target intersection: S <: (A & B) if S <: A and S <: B
         if let Some(TypeKey::Intersection(members)) = target_key.as_ref() {
             let members = self.interner.type_list(*members);
-            return members.iter().all(|&member| self.is_subtype(source, member));
+            return members
+                .iter()
+                .all(|&member| self.is_subtype(source, member));
         }
 
         // Target union: S <: (A | B) if S <: A or S <: B
         if let Some(TypeKey::Union(members)) = target_key.as_ref() {
             let members = self.interner.type_list(*members);
-            return members.iter().any(|&member| self.is_subtype(source, member));
+            return members
+                .iter()
+                .any(|&member| self.is_subtype(source, member));
         }
 
         false
@@ -1348,9 +1382,7 @@ impl<'a> InferenceContext<'a> {
         source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> bool {
-        if !self
-            .object_subtype_of(source, source_shape_id, &target.properties)
-        {
+        if !self.object_subtype_of(source, source_shape_id, &target.properties) {
             return false;
         }
         self.check_properties_against_index_signatures(source, target)
@@ -1362,9 +1394,7 @@ impl<'a> InferenceContext<'a> {
         source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> bool {
-        if !self
-            .object_subtype_of(&source.properties, source_shape_id, &target.properties)
-        {
+        if !self.object_subtype_of(&source.properties, source_shape_id, &target.properties) {
             return false;
         }
 
@@ -1393,7 +1423,9 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        if let (Some(s_string_idx), Some(s_number_idx)) = (&source.string_index, &source.number_index) {
+        if let (Some(s_string_idx), Some(s_number_idx)) =
+            (&source.string_index, &source.number_index)
+        {
             if !self.is_subtype(s_number_idx.value_type, s_string_idx.value_type) {
                 return false;
             }
@@ -2001,7 +2033,9 @@ impl<'a> InferenceContext<'a> {
             Some(TypeKey::Array(elem)) => self.contains_inference_var(elem, var),
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                elements.iter().any(|e| self.contains_inference_var(e.type_id, var))
+                elements
+                    .iter()
+                    .any(|e| self.contains_inference_var(e.type_id, var))
             }
             Some(TypeKey::Union(members)) | Some(TypeKey::Intersection(members)) => {
                 let members = self.interner.type_list(members);
@@ -2009,11 +2043,17 @@ impl<'a> InferenceContext<'a> {
             }
             Some(TypeKey::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                shape.properties.iter().any(|p| self.contains_inference_var(p.type_id, var))
+                shape
+                    .properties
+                    .iter()
+                    .any(|p| self.contains_inference_var(p.type_id, var))
             }
             Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                shape.properties.iter().any(|p| self.contains_inference_var(p.type_id, var))
+                shape
+                    .properties
+                    .iter()
+                    .any(|p| self.contains_inference_var(p.type_id, var))
                     || shape.string_index.as_ref().is_some_and(|idx| {
                         self.contains_inference_var(idx.key_type, var)
                             || self.contains_inference_var(idx.value_type, var)
@@ -2026,12 +2066,20 @@ impl<'a> InferenceContext<'a> {
             Some(TypeKey::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 self.contains_inference_var(app.base, var)
-                    || app.args.iter().any(|&arg| self.contains_inference_var(arg, var))
+                    || app
+                        .args
+                        .iter()
+                        .any(|&arg| self.contains_inference_var(arg, var))
             }
             Some(TypeKey::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
-                shape.params.iter().any(|p| self.contains_inference_var(p.type_id, var))
-                    || shape.this_type.is_some_and(|t| self.contains_inference_var(t, var))
+                shape
+                    .params
+                    .iter()
+                    .any(|p| self.contains_inference_var(p.type_id, var))
+                    || shape
+                        .this_type
+                        .is_some_and(|t| self.contains_inference_var(t, var))
                     || self.contains_inference_var(shape.return_type, var)
             }
             Some(TypeKey::Conditional(cond_id)) => {
@@ -2057,7 +2105,15 @@ impl<'a> InferenceContext<'a> {
         let mut invariant = 0u32;
         let mut bivariant = 0u32;
 
-        self.compute_variance_helper(ty, target_param, true, &mut covariant, &mut contravariant, &mut invariant, &mut bivariant);
+        self.compute_variance_helper(
+            ty,
+            target_param,
+            true,
+            &mut covariant,
+            &mut contravariant,
+            &mut invariant,
+            &mut bivariant,
+        );
 
         (covariant, contravariant, invariant, bivariant)
     }
@@ -2081,44 +2137,116 @@ impl<'a> InferenceContext<'a> {
                 }
             }
             Some(TypeKey::Array(elem)) => {
-                self.compute_variance_helper(elem, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                self.compute_variance_helper(
+                    elem,
+                    target_param,
+                    polarity,
+                    covariant,
+                    contravariant,
+                    invariant,
+                    bivariant,
+                );
             }
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 for elem in elements.iter() {
-                    self.compute_variance_helper(elem.type_id, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        elem.type_id,
+                        target_param,
+                        polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                 }
             }
             Some(TypeKey::Union(members)) | Some(TypeKey::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
-                    self.compute_variance_helper(member, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        member,
+                        target_param,
+                        polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                 }
             }
             Some(TypeKey::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     // Properties are covariant in their type (read position)
-                    self.compute_variance_helper(prop.type_id, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        prop.type_id,
+                        target_param,
+                        polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                     // Properties are contravariant in their write type (write position)
                     if prop.write_type != prop.type_id && !prop.readonly {
-                        self.compute_variance_helper(prop.write_type, target_param, !polarity, covariant, contravariant, invariant, bivariant);
+                        self.compute_variance_helper(
+                            prop.write_type,
+                            target_param,
+                            !polarity,
+                            covariant,
+                            contravariant,
+                            invariant,
+                            bivariant,
+                        );
                     }
                 }
             }
             Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
-                    self.compute_variance_helper(prop.type_id, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        prop.type_id,
+                        target_param,
+                        polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                     if prop.write_type != prop.type_id && !prop.readonly {
-                        self.compute_variance_helper(prop.write_type, target_param, !polarity, covariant, contravariant, invariant, bivariant);
+                        self.compute_variance_helper(
+                            prop.write_type,
+                            target_param,
+                            !polarity,
+                            covariant,
+                            contravariant,
+                            invariant,
+                            bivariant,
+                        );
                     }
                 }
                 if let Some(index) = shape.string_index.as_ref() {
-                    self.compute_variance_helper(index.value_type, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        index.value_type,
+                        target_param,
+                        polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                 }
                 if let Some(index) = shape.number_index.as_ref() {
-                    self.compute_variance_helper(index.value_type, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        index.value_type,
+                        target_param,
+                        polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                 }
             }
             Some(TypeKey::Application(app_id)) => {
@@ -2126,26 +2254,82 @@ impl<'a> InferenceContext<'a> {
                 // Variance depends on the generic type definition
                 // For now, assume covariant for all type arguments
                 for &arg in app.args.iter() {
-                    self.compute_variance_helper(arg, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        arg,
+                        target_param,
+                        polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                 }
             }
             Some(TypeKey::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 // Parameters are contravariant
                 for param in shape.params.iter() {
-                    self.compute_variance_helper(param.type_id, target_param, !polarity, covariant, contravariant, invariant, bivariant);
+                    self.compute_variance_helper(
+                        param.type_id,
+                        target_param,
+                        !polarity,
+                        covariant,
+                        contravariant,
+                        invariant,
+                        bivariant,
+                    );
                 }
                 // Return type is covariant
-                self.compute_variance_helper(shape.return_type, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                self.compute_variance_helper(
+                    shape.return_type,
+                    target_param,
+                    polarity,
+                    covariant,
+                    contravariant,
+                    invariant,
+                    bivariant,
+                );
             }
             Some(TypeKey::Conditional(cond_id)) => {
                 let cond = self.interner.conditional_type(cond_id);
                 // Conditional types are invariant in their type parameters
-                self.compute_variance_helper(cond.check_type, target_param, false, covariant, contravariant, invariant, bivariant);
-                self.compute_variance_helper(cond.extends_type, target_param, false, covariant, contravariant, invariant, bivariant);
+                self.compute_variance_helper(
+                    cond.check_type,
+                    target_param,
+                    false,
+                    covariant,
+                    contravariant,
+                    invariant,
+                    bivariant,
+                );
+                self.compute_variance_helper(
+                    cond.extends_type,
+                    target_param,
+                    false,
+                    covariant,
+                    contravariant,
+                    invariant,
+                    bivariant,
+                );
                 // But can be either in the result
-                self.compute_variance_helper(cond.true_type, target_param, polarity, covariant, contravariant, invariant, bivariant);
-                self.compute_variance_helper(cond.false_type, target_param, polarity, covariant, contravariant, invariant, bivariant);
+                self.compute_variance_helper(
+                    cond.true_type,
+                    target_param,
+                    polarity,
+                    covariant,
+                    contravariant,
+                    invariant,
+                    bivariant,
+                );
+                self.compute_variance_helper(
+                    cond.false_type,
+                    target_param,
+                    polarity,
+                    covariant,
+                    contravariant,
+                    invariant,
+                    bivariant,
+                );
             }
             _ => {}
         }
@@ -2165,7 +2349,8 @@ impl<'a> InferenceContext<'a> {
 
     /// Get the variance of a type parameter as a string.
     pub fn get_variance(&self, ty: TypeId, target_param: Atom) -> &'static str {
-        let (covariant, contravariant, invariant, bivariant) = self.compute_variance(ty, target_param);
+        let (covariant, contravariant, invariant, bivariant) =
+            self.compute_variance(ty, target_param);
 
         if invariant > 0 {
             "invariant"
@@ -2203,7 +2388,10 @@ impl<'a> InferenceContext<'a> {
         if self.contains_inference_var(context_type, root) {
             // Context contains the inference variable itself
             // This is a recursive type - we need to handle it specially
-            return Err(InferenceError::OccursCheck { var: root, ty: context_type });
+            return Err(InferenceError::OccursCheck {
+                var: root,
+                ty: context_type,
+            });
         }
 
         Ok(())
@@ -2281,7 +2469,10 @@ impl<'a> InferenceContext<'a> {
             if self.occurs_in(*var, resolved) {
                 let root = self.table.find(*var);
                 // This would be a circular reference
-                return Err(InferenceError::OccursCheck { var: root, ty: resolved });
+                return Err(InferenceError::OccursCheck {
+                    var: root,
+                    ty: resolved,
+                });
             }
 
             // For more advanced variance checking, we would need to know

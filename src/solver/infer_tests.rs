@@ -11677,7 +11677,7 @@ fn test_constraint_cycle_mixin_pattern() {
         return_type: TypeId::OBJECT,
         type_predicate: None,
         is_constructor: true,
-    is_method: false,
+        is_method: false,
     });
 
     // Add lower bound only - this is common for mixin patterns
@@ -12855,7 +12855,7 @@ fn test_constructor_parameters_inference() {
         return_type: TypeId::OBJECT,
         type_predicate: None,
         is_constructor: true,
-    is_method: false,
+        is_method: false,
     });
 
     ctx.add_lower_bound(var_t, ctor);
@@ -14489,7 +14489,7 @@ fn test_variance_computation_covariant() {
         type_id: t_type,
         write_type: t_type,
         optional: false,
-        readonly: true,  // Readonly makes it purely covariant
+        readonly: true, // Readonly makes it purely covariant
         is_method: false,
     }]);
 

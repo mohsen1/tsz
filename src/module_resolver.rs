@@ -146,46 +146,40 @@ impl ResolutionFailure {
     /// Convert a resolution failure to a diagnostic
     pub fn span_to_diagnostic(&self) -> Diagnostic {
         match self {
-            ResolutionFailure::NotFound { specifier, containing_file, span } => {
-                Diagnostic::error(
-                    containing_file,
-                    *span,
-                    format!("Cannot find module '{}'", specifier),
-                    CANNOT_FIND_MODULE,
-                )
-            }
-            ResolutionFailure::InvalidSpecifier(msg) => {
-                Diagnostic::error(
-                    "",
-                    Span::dummy(),
-                    format!("Invalid module specifier: {}", msg),
-                    CANNOT_FIND_MODULE,
-                )
-            }
-            ResolutionFailure::PackageJsonError(msg) => {
-                Diagnostic::error(
-                    "",
-                    Span::dummy(),
-                    format!("Package.json error: {}", msg),
-                    CANNOT_FIND_MODULE,
-                )
-            }
-            ResolutionFailure::CircularResolution(msg) => {
-                Diagnostic::error(
-                    "",
-                    Span::dummy(),
-                    format!("Circular resolution: {}", msg),
-                    CANNOT_FIND_MODULE,
-                )
-            }
-            ResolutionFailure::PathMappingFailed(msg) => {
-                Diagnostic::error(
-                    "",
-                    Span::dummy(),
-                    format!("Path mapping failed: {}", msg),
-                    CANNOT_FIND_MODULE,
-                )
-            }
+            ResolutionFailure::NotFound {
+                specifier,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!("Cannot find module '{}'", specifier),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::InvalidSpecifier(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Invalid module specifier: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::PackageJsonError(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Package.json error: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::CircularResolution(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Circular resolution: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::PathMappingFailed(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Path mapping failed: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
         }
     }
 
@@ -296,7 +290,12 @@ impl ModuleResolver {
 
         // Step 2: Handle relative imports
         if specifier.starts_with("./") || specifier.starts_with("../") {
-            return self.resolve_relative(specifier, containing_dir, containing_file, specifier_span);
+            return self.resolve_relative(
+                specifier,
+                containing_dir,
+                containing_file,
+                specifier_span,
+            );
         }
 
         // Step 3: Handle absolute imports (rare but valid)
@@ -309,11 +308,7 @@ impl ModuleResolver {
     }
 
     /// Try resolving through path mappings
-    fn try_path_mappings(
-        &self,
-        specifier: &str,
-        containing_dir: &Path,
-    ) -> Option<ResolvedModule> {
+    fn try_path_mappings(&self, specifier: &str, containing_dir: &Path) -> Option<ResolvedModule> {
         // Sort path mappings by specificity (most specific first)
         let mut sorted_mappings: Vec<_> = self.path_mappings.iter().collect();
         sorted_mappings.sort_by(|a, b| b.specificity().cmp(&a.specificity()));
@@ -421,7 +416,13 @@ impl ModuleResolver {
                 let package_dir = node_modules.join(&package_name);
 
                 if package_dir.is_dir() {
-                    return self.resolve_package(&package_dir, subpath.as_deref(), specifier, containing_file, specifier_span);
+                    return self.resolve_package(
+                        &package_dir,
+                        subpath.as_deref(),
+                        specifier,
+                        containing_file,
+                        specifier_span,
+                    );
                 }
             }
 
@@ -434,9 +435,16 @@ impl ModuleResolver {
 
         // Try type roots (for @types packages)
         for type_root in &self.type_roots {
-            let types_package = type_root.join(format!("@types/{}", package_name.replace('/', "__")));
+            let types_package =
+                type_root.join(format!("@types/{}", package_name.replace('/', "__")));
             if types_package.is_dir() {
-                if let Ok(resolved) = self.resolve_package(&types_package, subpath.as_deref(), specifier, containing_file, specifier_span) {
+                if let Ok(resolved) = self.resolve_package(
+                    &types_package,
+                    subpath.as_deref(),
+                    specifier,
+                    containing_file,
+                    specifier_span,
+                ) {
                     return Ok(resolved);
                 }
             }
@@ -471,10 +479,14 @@ impl ModuleResolver {
             // Try exports field first (Node16+)
             if matches!(
                 self.resolution_kind,
-                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext | ModuleResolutionKind::Bundler
+                ModuleResolutionKind::Node16
+                    | ModuleResolutionKind::NodeNext
+                    | ModuleResolutionKind::Bundler
             ) {
                 if let Some(exports) = &package_json.exports {
-                    if let Some(resolved) = self.resolve_package_exports(package_dir, exports, subpath) {
+                    if let Some(resolved) =
+                        self.resolve_package_exports(package_dir, exports, subpath)
+                    {
                         return Ok(ResolvedModule {
                             resolved_path: resolved.clone(),
                             is_external: true,
@@ -510,7 +522,9 @@ impl ModuleResolver {
         // Try exports "." field first (Node16+)
         if matches!(
             self.resolution_kind,
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext | ModuleResolutionKind::Bundler
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
         ) {
             if let Some(exports) = &package_json.exports {
                 if let Some(resolved) = self.resolve_package_exports(package_dir, exports, ".") {
@@ -625,7 +639,9 @@ impl ModuleResolver {
 
                 for condition in condition_order {
                     if let Some(value) = conditions.get(condition) {
-                        if let Some(resolved) = self.resolve_package_exports(package_dir, value, subpath) {
+                        if let Some(resolved) =
+                            self.resolve_package_exports(package_dir, value, subpath)
+                        {
                             return Some(resolved);
                         }
                     }
@@ -637,11 +653,7 @@ impl ModuleResolver {
     }
 
     /// Resolve a single export value
-    fn resolve_export_value(
-        &self,
-        package_dir: &Path,
-        value: &PackageExports,
-    ) -> Option<PathBuf> {
+    fn resolve_export_value(&self, package_dir: &Path, value: &PackageExports) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
                 let resolved = package_dir.join(s);
@@ -651,9 +663,11 @@ impl ModuleResolver {
                     None
                 }
             }
-            PackageExports::Conditional(conditions) => {
-                self.resolve_package_exports(package_dir, &PackageExports::Conditional(conditions.clone()), ".")
-            }
+            PackageExports::Conditional(conditions) => self.resolve_package_exports(
+                package_dir,
+                &PackageExports::Conditional(conditions.clone()),
+                ".",
+            ),
             PackageExports::Map(_) => None,
         }
     }

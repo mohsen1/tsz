@@ -5,7 +5,7 @@
 
 use crate::interner::Atom;
 use crate::solver::{
-    PropertyInfo, ObjectShape, FunctionShape, CallableShape, ParamInfo, TypeId, TypeInterner,
+    CallableShape, FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeInterner,
     TypeParamInfo,
 };
 use rayon::prelude::*;
@@ -45,14 +45,12 @@ fn test_concurrent_type_interning() {
     // Many threads intern different types concurrently
     let type_ids: Vec<TypeId> = (0..1000)
         .into_par_iter()
-        .map(|i| {
-            match i % 4 {
-                0 => interner.literal_number(i as f64),
-                1 => interner.literal_string(&format!("str_{}", i)),
-                2 => interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
-                3 => interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]),
-                _ => unreachable!(),
-            }
+        .map(|i| match i % 4 {
+            0 => interner.literal_number(i as f64),
+            1 => interner.literal_string(&format!("str_{}", i)),
+            2 => interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
+            3 => interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]),
+            _ => unreachable!(),
         })
         .collect();
 
@@ -183,13 +181,7 @@ fn test_concurrent_intersection_creation() {
     // Create many intersection types concurrently
     let intersection_types: Vec<TypeId> = (0..500)
         .into_par_iter()
-        .map(|_| {
-            interner.intersection(vec![
-                TypeId::STRING,
-                TypeId::NUMBER,
-                TypeId::BOOLEAN,
-            ])
-        })
+        .map(|_| interner.intersection(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]))
         .collect();
 
     // Verify all intersections were created successfully
@@ -324,7 +316,11 @@ fn test_shard_distribution() {
 
     // Verify the interner has many types (proving distribution)
     let total_types = interner.len();
-    assert!(total_types > 1000, "Should have interned many types: {}", total_types);
+    assert!(
+        total_types > 1000,
+        "Should have interned many types: {}",
+        total_types
+    );
 }
 
 #[test]

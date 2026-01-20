@@ -46,7 +46,11 @@ pub fn load_default_lib_dts() -> Option<Arc<LibFile>> {
     let arena = Arc::new(lib_parser.into_arena());
     let binder = Arc::new(lib_binder);
 
-    Some(Arc::new(LibFile::new("lib.d.ts".to_string(), arena, binder)))
+    Some(Arc::new(LibFile::new(
+        "lib.d.ts".to_string(),
+        arena,
+        binder,
+    )))
 }
 
 /// Loaded lib file with its arena and binder state.
@@ -143,7 +147,10 @@ pub fn emit_error_lib_target_mismatch(
         file_name,
         start,
         length,
-        format!("Cannot find name '{}'. Do you need to change your target library?", name),
+        format!(
+            "Cannot find name '{}'. Do you need to change your target library?",
+            name
+        ),
         MISSING_ES2015_LIB_SUPPORT,
     )
 }
@@ -199,7 +206,10 @@ pub fn is_es2015_plus_type(name: &str) -> bool {
 ///
 /// # Returns
 /// A list of diagnostics for any missing ES2015+ types
-pub fn validate_lib_es2015_support(lib_files: &[Arc<LibFile>], file_name: String) -> Vec<Diagnostic> {
+pub fn validate_lib_es2015_support(
+    lib_files: &[Arc<LibFile>],
+    file_name: String,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     // Collect all available global types from lib files
@@ -210,7 +220,12 @@ pub fn validate_lib_es2015_support(lib_files: &[Arc<LibFile>], file_name: String
     for &type_name in ES2015_PLUS_TYPES {
         if !available_globals.has(type_name) {
             // Emit a diagnostic at position 0 (no specific location for lib-level check)
-            diagnostics.push(emit_error_lib_target_mismatch(type_name, file_name.clone(), 0, 0));
+            diagnostics.push(emit_error_lib_target_mismatch(
+                type_name,
+                file_name.clone(),
+                0,
+                0,
+            ));
         }
     }
 
@@ -351,7 +366,10 @@ mod tests {
             // Core ECMAScript globals
             assert!(file_locals.has("Object"), "Object should be in lib.d.ts");
             assert!(file_locals.has("Array"), "Array should be in lib.d.ts");
-            assert!(file_locals.has("Function"), "Function should be in lib.d.ts");
+            assert!(
+                file_locals.has("Function"),
+                "Function should be in lib.d.ts"
+            );
             assert!(file_locals.has("Promise"), "Promise should be in lib.d.ts");
             assert!(file_locals.has("console"), "console should be in lib.d.ts");
 
@@ -364,7 +382,10 @@ mod tests {
                 assert!(file_locals.has("window"), "window should be in lib.d.ts");
             }
             if has_document {
-                assert!(file_locals.has("document"), "document should be in lib.d.ts");
+                assert!(
+                    file_locals.has("document"),
+                    "document should be in lib.d.ts"
+                );
             }
         }
     }
@@ -406,10 +427,22 @@ async function foo() {
         binder.merge_lib_symbols(&[lib_file]);
 
         // Verify global symbols are accessible
-        assert!(binder.file_locals.has("console"), "console should be in file_locals");
-        assert!(binder.file_locals.has("Array"), "Array should be in file_locals");
-        assert!(binder.file_locals.has("Object"), "Object should be in file_locals");
-        assert!(binder.file_locals.has("Promise"), "Promise should be in file_locals");
+        assert!(
+            binder.file_locals.has("console"),
+            "console should be in file_locals"
+        );
+        assert!(
+            binder.file_locals.has("Array"),
+            "Array should be in file_locals"
+        );
+        assert!(
+            binder.file_locals.has("Object"),
+            "Object should be in file_locals"
+        );
+        assert!(
+            binder.file_locals.has("Promise"),
+            "Promise should be in file_locals"
+        );
     }
 
     #[test]
@@ -435,25 +468,40 @@ async function foo() {
         binder.merge_lib_symbols(&[lib_file]);
 
         // Get a lib symbol ID and verify get_symbol() can resolve it
-        let console_sym_id = binder.file_locals.get("console")
+        let console_sym_id = binder
+            .file_locals
+            .get("console")
             .expect("console should be in file_locals");
-        let promise_sym_id = binder.file_locals.get("Promise")
+        let promise_sym_id = binder
+            .file_locals
+            .get("Promise")
             .expect("Promise should be in file_locals");
-        let array_sym_id = binder.file_locals.get("Array")
+        let array_sym_id = binder
+            .file_locals
+            .get("Array")
             .expect("Array should be in file_locals");
 
         // This is the key test: get_symbol() should be able to resolve lib symbols
         // After the fix, get_symbol() checks lib_binders automatically
         let console_sym = binder.get_symbol(console_sym_id);
-        assert!(console_sym.is_some(), "get_symbol() should resolve lib symbol 'console'");
+        assert!(
+            console_sym.is_some(),
+            "get_symbol() should resolve lib symbol 'console'"
+        );
         assert_eq!(console_sym.unwrap().escaped_name, "console");
 
         let promise_sym = binder.get_symbol(promise_sym_id);
-        assert!(promise_sym.is_some(), "get_symbol() should resolve lib symbol 'Promise'");
+        assert!(
+            promise_sym.is_some(),
+            "get_symbol() should resolve lib symbol 'Promise'"
+        );
         assert_eq!(promise_sym.unwrap().escaped_name, "Promise");
 
         let array_sym = binder.get_symbol(array_sym_id);
-        assert!(array_sym.is_some(), "get_symbol() should resolve lib symbol 'Array'");
+        assert!(
+            array_sym.is_some(),
+            "get_symbol() should resolve lib symbol 'Array'"
+        );
         assert_eq!(array_sym.unwrap().escaped_name, "Array");
     }
 }

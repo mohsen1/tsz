@@ -339,7 +339,10 @@ fn test_freshness_tracker_default() {
 #[test]
 fn test_typescript_quirks_list() {
     let quirks = TypeScriptQuirks::QUIRKS;
-    assert!(quirks.len() >= 9, "Should have at least 9 documented quirks");
+    assert!(
+        quirks.len() >= 9,
+        "Should have at least 9 documented quirks"
+    );
     let quirk_names: Vec<&str> = quirks.iter().map(|(name, _)| *name).collect();
     assert!(quirk_names.contains(&"any-propagation"));
     assert!(quirk_names.contains(&"function-bivariance"));

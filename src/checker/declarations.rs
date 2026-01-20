@@ -249,8 +249,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 continue;
             }
 
-            let message =
-                diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER.replace("{0}", &name);
+            let message = diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER.replace("{0}", &name);
 
             // Get the span for the property name
             if let Some((pos, end)) = self.ctx.get_node_span(name_node) {
@@ -287,16 +286,18 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 k if k == SyntaxKind::PrivateIdentifier as u16 => {
                     Some(PropertyKey::Private(name_str.to_string()))
                 }
-                k if k == SyntaxKind::StringLiteral as u16 => {
-                    Some(PropertyKey::Computed(ComputedKey::String(name_str.to_string())))
-                }
-                k if k == SyntaxKind::NumericLiteral as u16 => {
-                    Some(PropertyKey::Computed(ComputedKey::Number(name_str.to_string())))
-                }
+                k if k == SyntaxKind::StringLiteral as u16 => Some(PropertyKey::Computed(
+                    ComputedKey::String(name_str.to_string()),
+                )),
+                k if k == SyntaxKind::NumericLiteral as u16 => Some(PropertyKey::Computed(
+                    ComputedKey::Number(name_str.to_string()),
+                )),
                 k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                     // For computed properties, try to get the identifier
                     if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                        Some(PropertyKey::Computed(ComputedKey::Ident(ident.escaped_text.clone())))
+                        Some(PropertyKey::Computed(ComputedKey::Ident(
+                            ident.escaped_text.clone(),
+                        )))
                     } else {
                         None
                     }
@@ -420,9 +421,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 self.analyze_return_statement(assigned_in)
             }
-            k if k == syntax_kind_ext::THROW_STATEMENT => {
-                self.analyze_throw_statement(assigned_in)
-            }
+            k if k == syntax_kind_ext::THROW_STATEMENT => self.analyze_throw_statement(assigned_in),
             k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::FOR_STATEMENT => {
                 // For loops, we conservatively assume the property might not be assigned
                 FlowResult {
@@ -522,7 +521,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             };
         };
 
-        let assigned = self.analyze_expression_for_assignment(expr_stmt.expression, assigned_in, tracked);
+        let assigned =
+            self.analyze_expression_for_assignment(expr_stmt.expression, assigned_in, tracked);
 
         FlowResult {
             normal: Some(assigned),
@@ -777,7 +777,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check a module/namespace declaration.
     pub fn check_module_declaration(&mut self, module_idx: NodeIndex) {
-        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
         use crate::scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(module_idx) else {
@@ -796,7 +798,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         self.ctx.error(
                             name_node.pos,
                             name_node.end - name_node.pos,
-                            "Ambient modules cannot be nested in other modules or namespaces.".to_string(),
+                            "Ambient modules cannot be nested in other modules or namespaces."
+                                .to_string(),
                             diagnostic_codes::AMBIENT_MODULES_CANNOT_BE_NESTED,
                         );
                         return; // Don't emit other errors for nested ambient modules
@@ -829,12 +832,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             // 2. The file is not a .d.ts file
                             // In script files (no imports/exports), declare module "xxx" declares
                             // an ambient external module, which is always valid.
-                            else if !self.module_exists(&lit.text) 
+                            else if !self.module_exists(&lit.text)
                                 && !self.is_declaration_file()
-                                && self.is_external_module() {
+                                && self.is_external_module()
+                            {
                                 let message = format_message(
                                     diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION,
-                                    &[&lit.text]
+                                    &[&lit.text],
                                 );
                                 self.ctx.error(
                                     name_node.pos,
@@ -895,25 +899,25 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn is_inside_namespace(&self, node_idx: NodeIndex) -> bool {
         // Walk up the parent chain to see if we're inside a namespace
         let mut current = node_idx;
-        
+
         // Skip the first iteration (the node itself)
         if let Some(ext) = self.ctx.arena.get_extended(current) {
             current = ext.parent;
         } else {
             return false;
         }
-        
+
         while !current.is_none() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
-            
+
             // If we find a namespace/module declaration in the parent chain,
             // the ambient module is nested
             if node.kind == syntax_kind_ext::MODULE_DECLARATION {
                 return true;
             }
-            
+
             // Move to the next parent
             if let Some(ext) = self.ctx.arena.get_extended(current) {
                 current = ext.parent;
@@ -921,7 +925,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 break;
             }
         }
-        
+
         false
     }
 
@@ -999,8 +1003,13 @@ mod tests {
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
-        let mut ctx =
-            CheckerContext::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
 
         // Get the variable statement
         if let Some(root_node) = parser.get_arena().get(root) {
@@ -1035,7 +1044,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         // Get the class declaration
@@ -1092,7 +1105,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         // Get the class declaration
@@ -1140,7 +1157,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         // Get the class declaration
@@ -1241,7 +1262,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         if let Some(root_node) = parser.get_arena().get(root) {
@@ -1295,7 +1320,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         if let Some(root_node) = parser.get_arena().get(root) {
@@ -1348,7 +1377,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         if let Some(root_node) = parser.get_arena().get(root) {
@@ -1401,7 +1434,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         if let Some(root_node) = parser.get_arena().get(root) {
@@ -1453,7 +1490,11 @@ class Foo {
             &binder,
             &types,
             "test.ts".to_string(),
-            crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+            crate::checker::context::CheckerOptions {
+                strict: true,
+                strict_property_initialization: true,
+                ..Default::default()
+            },
         );
 
         if let Some(root_node) = parser.get_arena().get(root) {

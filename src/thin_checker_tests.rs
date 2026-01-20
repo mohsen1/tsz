@@ -24,7 +24,13 @@ fn test_thin_checker_creation() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Basic sanity check
     assert!(checker.ctx.diagnostics.is_empty());
@@ -35,7 +41,13 @@ fn test_thin_checker_basic_types() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let _checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let _checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Verify intrinsic TypeIds are constants (compile-time values)
     assert_eq!(TypeId::NUMBER.0, 9);
@@ -50,7 +62,13 @@ fn test_thin_checker_type_interner() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Test that TypeInterner is properly initialized
     // Intrinsics should be pre-registered
@@ -64,7 +82,13 @@ fn test_thin_checker_structural_equality() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Test structural equality via TypeInterner
     // Same string literal should get same TypeId
@@ -81,7 +105,13 @@ fn test_thin_checker_union_normalization() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Test union normalization
     // Union with `any` should be `any`
@@ -829,7 +859,13 @@ mixed;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let numbers_type = checker.get_type_of_node(numbers_expr.expression);
@@ -889,7 +925,13 @@ obj[key];
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let access_type = checker.get_type_of_node(expr_stmt.expression);
@@ -943,7 +985,13 @@ export function f(node: { body: number }) {
     );
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&file.arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &file.arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(file.source_file);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -995,7 +1043,13 @@ fn test_thin_checker_subtype_intrinsics() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Test intrinsic subtype relations
     // Any is assignable to everything
@@ -1025,7 +1079,13 @@ fn test_thin_checker_subtype_literals() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // String literal is subtype of string
     let hello = checker.ctx.types.literal_string("hello");
@@ -1048,7 +1108,13 @@ fn test_thin_checker_subtype_unions() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Create string | number union
     let string_or_number = checker.get_union_type(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -1070,7 +1136,13 @@ fn test_thin_checker_type_identity() {
     let arena = ThinNodeArena::new();
     let binder = ThinBinderState::new();
     let types = TypeInterner::new();
-    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     // Same type is identical to itself
     assert!(checker.are_types_identical(TypeId::STRING, TypeId::STRING));
@@ -3874,7 +3946,13 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
     println!("File locals count: {}", binder.file_locals.len());
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -3956,7 +4034,13 @@ class C extends B {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4012,7 +4096,13 @@ c.ro = "error: lhs of assignment can't be readonly";
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4054,7 +4144,13 @@ config["name"] = "error";
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4087,7 +4183,13 @@ xs[0] = 3;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4123,7 +4225,13 @@ svc.run = () => {};
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4159,7 +4267,13 @@ map["a"] = 2;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4196,7 +4310,13 @@ map[key] = 2;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4246,7 +4366,13 @@ c.ro = "error: lhs of assignment can't be readonly";
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -4377,7 +4503,13 @@ takesHandler(function(this: { value: number }, x) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.get_type_of_node(call_idx);
 
     let func_type = checker.get_type_of_node(func_idx);
@@ -8135,10 +8267,7 @@ const arrow = (...items) => items;
         .collect();
 
     // Find messages containing "any[]" (rest parameters)
-    let rest_param_errors: Vec<_> = messages
-        .iter()
-        .filter(|m| m.contains("any[]"))
-        .collect();
+    let rest_param_errors: Vec<_> = messages.iter().filter(|m| m.contains("any[]")).collect();
     assert_eq!(
         rest_param_errors.len(),
         3,
@@ -12035,7 +12164,13 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(inner_expr.expression);
@@ -12100,7 +12235,13 @@ if (typeof x === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -12199,7 +12340,13 @@ while (typeof x === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12260,7 +12407,13 @@ for (; typeof x === "string"; ) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12321,7 +12474,13 @@ for (const value of [x]) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12386,7 +12545,13 @@ for (const key in { a: x }) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let inner_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12472,7 +12637,13 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12523,7 +12694,13 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12574,7 +12751,13 @@ x;
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let after_type = checker.get_type_of_node(expr_stmt.expression);
@@ -12642,7 +12825,13 @@ if (typeof Alias.value === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -12705,7 +12894,13 @@ if (typeof Ns["value"] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let narrowed = checker.get_type_of_node(expr_stmt.expression);
@@ -13028,7 +13223,13 @@ if (typeof obj[key] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13098,7 +13299,13 @@ if (typeof obj[key] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13204,7 +13411,13 @@ if (typeof arr[idx] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13310,7 +13523,13 @@ if (typeof obj[key] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13377,7 +13596,13 @@ if (typeof arr[idx] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13445,7 +13670,13 @@ if (obj[key] === "a") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13511,7 +13742,13 @@ if (typeof obj["prop"] === "string") {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let expr_type = checker.get_type_of_node(expr_stmt.expression);
@@ -13640,7 +13877,13 @@ function f(x: number) { return x; }
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let param_type = checker.get_type_of_node(return_data.expression);
@@ -13704,7 +13947,13 @@ const reducer = createReducer(0, {
     );
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(&file.arena, &binder, &types, "lib.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        &file.arena,
+        &binder,
+        &types,
+        "lib.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(file.source_file);
 
     assert!(
@@ -13772,8 +14021,13 @@ const reducer = createReducer(0, {
             file.node_scope_ids.clone(),
         );
 
-        let mut checker =
-            ThinCheckerState::new(&file.arena, &binder, &types, file.file_name.clone(), crate::checker::context::CheckerOptions::default());
+        let mut checker = ThinCheckerState::new(
+            &file.arena,
+            &binder,
+            &types,
+            file.file_name.clone(),
+            crate::checker::context::CheckerOptions::default(),
+        );
         checker.check_source_file(file.source_file);
         assert!(
             checker.ctx.diagnostics.is_empty(),
@@ -15093,7 +15347,10 @@ var CC: typeof C = B;
     for diag in &checker.ctx.diagnostics {
         eprintln!("[{}] Code {}: {}", diag.start, diag.code, diag.message_text);
     }
-    eprintln!("Abstract constructor types in context: {:?}", checker.ctx.abstract_constructor_types);
+    eprintln!(
+        "Abstract constructor types in context: {:?}",
+        checker.ctx.abstract_constructor_types
+    );
 
     // Should have 2 TS2322 errors:
     // - Line 8: typeof B (abstract) to typeof A (concrete)
@@ -15101,8 +15358,7 @@ var CC: typeof C = B;
     assert_eq!(
         not_assignable_count, 2,
         "Expected 2 TS2322 errors for abstract to concrete constructor assignment, got: {:?}\nDiagnostics: {:?}",
-        codes,
-        checker.ctx.diagnostics
+        codes, checker.ctx.diagnostics
     );
 }
 
@@ -17672,7 +17928,11 @@ const str: string = null;
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, strict_null_checks: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -17712,7 +17972,11 @@ const num: number = undefined;
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, strict_null_checks: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -18257,8 +18521,13 @@ const elem2 = <span id="foo" />;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.tsx".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // Currently expect errors - JSX type checking not implemented
@@ -18315,8 +18584,13 @@ const btn = <MyButton label="Click me" />;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.tsx".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     eprintln!("=== JSX Component Uppercase Diagnostics ===");
@@ -18363,8 +18637,13 @@ const elem = <unknowntag />;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.tsx".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.tsx".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // Once JSX checking is implemented, expect 1 error for unknown element
@@ -18823,7 +19102,11 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            strict_property_initialization: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19137,7 +19420,11 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, strict_property_initialization: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            strict_property_initialization: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19193,7 +19480,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19238,7 +19528,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19283,7 +19576,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19329,7 +19625,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19380,7 +19679,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19426,7 +19728,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19473,7 +19778,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -19523,7 +19831,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -20781,8 +21092,13 @@ const bb: 0 = b;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20820,8 +21136,13 @@ if (a in c) {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20859,8 +21180,13 @@ function f<T>(x: T) {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -20895,8 +21221,13 @@ if (o?.x === 1) {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -21143,8 +21474,13 @@ class D3 extends getBase() <string, number> {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker =
-        ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -23116,7 +23452,13 @@ function f1<T extends string | undefined>(x: T): string {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // Should have no TS2322 errors - after narrowing, x should be assignable to string
@@ -23300,7 +23642,13 @@ function f1<T extends string | undefined>(y: { a: T }): string {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // Should have no TS2322 errors - after narrowing, y.a should be assignable to string
@@ -23354,7 +23702,13 @@ function test(obj: A | B | null) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23406,7 +23760,13 @@ function test2(obj: A | B) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let ts2339_errors: Vec<_> = checker
@@ -23461,7 +23821,13 @@ class C {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -23517,7 +23883,13 @@ class C {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
 
     checker.check_source_file(root);
 
@@ -23564,7 +23936,13 @@ function test(obj: A | B) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23625,7 +24003,13 @@ function test2(obj: NumberIndexed) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23673,7 +24057,13 @@ function test(obj: NoIndex) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -23723,7 +24113,13 @@ function test(obj: A | null) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // obj?.a should NOT produce TS2339
@@ -23778,7 +24174,13 @@ function test2(obj: A & { c: boolean }) {
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let ts2339_count = checker
@@ -24764,7 +25166,10 @@ declare global {
         "Expected 1 Window augmentation declaration"
     );
     assert_eq!(
-        binder.global_augmentations.get("CustomGlobal").map(|v| v.len()),
+        binder
+            .global_augmentations
+            .get("CustomGlobal")
+            .map(|v| v.len()),
         Some(1),
         "Expected 1 CustomGlobal augmentation declaration"
     );
@@ -24851,7 +25256,10 @@ const MyClass = class {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -24895,7 +25303,10 @@ const MyClass = class {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -24935,7 +25346,10 @@ const MyClass = class NamedClass {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -24979,7 +25393,10 @@ const Derived = class extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25005,13 +25422,23 @@ abstract class AbstractBase {
 
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty(), "Parse errors: {:?}", parser.get_diagnostics());
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
 
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // Abstract classes should not have TS2564 errors
@@ -25037,13 +25464,23 @@ function test() {
 
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty(), "Parse errors: {:?}", parser.get_diagnostics());
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
 
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25071,13 +25508,23 @@ function test() {
 
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty(), "Parse errors: {:?}", parser.get_diagnostics());
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
 
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25107,13 +25554,23 @@ function test() {
 
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty(), "Parse errors: {:?}", parser.get_diagnostics());
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
 
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25138,13 +25595,23 @@ function test() {
 
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    assert!(parser.get_diagnostics().is_empty(), "Parse errors: {:?}", parser.get_diagnostics());
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
 
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     let has_2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
@@ -25191,7 +25658,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25240,7 +25710,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25284,7 +25757,10 @@ class Container<T> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25333,7 +25809,10 @@ class Container<T> {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25379,7 +25858,10 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25435,7 +25917,10 @@ class Derived extends Base {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25481,7 +25966,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25525,7 +26013,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25574,7 +26065,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25618,7 +26112,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25670,7 +26167,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25719,7 +26219,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25759,7 +26262,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25800,7 +26306,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25849,7 +26358,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25893,7 +26405,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25942,7 +26457,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -25986,7 +26504,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -26034,7 +26555,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -26087,7 +26611,10 @@ class Foo {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
     checker.check_source_file(root);
 
@@ -26103,8 +26630,8 @@ class Foo {
 /// This verifies the fix for TS2304 errors where global symbols were undefined
 #[test]
 fn test_global_symbol_resolution_from_lib_dts() {
-    use crate::thin_parser::ThinParserState;
     use crate::lib_loader;
+    use crate::thin_parser::ThinParserState;
 
     // Load lib.d.ts
     let lib_file = lib_loader::load_default_lib_dts();
@@ -26182,28 +26709,32 @@ function booleanInstance(bool: Boolean): boolean {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions { strict: true, ..Default::default() },
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
     );
 
     // Set lib contexts for type resolution (clone Arc fields)
-    checker.ctx.set_lib_contexts(vec![crate::checker::context::LibContext {
-        arena: lib_file.arena.clone(),
-        binder: lib_file.binder.clone(),
-    }]);
-    
+    checker
+        .ctx
+        .set_lib_contexts(vec![crate::checker::context::LibContext {
+            arena: lib_file.arena.clone(),
+            binder: lib_file.binder.clone(),
+        }]);
+
     checker.check_source_file(root);
 
     // Filter out non-error diagnostics (we only care about actual errors)
-    let errors: Vec<_> = checker.ctx.diagnostics
+    let errors: Vec<_> = checker
+        .ctx
+        .diagnostics
         .iter()
         .filter(|d| d.code != 0)
         .collect();
 
     // We should have NO TS2304 (Cannot find name) errors for global types
-    let ts2304_errors: Vec<_> = errors
-        .iter()
-        .filter(|d| d.code == 2304)
-        .collect();
+    let ts2304_errors: Vec<_> = errors.iter().filter(|d| d.code == 2304).collect();
 
     assert!(
         ts2304_errors.is_empty(),
@@ -26213,10 +26744,7 @@ function booleanInstance(bool: Boolean): boolean {
 
     // Also verify no TS2552 (Implicit Any) for the Promise return type
     // This would indicate Promise wasn't resolved correctly
-    let ts2552_errors: Vec<_> = errors
-        .iter()
-        .filter(|d| d.code == 2552)
-        .collect();
+    let ts2552_errors: Vec<_> = errors.iter().filter(|d| d.code == 2552).collect();
 
     assert!(
         ts2552_errors.is_empty(),
@@ -26236,16 +26764,47 @@ fn test_tier_2_type_checker_accuracy_fixes() {
     let types = TypeInterner::new();
 
     // Test 1: Verify no_implicit_this flag exists in CheckerContext
-    let checker = ThinCheckerState::new(&arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions { strict: true, no_implicit_any: true, no_implicit_returns: false, no_implicit_this: true, strict_null_checks: true, strict_function_types: true, strict_property_initialization: true, use_unknown_in_catch_variables: true, isolated_modules: false, no_unchecked_indexed_access: false, strict_bind_call_apply: false, exact_optional_property_types: false });
-    assert!(checker.ctx.no_implicit_this(), "no_implicit_this flag should be enabled in strict mode");
+    let checker = ThinCheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            no_implicit_returns: false,
+            no_implicit_this: true,
+            strict_null_checks: true,
+            strict_function_types: true,
+            strict_property_initialization: true,
+            use_unknown_in_catch_variables: true,
+            isolated_modules: false,
+            no_unchecked_indexed_access: false,
+            strict_bind_call_apply: false,
+            exact_optional_property_types: false,
+        },
+    );
+    assert!(
+        checker.ctx.no_implicit_this(),
+        "no_implicit_this flag should be enabled in strict mode"
+    );
 
     // Test 2: Verify ANY type suppression constants exist
     assert_eq!(TypeId::ANY.0, 4); // ANY should be TypeId(4)
 
     // Test 3: Verify diagnostic codes are defined
-    assert_eq!(2683, crate::checker::types::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY);
-    assert_eq!(2322, crate::checker::types::diagnostics::diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE);
-    assert_eq!(2571, crate::checker::types::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN);
+    assert_eq!(
+        2683,
+        crate::checker::types::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY
+    );
+    assert_eq!(
+        2322,
+        crate::checker::types::diagnostics::diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE
+    );
+    assert_eq!(
+        2571,
+        crate::checker::types::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
+    );
     assert_eq!(2507, crate::checker::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE);
     assert_eq!(2348, crate::checker::types::diagnostics::diagnostic_codes::CANNOT_INVOKE_EXPRESSION_WHOSE_TYPE_LACKS_CALL_SIGNATURE);
 
@@ -26307,7 +26866,10 @@ namespace MyNamespace {
     let ns_data = arena.get_module(ns_node).expect("module data");
     let body_node = arena.get(ns_data.body).expect("module body");
     let block_data = arena.get_module_block(body_node).expect("module block");
-    let statements = block_data.statements.as_ref().expect("module block statements");
+    let statements = block_data
+        .statements
+        .as_ref()
+        .expect("module block statements");
     let func_idx = statements
         .nodes
         .iter()
@@ -26332,7 +26894,8 @@ function topLevelFunc() {
 }
 "#;
 
-    let mut parser2 = ThinParserState::new("test2.ts".to_string(), source_without_namespace.to_string());
+    let mut parser2 =
+        ThinParserState::new("test2.ts".to_string(), source_without_namespace.to_string());
     let root2 = parser2.parse_source_file();
     let arena2 = parser2.get_arena();
 
@@ -26410,8 +26973,13 @@ module MyModule {
     let mod_node = arena3.get(module_idx).expect("module node");
     let mod_data = arena3.get_module(mod_node).expect("module data");
     let mod_body_node = arena3.get(mod_data.body).expect("module body");
-    let mod_block_data = arena3.get_module_block(mod_body_node).expect("module block");
-    let mod_statements = mod_block_data.statements.as_ref().expect("module block statements");
+    let mod_block_data = arena3
+        .get_module_block(mod_body_node)
+        .expect("module block");
+    let mod_statements = mod_block_data
+        .statements
+        .as_ref()
+        .expect("module block statements");
     let mod_func_idx = mod_statements
         .nodes
         .iter()

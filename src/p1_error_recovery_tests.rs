@@ -129,7 +129,10 @@ interface A extends {
 
     // Should parse successfully with error
     let diags = parser.get_diagnostics();
-    assert!(!diags.is_empty(), "Should report error for malformed extends");
+    assert!(
+        !diags.is_empty(),
+        "Should report error for malformed extends"
+    );
 
     // Should still parse the interface body
     assert!(parser.arena.len() > 0, "Should parse interface body");
@@ -150,7 +153,10 @@ const x = `hello ${world`;
 
     // Should parse with error
     let diags = parser.get_diagnostics();
-    assert!(!diags.is_empty(), "Should report error for unterminated template");
+    assert!(
+        !diags.is_empty(),
+        "Should report error for unterminated template"
+    );
 
     // Should still create a template node
     assert!(parser.arena.len() > 0, "Should parse template");

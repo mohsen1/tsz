@@ -31,7 +31,10 @@ impl Span {
     /// Create an empty span at the given position.
     #[inline]
     pub const fn at(pos: u32) -> Self {
-        Span { start: pos, end: pos }
+        Span {
+            start: pos,
+            end: pos,
+        }
     }
 
     /// Create a span from start position and length.

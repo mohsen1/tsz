@@ -82,12 +82,7 @@ impl<'a> EnumChecker<'a> {
         self.enum_values.insert(enum_idx, values.clone());
 
         // Check member initializers
-        self.check_member_initializers(
-            &enum_data.members,
-            is_const,
-            is_ambient,
-            &values,
-        );
+        self.check_member_initializers(&enum_data.members, is_const, is_ambient, &values);
     }
 
     /// Check for duplicate enum members
@@ -153,8 +148,8 @@ impl<'a> EnumChecker<'a> {
 
             // After a string member, all subsequent members must have initializers
             // Check if value is Computed due to missing initializer after string member
-            let needs_initializer = had_string && !has_initializer
-                && matches!(value, Some(EnumValue::Computed) | None);
+            let needs_initializer =
+                had_string && !has_initializer && matches!(value, Some(EnumValue::Computed) | None);
             if needs_initializer {
                 self.diagnostics.push(Diagnostic::error(
                     String::new(),
@@ -392,13 +387,19 @@ mod tests {
     #[test]
     fn test_valid_const_enum() {
         let diagnostics = check_enum("const enum E { A = 1, B = 2, C = A | B }");
-        assert!(diagnostics.is_empty(), "Valid const enum should have no errors");
+        assert!(
+            diagnostics.is_empty(),
+            "Valid const enum should have no errors"
+        );
     }
 
     #[test]
     fn test_valid_string_enum() {
         let diagnostics = check_enum(r#"enum E { A = "a", B = "b" }"#);
-        assert!(diagnostics.is_empty(), "Valid string enum should have no errors");
+        assert!(
+            diagnostics.is_empty(),
+            "Valid string enum should have no errors"
+        );
     }
 
     #[test]

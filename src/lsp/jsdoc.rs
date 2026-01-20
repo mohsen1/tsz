@@ -87,8 +87,8 @@ pub fn jsdoc_for_node(
     if let Some(comment) = leading_comments.last() {
         let end = comment.end as usize;
         let check = target_pos as usize;
-        let gap_is_whitespace = end <= check
-            && source_text[end..check].chars().all(|c| c.is_whitespace());
+        let gap_is_whitespace =
+            end <= check && source_text[end..check].chars().all(|c| c.is_whitespace());
 
         if gap_is_whitespace && is_jsdoc_comment(comment, source_text) {
             return get_jsdoc_content(comment, source_text);

@@ -3868,12 +3868,20 @@ outer: for (let i = 0; i < 10; i++) {
         .find(|node| node.kind == syntax_kind_ext::BREAK_STATEMENT)
         .expect("break statement not found");
 
-    let jump_data = arena.get_jump_data(break_node).expect("jump data not found");
-    assert!(!jump_data.label.is_none(), "Label should be stored, not NONE");
+    let jump_data = arena
+        .get_jump_data(break_node)
+        .expect("jump data not found");
+    assert!(
+        !jump_data.label.is_none(),
+        "Label should be stored, not NONE"
+    );
 
     // Verify the label is the identifier "outer"
     if let Some(label_node) = arena.get(jump_data.label) {
-        assert_eq!(label_node.kind, crate::scanner::SyntaxKind::Identifier as u16);
+        assert_eq!(
+            label_node.kind,
+            crate::scanner::SyntaxKind::Identifier as u16
+        );
         if let Some(ident) = arena.get_identifier(label_node) {
             assert_eq!(ident.escaped_text, "outer");
         } else {
@@ -3912,11 +3920,17 @@ outer: for (let i = 0; i < 10; i++) {
     let jump_data = arena
         .get_jump_data(continue_node)
         .expect("jump data not found");
-    assert!(!jump_data.label.is_none(), "Label should be stored, not NONE");
+    assert!(
+        !jump_data.label.is_none(),
+        "Label should be stored, not NONE"
+    );
 
     // Verify the label is the identifier "outer"
     if let Some(label_node) = arena.get(jump_data.label) {
-        assert_eq!(label_node.kind, crate::scanner::SyntaxKind::Identifier as u16);
+        assert_eq!(
+            label_node.kind,
+            crate::scanner::SyntaxKind::Identifier as u16
+        );
         if let Some(ident) = arena.get_identifier(label_node) {
             assert_eq!(ident.escaped_text, "outer");
         } else {
@@ -3950,8 +3964,13 @@ for (let i = 0; i < 10; i++) {
         .find(|node| node.kind == syntax_kind_ext::BREAK_STATEMENT)
         .expect("break statement not found");
 
-    let jump_data = arena.get_jump_data(break_node).expect("jump data not found");
-    assert!(jump_data.label.is_none(), "Label should be NONE for break without label");
+    let jump_data = arena
+        .get_jump_data(break_node)
+        .expect("jump data not found");
+    assert!(
+        jump_data.label.is_none(),
+        "Label should be NONE for break without label"
+    );
 }
 
 #[test]
@@ -4007,7 +4026,10 @@ myLabel: while (true) {
         .find(|node| node.kind == syntax_kind_ext::LABELED_STATEMENT)
         .expect("labeled statement not found");
 
-    assert!(labeled_node.pos > 0, "Labeled statement should have position");
+    assert!(
+        labeled_node.pos > 0,
+        "Labeled statement should have position"
+    );
 }
 
 #[test]
@@ -4034,7 +4056,12 @@ outer: for (;;) {
         .find(|node| node.kind == syntax_kind_ext::BREAK_STATEMENT)
         .expect("break statement not found");
 
-    let jump_data = arena.get_jump_data(break_node).expect("jump data not found");
+    let jump_data = arena
+        .get_jump_data(break_node)
+        .expect("jump data not found");
     // After ASI, the label on the next line is a separate statement
-    assert!(jump_data.label.is_none(), "Label should be NONE due to ASI after break");
+    assert!(
+        jump_data.label.is_none(),
+        "Label should be NONE due to ASI after break"
+    );
 }

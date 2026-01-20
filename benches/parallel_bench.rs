@@ -3,7 +3,7 @@
 //! This benchmark suite tests the scaling of parallel type checking
 //! with the lock-free TypeInterner architecture.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -70,16 +70,14 @@ fn bench_concurrent_objects(c: &mut Criterion) {
                         (0..1000).into_par_iter().for_each(|i| {
                             use wasm::solver::{PropertyInfo, TypeParamInfo};
                             let name = interner.intern_string(&format!("prop_{}", i % 100));
-                            let _ = interner.object(vec![
-                                PropertyInfo {
-                                    name,
-                                    type_id: TypeId::STRING,
-                                    write_type: TypeId::STRING,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: false,
-                                },
-                            ]);
+                            let _ = interner.object(vec![PropertyInfo {
+                                name,
+                                type_id: TypeId::STRING,
+                                write_type: TypeId::STRING,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                            }]);
                         });
                     });
                 });
@@ -186,18 +184,20 @@ fn bench_property_lookup(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(2));
 
     group.bench_function("small_object", |b| {
-        use wasm::solver::{PropertyInfo, ObjectShape, ObjectShapeId};
+        use wasm::solver::{ObjectShape, ObjectShapeId, PropertyInfo};
         let interner = TypeInterner::new();
 
         // Create a small object (under cache threshold)
-        let props = (0..5).map(|i| PropertyInfo {
-            name: interner.intern_string(&format!("prop_{}", i)),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        }).collect::<Vec<_>>();
+        let props = (0..5)
+            .map(|i| PropertyInfo {
+                name: interner.intern_string(&format!("prop_{}", i)),
+                type_id: TypeId::STRING,
+                write_type: TypeId::STRING,
+                optional: false,
+                readonly: false,
+                is_method: false,
+            })
+            .collect::<Vec<_>>();
 
         let shape = ObjectShape {
             properties: props,
@@ -212,18 +212,20 @@ fn bench_property_lookup(c: &mut Criterion) {
     });
 
     group.bench_function("large_object_cached", |b| {
-        use wasm::solver::{PropertyInfo, ObjectShape};
+        use wasm::solver::{ObjectShape, PropertyInfo};
         let interner = TypeInterner::new();
 
         // Create a large object (above cache threshold)
-        let props = (0..30).map(|i| PropertyInfo {
-            name: interner.intern_string(&format!("prop_{}", i)),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        }).collect::<Vec<_>>();
+        let props = (0..30)
+            .map(|i| PropertyInfo {
+                name: interner.intern_string(&format!("prop_{}", i)),
+                type_id: TypeId::STRING,
+                write_type: TypeId::STRING,
+                optional: false,
+                readonly: false,
+                is_method: false,
+            })
+            .collect::<Vec<_>>();
 
         let shape = ObjectShape {
             properties: props,

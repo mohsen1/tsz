@@ -65,6 +65,8 @@ mod infer_tests;
 #[cfg(test)]
 mod instantiate_tests;
 #[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
 mod intern_tests;
 #[cfg(test)]
 mod lawyer_tests;
@@ -80,5 +82,3 @@ mod subtype_tests;
 mod types_tests;
 #[cfg(test)]
 mod union_tests;
-#[cfg(test)]
-mod integration_tests;
