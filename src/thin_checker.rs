@@ -15891,6 +15891,9 @@ impl<'a> ThinCheckerState<'a> {
             syntax_kind_ext::IMPORT_DECLARATION => {
                 self.check_import_declaration(stmt_idx);
             }
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.check_import_equals_declaration(stmt_idx);
+            }
             syntax_kind_ext::MODULE_DECLARATION => {
                 // Check module declaration (errors 5061, 2819, etc.)
                 let mut checker =
@@ -17181,6 +17184,23 @@ impl<'a> ThinCheckerState<'a> {
                     );
                 }
             }
+        }
+    }
+
+    /// Check an import equals declaration for ESM compatibility.
+    /// Emits TS1202 when `import x = require()` is used in an ES module.
+    fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        // TS1202: Import assignment cannot be used when targeting ECMAScript modules.
+        // This error is emitted when using `import x = require("y")` in a file that
+        // has other ES module syntax (import/export).
+        if self.ctx.binder.is_external_module() {
+            self.error_at_node(
+                stmt_idx,
+                "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
+                diagnostic_codes::IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM,
+            );
         }
     }
 

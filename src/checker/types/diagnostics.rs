@@ -281,6 +281,12 @@ pub mod diagnostic_codes {
     pub const LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS: u32 = 2695;
     pub const ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE: u32 = 2749;
 
+    // Delete expression errors
+    pub const DELETE_OPERAND_MUST_BE_OPTIONAL: u32 = 2703; // The operand of a 'delete' operation must be optional.
+
+    // Import/Export errors
+    pub const IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM: u32 = 1202; // Import assignment cannot be used when targeting ECMAScript modules.
+
     // Function/call errors
     pub const ARGUMENT_NOT_ASSIGNABLE_TO_PARAMETER: u32 = 2345;
     pub const CANNOT_INVOKE_EXPRESSION_WHOSE_TYPE_LACKS_CALL_SIGNATURE: u32 = 2348;
