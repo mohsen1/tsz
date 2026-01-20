@@ -319,11 +319,6 @@ process.on('unhandledRejection', (reason) => {
   parentPort!.on('message', (job: TestJob) => {
     const result = processTest(job);
     parentPort!.postMessage(result);
-    
-    // Force GC if available and memory is high
-    if (global.gc && getMemoryUsage() > 500 * 1024 * 1024) {
-      global.gc();
-    }
   });
 
   // Heartbeat - detect if we're hung
