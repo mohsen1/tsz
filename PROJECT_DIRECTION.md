@@ -76,15 +76,16 @@ The project mimics TypeScript's architecture *too* closely in some places (like 
 
 ### Improve Conformance Test Pass Rate
 
-Current pass rate: **35-43%** (depending on test sample size, up from ~3% with crashes).
+Current pass rate: **45.5%** on 100 tests, 0 crashes.
 Target: 95%+. Recent fixes:
-- Fixed TS2705 false positives for async functions with Promise return types (major impact)
-- Fixed re-export symbol tracking for cache invalidation
-- Fixed typesVersions resolution (default compiler version)
-- Fixed lib.d.ts path in conformance runner
-- Fixed compiler options parsing (target/module string values)
+- Fixed await expressions to return original type when not Promise-like (TS2571 reduction)
+- Fixed TS2664 to only emit in module files, not script files
+- Fixed TS2391 to skip ambient modules (function implementation check)
+- Fixed definite assignment error code (2524 -> 2564)
+- Fixed TS2705 false positives for async functions with Promise return types
 
-Top remaining issues: TS2304 (Cannot find name), TS2403, TS2664, TS2345, TS2571.
+Top remaining extra errors: TS2304 (7), TS2571 (4), TS2349 (4), TS2345 (3).
+Top remaining missing errors: TS2304 (12), TS1109 (10), TS2524 (7), TS2403 (6).
 
 ### Clean Up Clippy Ignores
 
