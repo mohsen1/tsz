@@ -3,7 +3,7 @@
  * High-Performance Parallel Conformance Test Runner
  *
  * Uses persistent worker threads that load WASM once.
- * Workers that hang are terminated and respawned.
+ * Robust crash/OOM recovery with automatic worker respawn.
  */
 interface RunnerConfig {
     wasmPkgPath: string;
@@ -22,12 +22,24 @@ interface TestStats {
     crashed: number;
     skipped: number;
     timedOut: number;
+    oom: number;
     byCategory: Record<string, {
         total: number;
         passed: number;
     }>;
     missingCodes: Map<number, number>;
     extraCodes: Map<number, number>;
+    crashedTests: {
+        path: string;
+        error: string;
+    }[];
+    oomTests: string[];
+    timedOutTests: string[];
+    workerStats: {
+        spawned: number;
+        crashed: number;
+        respawned: number;
+    };
 }
 export declare function runConformanceTests(config?: Partial<RunnerConfig>): Promise<TestStats>;
 export {};
