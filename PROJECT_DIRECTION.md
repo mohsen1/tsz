@@ -78,15 +78,16 @@ The project mimics TypeScript's architecture *too* closely in some places (like 
 
 Current pass rate: **49.5%** on 100 tests, 0 crashes.
 Target: 95%+. Recent fixes:
-- Fixed Promise<T> type extraction for await expressions without lib files (PROMISE_BASE synthetic type)
+- Implemented shorthand ambient modules (`declare module "x"` → `any` typed imports)
+- Fixed TS2524 for 'await' in default parameter values
+- Fixed Promise<T> type extraction for await expressions without lib files (PROMISE_BASE)
 - Fixed TS1040 for 'declare async function' (parser was losing declare modifier)
-- Fixed await expressions to return original type when not Promise-like (TS2571 reduction)
+- Fixed await expressions to return original type when not Promise-like
 - Fixed TS2664 to only emit in module files, not script files
 - Fixed TS2391 to skip ambient modules (function implementation check)
-- Fixed definite assignment error code (2524 -> 2564)
 - Fixed TS2705 false positives for async functions with Promise return types
 
-Top remaining extra errors: TS2304 (11), TS2571 (7), TS2349 (3).
+Top remaining extra errors: TS2571 (7), TS2322 (4), TS2349 (3).
 Top remaining missing errors: TS2304, TS1109, TS2524, TS2403.
 
 ### Clean Up Clippy Ignores
