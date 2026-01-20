@@ -488,7 +488,7 @@ impl TypeInterner {
         TemplateLiteralId(self.template_lists.intern(&spans))
     }
 
-    fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
+    pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 

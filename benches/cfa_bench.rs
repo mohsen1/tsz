@@ -5,6 +5,7 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use wasm::solver::{TypeId, TypeInterner};
 use wasm::thin_binder::ThinBinderState;
+use wasm::checker::CheckerOptions;
 use wasm::thin_checker::ThinCheckerState;
 use wasm::thin_parser::ThinParserState;
 
@@ -309,7 +310,7 @@ fn bench_scaling(c: &mut Criterion) {
                     &binder,
                     &types,
                     "bench.ts".to_string(),
-                    false,
+                    CheckerOptions::default(),
                 );
                 checker.check_source_file(root);
                 black_box(root)
@@ -343,7 +344,7 @@ fn bench_scaling(c: &mut Criterion) {
                     &binder,
                     &types,
                     "bench.ts".to_string(),
-                    false,
+                    CheckerOptions::default(),
                 );
                 checker.check_source_file(root);
                 black_box(root)
