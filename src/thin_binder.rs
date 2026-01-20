@@ -3509,6 +3509,16 @@ impl ThinBinderState {
             if !module.body.is_none() {
                 self.node_scope_ids
                     .insert(module.body.0, self.current_scope_id);
+            } else {
+                // Shorthand ambient module declaration: `declare module "foo"` without body
+                // Track this so imports from these modules are typed as `any`
+                if let Some(name_node) = arena.get(module.name) {
+                    if let Some(lit) = arena.get_literal(name_node) {
+                        if !lit.text.is_empty() {
+                            self.shorthand_ambient_modules.insert(lit.text.clone());
+                        }
+                    }
+                }
             }
 
             self.bind_node(arena, module.body);
