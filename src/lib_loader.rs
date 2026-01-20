@@ -5,10 +5,21 @@
 //! This enables proper resolution of built-in types like `Object`, `Function`, `console`, etc.
 
 use crate::binder::SymbolTable;
+use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::thin_node::ThinNodeArena;
 use crate::thin_binder::ThinBinderState;
 use crate::thin_parser::ThinParserState;
 use std::sync::Arc;
+
+// =============================================================================
+// Diagnostic Error Codes
+// =============================================================================
+
+/// TS2318: Cannot find global type '{0}'.
+pub const CANNOT_FIND_GLOBAL_TYPE: u32 = 2318;
+
+/// TS2583: Cannot find name '{0}'. Do you need to change your target library?
+pub const MISSING_ES2015_LIB_SUPPORT: u32 = 2583;
 
 /// Load the default lib.d.ts file from the tests/lib directory.
 ///
@@ -81,6 +92,131 @@ pub fn merge_lib_symbols(target: &mut SymbolTable, lib_files: &[Arc<LibFile>]) {
     }
 }
 
+// =============================================================================
+// Error Emission Helpers
+// =============================================================================
+
+/// Create a TS2318 error for a missing global type.
+///
+/// This error is emitted when a global type (like `Promise`, `Map`, `Set`)
+/// cannot be found in any of the loaded lib files. This typically indicates
+/// that the target library version doesn't support the requested feature.
+///
+/// # Arguments
+/// * `name` - The name of the missing global type
+/// * `file_name` - The source file name
+/// * `start` - Start position of the reference
+/// * `length` - Length of the reference
+pub fn emit_error_global_type_missing(
+    name: &str,
+    file_name: String,
+    start: u32,
+    length: u32,
+) -> Diagnostic {
+    Diagnostic::error(
+        file_name,
+        start,
+        length,
+        format!("Cannot find global type '{}'", name),
+        CANNOT_FIND_GLOBAL_TYPE,
+    )
+}
+
+/// Create a TS2583 error when a type is missing due to insufficient lib support.
+///
+/// This error is emitted when a global type is not available because the
+/// target library version doesn't include ES2015+ features. This helps users
+/// understand they need to change their `target` or `lib` compiler options.
+///
+/// # Arguments
+/// * `name` - The name of the missing type
+/// * `file_name` - The source file name
+/// * `start` - Start position of the reference
+/// * `length` - Length of the reference
+pub fn emit_error_lib_target_mismatch(
+    name: &str,
+    file_name: String,
+    start: u32,
+    length: u32,
+) -> Diagnostic {
+    Diagnostic::error(
+        file_name,
+        start,
+        length,
+        format!("Cannot find name '{}'. Do you need to change your target library?", name),
+        MISSING_ES2015_LIB_SUPPORT,
+    )
+}
+
+// =============================================================================
+// ES2015+ Type Detection
+// =============================================================================
+
+/// ES2015+ global types that may not be available in all lib versions.
+///
+/// These types were introduced in ES2015 and later. When a user references
+/// these types but their target lib doesn't include them, we should emit
+/// TS2583 with a helpful message about changing their target library.
+const ES2015_PLUS_TYPES: &[&str] = &[
+    // ES2015
+    "Promise",
+    "Map",
+    "Set",
+    "WeakMap",
+    "WeakSet",
+    "Proxy",
+    "Reflect",
+    "Symbol",
+    // ES2017
+    "AsyncFunction",
+    // ES2019
+    "ObjectEntries",
+    "ObjectValues",
+    // ES2020
+    "BigInt",
+    // ES2021
+    "FinalizationRegistry",
+    "WeakRef",
+];
+
+/// Check if a type name is an ES2015+ feature that requires specific lib support.
+///
+/// This helps determine whether we should emit TS2583 (suggesting target/lib change)
+/// instead of TS2318 (generic type not found).
+pub fn is_es2015_plus_type(name: &str) -> bool {
+    ES2015_PLUS_TYPES.contains(&name)
+}
+
+/// Validate that the loaded lib files support the required ES2015+ features.
+///
+/// This function checks if all essential ES2015+ global types are available
+/// in the provided lib files. If not, it returns diagnostics suggesting
+/// that the user may need to adjust their target or lib compiler options.
+///
+/// # Arguments
+/// * `lib_files` - The loaded lib files to validate
+/// * `file_name` - The file name to use in diagnostics
+///
+/// # Returns
+/// A list of diagnostics for any missing ES2015+ types
+pub fn validate_lib_es2015_support(lib_files: &[Arc<LibFile>], file_name: String) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    // Collect all available global types from lib files
+    let mut available_globals = SymbolTable::new();
+    merge_lib_symbols(&mut available_globals, lib_files);
+
+    // Check for missing ES2015+ types
+    for &type_name in ES2015_PLUS_TYPES {
+        if !available_globals.has(type_name) {
+            // Emit a diagnostic at position 0 (no specific location for lib-level check)
+            diagnostics.push(emit_error_lib_target_mismatch(type_name, file_name.clone(), 0, 0));
+        }
+    }
+
+    diagnostics
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +261,80 @@ mod tests {
         // Function and console should be added
         assert_eq!(target.get("Function"), Some(function_id));
         assert_eq!(target.get("console"), Some(console_id));
+    }
+
+    #[test]
+    fn test_emit_error_global_type_missing() {
+        // Test that the global type missing error is created correctly
+        let diagnostic = emit_error_global_type_missing("Promise", "test.ts".to_string(), 10, 7);
+
+        assert_eq!(diagnostic.code, CANNOT_FIND_GLOBAL_TYPE);
+        assert_eq!(diagnostic.file, "test.ts");
+        assert_eq!(diagnostic.start, 10);
+        assert_eq!(diagnostic.length, 7);
+        assert_eq!(diagnostic.message_text, "Cannot find global type 'Promise'");
+    }
+
+    #[test]
+    fn test_emit_error_lib_target_mismatch() {
+        // Test that the lib target mismatch error is created correctly
+        let diagnostic = emit_error_lib_target_mismatch("Map", "test.ts".to_string(), 20, 3);
+
+        assert_eq!(diagnostic.code, MISSING_ES2015_LIB_SUPPORT);
+        assert_eq!(diagnostic.file, "test.ts");
+        assert_eq!(diagnostic.start, 20);
+        assert_eq!(diagnostic.length, 3);
+        assert_eq!(
+            diagnostic.message_text,
+            "Cannot find name 'Map'. Do you need to change your target library?"
+        );
+    }
+
+    #[test]
+    fn test_is_es2015_plus_type() {
+        // Test ES2015 types
+        assert!(is_es2015_plus_type("Promise"));
+        assert!(is_es2015_plus_type("Map"));
+        assert!(is_es2015_plus_type("Set"));
+        assert!(is_es2015_plus_type("WeakMap"));
+        assert!(is_es2015_plus_type("WeakSet"));
+        assert!(is_es2015_plus_type("Proxy"));
+        assert!(is_es2015_plus_type("Reflect"));
+        assert!(is_es2015_plus_type("Symbol"));
+
+        // Test ES2017+ types
+        assert!(is_es2015_plus_type("AsyncFunction"));
+        assert!(is_es2015_plus_type("BigInt"));
+        assert!(is_es2015_plus_type("FinalizationRegistry"));
+        assert!(is_es2015_plus_type("WeakRef"));
+
+        // Test pre-ES2015 types (should return false)
+        assert!(!is_es2015_plus_type("Object"));
+        assert!(!is_es2015_plus_type("Array"));
+        assert!(!is_es2015_plus_type("Function"));
+        assert!(!is_es2015_plus_type("String"));
+        assert!(!is_es2015_plus_type("Number"));
+        assert!(!is_es2015_plus_type("Boolean"));
+    }
+
+    #[test]
+    fn test_validate_lib_es2015_support() {
+        // Load lib.d.ts
+        let lib_file = load_default_lib_dts();
+        if lib_file.is_none() {
+            // Skip test if lib.d.ts is not available
+            return;
+        }
+        let lib_file = lib_file.unwrap();
+
+        // Validate ES2015+ support - if lib.d.ts has these types, should return empty vec
+        let diagnostics = validate_lib_es2015_support(&[lib_file], "test.ts".to_string());
+
+        // The result depends on whether lib.d.ts has ES2015+ types
+        // If it does, diagnostics should be empty
+        // If it doesn't, diagnostics should contain errors for missing types
+        // Just verify the function runs without panicking
+        println!("ES2015+ validation diagnostics: {}", diagnostics.len());
     }
 
     #[test]
