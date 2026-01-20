@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use wasm::checker::context::CheckerOptions;
-use wasm::thin_parser::ThinParserState;
+use wasm::parser::ParserState;
 
 /// Default timeout for conformance tests (30 seconds)
 const CONFORMANCE_TEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -177,7 +177,7 @@ pub fn run_conformance_test(source: &str, file_name: &str) -> ConformanceResult 
     };
 
     // Parse
-    let mut parser = ThinParserState::new(file_name.to_string(), test_source.to_string());
+    let mut parser = ParserState::new(file_name.to_string(), test_source.to_string());
     parser.parse_source_file();
 
     let parse_errors: Vec<String> = parser

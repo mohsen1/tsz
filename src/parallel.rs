@@ -29,9 +29,9 @@
 use crate::binder::{Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
 use crate::lib_loader;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_parser::{ParseDiagnostic, ThinParserState};
+use crate::parser::node::NodeArena;
+use crate::binder::BinderState;
+use crate::parser::{ParseDiagnostic, ParserState};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
@@ -44,12 +44,12 @@ pub struct ParseResult {
     /// The parsed source file node index
     pub source_file: NodeIndex,
     /// The arena containing all nodes
-    pub arena: ThinNodeArena,
+    pub arena: NodeArena,
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
 }
 
-/// Parse multiple files in parallel using ThinParser
+/// Parse multiple files in parallel using Parser
 ///
 /// Each file is parsed independently, producing its own arena.
 /// This is optimal for initial parsing before symbol resolution.
@@ -63,7 +63,7 @@ pub fn parse_files_parallel(files: Vec<(String, String)>) -> Vec<ParseResult> {
     files
         .into_par_iter()
         .map(|(file_name, source_text)| {
-            let mut parser = ThinParserState::new(file_name.clone(), source_text);
+            let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
 
             // Consume the parser and take its arena/diagnostics
@@ -81,7 +81,7 @@ pub fn parse_files_parallel(files: Vec<(String, String)>) -> Vec<ParseResult> {
 
 /// Parse a single file (for comparison/testing)
 pub fn parse_file_single(file_name: String, source_text: String) -> ParseResult {
-    let mut parser = ThinParserState::new(file_name.clone(), source_text);
+    let mut parser = ParserState::new(file_name.clone(), source_text);
     let source_file = parser.parse_source_file();
 
     // Consume the parser and take its arena/diagnostics
@@ -119,7 +119,7 @@ pub struct BindResult {
     /// The parsed source file node index
     pub source_file: NodeIndex,
     /// The arena containing all nodes
-    pub arena: Arc<ThinNodeArena>,
+    pub arena: Arc<NodeArena>,
     /// Symbols created in this file
     pub symbols: SymbolArena,
     /// File-level symbol table (exports, declarations)
@@ -155,13 +155,13 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
         .into_par_iter()
         .map(|(file_name, source_text)| {
             // Parse
-            let mut parser = ThinParserState::new(file_name.clone(), source_text);
+            let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
 
             let (arena, parse_diagnostics) = parser.into_parts();
 
             // Bind
-            let mut binder = ThinBinderState::new();
+            let mut binder = BinderState::new();
             binder.bind_source_file(&arena, source_file);
 
             BindResult {
@@ -184,12 +184,12 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
 
 /// Bind a single file (for comparison/testing)
 pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResult {
-    let mut parser = ThinParserState::new(file_name.clone(), source_text);
+    let mut parser = ParserState::new(file_name.clone(), source_text);
     let source_file = parser.parse_source_file();
 
     let (arena, parse_diagnostics) = parser.into_parts();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(&arena, source_file);
 
     BindResult {
@@ -249,7 +249,7 @@ pub fn parse_and_bind_with_stats(files: Vec<(String, String)>) -> (Vec<BindResul
 /// This is similar to `load_lib_files_for_contexts` in driver.rs but returns
 /// Arc<LibFile> objects for use with `merge_lib_symbols`.
 pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::LibFile>> {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let mut lib_files_loaded = Vec::new();
 
@@ -279,7 +279,7 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
 
         // Parse the lib file
         let file_name = lib_path.to_string_lossy().to_string();
-        let mut lib_parser = ThinParserState::new(file_name.clone(), source_text);
+        let mut lib_parser = ParserState::new(file_name.clone(), source_text);
         let source_file_idx = lib_parser.parse_source_file();
 
         // Skip if there are parse errors
@@ -288,7 +288,7 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
         }
 
         // Bind the lib file
-        let mut lib_binder = ThinBinderState::new();
+        let mut lib_binder = BinderState::new();
         lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
         // Create the LibFile
@@ -344,13 +344,13 @@ pub fn parse_and_bind_parallel_with_libs(
         .into_par_iter()
         .map(|(file_name, source_text)| {
             // Parse
-            let mut parser = ThinParserState::new(file_name.clone(), source_text);
+            let mut parser = ParserState::new(file_name.clone(), source_text);
             let source_file = parser.parse_source_file();
 
             let (arena, parse_diagnostics) = parser.into_parts();
 
             // Bind with lib symbols
-            let mut binder = ThinBinderState::new();
+            let mut binder = BinderState::new();
 
             // IMPORTANT: Merge lib symbols BEFORE binding source file
             // so that symbols like console, Array, Promise are available during binding
@@ -389,7 +389,7 @@ pub struct BoundFile {
     /// The parsed source file node index
     pub source_file: NodeIndex,
     /// The arena containing all nodes (owned by this file)
-    pub arena: Arc<ThinNodeArena>,
+    pub arena: Arc<NodeArena>,
     /// Node-to-symbol mapping (symbol IDs are global after merge)
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Persistent scopes (symbol IDs are global after merge)
@@ -411,7 +411,7 @@ pub struct MergedProgram {
     /// Global symbol arena (all symbols from all files, with remapped IDs)
     pub symbols: SymbolArena,
     /// Symbol-to-arena mapping for declaration lookup
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<ThinNodeArena>>,
+    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
@@ -808,7 +808,7 @@ pub fn compile_files(files: Vec<(String, String)>) -> MergedProgram {
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeId;
-use crate::thin_checker::ThinCheckerState;
+use crate::checker::state::CheckerState;
 
 /// Result of type checking a single function body
 #[derive(Debug)]
@@ -846,7 +846,7 @@ pub struct CheckResult {
 }
 
 /// Collect all function declarations from a source file
-fn collect_functions(arena: &ThinNodeArena, source_file: NodeIndex) -> Vec<NodeIndex> {
+fn collect_functions(arena: &NodeArena, source_file: NodeIndex) -> Vec<NodeIndex> {
     let mut functions = Vec::new();
 
     let Some(node) = arena.get(source_file) else {
@@ -866,7 +866,7 @@ fn collect_functions(arena: &ThinNodeArena, source_file: NodeIndex) -> Vec<NodeI
 
 /// Recursively collect functions from a node
 fn collect_functions_from_node(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     node_idx: NodeIndex,
     functions: &mut Vec<NodeIndex>,
 ) {
@@ -976,7 +976,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     let function_count = all_functions.len();
 
     // Check functions in parallel
-    // Note: We need to be careful here - ThinCheckerState holds mutable references
+    // Note: We need to be careful here - CheckerState holds mutable references
     // For now, we group by file and check each file's functions together
     let file_results: Vec<FileCheckResult> = program
         .files
@@ -990,7 +990,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
-            let mut checker = ThinCheckerState::new(
+            let mut checker = CheckerState::new(
                 &file.arena,
                 &binder,
                 &program.type_interner,
@@ -1033,12 +1033,12 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     }
 }
 
-/// Create a ThinBinderState from a BoundFile for type checking
+/// Create a BinderState from a BoundFile for type checking
 fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
-) -> ThinBinderState {
+) -> BinderState {
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
 
@@ -1056,7 +1056,7 @@ fn create_binder_from_bound_file(
         }
     }
 
-    let mut binder = ThinBinderState::from_bound_state_with_scopes_and_augmentations(
+    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         program.symbols.clone(),
         file_locals,
         file.node_symbols.clone(),

@@ -154,16 +154,16 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
 mod tests {
     use super::*;
     use crate::solver::TypeInterner;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_expression_checker_numeric_literal() {
         let source = "42";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();

@@ -9,7 +9,7 @@
 use crate::binder::{FlowNodeId, flow_flags};
 use crate::checker::flow_graph_builder::FlowGraph;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use rustc_hash::FxHashSet;
 
 /// Analyzer for detecting unreachable code.
@@ -20,15 +20,15 @@ use rustc_hash::FxHashSet;
 pub struct ReachabilityAnalyzer<'a> {
     /// Reference to the flow graph
     graph: &'a FlowGraph,
-    /// Reference to the ThinNodeArena for AST access
-    arena: &'a ThinNodeArena,
+    /// Reference to the NodeArena for AST access
+    arena: &'a NodeArena,
     /// Cached set of unreachable node IDs
     unreachable_cache: FxHashSet<u32>,
 }
 
 impl<'a> ReachabilityAnalyzer<'a> {
     /// Create a new reachability analyzer.
-    pub fn new(graph: &'a FlowGraph, arena: &'a ThinNodeArena) -> Self {
+    pub fn new(graph: &'a FlowGraph, arena: &'a NodeArena) -> Self {
         let unreachable_cache = graph.unreachable_nodes.clone();
 
         Self {
@@ -135,7 +135,7 @@ impl<'a> ReachabilityAnalyzer<'a> {
 mod tests {
     use super::*;
     use crate::checker::flow_graph_builder::FlowGraphBuilder;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_unreachable_after_return() {
@@ -146,7 +146,7 @@ mod tests {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -174,7 +174,7 @@ mod tests {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -201,7 +201,7 @@ while (true) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -228,7 +228,7 @@ while (true) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -256,7 +256,7 @@ while (true) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -286,7 +286,7 @@ while (true) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();

@@ -1,9 +1,9 @@
-use crate::ThinParser;
-use crate::thin_emitter::{ModuleKind, ScriptTarget};
+use crate::Parser;
+use crate::emitter::{ModuleKind, ScriptTarget};
 
 #[test]
 fn test_generate_transforms_and_emit_with_context() {
-    let mut parser = ThinParser::new(
+    let mut parser = Parser::new(
         "test.ts".to_string(),
         "export class Foo { constructor(x) { this.x = x; } }".to_string(),
     );

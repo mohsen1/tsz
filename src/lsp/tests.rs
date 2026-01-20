@@ -3,18 +3,18 @@
 //! These tests verify that the LSP features work correctly together.
 
 use super::*;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_parser::ThinParserState;
+use crate::binder::BinderState;
+use crate::parser::ParserState;
 
 #[test]
 fn test_lsp_workflow_simple() {
     // Simple test: const x = 1; x + x;
     let source = "const x = 1;\nx + x;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let line_map = position::LineMap::build(source);
@@ -37,11 +37,11 @@ fn test_lsp_workflow_simple() {
 fn test_lsp_with_function() {
     // Test with a function: function foo() {} foo();
     let source = "function foo() {}\nfoo();";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let line_map = position::LineMap::build(source);
@@ -101,15 +101,15 @@ fn test_project_multi_file_definition() {
 #[test]
 fn test_lsp_diagnostic_conversion() {
     let source = "const x: string = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = crate::solver::TypeInterner::new();
-    let mut checker = crate::thin_checker::ThinCheckerState::new(
+    let mut checker = crate::checker::state::CheckerState::new(
         arena,
         &binder,
         &types,

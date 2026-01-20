@@ -1,13 +1,13 @@
-use super::{ThinPrinter, get_operator_text};
-use crate::parser::{syntax_kind_ext, thin_node::ThinNode};
+use super::{Printer, get_operator_text};
+use crate::parser::{syntax_kind_ext, node::Node};
 use crate::scanner::SyntaxKind;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Expressions
     // =========================================================================
 
-    pub(super) fn emit_binary_expression(&mut self, node: &ThinNode) {
+    pub(super) fn emit_binary_expression(&mut self, node: &Node) {
         let Some(binary) = self.arena.get_binary_expr(node) else {
             return;
         };
@@ -19,7 +19,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(binary.right);
     }
 
-    pub(super) fn emit_prefix_unary(&mut self, node: &ThinNode) {
+    pub(super) fn emit_prefix_unary(&mut self, node: &Node) {
         let Some(unary) = self.arena.get_unary_expr(node) else {
             return;
         };
@@ -28,7 +28,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(unary.operand);
     }
 
-    pub(super) fn emit_postfix_unary(&mut self, node: &ThinNode) {
+    pub(super) fn emit_postfix_unary(&mut self, node: &Node) {
         let Some(unary) = self.arena.get_unary_expr(node) else {
             return;
         };
@@ -37,7 +37,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(get_operator_text(unary.operator));
     }
 
-    pub(super) fn emit_call_expression(&mut self, node: &ThinNode) {
+    pub(super) fn emit_call_expression(&mut self, node: &Node) {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };
@@ -103,7 +103,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(")");
     }
 
-    pub(super) fn emit_new_expression(&mut self, node: &ThinNode) {
+    pub(super) fn emit_new_expression(&mut self, node: &Node) {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
         };
@@ -117,7 +117,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(")");
     }
 
-    pub(super) fn emit_property_access(&mut self, node: &ThinNode) {
+    pub(super) fn emit_property_access(&mut self, node: &Node) {
         let Some(access) = self.arena.get_access_expr(node) else {
             return;
         };
@@ -127,7 +127,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(access.name_or_argument);
     }
 
-    pub(super) fn emit_element_access(&mut self, node: &ThinNode) {
+    pub(super) fn emit_element_access(&mut self, node: &Node) {
         let Some(access) = self.arena.get_access_expr(node) else {
             return;
         };
@@ -138,7 +138,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("]");
     }
 
-    pub(super) fn emit_parenthesized(&mut self, node: &ThinNode) {
+    pub(super) fn emit_parenthesized(&mut self, node: &Node) {
         let Some(paren) = self.arena.get_parenthesized(node) else {
             return;
         };
@@ -148,7 +148,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(")");
     }
 
-    pub(super) fn emit_type_assertion_expression(&mut self, node: &ThinNode) {
+    pub(super) fn emit_type_assertion_expression(&mut self, node: &Node) {
         let Some(assertion) = self.arena.get_type_assertion(node) else {
             self.write("void 0");
             return;
@@ -157,7 +157,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit_expression(assertion.expression);
     }
 
-    pub(super) fn emit_non_null_expression(&mut self, node: &ThinNode) {
+    pub(super) fn emit_non_null_expression(&mut self, node: &Node) {
         let Some(unary) = self.arena.get_unary_expr_ex(node) else {
             self.write("void 0");
             return;
@@ -166,7 +166,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit_expression(unary.expression);
     }
 
-    pub(super) fn emit_conditional(&mut self, node: &ThinNode) {
+    pub(super) fn emit_conditional(&mut self, node: &Node) {
         let Some(cond) = self.arena.get_conditional_expr(node) else {
             return;
         };
@@ -178,7 +178,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(cond.when_false);
     }
 
-    pub(super) fn emit_array_literal(&mut self, node: &ThinNode) {
+    pub(super) fn emit_array_literal(&mut self, node: &Node) {
         let Some(array) = self.arena.get_literal_expr(node) else {
             return;
         };
@@ -188,7 +188,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("]");
     }
 
-    pub(super) fn emit_object_literal(&mut self, node: &ThinNode) {
+    pub(super) fn emit_object_literal(&mut self, node: &Node) {
         let Some(obj) = self.arena.get_literal_expr(node) else {
             return;
         };
@@ -222,7 +222,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_property_assignment(&mut self, node: &ThinNode) {
+    pub(super) fn emit_property_assignment(&mut self, node: &Node) {
         let Some(prop) = self.arena.get_property_assignment(node) else {
             return;
         };
@@ -232,7 +232,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit_expression(prop.initializer);
     }
 
-    pub(super) fn emit_shorthand_property(&mut self, node: &ThinNode) {
+    pub(super) fn emit_shorthand_property(&mut self, node: &Node) {
         let Some(shorthand) = self.arena.get_shorthand_property(node) else {
             // Fallback: try to get identifier data directly
             if let Some(ident) = self.arena.get_identifier(node) {

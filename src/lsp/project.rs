@@ -27,13 +27,13 @@ use crate::lsp::rename::{RenameProvider, TextEdit, WorkspaceEdit};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::thin_node::NodeAccess;
-use crate::parser::{NodeIndex, NodeList, syntax_kind_ext, thin_node::ThinNodeArena};
+use crate::parser::node::NodeAccess;
+use crate::parser::{NodeIndex, NodeList, syntax_kind_ext, node::NodeArena};
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
-use crate::thin_parser::ThinParserState;
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
+use crate::parser::ParserState;
 
 enum ImportKind {
     Named(String),
@@ -74,8 +74,8 @@ const INCREMENTAL_MIN_NODE_BUDGET: usize = 4096;
 pub struct ProjectFile {
     file_name: String,
     root: NodeIndex,
-    parser: ThinParserState,
-    binder: ThinBinderState,
+    parser: ParserState,
+    binder: BinderState,
     line_map: LineMap,
     type_interner: TypeInterner,
     type_cache: Option<TypeCache>,
@@ -91,11 +91,11 @@ impl ProjectFile {
 
     /// Parse and bind a single source file with explicit strict mode setting.
     pub fn with_strict(file_name: String, source_text: String, strict: bool) -> Self {
-        let mut parser = ThinParserState::new(file_name.clone(), source_text);
+        let mut parser = ParserState::new(file_name.clone(), source_text);
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(parser.get_source_text());
@@ -123,13 +123,13 @@ impl ProjectFile {
         self.root
     }
 
-    /// Arena containing parsed ThinNodes.
-    pub fn arena(&self) -> &ThinNodeArena {
+    /// Arena containing parsed Nodes.
+    pub fn arena(&self) -> &NodeArena {
         self.parser.get_arena()
     }
 
     /// Binder state for symbol lookup.
-    pub fn binder(&self) -> &ThinBinderState {
+    pub fn binder(&self) -> &BinderState {
         &self.binder
     }
 
@@ -449,7 +449,7 @@ impl ProjectFile {
         };
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
-            ThinCheckerState::with_cache(
+            CheckerState::with_cache(
                 self.parser.get_arena(),
                 &self.binder,
                 &self.type_interner,
@@ -458,7 +458,7 @@ impl ProjectFile {
                 compiler_options,
             )
         } else {
-            ThinCheckerState::new(
+            CheckerState::new(
                 self.parser.get_arena(),
                 &self.binder,
                 &self.type_interner,
@@ -2850,7 +2850,7 @@ impl Project {
         Some((node_idx, text))
     }
 
-    fn is_member_access_node(&self, arena: &ThinNodeArena, node_idx: NodeIndex) -> bool {
+    fn is_member_access_node(&self, arena: &NodeArena, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
         while !current.is_none() {
             let Some(node) = arena.get(current) else {

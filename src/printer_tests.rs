@@ -1,7 +1,7 @@
-//! Tests for thin_printer module
+//! Tests for printer module
 
-use crate::thin_parser::ThinParserState;
-use crate::thin_printer::{
+use crate::parser::ParserState;
+use crate::printer::{
     PrintOptions, Printer, StreamingPrinter, lower_and_print, print_to_string,
     print_with_source_map, safe_slice,
 };
@@ -13,7 +13,7 @@ use crate::thin_printer::{
 #[test]
 fn test_print_to_string_basic() {
     let source = "const x = 42;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
@@ -23,7 +23,7 @@ fn test_print_to_string_basic() {
 #[test]
 fn test_print_to_string_function() {
     let source = "function add(a: number, b: number): number { return a + b; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
@@ -36,7 +36,7 @@ fn test_print_to_string_function() {
 #[test]
 fn test_print_to_string_class() {
     let source = "class Foo { constructor() {} }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
@@ -51,7 +51,7 @@ fn test_print_to_string_class() {
 #[test]
 fn test_lower_and_print_es5_class() {
     let source = "class Foo { constructor() {} }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let result = lower_and_print(&parser.arena, root, PrintOptions::es5());
@@ -66,7 +66,7 @@ fn test_lower_and_print_es5_class() {
 #[test]
 fn test_lower_and_print_es5_arrow() {
     let source = "const fn = (x) => x * 2;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let result = lower_and_print(&parser.arena, root, PrintOptions::es5());
@@ -78,7 +78,7 @@ fn test_lower_and_print_es5_arrow() {
 #[test]
 fn test_lower_and_print_es5_let_const() {
     let source = "let x = 1; const y = 2;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let result = lower_and_print(&parser.arena, root, PrintOptions::es5());
@@ -94,7 +94,7 @@ fn test_lower_and_print_es5_let_const() {
 #[test]
 fn test_print_with_source_map() {
     let source = "const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrintOptions::default();
@@ -120,7 +120,7 @@ fn test_print_with_source_map() {
 #[test]
 fn test_printer_struct() {
     let source = "const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = Printer::new(&parser.arena, PrintOptions::default());
@@ -259,7 +259,7 @@ fn test_print_options_es5() {
     let opts = PrintOptions::es5();
     assert!(matches!(
         opts.target,
-        crate::thin_emitter::ScriptTarget::ES5
+        crate::emitter::ScriptTarget::ES5
     ));
 }
 
@@ -268,7 +268,7 @@ fn test_print_options_es6() {
     let opts = PrintOptions::es6();
     assert!(matches!(
         opts.target,
-        crate::thin_emitter::ScriptTarget::ES2015
+        crate::emitter::ScriptTarget::ES2015
     ));
 }
 
@@ -277,7 +277,7 @@ fn test_print_options_commonjs() {
     let opts = PrintOptions::commonjs();
     assert!(matches!(
         opts.module,
-        crate::thin_emitter::ModuleKind::CommonJS
+        crate::emitter::ModuleKind::CommonJS
     ));
 }
 
@@ -286,11 +286,11 @@ fn test_print_options_es5_commonjs() {
     let opts = PrintOptions::es5_commonjs();
     assert!(matches!(
         opts.target,
-        crate::thin_emitter::ScriptTarget::ES5
+        crate::emitter::ScriptTarget::ES5
     ));
     assert!(matches!(
         opts.module,
-        crate::thin_emitter::ModuleKind::CommonJS
+        crate::emitter::ModuleKind::CommonJS
     ));
 }
 
@@ -309,7 +309,7 @@ class Calculator {
 const calc = new Calculator();
 "#;
 
-    let mut parser = ThinParserState::new("calc.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("calc.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     // Test ES6+ output
@@ -335,7 +335,7 @@ fn test_emit_produces_valid_javascript() {
     // Simple variable declaration
     {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
         assert!(output.contains("let x = 1"), "Output: {}", output);
@@ -344,7 +344,7 @@ fn test_emit_produces_valid_javascript() {
     // Function with types stripped
     {
         let source = "function greet(name: string): string { return 'Hello, ' + name; }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
         assert!(
@@ -362,7 +362,7 @@ fn test_emit_produces_valid_javascript() {
     // Class
     {
         let source = "class Foo { x: number = 1; }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
         assert!(output.contains("class Foo"), "Output: {}", output);

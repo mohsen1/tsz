@@ -56,12 +56,12 @@
 //! }); };
 //! ```
 
-use crate::parser::thin_node::{ThinNode, ThinNodeArena};
+use crate::parser::node::{Node, NodeArena};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::source_map::Mapping;
 use crate::source_writer::source_position_from_offset;
-use crate::thin_emitter::ThinPrinter;
+use crate::emitter::Printer;
 use crate::transform_context::{TransformContext, TransformDirective};
 use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::emit_utils;
@@ -104,7 +104,7 @@ impl AsyncTransformState {
 
 /// Async ES5 emitter for transforming async functions
 pub struct AsyncES5Emitter<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     output: String,
     indent_level: u32,
     source_text: Option<&'a str>,
@@ -121,7 +121,7 @@ pub struct AsyncES5Emitter<'a> {
 }
 
 impl<'a> AsyncES5Emitter<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             output: String::with_capacity(1024),
@@ -171,7 +171,7 @@ impl<'a> AsyncES5Emitter<'a> {
         self.column = 0;
     }
 
-    fn record_mapping(&mut self, node: &ThinNode) {
+    fn record_mapping(&mut self, node: &Node) {
         let Some(text) = self.source_text else {
             return;
         };
@@ -777,7 +777,7 @@ impl<'a> AsyncES5Emitter<'a> {
         }
     }
 
-    fn emit_variable_statement_async(&mut self, stmt_node: &crate::parser::thin_node::ThinNode) {
+    fn emit_variable_statement_async(&mut self, stmt_node: &crate::parser::node::Node) {
         let Some(var_data) = self.arena.get_variable(stmt_node) else {
             return;
         };
@@ -1047,7 +1047,7 @@ impl<'a> AsyncES5Emitter<'a> {
                             captures_this,
                         },
                     );
-                    let mut printer = ThinPrinter::with_transforms(self.arena, transforms);
+                    let mut printer = Printer::with_transforms(self.arena, transforms);
                     printer.set_target_es5(true);
                     printer.emit(idx);
                     self.write(printer.get_output());

@@ -6,8 +6,8 @@ use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
-use crate::thin_binder::ThinBinderState;
+use crate::parser::node::NodeArena;
+use crate::binder::BinderState;
 
 /// Go-to-Definition provider.
 ///
@@ -17,8 +17,8 @@ use crate::thin_binder::ThinBinderState;
 /// 3. Resolving the node to a symbol
 /// 4. Returning the symbol's declaration locations
 pub struct GoToDefinition<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     file_name: String,
     source_text: &'a str,
@@ -27,8 +27,8 @@ pub struct GoToDefinition<'a> {
 impl<'a> GoToDefinition<'a> {
     /// Create a new Go-to-Definition provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         file_name: String,
         source_text: &'a str,
@@ -193,19 +193,19 @@ impl<'a> GoToDefinition<'a> {
 mod definition_tests {
     use super::*;
     use crate::lsp::position::LineMap;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_goto_definition_simple_variable() {
         // const x = 1;
         // x + 1;
         let source = "const x = 1;\nx + 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -233,11 +233,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_type_reference() {
         let source = "type Foo = { value: string };\nconst x: Foo = { value: \"\" };";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -265,11 +265,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_binding_pattern() {
         let source = "const { foo } = obj;\nfoo;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -297,11 +297,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_parameter_binding_pattern() {
         let source = "function demo({ foo }: { foo: number }) {\n  return foo;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -329,11 +329,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_class_method_local() {
         let source = "class Foo {\n  method() {\n    const value = 1;\n    return value;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -361,11 +361,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_class_method_name() {
         let source = "class Foo {\n  method() {}\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -393,11 +393,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_class_member_not_in_scope() {
         let source = "class Foo {\n  value = 1;\n  method() {\n    return value;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -418,11 +418,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_class_self_reference() {
         let source = "class Foo {\n  method() {\n    return Foo;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -450,11 +450,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_class_expression_name() {
         let source = "const Foo = class Bar {\n  method() {\n    return Bar;\n  }\n};";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -483,11 +483,11 @@ mod definition_tests {
     fn test_goto_definition_nested_arrow_in_conditional() {
         let source =
             "const handler = cond ? (() => {\n  const value = 1;\n  return value;\n}) : null;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -512,11 +512,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_nested_arrow_in_if_condition() {
         let source = "if ((() => {\n  const value = 1;\n  return value;\n})()) {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -544,11 +544,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_nested_arrow_in_while_condition() {
         let source = "while ((() => {\n  const value = 1;\n  return value;\n})()) {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -576,11 +576,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_nested_arrow_in_for_of_expression() {
         let source = "for (const item of (() => {\n  const value = 1;\n  return value;\n})()) {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -608,11 +608,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_export_default_expression() {
         let source = "export default (() => {\n  const value = 1;\n  return value;\n})();";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -640,11 +640,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_labeled_statement_local() {
         let source = "label: {\n  const value = 1;\n  value;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -672,11 +672,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_with_statement_local() {
         let source = "with (obj) {\n  const value = 1;\n  value;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -704,11 +704,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_var_hoisted_in_nested_block() {
         let source = "function demo() {\n  value;\n  if (cond) {\n    var value = 1;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -736,11 +736,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_decorator_reference() {
         let source = "const deco = () => {};\n@deco\nclass Foo {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -765,11 +765,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_decorator_argument_local() {
         let source = "const deco = (cb) => cb();\n@deco(() => {\n  const value = 1;\n  return value;\n})\nclass Foo {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -797,11 +797,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_nested_arrow_in_object_literal() {
         let source = "const holder = { run: () => {\n  const value = 1;\n  return value;\n} };";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -829,11 +829,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_class_static_block_local() {
         let source = "class Foo {\n  static {\n    const value = 1;\n    value;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -858,11 +858,11 @@ mod definition_tests {
     #[test]
     fn test_goto_definition_not_found() {
         let source = "const x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);

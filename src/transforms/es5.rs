@@ -25,7 +25,7 @@
 //! ```
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
@@ -35,7 +35,7 @@ use crate::transforms::private_fields_es5::{
 
 /// ES5 Class Transformer - produces IR nodes for ES5 class lowering
 pub struct ES5ClassTransformer<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     /// Current class name (for WeakMap naming)
     class_name: String,
     /// Whether we're using _this capture
@@ -45,7 +45,7 @@ pub struct ES5ClassTransformer<'a> {
 }
 
 impl<'a> ES5ClassTransformer<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             class_name: String::new(),
@@ -164,7 +164,7 @@ impl<'a> ES5ClassTransformer<'a> {
     fn transform_constructor(
         &mut self,
         class_name: &str,
-        class_data: &crate::parser::thin_node::ClassData,
+        class_data: &crate::parser::node::ClassData,
         has_extends: bool,
     ) -> IRNode {
         // Collect instance property initializers
@@ -368,7 +368,7 @@ impl<'a> ES5ClassTransformer<'a> {
     fn transform_methods(
         &mut self,
         class_name: &str,
-        class_data: &crate::parser::thin_node::ClassData,
+        class_data: &crate::parser::node::ClassData,
     ) -> Vec<IRNode> {
         let mut nodes = Vec::new();
 
@@ -411,7 +411,7 @@ impl<'a> ES5ClassTransformer<'a> {
     fn transform_static_members(
         &mut self,
         class_name: &str,
-        class_data: &crate::parser::thin_node::ClassData,
+        class_data: &crate::parser::node::ClassData,
     ) -> Vec<IRNode> {
         let mut nodes = Vec::new();
 
@@ -768,7 +768,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
 /// ES5 Async Transformer - produces IR nodes for async/await lowering
 pub struct ES5AsyncTransformer<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     /// Label counter for generator state machine
     label_counter: u32,
     /// Whether we're using _this capture
@@ -778,7 +778,7 @@ pub struct ES5AsyncTransformer<'a> {
 }
 
 impl<'a> ES5AsyncTransformer<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             label_counter: 0,
@@ -1274,14 +1274,14 @@ mod tests {
     fn test_es5_class_transformer_basic() {
         // This would need actual AST nodes to test properly
         // For now, just verify the transformer compiles
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let mut transformer = ES5ClassTransformer::new(&arena);
         assert!(transformer.transform_class(NodeIndex::NONE).is_none());
     }
 
     #[test]
     fn test_es5_async_transformer_basic() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let transformer = ES5AsyncTransformer::new(&arena);
         assert!(!transformer.body_contains_await(NodeIndex::NONE));
     }

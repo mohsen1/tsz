@@ -13,10 +13,10 @@
 
 use crate::binder::{Symbol, symbol_flags};
 use crate::lsp::position::LineMap;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 
 /// LSP Semantic Token Types (mapped to indices 0-N).
 /// These match the standard LSP semantic token types.
@@ -122,8 +122,8 @@ impl Default for SemanticTokensBuilder {
 
 /// Provider for Semantic Tokens.
 pub struct SemanticTokensProvider<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     source_text: &'a str,
     builder: SemanticTokensBuilder,
@@ -133,8 +133,8 @@ pub struct SemanticTokensProvider<'a> {
 impl<'a> SemanticTokensProvider<'a> {
     /// Create a new semantic tokens provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         source_text: &'a str,
     ) -> Self {
@@ -679,17 +679,17 @@ impl<'a> SemanticTokensProvider<'a> {
 #[cfg(test)]
 mod semantic_tokens_tests {
     use super::*;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_semantic_tokens_basic() {
         let source = "const x = 1;\nfunction foo() {}\nclass Bar {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -711,11 +711,11 @@ mod semantic_tokens_tests {
     #[test]
     fn test_semantic_tokens_function() {
         let source = "function myFunc() {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -739,11 +739,11 @@ mod semantic_tokens_tests {
     #[test]
     fn test_semantic_tokens_class() {
         let source = "class MyClass {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -761,11 +761,11 @@ mod semantic_tokens_tests {
     #[test]
     fn test_semantic_tokens_delta_encoding() {
         let source = "const a = 1;\nconst b = 2;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);

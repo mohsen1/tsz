@@ -11,13 +11,14 @@
 //! - This design allows efficient serialization to/from JavaScript
 //!
 //! PERFORMANCE NOTES:
-//! - The `thin_node` module provides a cache-optimized 16-byte node representation
+//! - The `node` module provides a cache-optimized 16-byte node representation
 //! - Current `Node` enum is 208 bytes (0.31 nodes/cache-line)
-//! - ThinNode is 16 bytes (4 nodes/cache-line) - 13x better cache locality
+//! - Node is 16 bytes (4 nodes/cache-line) - 13x better cache locality
 
 pub mod base;
 pub mod flags;
-pub mod thin_node;
+pub mod node;
+pub mod state;
 
 #[cfg(test)]
 mod tests;
@@ -28,8 +29,11 @@ pub use flags::{modifier_flags, node_flags, transform_flags};
 // Re-export base types used throughout the thin pipeline
 pub use base::{NodeIndex, NodeList, TextRange};
 
-// Legacy fat AST has been removed; ThinNodeArena is the only AST representation.
-pub use thin_node::ThinNodeArena;
+// Legacy fat AST has been removed; NodeArena is the only AST representation.
+pub use node::NodeArena;
+
+// Parser implementation (NodeArena-based).
+pub use state::{ParseDiagnostic, ParserState};
 
 /// Extended SyntaxKind values for AST nodes that are not tokens.
 /// These match TypeScript's SyntaxKind enum values exactly.

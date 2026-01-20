@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use crate::thin_emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

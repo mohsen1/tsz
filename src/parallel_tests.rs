@@ -85,7 +85,7 @@ fn test_large_batch_parsing() {
 
     assert_eq!(results.len(), 100);
     assert_eq!(stats.file_count, 100);
-    // Note: ThinParser may produce parse errors for some constructs
+    // Note: Parser may produce parse errors for some constructs
     // The key test is that parallel parsing works correctly
     // assert_eq!(stats.error_count, 0);
 

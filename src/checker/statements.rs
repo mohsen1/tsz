@@ -1,7 +1,7 @@
 //! Statement Type Checking
 //!
 //! Handles control flow statements and dispatches declarations.
-//! This module separates statement checking logic from the monolithic ThinCheckerState.
+//! This module separates statement checking logic from the monolithic CheckerState.
 
 use super::context::CheckerContext;
 use crate::parser::NodeIndex;
@@ -24,7 +24,7 @@ impl<'a, 'ctx> StatementChecker<'a, 'ctx> {
     /// Check a statement node.
     ///
     /// This dispatches to specialized handlers based on statement kind.
-    /// Currently a skeleton - logic will be migrated incrementally from ThinCheckerState.
+    /// Currently a skeleton - logic will be migrated incrementally from CheckerState.
     pub fn check(&mut self, stmt_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -63,7 +63,7 @@ impl<'a, 'ctx> StatementChecker<'a, 'ctx> {
         }
     }
 
-    // Note: fallthrough analysis has been moved to ThinCheckerState in thin_checker.rs
+    // Note: fallthrough analysis has been moved to CheckerState in checker/state.rs
     // These methods were delegating to control_flow module but that module has been refactored.
 
     /// Check a block statement.
@@ -131,19 +131,19 @@ impl<'a, 'ctx> StatementChecker<'a, 'ctx> {
 
     /// Check a return statement.
     fn check_return_statement(&mut self, _stmt_idx: NodeIndex) {
-        // Return type checking is handled by ThinCheckerState for now
+        // Return type checking is handled by CheckerState for now
         // Will be migrated incrementally
     }
 
     /// Check a switch statement.
     fn check_switch_statement(&mut self, _stmt_idx: NodeIndex) {
-        // Switch statement checking is handled by ThinCheckerState for now
+        // Switch statement checking is handled by CheckerState for now
         // Will be migrated when the arena provides get_switch_statement
     }
 
     /// Check a try statement.
     fn check_try_statement(&mut self, _stmt_idx: NodeIndex) {
-        // Try statement checking is handled by ThinCheckerState for now
+        // Try statement checking is handled by CheckerState for now
         // Will be migrated when the arena provides get_try_statement
     }
 
@@ -158,16 +158,16 @@ impl<'a, 'ctx> StatementChecker<'a, 'ctx> {
 mod tests {
     use super::*;
     use crate::solver::TypeInterner;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_statement_checker_block() {
         let source = "{ let x = 1; }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();

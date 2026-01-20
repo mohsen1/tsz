@@ -24,18 +24,16 @@ mod scanner_impl_tests;
 // Parser AST types (Phase 3)
 pub mod parser;
 
-// ThinParser - Cache-optimized parser using ThinNodeArena (Phase 0.1)
-pub mod thin_parser;
+// Parser - Cache-optimized parser using NodeArena (Phase 0.1)
 #[cfg(test)]
-mod thin_parser_tests;
+mod parser_state_tests;
 
 // Binder types and implementation (Phase 4)
 pub mod binder;
 
-// ThinBinder - Binder using ThinNodeArena (Phase 0.1)
-pub mod thin_binder;
+// BinderState - Binder using NodeArena (Phase 0.1)
 #[cfg(test)]
-mod thin_binder_tests;
+mod binder_state_tests;
 
 // Module Resolution Debugging - Logging for symbol table operations and scope lookups
 pub mod module_resolution_debug;
@@ -46,28 +44,27 @@ pub mod lib_loader;
 // Checker types and implementation (Phase 5)
 pub mod checker;
 
-// ThinChecker - Type checker using ThinNodeArena (Phase 0.1)
-pub mod thin_checker;
 #[cfg(test)]
-mod thin_checker_tests;
+mod checker_state_tests;
+pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 
-// ThinEmitter - Emitter using ThinNodeArena (Phase 0.1)
+// Emitter - Emitter using NodeArena (Phase 0.1)
 #[cfg(test)]
 mod emitter_edge_case_tests;
 #[cfg(test)]
 mod emitter_parity_tests;
 #[cfg(test)]
 mod emitter_transform_integration_tests;
-pub mod thin_emitter;
+pub mod emitter;
 #[cfg(test)]
-mod thin_emitter_tests;
+mod emitter_tests;
 #[cfg(test)]
 mod transform_api_tests;
 
-// ThinPrinter - Clean, safe AST-to-JavaScript printer
-pub mod thin_printer;
+// Printer - Clean, safe AST-to-JavaScript printer
+pub mod printer;
 #[cfg(test)]
-mod thin_printer_tests;
+mod printer_tests;
 
 // Span - Source location tracking (byte offsets)
 pub mod span;
@@ -167,7 +164,7 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 }
 
 // =============================================================================
-// ThinParser WASM Interface (High-Performance Parser)
+// Parser WASM Interface (High-Performance Parser)
 // =============================================================================
 
 use crate::checker::context::LibContext;
@@ -183,10 +180,9 @@ use crate::lsp::{
     SemanticTokensProvider, SignatureHelpProvider,
 };
 use crate::solver::TypeInterner;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
-use crate::thin_emitter::{ModuleKind, PrinterOptions, ScriptTarget, ThinPrinter};
-use crate::thin_parser::ThinParserState;
+use crate::binder::BinderState;
+use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget, Printer};
+use crate::parser::ParserState;
 use crate::transform_context::TransformContext;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -437,13 +433,13 @@ impl WasmTransformContext {
     }
 }
 
-/// High-performance parser using ThinNode architecture (16 bytes/node).
+/// High-performance parser using Node architecture (16 bytes/node).
 /// This is the optimized path for Phase 8 test suite evaluation.
 #[wasm_bindgen]
-pub struct ThinParser {
-    parser: ThinParserState,
+pub struct Parser {
+    parser: ParserState,
     source_file_idx: Option<parser::NodeIndex>,
-    binder: Option<ThinBinderState>,
+    binder: Option<BinderState>,
     /// Local type interner for single-file checking.
     /// For multi-file compilation, use MergedProgram.type_interner instead.
     type_interner: TypeInterner,
@@ -462,12 +458,12 @@ pub struct ThinParser {
 }
 
 #[wasm_bindgen]
-impl ThinParser {
-    /// Create a new ThinParser for the given source file.
+impl Parser {
+    /// Create a new Parser for the given source file.
     #[wasm_bindgen(constructor)]
-    pub fn new(file_name: String, source_text: String) -> ThinParser {
-        ThinParser {
-            parser: ThinParserState::new(file_name, source_text),
+    pub fn new(file_name: String, source_text: String) -> Parser {
+        Parser {
+            parser: ParserState::new(file_name, source_text),
             source_file_idx: None,
             binder: None,
             type_interner: TypeInterner::new(),
@@ -486,7 +482,7 @@ impl ThinParser {
     ///
     /// # Example
     /// ```javascript
-    /// const parser = new ThinParser("file.ts", "const x = 1;");
+    /// const parser = new Parser("file.ts", "const x = 1;");
     /// parser.setCompilerOptions(JSON.stringify({
     ///   strict: true,
     ///   noImplicitAny: true,
@@ -514,10 +510,10 @@ impl ThinParser {
     /// available during binding and type checking.
     #[wasm_bindgen(js_name = addLibFile)]
     pub fn add_lib_file(&mut self, file_name: String, source_text: String) {
-        let mut lib_parser = ThinParserState::new(file_name.clone(), source_text);
+        let mut lib_parser = ParserState::new(file_name.clone(), source_text);
         let source_file_idx = lib_parser.parse_source_file();
 
-        let mut lib_binder = ThinBinderState::new();
+        let mut lib_binder = BinderState::new();
         lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
         // Wrap in Arc for sharing with LibContext during type checking
@@ -576,16 +572,16 @@ impl ThinParser {
     #[wasm_bindgen(js_name = bindSourceFile)]
     pub fn bind_source_file(&mut self) -> String {
         if let Some(root_idx) = self.source_file_idx {
-            let mut binder = ThinBinderState::new();
+            let mut binder = BinderState::new();
             // Use bind_source_file_with_libs to merge lib symbols into the binder
             binder.bind_source_file_with_libs(self.parser.get_arena(), root_idx, &self.lib_files);
 
             // Inject lib file symbols for global type resolution (console, Array, Promise, etc.)
             if !self.lib_files.is_empty() {
-                let lib_contexts: Vec<thin_binder::LibContext> = self
+                let lib_contexts: Vec<crate::binder::LibContext> = self
                     .lib_files
                     .iter()
-                    .map(|lib| thin_binder::LibContext {
+                    .map(|lib| crate::binder::LibContext {
                         arena: Arc::clone(&lib.arena),
                         binder: Arc::clone(&lib.binder),
                     })
@@ -629,7 +625,7 @@ impl ThinParser {
             // Get compiler options
             let checker_options = self.compiler_options.to_checker_options();
             let mut checker = if let Some(cache) = self.type_cache.take() {
-                ThinCheckerState::with_cache_and_options(
+                CheckerState::with_cache_and_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
@@ -638,7 +634,7 @@ impl ThinParser {
                     &checker_options,
                 )
             } else {
-                ThinCheckerState::with_options(
+                CheckerState::with_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
@@ -700,7 +696,7 @@ impl ThinParser {
             // Get compiler options
             let checker_options = self.compiler_options.to_checker_options();
             let mut checker = if let Some(cache) = self.type_cache.take() {
-                ThinCheckerState::with_cache_and_options(
+                CheckerState::with_cache_and_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
@@ -709,7 +705,7 @@ impl ThinParser {
                     &checker_options,
                 )
             } else {
-                ThinCheckerState::with_options(
+                CheckerState::with_options(
                     self.parser.get_arena(),
                     binder,
                     &self.type_interner,
@@ -762,7 +758,7 @@ impl ThinParser {
     fn emit_with_context(&self, root_idx: parser::NodeIndex, ctx: EmitContext) -> String {
         let transforms = LoweringPass::new(self.parser.get_arena(), &ctx).run(root_idx);
 
-        let mut printer = ThinPrinter::with_transforms_and_options(
+        let mut printer = Printer::with_transforms_and_options(
             self.parser.get_arena(),
             transforms,
             ctx.options.clone(),
@@ -826,7 +822,7 @@ impl ThinParser {
     pub fn emit_with_transforms(&self, context: &WasmTransformContext) -> String {
         if let Some(root_idx) = self.source_file_idx {
             let mut printer =
-                ThinPrinter::with_transforms(self.parser.get_arena(), context.inner.clone());
+                Printer::with_transforms(self.parser.get_arena(), context.inner.clone());
             printer.set_target_es5(context.target_es5);
             printer.set_module_kind(context.module_kind);
             printer.set_source_text(self.parser.get_source_text());
@@ -1701,7 +1697,7 @@ impl ThinParser {
         let checker_options = self.compiler_options.to_checker_options();
 
         let mut checker = if let Some(cache) = self.type_cache.take() {
-            ThinCheckerState::with_cache_and_options(
+            CheckerState::with_cache_and_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
@@ -1710,7 +1706,7 @@ impl ThinParser {
                 &checker_options,
             )
         } else {
-            ThinCheckerState::with_options(
+            CheckerState::with_options(
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
@@ -1734,11 +1730,11 @@ impl ThinParser {
     }
 }
 
-/// Create a new ThinParser for the given source text.
+/// Create a new Parser for the given source text.
 /// This is the recommended parser for production use.
-#[wasm_bindgen(js_name = createThinParser)]
-pub fn create_thin_parser(file_name: String, source_text: String) -> ThinParser {
-    ThinParser::new(file_name, source_text)
+#[wasm_bindgen(js_name = createParser)]
+pub fn create_parser(file_name: String, source_text: String) -> Parser {
+    Parser::new(file_name, source_text)
 }
 
 // =============================================================================
@@ -1880,7 +1876,7 @@ impl WasmProgram {
             .iter()
             .filter_map(|(file_name, source_text)| {
                 // Parse lib file
-                let mut lib_parser = ThinParserState::new(file_name.clone(), source_text.clone());
+                let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
                 let source_file_idx = lib_parser.parse_source_file();
 
                 if !lib_parser.get_diagnostics().is_empty() {
@@ -1888,7 +1884,7 @@ impl WasmProgram {
                     return None;
                 }
 
-                let mut lib_binder = ThinBinderState::new();
+                let mut lib_binder = BinderState::new();
                 lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
                 let arena = Arc::new(lib_parser.into_arena());
@@ -1997,7 +1993,7 @@ impl WasmProgram {
             .iter()
             .filter_map(|(file_name, source_text)| {
                 // Parse lib file
-                let mut lib_parser = ThinParserState::new(file_name.clone(), source_text.clone());
+                let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
                 let source_file_idx = lib_parser.parse_source_file();
 
                 if !lib_parser.get_diagnostics().is_empty() {
@@ -2005,7 +2001,7 @@ impl WasmProgram {
                     return None;
                 }
 
-                let mut lib_binder = ThinBinderState::new();
+                let mut lib_binder = BinderState::new();
                 lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
                 let arena = Arc::new(lib_parser.into_arena());
@@ -2069,7 +2065,7 @@ impl WasmProgram {
             .iter()
             .filter_map(|(file_name, source_text)| {
                 // Parse lib file
-                let mut lib_parser = ThinParserState::new(file_name.clone(), source_text.clone());
+                let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
                 let source_file_idx = lib_parser.parse_source_file();
 
                 if !lib_parser.get_diagnostics().is_empty() {
@@ -2077,7 +2073,7 @@ impl WasmProgram {
                     return None;
                 }
 
-                let mut lib_binder = ThinBinderState::new();
+                let mut lib_binder = BinderState::new();
                 lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
                 let arena = Arc::new(lib_parser.into_arena());

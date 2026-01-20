@@ -198,7 +198,7 @@ ResolvedCompilerOptions (src/cli/config.rs)
     ↓
 CheckerContext (src/checker/context.rs)
     ↓
-ThinCheckerState (src/thin_checker.rs)
+CheckerState (src/checker/state.rs)
 ```
 
 ### Configuration Structures
@@ -251,8 +251,8 @@ Located in `src/checker/context.rs`:
 
 ```rust
 pub struct CheckerContext<'a> {
-    pub arena: &'a ThinNodeArena,
-    pub binder: &'a ThinBinderState,
+    pub arena: &'a NodeArena,
+    pub binder: &'a BinderState,
     pub types: &'a TypeInterner,
     pub file_name: String,
 
@@ -319,7 +319,7 @@ pub fn resolve_compiler_options(
 │     └─> Build CompilerOptions object                            │
 │     ↓                                                            │
 │  3. Create compiler instance                                    │
-│     const parser = new ThinParser(fileName, code)               │
+│     const parser = new Parser(fileName, code)               │
 │     ↓                                                            │
 │  4. Configure compiler with directives                          │
 │     parser.setCompilerOptions(JSON.stringify(options))          │
@@ -342,7 +342,7 @@ pub fn resolve_compiler_options(
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │                        WASM BOUNDARY                             │
-│                   (ThinParser public API)                        │
+│                     (Parser public API)                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  setCompilerOptions(json: String)                               │
@@ -356,10 +356,10 @@ pub fn resolve_compiler_options(
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │                      SOURCE CODE                                 │
-│                   (src/thin_checker.rs)                          │
+│                 (src/checker/state.rs)                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ThinCheckerState::new(                                         │
+│  CheckerState::new(                                              │
 │    arena,                                                        │
 │    binder,                                                       │
 │    type_interner,                                               │
@@ -394,8 +394,8 @@ When `strict: true` is set, the following flags are enabled:
 // From src/checker/context.rs
 impl<'a> CheckerContext<'a> {
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         strict: bool,  // Single strict flag controls all below
@@ -451,9 +451,10 @@ function bar(x: string | null) {
 When creating a checker in Rust tests:
 
 ```rust
-use crate::thin_checker::ThinCheckerState;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_parser::ThinParserState;
+use crate::checker::CheckerState;
+use crate::binder::BinderState;
+use crate::parser::ParserState;
+use crate::checker::context::CheckerOptions;
 use crate::solver::TypeInterner;
 
 #[test]
@@ -464,24 +465,26 @@ function foo(x) {
 }
 "#;
 
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         source.to_string()
     );
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
 
     // Create checker with strict mode ENABLED
-    let mut checker = ThinCheckerState::new(
+    let checker_options = CheckerOptions { strict: true, ..Default::default() }
+        .apply_strict_defaults();
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         "test.ts".to_string(),
-        true  // strict = true enables all strict checks
+        checker_options,
     );
 
     checker.check_source_file(root);
@@ -540,7 +543,7 @@ function add(x, y) {
 **How it works:**
 1. Test runner parses `@strict: true`
 2. Creates `CompilerOptions { strict: true, ... }`
-3. Passes to `ThinParser.setCompilerOptions(...)`
+3. Passes to `Parser.setCompilerOptions(...)`
 4. Checker enables all strict checks
 5. Emits TS7006 for implicit any
 
@@ -605,7 +608,7 @@ document.getElementById('app');
 **How it works:**
 1. Test runner parses `@lib: es2015,dom`
 2. Loads `lib.es2015.d.ts` and `lib.dom.d.ts`
-3. Calls `ThinParser.addLibFile(...)` for each
+3. Calls `Parser.addLibFile(...)` for each
 4. Checker has access to `Promise` and `document` types
 
 ---
@@ -648,7 +651,7 @@ In the test infrastructure:
 
 ```rust
 // Create checker with explicit strict flag
-let mut checker = ThinCheckerState::new(
+let mut checker = CheckerState::new(
     arena,
     binder,
     types,
@@ -678,7 +681,7 @@ async function runTest(testFile) {
   const code = readFileSync(testFile);
   const { options, files } = parseTestDirectives(code);
 
-  const parser = new ThinParser(testFile, code);
+  const parser = new Parser(testFile, code);
   parser.setCompilerOptions(JSON.stringify(options));
 
   // Run checker with configured options
@@ -691,7 +694,7 @@ async function runTest(testFile) {
 **WRONG: Source Code**
 
 ```rust
-// BAD - DO NOT DO THIS in src/thin_checker.rs
+// BAD - DO NOT DO THIS in src/checker/state.rs
 
 fn check_source_file(&mut self, root: NodeIndex) {
     // WRONG: Checking file name to change behavior
@@ -713,7 +716,7 @@ fn check_source_file(&mut self, root: NodeIndex) {
 ```rust
 // Public API in src/lib.rs (already implemented, lines 330-338)
 
-impl ThinParser {
+impl Parser {
     #[wasm_bindgen(js_name = setCompilerOptions)]
     pub fn set_compiler_options(&mut self, json: String) -> Result<(), JsValue> {
         let options: CompilerOptions = serde_json::from_str(&json)?;
@@ -728,7 +731,7 @@ let compiler_options = self.compiler_options
     .map(|opts| opts.to_checker_options())
     .unwrap_or_default();
 
-let checker = ThinCheckerState::new(
+let checker = CheckerState::new(
     arena,
     binder,
     type_interner,
@@ -748,7 +751,7 @@ parser.setCompilerOptions(JSON.stringify(options));
 
 **Before (BAD):**
 ```rust
-// In src/thin_checker.rs
+// In src/checker/state.rs
 let is_test = file_name.contains("conformance")
     || file_name.contains("test");
 
@@ -760,7 +763,7 @@ if is_test && file_name.contains("strict") {
 
 **After (GOOD):**
 ```rust
-// In src/thin_checker.rs
+// In src/checker/state.rs
 // NO file name checks!
 // Behavior controlled by self.options.strict
 
@@ -800,7 +803,7 @@ const result = processUser({ name: "Alice" });
 3. Creates `CompilerOptions { strict: Some(true), target: Some("es2015"), ... }`
 4. Resolves to `ResolvedCompilerOptions` with `checker.strict = true`
 5. Creates `CheckerContext` with all strict flags enabled
-6. `ThinCheckerState` performs type checking with strict mode
+6. `CheckerState` performs type checking with strict mode
 7. Produces TS7006 diagnostic for implicit 'any' parameter
 
 ### Multi-File Test
@@ -866,7 +869,7 @@ greet({ name: "Bob" });  // TS2345: Missing 'age' property
                               ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                        WASM Public API                         │
-│                      (ThinParser struct)                       │
+│                      (Parser struct)                       │
 ├───────────────────────────────────────────────────────────────┤
 │                                                                │
 │  Responsibilities:                                             │
@@ -887,7 +890,7 @@ greet({ name: "Bob" });  // TS2345: Missing 'age' property
                               ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                      Type Checker Core                         │
-│                  (ThinCheckerState, solver)                    │
+│                  (CheckerState, solver)                    │
 ├───────────────────────────────────────────────────────────────┤
 │                                                                │
 │  Responsibilities:                                             │

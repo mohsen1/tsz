@@ -1,12 +1,12 @@
 //! Debug ASI parsing
 #[cfg(test)]
 mod tests {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn debug_function_missing_paren() {
         let source = r#"function f( { }"#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         parser.parse_source_file();
 
         let diagnostics = parser.get_diagnostics();

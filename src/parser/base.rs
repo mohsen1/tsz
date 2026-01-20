@@ -1,4 +1,4 @@
-//! Shared parser base types used by both ThinNode and (legacy) AST.
+//! Shared parser base types used by both Node and (legacy) AST.
 //!
 //! These types are part of the "thin pipeline" surface area and should remain
 //! available even if the legacy fat AST is disabled.

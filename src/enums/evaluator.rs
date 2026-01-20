@@ -22,7 +22,7 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;
 
@@ -76,7 +76,7 @@ impl EnumValue {
 
 /// Evaluates enum member values at compile time
 pub struct EnumEvaluator<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     /// Map of enum member names to their evaluated values within current enum
     member_values: FxHashMap<String, EnumValue>,
     /// The current enum name (for self-references like `E.A`)
@@ -85,7 +85,7 @@ pub struct EnumEvaluator<'a> {
 
 impl<'a> EnumEvaluator<'a> {
     /// Create a new enum evaluator
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         EnumEvaluator {
             arena,
             member_values: FxHashMap::default(),
@@ -436,10 +436,10 @@ impl<'a> EnumEvaluator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     fn evaluate_enum(source: &str) -> FxHashMap<String, EnumValue> {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {

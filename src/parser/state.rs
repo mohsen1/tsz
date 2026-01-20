@@ -1,12 +1,12 @@
-//! ThinParser - Cache-optimized parser using ThinNodeArena
+//! Parser - Cache-optimized parser using NodeArena
 //!
-//! This parser uses the ThinNode architecture (16 bytes per node vs 208 bytes)
+//! This parser uses the Node architecture (16 bytes per node vs 208 bytes)
 //! for 13x better cache locality. It produces the same AST semantically
 //! but stored in a more efficient format.
 //!
 //! # Architecture
 //!
-//! - Uses ThinNodeArena instead of NodeArena
+//! - Uses NodeArena instead of NodeArena
 //! - Each node is 16 bytes (vs 208 bytes for fat Node enum)
 
 //! - Node data is stored in separate typed pools
@@ -14,14 +14,14 @@
 
 use crate::parser::{
     NodeIndex, NodeList, node_flags, syntax_kind_ext,
-    thin_node::{
+    node::{
         AccessExprData, BinaryExprData, BlockData, CallExprData, CaseClauseData, CatchClauseData,
         ClassData, ConditionalExprData, EnumData, EnumMemberData, ExportAssignmentData,
         ExportDeclData, ExprStatementData, FunctionData, IdentifierData, IfStatementData,
         ImportClauseData, ImportDeclData, LabeledData, LiteralData, LiteralExprData, LoopData,
         NamedImportsData, ParameterData, ParenthesizedData, QualifiedNameData, ReturnData,
         SourceFileData, SpecifierData, SwitchData, TaggedTemplateData, TemplateExprData,
-        TemplateSpanData, ThinNodeArena, TryData, TypeAssertionData, UnaryExprData,
+        TemplateSpanData, NodeArena, TryData, TypeAssertionData, UnaryExprData,
         UnaryExprDataEx, VariableData, VariableDeclarationData,
     },
 };
@@ -61,18 +61,18 @@ pub(crate) struct IncrementalParseResult {
 }
 
 // =============================================================================
-// ThinParserState
+// ParserState
 // =============================================================================
 
-/// A high-performance parser using ThinNode architecture.
+/// A high-performance parser using Node architecture.
 ///
 /// This parser produces the same AST semantically as ParserState,
-/// but uses the cache-optimized ThinNodeArena for storage.
-pub struct ThinParserState {
+/// but uses the cache-optimized NodeArena for storage.
+pub struct ParserState {
     /// The scanner for tokenizing
     scanner: ScannerState,
-    /// Arena for allocating ThinNodes
-    pub arena: ThinNodeArena,
+    /// Arena for allocating Nodes
+    pub arena: NodeArena,
     /// Source file name
     file_name: String,
     /// Parser context flags
@@ -89,16 +89,16 @@ pub struct ThinParserState {
     last_error_pos: u32,
 }
 
-impl ThinParserState {
-    /// Create a new ThinParser for the given source text.
-    pub fn new(file_name: String, source_text: String) -> ThinParserState {
+impl ParserState {
+    /// Create a new Parser for the given source text.
+    pub fn new(file_name: String, source_text: String) -> ParserState {
         let estimated_nodes = source_text.len() / 20; // Rough estimate
         // Zero-copy: Pass source_text directly to scanner without cloning
         // This eliminates the 2x memory overhead from duplicating the source
         let scanner = ScannerState::new(source_text, true);
-        ThinParserState {
+        ParserState {
             scanner,
-            arena: ThinNodeArena::with_capacity(estimated_nodes),
+            arena: NodeArena::with_capacity(estimated_nodes),
             file_name,
             context_flags: 0,
             current_token: SyntaxKind::Unknown,
@@ -2245,7 +2245,7 @@ impl ThinParserState {
             syntax_kind_ext::PARAMETER,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ParameterData {
+            crate::parser::node::ParameterData {
                 modifiers,
                 dot_dot_dot_token,
                 name,
@@ -2572,7 +2572,7 @@ impl ThinParserState {
             syntax_kind_ext::DECORATOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::DecoratorData { expression },
+            crate::parser::node::DecoratorData { expression },
         ))
     }
 
@@ -2722,7 +2722,7 @@ impl ThinParserState {
                         syntax_kind_ext::HERITAGE_CLAUSE,
                         start_pos,
                         end_pos,
-                        crate::parser::thin_node::HeritageData {
+                        crate::parser::node::HeritageData {
                             token: SyntaxKind::ExtendsKeyword as u16,
                             types: self.make_node_list(vec![type_ref]),
                         },
@@ -2760,7 +2760,7 @@ impl ThinParserState {
                         syntax_kind_ext::HERITAGE_CLAUSE,
                         start_pos,
                         end_pos,
-                        crate::parser::thin_node::HeritageData {
+                        crate::parser::node::HeritageData {
                             token: SyntaxKind::ImplementsKeyword as u16,
                             types: self.make_node_list(types),
                         },
@@ -2889,7 +2889,7 @@ impl ThinParserState {
                     syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::AccessExprData {
+                    crate::parser::node::AccessExprData {
                         expression: expr,
                         name_or_argument: name,
                         question_dot_token: false,
@@ -2910,7 +2910,7 @@ impl ThinParserState {
                     syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::AccessExprData {
+                    crate::parser::node::AccessExprData {
                         expression: expr,
                         name_or_argument: name,
                         question_dot_token: true,
@@ -2951,7 +2951,7 @@ impl ThinParserState {
                         syntax_kind_ext::CALL_EXPRESSION,
                         start_pos,
                         end_pos,
-                        crate::parser::thin_node::CallExprData {
+                        crate::parser::node::CallExprData {
                             expression: expr,
                             type_arguments: Some(self.make_node_list(type_args)),
                             arguments: Some(self.make_node_list(args)),
@@ -2964,7 +2964,7 @@ impl ThinParserState {
                         syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
                         start_pos,
                         end_pos,
-                        crate::parser::thin_node::ExprWithTypeArgsData {
+                        crate::parser::node::ExprWithTypeArgsData {
                             expression: expr,
                             type_arguments: Some(self.make_node_list(type_args)),
                         },
@@ -2990,7 +2990,7 @@ impl ThinParserState {
                     syntax_kind_ext::CALL_EXPRESSION,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::CallExprData {
+                    crate::parser::node::CallExprData {
                         expression: expr,
                         type_arguments: None,
                         arguments: Some(self.make_node_list(args)),
@@ -3171,7 +3171,7 @@ impl ThinParserState {
             syntax_kind_ext::CONSTRUCTOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ConstructorData {
+            crate::parser::node::ConstructorData {
                 modifiers,
                 type_parameters: None,
                 parameters,
@@ -3234,7 +3234,7 @@ impl ThinParserState {
             syntax_kind_ext::GET_ACCESSOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::AccessorData {
+            crate::parser::node::AccessorData {
                 modifiers,
                 name,
                 type_parameters,
@@ -3304,7 +3304,7 @@ impl ThinParserState {
             syntax_kind_ext::SET_ACCESSOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::AccessorData {
+            crate::parser::node::AccessorData {
                 modifiers,
                 name,
                 type_parameters,
@@ -3551,7 +3551,7 @@ impl ThinParserState {
                 syntax_kind_ext::METHOD_DECLARATION,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::MethodDeclData {
+                crate::parser::node::MethodDeclData {
                     modifiers,
                     asterisk_token,
                     name,
@@ -3581,7 +3581,7 @@ impl ThinParserState {
                 syntax_kind_ext::PROPERTY_DECLARATION,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::PropertyDeclData {
+                crate::parser::node::PropertyDeclData {
                     modifiers,
                     name,
                     question_token,
@@ -3657,7 +3657,7 @@ impl ThinParserState {
             syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::BlockData {
+            crate::parser::node::BlockData {
                 statements,
                 multi_line: true,
             },
@@ -3734,7 +3734,7 @@ impl ThinParserState {
                 syntax_kind_ext::HERITAGE_CLAUSE,
                 clause_start,
                 clause_end,
-                crate::parser::thin_node::HeritageData {
+                crate::parser::node::HeritageData {
                     token: SyntaxKind::ExtendsKeyword as u16,
                     types: self.make_node_list(types),
                 },
@@ -3754,7 +3754,7 @@ impl ThinParserState {
             syntax_kind_ext::INTERFACE_DECLARATION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::InterfaceData {
+            crate::parser::node::InterfaceData {
                 modifiers,
                 name,
                 type_parameters,
@@ -3925,7 +3925,7 @@ impl ThinParserState {
                 syntax_kind_ext::METHOD_SIGNATURE,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::SignatureData {
+                crate::parser::node::SignatureData {
                     modifiers,
                     name,
                     question_token,
@@ -3953,7 +3953,7 @@ impl ThinParserState {
                 syntax_kind_ext::PROPERTY_SIGNATURE,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::SignatureData {
+                crate::parser::node::SignatureData {
                     modifiers,
                     name,
                     question_token,
@@ -3990,7 +3990,7 @@ impl ThinParserState {
             syntax_kind_ext::CALL_SIGNATURE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::SignatureData {
+            crate::parser::node::SignatureData {
                 modifiers: None,
                 name: NodeIndex::NONE,
                 question_token: false,
@@ -4028,7 +4028,7 @@ impl ThinParserState {
             syntax_kind_ext::CONSTRUCT_SIGNATURE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::SignatureData {
+            crate::parser::node::SignatureData {
                 modifiers: None,
                 name: NodeIndex::NONE,
                 question_token: false,
@@ -4090,7 +4090,7 @@ impl ThinParserState {
             syntax_kind_ext::INDEX_SIGNATURE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::IndexSignatureData {
+            crate::parser::node::IndexSignatureData {
                 modifiers,
                 parameters: self.make_node_list(vec![param_node]),
                 type_annotation,
@@ -4127,7 +4127,7 @@ impl ThinParserState {
             syntax_kind_ext::GET_ACCESSOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::AccessorData {
+            crate::parser::node::AccessorData {
                 modifiers: None,
                 name,
                 type_parameters: None,
@@ -4161,7 +4161,7 @@ impl ThinParserState {
             syntax_kind_ext::SET_ACCESSOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::AccessorData {
+            crate::parser::node::AccessorData {
                 modifiers: None,
                 name,
                 type_parameters: None,
@@ -4207,7 +4207,7 @@ impl ThinParserState {
                     syntax_kind_ext::TYPE_ALIAS_DECLARATION,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::TypeAliasData {
+                    crate::parser::node::TypeAliasData {
                         modifiers,
                         name,
                         type_parameters,
@@ -4228,7 +4228,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_ALIAS_DECLARATION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeAliasData {
+            crate::parser::node::TypeAliasData {
                 modifiers,
                 name,
                 type_parameters,
@@ -4483,7 +4483,7 @@ impl ThinParserState {
             syntax_kind_ext::MODULE_DECLARATION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ModuleData {
+            crate::parser::node::ModuleData {
                 modifiers,
                 name,
                 body,
@@ -4566,7 +4566,7 @@ impl ThinParserState {
             syntax_kind_ext::MODULE_DECLARATION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ModuleData {
+            crate::parser::node::ModuleData {
                 modifiers,
                 name,
                 body,
@@ -4607,7 +4607,7 @@ impl ThinParserState {
             syntax_kind_ext::MODULE_DECLARATION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ModuleData {
+            crate::parser::node::ModuleData {
                 modifiers,
                 name,
                 body,
@@ -4654,7 +4654,7 @@ impl ThinParserState {
             syntax_kind_ext::MODULE_BLOCK,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ModuleBlockData {
+            crate::parser::node::ModuleBlockData {
                 statements: Some(statements),
             },
         )
@@ -5567,7 +5567,7 @@ impl ThinParserState {
             syntax_kind_ext::FOR_IN_STATEMENT,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ForInOfData {
+            crate::parser::node::ForInOfData {
                 await_modifier: false,
                 initializer,
                 expression,
@@ -5593,7 +5593,7 @@ impl ThinParserState {
             syntax_kind_ext::FOR_OF_STATEMENT,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ForInOfData {
+            crate::parser::node::ForInOfData {
                 await_modifier,
                 initializer,
                 expression,
@@ -5625,7 +5625,7 @@ impl ThinParserState {
             syntax_kind_ext::BREAK_STATEMENT as u16,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JumpData { label },
+            crate::parser::node::JumpData { label },
         )
     }
 
@@ -5652,7 +5652,7 @@ impl ThinParserState {
             syntax_kind_ext::CONTINUE_STATEMENT as u16,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JumpData { label },
+            crate::parser::node::JumpData { label },
         )
     }
 
@@ -6298,7 +6298,7 @@ impl ThinParserState {
                 syntax_kind_ext::PARAMETER,
                 param_start,
                 param_end,
-                crate::parser::thin_node::ParameterData {
+                crate::parser::node::ParameterData {
                     modifiers: None,
                     dot_dot_dot_token: false,
                     name,
@@ -6412,7 +6412,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_PARAMETER,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeParameterData {
+            crate::parser::node::TypeParameterData {
                 modifiers: None,
                 name,
                 constraint,
@@ -6580,7 +6580,7 @@ impl ThinParserState {
             },
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeAssertionData {
+            crate::parser::node::TypeAssertionData {
                 expression,
                 type_node,
             },
@@ -6652,7 +6652,7 @@ impl ThinParserState {
                             SyntaxKind::Identifier as u16,
                             start_pos,
                             end_pos,
-                            crate::parser::thin_node::IdentifierData {
+                            crate::parser::node::IdentifierData {
                                 escaped_text: String::from("await"),
                                 original_text: None,
                                 type_arguments: None,
@@ -7005,7 +7005,7 @@ impl ThinParserState {
                         syntax_kind_ext::NON_NULL_EXPRESSION,
                         start_pos,
                         end_pos,
-                        crate::parser::thin_node::UnaryExprDataEx {
+                        crate::parser::node::UnaryExprDataEx {
                             expression: expr,
                             asterisk_token: false,
                         },
@@ -7083,7 +7083,7 @@ impl ThinParserState {
                     syntax_kind_ext::SPREAD_ELEMENT,
                     spread_start,
                     spread_end,
-                    crate::parser::thin_node::SpreadData { expression },
+                    crate::parser::node::SpreadData { expression },
                 );
                 args.push(spread);
             } else {
@@ -7282,7 +7282,7 @@ impl ThinParserState {
                     syntax_kind_ext::BINDING_ELEMENT,
                     elem_start,
                     elem_end,
-                    crate::parser::thin_node::BindingElementData {
+                    crate::parser::node::BindingElementData {
                         dot_dot_dot_token: true,
                         property_name: NodeIndex::NONE,
                         name,
@@ -7323,7 +7323,7 @@ impl ThinParserState {
                     syntax_kind_ext::BINDING_ELEMENT,
                     elem_start,
                     elem_end,
-                    crate::parser::thin_node::BindingElementData {
+                    crate::parser::node::BindingElementData {
                         dot_dot_dot_token: false,
                         property_name,
                         name,
@@ -7359,7 +7359,7 @@ impl ThinParserState {
             syntax_kind_ext::OBJECT_BINDING_PATTERN,
             start_pos,
             end_pos,
-            crate::parser::thin_node::BindingPatternData {
+            crate::parser::node::BindingPatternData {
                 elements: self.make_node_list(elements),
             },
         )
@@ -7412,7 +7412,7 @@ impl ThinParserState {
                 syntax_kind_ext::BINDING_ELEMENT,
                 elem_start,
                 elem_end,
-                crate::parser::thin_node::BindingElementData {
+                crate::parser::node::BindingElementData {
                     dot_dot_dot_token: dot_dot_dot,
                     property_name: NodeIndex::NONE,
                     name,
@@ -7432,7 +7432,7 @@ impl ThinParserState {
             syntax_kind_ext::ARRAY_BINDING_PATTERN,
             start_pos,
             end_pos,
-            crate::parser::thin_node::BindingPatternData {
+            crate::parser::node::BindingPatternData {
                 elements: self.make_node_list(elements),
             },
         )
@@ -7622,7 +7622,7 @@ impl ThinParserState {
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::AccessExprData {
+                crate::parser::node::AccessExprData {
                     expression: import_node,
                     question_dot_token: false,
                     name_or_argument: name,
@@ -7662,7 +7662,7 @@ impl ThinParserState {
             syntax_kind_ext::CALL_EXPRESSION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::CallExprData {
+            crate::parser::node::CallExprData {
                 expression: import_keyword,
                 type_arguments: None,
                 arguments: Some(arguments),
@@ -7913,7 +7913,7 @@ impl ThinParserState {
                     syntax_kind_ext::SPREAD_ELEMENT,
                     spread_start,
                     spread_end,
-                    crate::parser::thin_node::SpreadData { expression },
+                    crate::parser::node::SpreadData { expression },
                 );
                 elements.push(spread);
             } else {
@@ -8039,7 +8039,7 @@ impl ThinParserState {
                 syntax_kind_ext::SPREAD_ASSIGNMENT,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::SpreadData { expression },
+                crate::parser::node::SpreadData { expression },
             );
         }
 
@@ -8100,7 +8100,7 @@ impl ThinParserState {
                 syntax_kind_ext::PROPERTY_ASSIGNMENT,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::PropertyAssignmentData {
+                crate::parser::node::PropertyAssignmentData {
                     modifiers: None,
                     name,
                     initializer,
@@ -8134,7 +8134,7 @@ impl ThinParserState {
             syntax_kind_ext::PROPERTY_ASSIGNMENT,
             start_pos,
             end_pos,
-            crate::parser::thin_node::PropertyAssignmentData {
+            crate::parser::node::PropertyAssignmentData {
                 modifiers: None,
                 name,
                 initializer,
@@ -8224,7 +8224,7 @@ impl ThinParserState {
             syntax_kind_ext::GET_ACCESSOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::AccessorData {
+            crate::parser::node::AccessorData {
                 modifiers: None,
                 name,
                 type_parameters,
@@ -8295,7 +8295,7 @@ impl ThinParserState {
             syntax_kind_ext::SET_ACCESSOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::AccessorData {
+            crate::parser::node::AccessorData {
                 modifiers: None,
                 name,
                 type_parameters,
@@ -8397,7 +8397,7 @@ impl ThinParserState {
             syntax_kind_ext::METHOD_DECLARATION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::MethodDeclData {
+            crate::parser::node::MethodDeclData {
                 modifiers,
                 asterisk_token: asterisk,
                 name,
@@ -8442,7 +8442,7 @@ impl ThinParserState {
                     syntax_kind_ext::COMPUTED_PROPERTY_NAME,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::ComputedPropertyData { expression },
+                    crate::parser::node::ComputedPropertyData { expression },
                 )
             }
             SyntaxKind::PrivateIdentifier => {
@@ -8658,7 +8658,7 @@ impl ThinParserState {
                     syntax_kind_ext::TYPE_PREDICATE,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::TypePredicateData {
+                    crate::parser::node::TypePredicateData {
                         asserts_modifier: false,
                         parameter_name: name,
                         type_node,
@@ -8704,7 +8704,7 @@ impl ThinParserState {
                     syntax_kind_ext::TYPE_PREDICATE,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::TypePredicateData {
+                    crate::parser::node::TypePredicateData {
                         asserts_modifier: false,
                         parameter_name: name,
                         type_node,
@@ -8749,7 +8749,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_PREDICATE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypePredicateData {
+            crate::parser::node::TypePredicateData {
                 asserts_modifier: true,
                 parameter_name,
                 type_node,
@@ -8792,7 +8792,7 @@ impl ThinParserState {
             syntax_kind_ext::CONDITIONAL_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::ConditionalTypeData {
+            crate::parser::node::ConditionalTypeData {
                 check_type,
                 extends_type,
                 true_type,
@@ -8827,7 +8827,7 @@ impl ThinParserState {
             syntax_kind_ext::UNION_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::CompositeTypeData {
+            crate::parser::node::CompositeTypeData {
                 types: self.make_node_list(types),
             },
         )
@@ -8859,7 +8859,7 @@ impl ThinParserState {
             syntax_kind_ext::INTERSECTION_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::CompositeTypeData {
+            crate::parser::node::CompositeTypeData {
                 types: self.make_node_list(types),
             },
         )
@@ -8877,7 +8877,7 @@ impl ThinParserState {
                 SyntaxKind::Identifier as u16,
                 start_pos,
                 self.token_pos(),
-                crate::parser::thin_node::IdentifierData {
+                crate::parser::node::IdentifierData {
                     escaped_text: String::new(),
                     original_text: None,
                     type_arguments: None,
@@ -9060,7 +9060,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_REFERENCE,
             start_pos,
             self.token_end(),
-            crate::parser::thin_node::TypeRefData {
+            crate::parser::node::TypeRefData {
                 type_name,
                 type_arguments,
             },
@@ -9089,7 +9089,7 @@ impl ThinParserState {
                 syntax_kind_ext::REST_TYPE,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::WrappedTypeData {
+                crate::parser::node::WrappedTypeData {
                     type_node: element_type,
                 },
             );
@@ -9130,7 +9130,7 @@ impl ThinParserState {
                 syntax_kind_ext::OPTIONAL_TYPE,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::WrappedTypeData { type_node },
+                crate::parser::node::WrappedTypeData { type_node },
             );
         }
 
@@ -9161,7 +9161,7 @@ impl ThinParserState {
             syntax_kind_ext::NAMED_TUPLE_MEMBER,
             start_pos,
             end_pos,
-            crate::parser::thin_node::NamedTupleMemberData {
+            crate::parser::node::NamedTupleMemberData {
                 dot_dot_dot_token,
                 name,
                 question_token,
@@ -9195,7 +9195,7 @@ impl ThinParserState {
             syntax_kind_ext::TUPLE_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TupleTypeData {
+            crate::parser::node::TupleTypeData {
                 elements: self.make_node_list(elements),
             },
         );
@@ -9230,7 +9230,7 @@ impl ThinParserState {
             syntax_kind_ext::LITERAL_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::LiteralTypeData { literal },
+            crate::parser::node::LiteralTypeData { literal },
         )
     }
 
@@ -9258,7 +9258,7 @@ impl ThinParserState {
             syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
             start_pos,
             prefix_end,
-            crate::parser::thin_node::UnaryExprData {
+            crate::parser::node::UnaryExprData {
                 operator: operator_kind,
                 operand,
             },
@@ -9269,7 +9269,7 @@ impl ThinParserState {
             syntax_kind_ext::LITERAL_TYPE,
             start_pos,
             prefix_end,
-            crate::parser::thin_node::LiteralTypeData {
+            crate::parser::node::LiteralTypeData {
                 literal: prefix_expr,
             },
         )
@@ -9296,7 +9296,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_QUERY,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeQueryData {
+            crate::parser::node::TypeQueryData {
                 expr_name,
                 type_arguments,
             },
@@ -9318,7 +9318,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_OPERATOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeOperatorData {
+            crate::parser::node::TypeOperatorData {
                 operator,
                 type_node,
             },
@@ -9340,7 +9340,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_OPERATOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeOperatorData {
+            crate::parser::node::TypeOperatorData {
                 operator,
                 type_node,
             },
@@ -9362,7 +9362,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_OPERATOR,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeOperatorData {
+            crate::parser::node::TypeOperatorData {
                 operator,
                 type_node,
             },
@@ -9383,7 +9383,7 @@ impl ThinParserState {
             syntax_kind_ext::INFER_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::InferTypeData { type_parameter },
+            crate::parser::node::InferTypeData { type_parameter },
         )
     }
 
@@ -9401,7 +9401,7 @@ impl ThinParserState {
                 syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::TemplateLiteralTypeData {
+                crate::parser::node::TemplateLiteralTypeData {
                     head,
                     template_spans: self.make_node_list(vec![]),
                 },
@@ -9435,7 +9435,7 @@ impl ThinParserState {
                 syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN,
                 span_start,
                 span_end,
-                crate::parser::thin_node::TemplateSpanData {
+                crate::parser::node::TemplateSpanData {
                     expression: type_node,
                     literal,
                 },
@@ -9453,7 +9453,7 @@ impl ThinParserState {
             syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TemplateLiteralTypeData {
+            crate::parser::node::TemplateLiteralTypeData {
                 head,
                 template_spans: self.make_node_list(spans),
             },
@@ -9614,7 +9614,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_PARAMETER,
             type_param_start,
             type_param_end,
-            crate::parser::thin_node::TypeParameterData {
+            crate::parser::node::TypeParameterData {
                 modifiers: None,
                 name: param_name,
                 constraint,
@@ -9660,7 +9660,7 @@ impl ThinParserState {
             syntax_kind_ext::MAPPED_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::MappedTypeData {
+            crate::parser::node::MappedTypeData {
                 readonly_token,
                 type_parameter,
                 name_type,
@@ -9707,7 +9707,7 @@ impl ThinParserState {
             syntax_kind_ext::TYPE_LITERAL,
             start_pos,
             end_pos,
-            crate::parser::thin_node::TypeLiteralData {
+            crate::parser::node::TypeLiteralData {
                 members: self.make_node_list(members),
             },
         )
@@ -9833,7 +9833,7 @@ impl ThinParserState {
                     syntax_kind_ext::ARRAY_TYPE,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::ArrayTypeData {
+                    crate::parser::node::ArrayTypeData {
                         element_type: current,
                     },
                 );
@@ -9847,7 +9847,7 @@ impl ThinParserState {
                     syntax_kind_ext::INDEXED_ACCESS_TYPE,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::IndexedAccessTypeData {
+                    crate::parser::node::IndexedAccessTypeData {
                         object_type: current,
                         index_type,
                     },
@@ -10055,7 +10055,7 @@ impl ThinParserState {
             syntax_kind_ext::FUNCTION_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::FunctionTypeData {
+            crate::parser::node::FunctionTypeData {
                 type_parameters: None,
                 parameters,
                 type_annotation,
@@ -10088,7 +10088,7 @@ impl ThinParserState {
             syntax_kind_ext::FUNCTION_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::FunctionTypeData {
+            crate::parser::node::FunctionTypeData {
                 type_parameters: Some(type_parameters),
                 parameters,
                 type_annotation,
@@ -10126,7 +10126,7 @@ impl ThinParserState {
             syntax_kind_ext::CONSTRUCTOR_TYPE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::FunctionTypeData {
+            crate::parser::node::FunctionTypeData {
                 type_parameters,
                 parameters,
                 type_annotation,
@@ -10179,7 +10179,7 @@ impl ThinParserState {
                 syntax_kind_ext::PARAMETER,
                 param_start,
                 param_end,
-                crate::parser::thin_node::ParameterData {
+                crate::parser::node::ParameterData {
                     modifiers,
                     dot_dot_dot_token: dot_dot_dot,
                     name,
@@ -10237,7 +10237,7 @@ impl ThinParserState {
                 syntax_kind_ext::QUALIFIED_NAME,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::QualifiedNameData {
+                crate::parser::node::QualifiedNameData {
                     left: current,
                     right,
                 },
@@ -10257,13 +10257,13 @@ impl ThinParserState {
     }
 
     /// Get the arena
-    pub fn get_arena(&self) -> &ThinNodeArena {
+    pub fn get_arena(&self) -> &NodeArena {
         &self.arena
     }
 
     /// Consume the parser and return the arena.
     /// This is used for lib files where we need to store the arena in an Arc.
-    pub fn into_arena(self) -> ThinNodeArena {
+    pub fn into_arena(self) -> NodeArena {
         self.arena
     }
 
@@ -10356,7 +10356,7 @@ impl ThinParserState {
                 syntax_kind_ext::JSX_ELEMENT,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::JsxElementData {
+                crate::parser::node::JsxElementData {
                     opening_element: opening,
                     children,
                     closing_element: closing,
@@ -10372,7 +10372,7 @@ impl ThinParserState {
                 syntax_kind_ext::JSX_FRAGMENT,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::JsxFragmentData {
+                crate::parser::node::JsxFragmentData {
                     opening_fragment: opening,
                     children,
                     closing_fragment: closing,
@@ -10423,7 +10423,7 @@ impl ThinParserState {
                 syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::JsxOpeningData {
+                crate::parser::node::JsxOpeningData {
                     tag_name,
                     type_arguments,
                     attributes,
@@ -10438,7 +10438,7 @@ impl ThinParserState {
             syntax_kind_ext::JSX_OPENING_ELEMENT,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JsxOpeningData {
+            crate::parser::node::JsxOpeningData {
                 tag_name,
                 type_arguments,
                 attributes,
@@ -10493,7 +10493,7 @@ impl ThinParserState {
                     syntax_kind_ext::JSX_NAMESPACED_NAME,
                     start_pos,
                     end_pos,
-                    crate::parser::thin_node::JsxNamespacedNameData {
+                    crate::parser::node::JsxNamespacedNameData {
                         namespace: name,
                         name: local_name,
                     },
@@ -10512,7 +10512,7 @@ impl ThinParserState {
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::AccessExprData {
+                crate::parser::node::AccessExprData {
                     expression: expr,
                     name_or_argument: name,
                     question_dot_token: false,
@@ -10546,7 +10546,7 @@ impl ThinParserState {
             syntax_kind_ext::JSX_ATTRIBUTES,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JsxAttributesData {
+            crate::parser::node::JsxAttributesData {
                 properties: self.make_node_list(properties),
             },
         )
@@ -10568,7 +10568,7 @@ impl ThinParserState {
                 syntax_kind_ext::JSX_ATTRIBUTE,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::JsxAttributeData {
+                crate::parser::node::JsxAttributeData {
                     name: NodeIndex::NONE,
                     initializer: NodeIndex::NONE,
                 },
@@ -10598,7 +10598,7 @@ impl ThinParserState {
             syntax_kind_ext::JSX_ATTRIBUTE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JsxAttributeData { name, initializer },
+            crate::parser::node::JsxAttributeData { name, initializer },
         )
     }
 
@@ -10622,7 +10622,7 @@ impl ThinParserState {
                 syntax_kind_ext::JSX_NAMESPACED_NAME,
                 start_pos,
                 end_pos,
-                crate::parser::thin_node::JsxNamespacedNameData {
+                crate::parser::node::JsxNamespacedNameData {
                     namespace: name,
                     name: local_name,
                 },
@@ -10645,7 +10645,7 @@ impl ThinParserState {
             syntax_kind_ext::JSX_SPREAD_ATTRIBUTE,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JsxSpreadAttributeData { expression },
+            crate::parser::node::JsxSpreadAttributeData { expression },
         )
     }
 
@@ -10671,7 +10671,7 @@ impl ThinParserState {
             syntax_kind_ext::JSX_EXPRESSION,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JsxExpressionData {
+            crate::parser::node::JsxExpressionData {
                 dot_dot_dot_token,
                 expression,
             },
@@ -10729,7 +10729,7 @@ impl ThinParserState {
             SyntaxKind::JsxText as u16,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JsxTextData {
+            crate::parser::node::JsxTextData {
                 text,
                 contains_only_trivia_white_spaces: false,
             },
@@ -10748,7 +10748,7 @@ impl ThinParserState {
             syntax_kind_ext::JSX_CLOSING_ELEMENT,
             start_pos,
             end_pos,
-            crate::parser::thin_node::JsxClosingData { tag_name },
+            crate::parser::node::JsxClosingData { tag_name },
         )
     }
 
@@ -10765,7 +10765,7 @@ impl ThinParserState {
 
     /// Consume the parser and return its parts.
     /// This is useful for taking ownership of the arena after parsing.
-    pub fn into_parts(self) -> (ThinNodeArena, Vec<ParseDiagnostic>) {
+    pub fn into_parts(self) -> (NodeArena, Vec<ParseDiagnostic>) {
         (self.arena, self.parse_diagnostics)
     }
 }

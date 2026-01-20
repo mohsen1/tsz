@@ -1,18 +1,18 @@
-//! ThinEmitter - Emitter using ThinNodeArena
+//! Emitter - Emitter using NodeArena
 //!
-//! This emitter uses the ThinNode architecture for cache-optimized AST access.
-//! It works directly with ThinNodeArena instead of the old Node enum.
+//! This emitter uses the Node architecture for cache-optimized AST access.
+//! It works directly with NodeArena instead of the old Node enum.
 //!
 //! # Architecture
 //!
-//! - Uses ThinNodeArena for AST access (16-byte nodes, 13x cache improvement)
-//! - Dispatches based on ThinNode.kind (u16)
+//! - Uses NodeArena for AST access (16-byte nodes, 13x cache improvement)
+//! - Dispatches based on Node.kind (u16)
 //! - Uses accessor methods to get typed node data
 //!
 //! # Module Organization
 //!
 //! The emitter is organized as a directory module:
-//! - `mod.rs` - Core ThinPrinter struct, dispatch logic, and emit methods
+//! - `mod.rs` - Core Printer struct, dispatch logic, and emit methods
 //! - `expressions.rs` - Expression emission helpers
 //! - `statements.rs` - Statement emission helpers
 //! - `declarations.rs` - Declaration emission helpers
@@ -20,7 +20,7 @@
 //! - `types.rs` - Type emission helpers
 //! - `jsx.rs` - JSX emission helpers
 //!
-//! Note: pub(super) fields and methods allow future submodules to access ThinPrinter internals.
+//! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
 // Allow dead code for emitter infrastructure methods that will be used in future phases
 #![allow(dead_code)]
@@ -28,7 +28,7 @@
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{ThinNode, ThinNodeArena};
+use crate::parser::node::{Node, NodeArena};
 use crate::scanner::SyntaxKind;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};
@@ -218,20 +218,20 @@ enum EmitDirective {
 }
 
 // =============================================================================
-// ThinPrinter
+// Printer
 // =============================================================================
 
 /// Maximum recursion depth for emit to prevent infinite loops
 const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
 
-/// Printer that works with ThinNodeArena.
+/// Printer that works with NodeArena.
 ///
 /// Uses SourceWriter for output generation (enables source map support).
 /// Uses EmitContext for transform-specific state management.
 /// Uses TransformContext for directive-based transforms (Phase 2 architecture).
-pub struct ThinPrinter<'a> {
-    /// The ThinNodeArena containing the AST.
-    pub(super) arena: &'a ThinNodeArena,
+pub struct Printer<'a> {
+    /// The NodeArena containing the AST.
+    pub(super) arena: &'a NodeArena,
 
     /// Source writer for output generation and source map tracking
     pub(super) writer: SourceWriter,
@@ -261,26 +261,26 @@ pub struct ThinPrinter<'a> {
     emit_recursion_depth: u32,
 }
 
-impl<'a> ThinPrinter<'a> {
-    /// Create a new ThinPrinter.
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+impl<'a> Printer<'a> {
+    /// Create a new Printer.
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self::with_options(arena, PrinterOptions::default())
     }
 
-    /// Create a new ThinPrinter with pre-allocated output capacity
+    /// Create a new Printer with pre-allocated output capacity
     /// This reduces allocations when the expected output size is known (e.g., ~1.5x source size)
-    pub fn with_capacity(arena: &'a ThinNodeArena, capacity: usize) -> Self {
+    pub fn with_capacity(arena: &'a NodeArena, capacity: usize) -> Self {
         Self::with_capacity_and_options(arena, capacity, PrinterOptions::default())
     }
 
-    /// Create a new ThinPrinter with options.
-    pub fn with_options(arena: &'a ThinNodeArena, options: PrinterOptions) -> Self {
+    /// Create a new Printer with options.
+    pub fn with_options(arena: &'a NodeArena, options: PrinterOptions) -> Self {
         Self::with_capacity_and_options(arena, 1024, options)
     }
 
-    /// Create a new ThinPrinter with pre-allocated capacity and options.
+    /// Create a new Printer with pre-allocated capacity and options.
     pub fn with_capacity_and_options(
-        arena: &'a ThinNodeArena,
+        arena: &'a NodeArena,
         capacity: usize,
         options: PrinterOptions,
     ) -> Self {
@@ -290,7 +290,7 @@ impl<'a> ThinPrinter<'a> {
         // Create EmitContext from options (target controls ES5 vs ESNext)
         let ctx = EmitContext::with_options(options);
 
-        ThinPrinter {
+        Printer {
             arena,
             writer,
             ctx,
@@ -304,17 +304,17 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    /// Create a new ThinPrinter with transform directives.
+    /// Create a new Printer with transform directives.
     /// This is the Phase 2 constructor that accepts pre-computed transforms.
-    pub fn with_transforms(arena: &'a ThinNodeArena, transforms: TransformContext) -> Self {
+    pub fn with_transforms(arena: &'a NodeArena, transforms: TransformContext) -> Self {
         let mut printer = Self::new(arena);
         printer.transforms = transforms;
         printer
     }
 
-    /// Create a new ThinPrinter with transforms and options.
+    /// Create a new Printer with transforms and options.
     pub fn with_transforms_and_options(
-        arena: &'a ThinNodeArena,
+        arena: &'a NodeArena,
         transforms: TransformContext,
         options: PrinterOptions,
     ) -> Self {
@@ -323,15 +323,15 @@ impl<'a> ThinPrinter<'a> {
         printer
     }
 
-    /// Create a new ThinPrinter targeting ES5.
-    pub fn new_es5(arena: &'a ThinNodeArena) -> Self {
+    /// Create a new Printer targeting ES5.
+    pub fn new_es5(arena: &'a NodeArena) -> Self {
         let mut options = PrinterOptions::default();
         options.target = ScriptTarget::ES5;
         Self::with_options(arena, options)
     }
 
-    /// Create a new ThinPrinter targeting ES6+.
-    pub fn new_es6(arena: &'a ThinNodeArena) -> Self {
+    /// Create a new Printer targeting ES6+.
+    pub fn new_es6(arena: &'a NodeArena) -> Self {
         let mut options = PrinterOptions::default();
         options.target = ScriptTarget::ES2015;
         Self::with_options(arena, options)
@@ -382,7 +382,7 @@ impl<'a> ThinPrinter<'a> {
         self.source_map_text.or(self.source_text)
     }
 
-    fn queue_source_mapping(&mut self, node: &ThinNode) {
+    fn queue_source_mapping(&mut self, node: &Node) {
         if !self.writer.has_source_map() {
             self.pending_source_pos = None;
             return;
@@ -399,7 +399,7 @@ impl<'a> ThinPrinter<'a> {
     /// Check if a node spans a single line in the source.
     /// For blocks like `{ }`, we look for the closing `}` and check if there's a newline
     /// between the opening `{` and the first `}`.
-    fn is_single_line(&self, node: &ThinNode) -> bool {
+    fn is_single_line(&self, node: &Node) -> bool {
         if let Some(text) = self.source_text {
             let start = node.pos as usize;
             if start < text.len() {
@@ -524,7 +524,7 @@ impl<'a> ThinPrinter<'a> {
 
     /// Apply a transform directive to a node.
     /// This is called when a node has an entry in the TransformContext.
-    fn apply_transform(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn apply_transform(&mut self, node: &Node, idx: NodeIndex) {
         let Some(directive) = self.transforms.get(idx) else {
             // No transform, emit normally (should not happen if has_transform returned true)
             self.emit_node_default(node, idx);
@@ -543,7 +543,7 @@ impl<'a> ThinPrinter<'a> {
             EmitDirective::ES5Class { class_node } => {
                 if debug_emit {
                     println!(
-                        "TSZ_DEBUG_EMIT: ThinPrinter ES5Class start (idx={}, class_node={})",
+                        "TSZ_DEBUG_EMIT: Printer ES5Class start (idx={}, class_node={})",
                         idx.0, class_node.0
                     );
                 }
@@ -561,7 +561,7 @@ impl<'a> ThinPrinter<'a> {
                 let es5_output = es5_emitter.emit_class(class_node);
                 if debug_emit {
                     println!(
-                        "TSZ_DEBUG_EMIT: ThinPrinter ES5Class end (idx={}, class_node={}, output_len={})",
+                        "TSZ_DEBUG_EMIT: Printer ES5Class end (idx={}, class_node={}, output_len={})",
                         idx.0,
                         class_node.0,
                         es5_output.len()
@@ -724,7 +724,7 @@ impl<'a> ThinPrinter<'a> {
 
     fn emit_commonjs_inner(
         &mut self,
-        node: &ThinNode,
+        node: &Node,
         idx: NodeIndex,
         inner: &EmitDirective,
         export_name: Option<IdentifierId>,
@@ -824,7 +824,7 @@ impl<'a> ThinPrinter<'a> {
 
     fn emit_chained_directives(
         &mut self,
-        node: &ThinNode,
+        node: &Node,
         idx: NodeIndex,
         directives: &[EmitDirective],
     ) {
@@ -839,7 +839,7 @@ impl<'a> ThinPrinter<'a> {
 
     fn emit_chained_directive(
         &mut self,
-        node: &ThinNode,
+        node: &Node,
         idx: NodeIndex,
         directives: &[EmitDirective],
         index: usize,
@@ -1016,7 +1016,7 @@ impl<'a> ThinPrinter<'a> {
 
     fn emit_chained_previous(
         &mut self,
-        node: &ThinNode,
+        node: &Node,
         idx: NodeIndex,
         directives: &[EmitDirective],
         index: usize,
@@ -1030,7 +1030,7 @@ impl<'a> ThinPrinter<'a> {
 
     /// Emit a node using default logic (no transforms).
     /// This is the old emit_node logic extracted for reuse.
-    fn emit_node_default(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn emit_node_default(&mut self, node: &Node, idx: NodeIndex) {
         // Emit the node without consulting transform directives.
         let kind = node.kind;
         self.emit_node_by_kind(node, idx, kind);
@@ -1097,7 +1097,7 @@ impl<'a> ThinPrinter<'a> {
     }
 
     /// Emit a node.
-    fn emit_node(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn emit_node(&mut self, node: &Node, idx: NodeIndex) {
         // Recursion depth check to prevent infinite loops
         self.emit_recursion_depth += 1;
         if self.emit_recursion_depth > MAX_EMIT_RECURSION_DEPTH {
@@ -1147,7 +1147,7 @@ impl<'a> ThinPrinter<'a> {
 
     /// Emit a node by kind using default logic (no transforms).
     /// This is the main dispatch method for emission.
-    fn emit_node_by_kind(&mut self, node: &ThinNode, idx: NodeIndex, kind: u16) {
+    fn emit_node_by_kind(&mut self, node: &Node, idx: NodeIndex, kind: u16) {
         match kind {
             // Identifiers
             k if k == SyntaxKind::Identifier as u16 => {
@@ -1616,7 +1616,7 @@ impl<'a> ThinPrinter<'a> {
     // Yield and Await
     // =========================================================================
 
-    fn emit_yield_expression(&mut self, node: &ThinNode) {
+    fn emit_yield_expression(&mut self, node: &Node) {
         // YieldExpression is stored with UnaryExprData (operand = expression, operator = asterisk flag)
         let Some(unary) = self.arena.get_unary_expr(node) else {
             self.write("yield");
@@ -1634,7 +1634,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    fn emit_await_expression(&mut self, node: &ThinNode) {
+    fn emit_await_expression(&mut self, node: &Node) {
         // AwaitExpression is stored with UnaryExprData
         let Some(unary) = self.arena.get_unary_expr(node) else {
             self.write("await");
@@ -1645,7 +1645,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit_expression(unary.operand);
     }
 
-    fn emit_spread_element(&mut self, node: &ThinNode) {
+    fn emit_spread_element(&mut self, node: &Node) {
         let Some(spread) = self.arena.get_spread(node) else {
             self.write("...");
             return;
@@ -1659,7 +1659,7 @@ impl<'a> ThinPrinter<'a> {
     // Decorators
     // =========================================================================
 
-    fn emit_decorator(&mut self, node: &ThinNode) {
+    fn emit_decorator(&mut self, node: &Node) {
         // In ES5 mode, decorators are not supported - skip them entirely
         if self.ctx.target_es5 {
             return;
@@ -1677,7 +1677,7 @@ impl<'a> ThinPrinter<'a> {
     // Source File
     // =========================================================================
 
-    fn emit_source_file(&mut self, node: &ThinNode) {
+    fn emit_source_file(&mut self, node: &Node) {
         let Some(source) = self.arena.get_source_file(node) else {
             return;
         };
@@ -1887,7 +1887,7 @@ impl<'a> ThinPrinter<'a> {
     // =========================================================================
 
     /// Emit an object binding pattern: { x, y }
-    fn emit_object_binding_pattern(&mut self, node: &ThinNode) {
+    fn emit_object_binding_pattern(&mut self, node: &Node) {
         let Some(pattern) = self.arena.get_binding_pattern(node) else {
             return;
         };
@@ -1898,7 +1898,7 @@ impl<'a> ThinPrinter<'a> {
     }
 
     /// Emit an array binding pattern: [x, y]
-    fn emit_array_binding_pattern(&mut self, node: &ThinNode) {
+    fn emit_array_binding_pattern(&mut self, node: &Node) {
         let Some(pattern) = self.arena.get_binding_pattern(node) else {
             return;
         };
@@ -1909,7 +1909,7 @@ impl<'a> ThinPrinter<'a> {
     }
 
     /// Emit a binding element: x or x = default or propertyName: x
-    fn emit_binding_element(&mut self, node: &ThinNode) {
+    fn emit_binding_element(&mut self, node: &Node) {
         let Some(elem) = self.arena.get_binding_element(node) else {
             return;
         };

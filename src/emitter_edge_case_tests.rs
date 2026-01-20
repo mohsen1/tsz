@@ -8,8 +8,8 @@
 
 use crate::emit_context::EmitContext;
 use crate::lowering_pass::LoweringPass;
-use crate::thin_emitter::{ModuleKind, PrinterOptions, ScriptTarget, ThinPrinter};
-use crate::thin_parser::ThinParserState;
+use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget, Printer};
+use crate::parser::ParserState;
 
 #[test]
 fn test_comment_with_utf8_emoji() {
@@ -17,10 +17,10 @@ fn test_comment_with_utf8_emoji() {
 // Comment with emoji 🚀
 const x = "test";
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -40,10 +40,10 @@ fn test_comment_with_multibyte_unicode() {
 // Arabic: مرحبا
 const x = 1;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -64,10 +64,10 @@ fn test_triple_slash_directive_filtered() {
 // Regular comment
 const x = 1;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -92,12 +92,12 @@ fn test_namespace_import_uses_import_star_helper() {
 import * as ts from "typescript";
 const x = ts.version;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.module = ModuleKind::CommonJS;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -122,12 +122,12 @@ fn test_helper_emission_order() {
  */
 export const x = 1;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.module = ModuleKind::CommonJS;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -155,12 +155,12 @@ fn test_export_assignment_suppresses_other_exports() {
 export class C {}
 export = C;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.module = ModuleKind::CommonJS;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -192,12 +192,12 @@ fn test_commonjs_preamble_with_no_imports() {
     let source = r#"
 export const x = 1;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.module = ModuleKind::CommonJS;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -225,10 +225,10 @@ fn test_parse_error_tolerance() {
 const x =
 const y = 2;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -258,10 +258,10 @@ class C {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_text(parser.get_source_text());
     printer.set_target_es5(true);
     printer.emit(root);
@@ -280,7 +280,7 @@ fn test_class_extends_helper() {
 class Base {}
 class Derived extends Base {}
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
@@ -288,7 +288,7 @@ class Derived extends Base {}
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
-    let mut printer = ThinPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_source_text(parser.get_source_text());
     printer.set_target_es5(ctx.target_es5);
     printer.emit(root);
@@ -307,12 +307,12 @@ fn test_named_import_bindings() {
     let source = r#"
 import { foo, bar as baz } from "module";
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.module = ModuleKind::CommonJS;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -336,12 +336,12 @@ fn test_default_import_binding() {
     let source = r#"
 import myDefault from "module";
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.module = ModuleKind::CommonJS;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -366,10 +366,10 @@ fn test_multiline_block_comment_preserved() {
  */
 const x = 1;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();
@@ -388,12 +388,12 @@ fn test_es6_module_no_commonjs_transform() {
 import { x } from "module";
 export const y = x;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.module = ModuleKind::ES2015;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.set_source_text(parser.get_source_text());
     printer.emit(root);
     let output = printer.get_output();

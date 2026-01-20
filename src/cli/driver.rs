@@ -22,14 +22,14 @@ use crate::declaration_emitter::DeclarationEmitter;
 use crate::parallel::{self, BindResult, BoundFile, MergedProgram};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{NodeAccess, ThinNodeArena};
+use crate::parser::node::{NodeAccess, NodeArena};
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeFormatter, TypeId};
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
-use crate::thin_emitter::{ModuleKind, NewLineKind, ThinPrinter};
-use crate::thin_parser::ParseDiagnostic;
-use crate::thin_parser::ThinParserState;
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
+use crate::emitter::{ModuleKind, NewLineKind, Printer};
+use crate::parser::ParseDiagnostic;
+use crate::parser::ParserState;
 use rustc_hash::FxHasher;
 
 #[derive(Debug, Clone)]
@@ -513,7 +513,7 @@ fn build_program_with_cache(
                 BindResult {
                     file_name: entry.file_name.clone(),
                     source_file: NodeIndex::NONE, // Invalid node index
-                    arena: std::sync::Arc::new(ThinNodeArena::new()),
+                    arena: std::sync::Arc::new(NodeArena::new()),
                     symbols: Default::default(),
                     file_locals: Default::default(),
                     declared_modules: Default::default(),
@@ -1015,7 +1015,7 @@ fn read_source_files(
 
 fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Vec<String> {
     let file_name = path.to_string_lossy().into_owned();
-    let mut parser = ThinParserState::new(file_name, text.to_string());
+    let mut parser = ParserState::new(file_name, text.to_string());
     let source_file = parser.parse_source_file();
     let (arena, _diagnostics) = parser.into_parts();
     collect_module_specifiers(&arena, source_file)
@@ -1025,7 +1025,7 @@ fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Vec<String> {
 }
 
 fn collect_module_specifiers(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     source_file: NodeIndex,
 ) -> Vec<(String, NodeIndex)> {
     let mut specifiers = Vec::new();
@@ -1068,7 +1068,7 @@ fn collect_module_specifiers(
 }
 
 fn collect_import_bindings(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     source_file: NodeIndex,
 ) -> Vec<(String, Vec<String>)> {
     let mut bindings = Vec::new();
@@ -1102,7 +1102,7 @@ fn collect_import_bindings(
 }
 
 fn collect_export_binding_nodes(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     source_file: NodeIndex,
 ) -> Vec<(String, Vec<NodeIndex>)> {
     let mut bindings = Vec::new();
@@ -1167,7 +1167,7 @@ fn collect_export_binding_nodes(
     bindings
 }
 
-fn collect_star_export_specifiers(arena: &ThinNodeArena, source_file: NodeIndex) -> Vec<String> {
+fn collect_star_export_specifiers(arena: &NodeArena, source_file: NodeIndex) -> Vec<String> {
     let mut specifiers = Vec::new();
     let Some(node) = arena.get(source_file) else {
         return specifiers;
@@ -1198,8 +1198,8 @@ fn collect_star_export_specifiers(arena: &ThinNodeArena, source_file: NodeIndex)
 }
 
 fn collect_import_local_names(
-    arena: &ThinNodeArena,
-    import_decl: &crate::parser::thin_node::ImportDeclData,
+    arena: &NodeArena,
+    import_decl: &crate::parser::node::ImportDeclData,
 ) -> Vec<String> {
     let mut names = Vec::new();
     if import_decl.import_clause.is_none() {
@@ -2314,8 +2314,8 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 /// and returns LibContext objects that can be used by the checker to resolve global
 /// symbols like `console`, `Array`, `Promise`, etc.
 fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
     use std::sync::Arc;
 
     let mut lib_contexts = Vec::new();
@@ -2346,7 +2346,7 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
 
         // Parse the lib file
         let file_name = lib_path.to_string_lossy().to_string();
-        let mut lib_parser = ThinParserState::new(file_name.clone(), source_text);
+        let mut lib_parser = ParserState::new(file_name.clone(), source_text);
         let source_file_idx = lib_parser.parse_source_file();
 
         // Skip if there are parse errors
@@ -2355,7 +2355,7 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
         }
 
         // Bind the lib file
-        let mut lib_binder = ThinBinderState::new();
+        let mut lib_binder = BinderState::new();
         lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
         // Create the LibContext
@@ -2434,7 +2434,7 @@ fn collect_diagnostics(
             .and_then(|cache| cache.type_caches.remove(&file_path));
         let compiler_options = options.checker.clone();
         let mut checker = if let Some(cached) = cached {
-            ThinCheckerState::with_cache(
+            CheckerState::with_cache(
                 &file.arena,
                 &binder,
                 &program.type_interner,
@@ -2443,7 +2443,7 @@ fn collect_diagnostics(
                 compiler_options,
             )
         } else {
-            ThinCheckerState::new(
+            CheckerState::new(
                 &file.arena,
                 &binder,
                 &program.type_interner,
@@ -2552,7 +2552,7 @@ fn compute_export_hash(
     program: &MergedProgram,
     file: &BoundFile,
     file_idx: usize,
-    checker: &mut ThinCheckerState,
+    checker: &mut CheckerState,
 ) -> u64 {
     let mut formatter = TypeFormatter::with_symbols(&program.type_interner, &program.symbols);
     let mut hasher = FxHasher::default();
@@ -2593,7 +2593,7 @@ fn is_exported_symbol(symbols: &crate::binder::SymbolArena, sym_id: SymbolId) ->
 
 fn collect_export_signatures(
     file: &BoundFile,
-    checker: &mut ThinCheckerState,
+    checker: &mut CheckerState,
     formatter: &mut TypeFormatter,
     signatures: &mut Vec<String>,
 ) {
@@ -2713,10 +2713,10 @@ fn collect_export_signatures(
 }
 
 fn collect_local_named_export_signatures(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     source_file: NodeIndex,
     named_idx: NodeIndex,
-    checker: &mut ThinCheckerState,
+    checker: &mut CheckerState,
     formatter: &mut TypeFormatter,
     type_prefix: &str,
     signatures: &mut Vec<String>,
@@ -2757,9 +2757,9 @@ fn collect_local_named_export_signatures(
 }
 
 fn collect_exported_declaration_signatures(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     decl_idx: NodeIndex,
-    checker: &mut ThinCheckerState,
+    checker: &mut CheckerState,
     formatter: &mut TypeFormatter,
     type_prefix: &str,
     signatures: &mut Vec<String>,
@@ -2855,7 +2855,7 @@ fn collect_exported_declaration_signatures(
 fn push_exported_signature(
     name: &str,
     decl_idx: NodeIndex,
-    checker: &mut ThinCheckerState,
+    checker: &mut CheckerState,
     formatter: &mut TypeFormatter,
     type_prefix: &str,
     signatures: &mut Vec<String>,
@@ -2866,7 +2866,7 @@ fn push_exported_signature(
 }
 
 fn find_local_declaration(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     source_file: NodeIndex,
     name: &str,
 ) -> Option<NodeIndex> {
@@ -2907,7 +2907,7 @@ fn find_local_declaration(
 }
 
 fn find_local_declaration_in_node(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     node_idx: NodeIndex,
     name: &str,
 ) -> Option<NodeIndex> {
@@ -3007,7 +3007,7 @@ fn find_local_declaration_in_node(
 
 fn export_default_signature(
     export_clause: NodeIndex,
-    checker: &mut ThinCheckerState,
+    checker: &mut CheckerState,
     formatter: &mut TypeFormatter,
 ) -> Option<String> {
     if export_clause.is_none() {
@@ -3042,7 +3042,7 @@ fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
-) -> ThinBinderState {
+) -> BinderState {
     let mut file_locals = SymbolTable::new();
 
     if file_idx < program.file_locals.len() {
@@ -3057,7 +3057,7 @@ fn create_binder_from_bound_file(
         }
     }
 
-    let mut binder = ThinBinderState::from_bound_state_with_scopes_and_augmentations(
+    let mut binder = BinderState::from_bound_state_with_scopes_and_augmentations(
         program.symbols.clone(),
         file_locals,
         file.node_symbols.clone(),
@@ -3096,7 +3096,7 @@ fn emit_outputs(
 
         if let Some(js_path) = js_output_path(base_dir, root_dir, out_dir, options.jsx, &input_path)
         {
-            let mut printer = ThinPrinter::with_options(&file.arena, options.printer.clone());
+            let mut printer = Printer::with_options(&file.arena, options.printer.clone());
             let map_info = if options.source_map {
                 map_output_info(&js_path)
             } else {

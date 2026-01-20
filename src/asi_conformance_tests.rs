@@ -5,7 +5,7 @@
 
 use crate::checker::types::diagnostics::diagnostic_codes;
 use crate::scanner::SyntaxKind;
-use crate::thin_parser::ThinParserState;
+use crate::parser::ParserState;
 
 /// Test that throw with line break reports TS1109
 #[test]
@@ -16,7 +16,7 @@ function f() {
     new Error("test");
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
@@ -36,7 +36,7 @@ function f() {
     throw new Error("test");
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
@@ -57,7 +57,7 @@ function f() {
     x + y;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // ASI applies - return is a complete statement
@@ -72,7 +72,7 @@ fn test_asi_postfix_increment_line_break() {
 let x = 5
 x++;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse as two statements: let x = 5; x++;
@@ -86,7 +86,7 @@ fn test_asi_prefix_increment_after_line_break() {
 let a = 5
 let b = ++a;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse as: let a = 5; let b = ++a;
@@ -102,7 +102,7 @@ function* g() {
     x + y;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // ASI applies - yield without expression is valid
@@ -118,7 +118,7 @@ outer: while (true) {
     outer;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // ASI applies - break; outer; (two statements)
@@ -131,7 +131,7 @@ fn test_asi_arrow_function_concise_body() {
     let source = r#"
 let f = x => x * 2;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse arrow function correctly
@@ -144,7 +144,7 @@ fn test_asi_arrow_function_object_literal() {
     let source = r#"
 let f = x => ({ x: 1 });
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse with parentheses
@@ -159,7 +159,7 @@ function f() {
     return 42
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // ASI applies at EOF before }
@@ -200,7 +200,7 @@ fn test_asi_comprehensive_edge_cases() {
     ];
 
     for (i, (source, should_have_errors, description)) in test_cases.iter().enumerate() {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         parser.parse_source_file();
 
         let has_errors = !parser.get_diagnostics().is_empty();
@@ -229,7 +229,7 @@ fn test_asi_ts1005_token_expected_patterns() {
     ];
 
     for (i, (source, should_have_errors, description)) in test_cases.iter().enumerate() {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         parser.parse_source_file();
 
         let diagnostics = parser.get_diagnostics();
@@ -251,7 +251,7 @@ fn test_async_function_await_computed_property() {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "asyncFunctionDeclaration9_es2017.ts".to_string(),
         source.to_string(),
     );
@@ -284,7 +284,7 @@ fn test_async_arrow_await_computed_property() {
 }"#;
 
     let mut parser =
-        ThinParserState::new("asyncArrowFunction8_es6.ts".to_string(), source.to_string());
+        ParserState::new("asyncArrowFunction8_es6.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     let diagnostics = parser.get_diagnostics();
@@ -317,7 +317,7 @@ var foo = async (): Promise<void> => {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "asyncArrowFunction8_es2017.ts".to_string(),
         arrow_source.to_string(),
     );
@@ -331,7 +331,7 @@ async function foo(): Promise<void> {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "asyncFunctionDeclaration9_es2017.ts".to_string(),
         func_source.to_string(),
     );
@@ -366,7 +366,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("throw_test.ts".to_string(), throw_source.to_string());
+    let mut parser = ParserState::new("throw_test.ts".to_string(), throw_source.to_string());
     parser.parse_source_file();
     let throw_diagnostics = parser.get_diagnostics();
 
@@ -378,7 +378,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("return_test.ts".to_string(), return_source.to_string());
+    let mut parser = ParserState::new("return_test.ts".to_string(), return_source.to_string());
     parser.parse_source_file();
     let return_diagnostics = parser.get_diagnostics();
 
@@ -407,7 +407,7 @@ fn test_yield_ts1109() {
     42;
 }"#;
 
-    let mut parser = ThinParserState::new("yield_test.ts".to_string(), yield_source.to_string());
+    let mut parser = ParserState::new("yield_test.ts".to_string(), yield_source.to_string());
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
@@ -442,7 +442,7 @@ x
 console.log(x);"#;
 
     let mut parser =
-        ThinParserState::new("postfix_test.ts".to_string(), postfix_source.to_string());
+        ParserState::new("postfix_test.ts".to_string(), postfix_source.to_string());
     parser.parse_source_file();
     let postfix_diagnostics = parser.get_diagnostics();
 
@@ -451,7 +451,7 @@ console.log(x);"#;
 let val = arr
 [0];"#;
 
-    let mut parser = ThinParserState::new("array_test.ts".to_string(), array_source.to_string());
+    let mut parser = ParserState::new("array_test.ts".to_string(), array_source.to_string());
     parser.parse_source_file();
     let array_diagnostics = parser.get_diagnostics();
 
@@ -483,7 +483,7 @@ var foo = async (): Promise<void> => {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "asyncArrowFunction8_es2017.ts".to_string(),
         source.to_string(),
     );
@@ -523,7 +523,7 @@ fn test_incomplete_expressions_ts1109() {
     default:
 }"#;
 
-    let mut parser = ThinParserState::new("switch_test.ts".to_string(), switch_source.to_string());
+    let mut parser = ParserState::new("switch_test.ts".to_string(), switch_source.to_string());
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
@@ -549,7 +549,7 @@ fn test_new_missing_identifier_ts1109() {
     let source = r#"var x = new ();"#;
 
     let mut parser =
-        ThinParserState::new("newMissingIdentifier.ts".to_string(), source.to_string());
+        ParserState::new("newMissingIdentifier.ts".to_string(), source.to_string());
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
@@ -584,7 +584,7 @@ fn test_await_yield_missing_value_ts1109() {
 }"#;
 
     let mut parser =
-        ThinParserState::new("awaitMissingValue.ts".to_string(), await_source.to_string());
+        ParserState::new("awaitMissingValue.ts".to_string(), await_source.to_string());
     parser.parse_source_file();
     let await_diagnostics = parser.get_diagnostics();
 
@@ -593,7 +593,7 @@ fn test_await_yield_missing_value_ts1109() {
     yield *;
 }"#;
 
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "yieldStarMissingValue.ts".to_string(),
         yield_star_source.to_string(),
     );
@@ -638,7 +638,7 @@ fn debug_await_semicolon() {
     await;
 }"#;
 
-    let mut parser = ThinParserState::new("await_debug.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("await_debug.ts".to_string(), source.to_string());
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
@@ -658,7 +658,7 @@ fn test_await_parameter_default_ts1109() {
     let source = r#"async function foo(a = await): Promise<void> {
 }"#;
 
-    let mut parser = ThinParserState::new("paramAwait.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("paramAwait.ts".to_string(), source.to_string());
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 

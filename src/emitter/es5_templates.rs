@@ -1,11 +1,11 @@
-use super::{TemplateParts, ThinPrinter};
+use super::{TemplateParts, Printer};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{TaggedTemplateData, TemplateExprData, ThinNode};
+use crate::parser::node::{TaggedTemplateData, TemplateExprData, Node};
 use crate::scanner::SyntaxKind;
 
-impl<'a> ThinPrinter<'a> {
-    pub(super) fn emit_template_literal_es5(&mut self, node: &ThinNode, idx: NodeIndex) -> bool {
+impl<'a> Printer<'a> {
+    pub(super) fn emit_template_literal_es5(&mut self, node: &Node, idx: NodeIndex) -> bool {
         match node.kind {
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
@@ -171,7 +171,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    fn template_raw_text(&self, node: &ThinNode, cooked_fallback: &str) -> String {
+    fn template_raw_text(&self, node: &Node, cooked_fallback: &str) -> String {
         let Some(text) = self.source_text else {
             return cooked_fallback.to_string();
         };

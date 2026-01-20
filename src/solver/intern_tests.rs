@@ -1,6 +1,6 @@
 use super::*;
 use crate::parser::NodeIndex;
-use crate::parser::ThinNodeArena;
+use crate::parser::NodeArena;
 use crate::solver::intern::PROPERTY_MAP_THRESHOLD;
 
 #[test]

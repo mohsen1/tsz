@@ -1,16 +1,16 @@
-use super::{ThinPrinter, get_trailing_comment_ranges};
+use super::{Printer, get_trailing_comment_ranges};
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNode;
+use crate::parser::node::Node;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::thin_printer::safe_slice;
+use crate::printer::safe_slice;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Statements
     // =========================================================================
 
-    pub(super) fn emit_block(&mut self, node: &ThinNode) {
+    pub(super) fn emit_block(&mut self, node: &Node) {
         let Some(block) = self.arena.get_block(node) else {
             return;
         };
@@ -50,7 +50,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit_trailing_comments(node.end);
     }
 
-    pub(super) fn emit_variable_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_variable_statement(&mut self, node: &Node) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
@@ -178,7 +178,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_expression_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_expression_statement(&mut self, node: &Node) {
         let Some(expr_stmt) = self.arena.get_expression_statement(node) else {
             return;
         };
@@ -230,7 +230,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_if_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_if_statement(&mut self, node: &Node) {
         let Some(if_stmt) = self.arena.get_if_statement(node) else {
             return;
         };
@@ -246,7 +246,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_while_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_while_statement(&mut self, node: &Node) {
         let Some(loop_stmt) = self.arena.get_loop(node) else {
             return;
         };
@@ -257,7 +257,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(loop_stmt.statement);
     }
 
-    pub(super) fn emit_for_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_for_statement(&mut self, node: &Node) {
         let Some(loop_stmt) = self.arena.get_loop(node) else {
             return;
         };
@@ -272,7 +272,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(loop_stmt.statement);
     }
 
-    pub(super) fn emit_for_in_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_for_in_statement(&mut self, node: &Node) {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
@@ -285,7 +285,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(for_in_of.statement);
     }
 
-    pub(super) fn emit_for_of_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_for_of_statement(&mut self, node: &Node) {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
@@ -302,7 +302,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(for_in_of.statement);
     }
 
-    pub(super) fn emit_return_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_return_statement(&mut self, node: &Node) {
         let Some(ret) = self.arena.get_return_statement(node) else {
             self.write("return");
             self.write_semicolon();
@@ -321,7 +321,7 @@ impl<'a> ThinPrinter<'a> {
     // Additional Statements
     // =========================================================================
 
-    pub(super) fn emit_throw_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_throw_statement(&mut self, node: &Node) {
         // ThrowStatement uses ReturnData (same structure)
         let Some(throw_data) = self.arena.get_return_statement(node) else {
             self.write("throw");
@@ -334,7 +334,7 @@ impl<'a> ThinPrinter<'a> {
         self.write_semicolon();
     }
 
-    pub(super) fn emit_try_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_try_statement(&mut self, node: &Node) {
         let Some(try_stmt) = self.arena.get_try(node) else {
             return;
         };
@@ -353,7 +353,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_catch_clause(&mut self, node: &ThinNode) {
+    pub(super) fn emit_catch_clause(&mut self, node: &Node) {
         let Some(catch) = self.arena.get_catch_clause(node) else {
             return;
         };
@@ -370,7 +370,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(catch.block);
     }
 
-    pub(super) fn emit_switch_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_switch_statement(&mut self, node: &Node) {
         let Some(switch) = self.arena.get_switch(node) else {
             return;
         };
@@ -382,7 +382,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(switch.case_block);
     }
 
-    pub(super) fn emit_case_block(&mut self, node: &ThinNode) {
+    pub(super) fn emit_case_block(&mut self, node: &Node) {
         if !node.has_data() || node.kind != syntax_kind_ext::CASE_BLOCK {
             return;
         }
@@ -403,7 +403,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("}");
     }
 
-    pub(super) fn emit_case_clause(&mut self, node: &ThinNode) {
+    pub(super) fn emit_case_clause(&mut self, node: &Node) {
         let Some(clause) = self.arena.get_case_clause(node) else {
             return;
         };
@@ -422,7 +422,7 @@ impl<'a> ThinPrinter<'a> {
         self.decrease_indent();
     }
 
-    pub(super) fn emit_default_clause(&mut self, node: &ThinNode) {
+    pub(super) fn emit_default_clause(&mut self, node: &Node) {
         let Some(clause) = self.arena.get_case_clause(node) else {
             return;
         };
@@ -449,7 +449,7 @@ impl<'a> ThinPrinter<'a> {
         self.write_semicolon();
     }
 
-    pub(super) fn emit_do_statement(&mut self, node: &ThinNode) {
+    pub(super) fn emit_do_statement(&mut self, node: &Node) {
         let Some(loop_stmt) = self.arena.get_loop(node) else {
             return;
         };

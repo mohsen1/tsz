@@ -1,13 +1,13 @@
 use super::is_valid_identifier_name;
-use super::{ParamTransform, ParamTransformPlan, RestParamTransform, ThinPrinter};
+use super::{ParamTransform, ParamTransformPlan, RestParamTransform, Printer};
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{MethodDeclData, ThinNode};
+use crate::parser::node::{MethodDeclData, Node};
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transform_context::TransformDirective;
 use crate::transforms::class_es5::ClassES5Emitter;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     pub(super) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
@@ -316,8 +316,8 @@ impl<'a> ThinPrinter<'a> {
     /// Arrow: (x) => x + 1  →  function (x) { return x + 1; }
     pub(super) fn emit_arrow_function_es5(
         &mut self,
-        _node: &ThinNode,
-        func: &crate::parser::thin_node::FunctionData,
+        _node: &Node,
+        func: &crate::parser::node::FunctionData,
         captures_this: bool,
     ) {
         let needs_this_capture = captures_this;
@@ -402,7 +402,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_function_expression_es5_params(&mut self, node: &ThinNode) {
+    pub(super) fn emit_function_expression_es5_params(&mut self, node: &Node) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -450,7 +450,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_function_declaration_es5_params(&mut self, node: &ThinNode) {
+    pub(super) fn emit_function_declaration_es5_params(&mut self, node: &Node) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -495,7 +495,7 @@ impl<'a> ThinPrinter<'a> {
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
     pub(super) fn emit_async_function_es5(
         &mut self,
-        func: &crate::parser::thin_node::FunctionData,
+        func: &crate::parser::node::FunctionData,
         func_name: &str,
         this_expr: &str,
     ) {

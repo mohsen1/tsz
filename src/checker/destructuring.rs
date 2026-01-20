@@ -9,19 +9,19 @@
 //! - Function parameter destructuring
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeId, TypeInterner, TypeKey};
 
 /// Destructuring pattern type checker
 pub struct DestructuringChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     types: &'a TypeInterner,
 }
 
 impl<'a> DestructuringChecker<'a> {
-    pub fn new(arena: &'a ThinNodeArena, types: &'a TypeInterner) -> Self {
+    pub fn new(arena: &'a NodeArena, types: &'a TypeInterner) -> Self {
         Self { arena, types }
     }
 
@@ -248,7 +248,7 @@ impl<'a> DestructuringChecker<'a> {
     }
 
     /// Check if a node is a rest element
-    fn is_rest_element(&self, node: &crate::parser::thin_node::ThinNode) -> bool {
+    fn is_rest_element(&self, node: &crate::parser::node::Node) -> bool {
         if node.kind == syntax_kind_ext::BINDING_ELEMENT {
             if let Some(binding) = self.arena.get_binding_element(node) {
                 return binding.dot_dot_dot_token;
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_destructuring_checker_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let types = TypeInterner::new();
         let _checker = DestructuringChecker::new(&arena, &types);
     }

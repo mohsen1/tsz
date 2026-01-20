@@ -1,7 +1,7 @@
-use super::{CommentKind, ThinPrinter, get_leading_comment_ranges, get_trailing_comment_ranges};
-use crate::thin_printer::safe_slice;
+use super::{CommentKind, Printer, get_leading_comment_ranges, get_trailing_comment_ranges};
+use crate::printer::safe_slice;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Comment Emission Helpers
     // =========================================================================

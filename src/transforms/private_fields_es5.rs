@@ -23,7 +23,7 @@
 //! _C_value = new WeakMap();
 //! ```
 
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
@@ -152,7 +152,7 @@ impl PrivateFieldState {
 }
 
 /// Check if a property name is a private identifier (starts with #)
-pub fn is_private_identifier(arena: &ThinNodeArena, name_idx: NodeIndex) -> bool {
+pub fn is_private_identifier(arena: &NodeArena, name_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(name_idx) else {
         return false;
     };
@@ -160,7 +160,7 @@ pub fn is_private_identifier(arena: &ThinNodeArena, name_idx: NodeIndex) -> bool
 }
 
 /// Get the private field name from a private identifier node
-pub fn get_private_field_name(arena: &ThinNodeArena, name_idx: NodeIndex) -> Option<String> {
+pub fn get_private_field_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<String> {
     let node = arena.get(name_idx)?;
     if node.kind != SyntaxKind::PrivateIdentifier as u16 {
         return None;
@@ -171,7 +171,7 @@ pub fn get_private_field_name(arena: &ThinNodeArena, name_idx: NodeIndex) -> Opt
 
 /// Collect private fields from a class
 pub fn collect_private_fields(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     class_idx: NodeIndex,
     class_name: &str,
 ) -> Vec<PrivateFieldInfo> {
@@ -216,7 +216,7 @@ pub fn collect_private_fields(
 }
 
 /// Check if modifiers contain the static keyword
-fn has_static_modifier(arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+fn has_static_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
     let Some(mods) = modifiers else {
         return false;
     };
@@ -233,7 +233,7 @@ fn has_static_modifier(arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> b
 
 /// Collect private accessors from a class
 pub fn collect_private_accessors(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     class_idx: NodeIndex,
     class_name: &str,
 ) -> Vec<PrivateAccessorInfo> {

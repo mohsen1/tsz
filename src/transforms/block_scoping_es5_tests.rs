@@ -1,9 +1,9 @@
 use super::*;
 use crate::parser::NodeIndex;
-use crate::thin_parser::ThinParserState;
+use crate::parser::ParserState;
 
-fn parse_first_loop(source: &str) -> (ThinParserState, NodeIndex, NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_first_loop(source: &str) -> (ParserState, NodeIndex, NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let root_node = parser.arena.get(root).expect("expected root node");

@@ -42,19 +42,19 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
 
 /// ES5 Destructuring Transformer - produces IR nodes for destructuring lowering
 pub struct ES5DestructuringTransformer<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     /// Counter for temporary variable names (_a, _b, etc.)
     temp_var_counter: u32,
 }
 
 impl<'a> ES5DestructuringTransformer<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             temp_var_counter: 0,
@@ -620,11 +620,11 @@ impl<'a> ES5DestructuringTransformer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     use crate::transforms::ir_printer::IRPrinter;
 
     fn transform_destructuring(source: &str) -> String {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let Some(root_node) = parser.arena.get(root) else {
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn test_transformer_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let transformer = ES5DestructuringTransformer::new(&arena);
         assert!(!transformer.is_destructuring_pattern(NodeIndex::NONE));
         assert!(!transformer.is_destructuring_assignment(NodeIndex::NONE));
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn test_temp_var_generation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let mut transformer = ES5DestructuringTransformer::new(&arena);
 
         // Test temp var name generation

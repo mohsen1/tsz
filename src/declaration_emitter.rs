@@ -25,14 +25,14 @@
 //! ```
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{ThinNode, ThinNodeArena};
+use crate::parser::node::{Node, NodeArena};
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     writer: SourceWriter,
     indent_level: u32,
     source_map_text: Option<&'a str>,
@@ -46,7 +46,7 @@ struct SourceMapState {
 }
 
 impl<'a> DeclarationEmitter<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         DeclarationEmitter {
             arena,
             writer: SourceWriter::with_capacity(4096),
@@ -1680,7 +1680,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn queue_source_mapping(&mut self, node: &ThinNode) {
+    fn queue_source_mapping(&mut self, node: &Node) {
         if !self.writer.has_source_map() {
             self.pending_source_pos = None;
             return;
@@ -1734,12 +1734,12 @@ impl<'a> DeclarationEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_function_declaration() {
         let source = "export function add(a: number, b: number): number { return a + b; }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -1773,7 +1773,7 @@ mod tests {
             }
         }
         "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -1795,7 +1795,7 @@ mod tests {
     #[test]
     fn test_interface_declaration() {
         let source = "export interface Point { x: number; y: number; }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -1816,7 +1816,7 @@ mod tests {
     #[test]
     fn test_type_alias() {
         let source = "export type ID = string | number;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let mut emitter = DeclarationEmitter::new(&parser.arena);

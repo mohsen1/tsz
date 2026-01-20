@@ -1,13 +1,13 @@
 use super::FlowAnalyzer;
 use crate::checker::flow_graph_builder::FlowGraphBuilder;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::solver::{PropertyInfo, TypeId, TypeInterner};
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
-use crate::thin_parser::ThinParserState;
+use crate::binder::BinderState;
+use crate::checker::CheckerState;
+use crate::parser::ParserState;
 
-fn get_switch_statement(arena: &ThinNodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
+fn get_switch_statement(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
     let root_node = arena.get(root).expect("root node");
     let source_file = arena.get_source_file(root_node).expect("source file");
     *source_file
@@ -18,7 +18,7 @@ fn get_switch_statement(arena: &ThinNodeArena, root: NodeIndex, stmt_index: usiz
 }
 
 fn get_switch_clause_expression(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     switch_idx: NodeIndex,
     clause_index: usize,
 ) -> NodeIndex {
@@ -42,7 +42,7 @@ fn get_switch_clause_expression(
 }
 
 fn get_if_branch_expression(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     root: NodeIndex,
     stmt_index: usize,
     is_then: bool,
@@ -65,7 +65,7 @@ fn get_if_branch_expression(
     extract_expression_from_statement(arena, branch_idx)
 }
 
-fn extract_expression_from_statement(arena: &ThinNodeArena, stmt_idx: NodeIndex) -> NodeIndex {
+fn extract_expression_from_statement(arena: &NodeArena, stmt_idx: NodeIndex) -> NodeIndex {
     let stmt_node = arena.get(stmt_idx).expect("statement node");
     if let Some(block) = arena.get_block(stmt_node) {
         let inner_idx = *block.statements.nodes.first().expect("block statement");
@@ -79,7 +79,7 @@ fn extract_expression_from_statement(arena: &ThinNodeArena, stmt_idx: NodeIndex)
 }
 
 fn get_block_expression(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     block_idx: NodeIndex,
     stmt_index: usize,
 ) -> NodeIndex {
@@ -108,10 +108,10 @@ switch (x) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -157,10 +157,10 @@ switch (x.kind) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -216,10 +216,10 @@ if (x instanceof Foo) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -261,10 +261,10 @@ if ("a" in x) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -316,10 +316,10 @@ if ("a" in x) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -371,10 +371,10 @@ if (#a in x) {
 }
 "##;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -429,16 +429,16 @@ if (isString(x)) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -479,16 +479,16 @@ if (guard(x)) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -570,16 +570,16 @@ if (assertString(x)) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -616,16 +616,16 @@ assertString(x);
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -660,10 +660,10 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -700,16 +700,16 @@ x = "hi";
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -755,16 +755,16 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -809,10 +809,10 @@ if (isString) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -837,10 +837,10 @@ x = "hi";
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -871,10 +871,10 @@ while (true) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -911,10 +911,10 @@ x = null;
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -945,10 +945,10 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -987,10 +987,10 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -1029,10 +1029,10 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -1071,10 +1071,10 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -1113,10 +1113,10 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -1155,10 +1155,10 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -1200,16 +1200,16 @@ if (isStringArray(x)) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -1262,16 +1262,16 @@ const callback = () => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -1356,10 +1356,10 @@ x = "assigned";
 })();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -1391,16 +1391,16 @@ arr.forEach((item) => {
 });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -1505,16 +1505,16 @@ const mapped = arr.map((item) => {
 });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -1623,16 +1623,16 @@ const outer = () => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -1783,16 +1783,16 @@ setTimeout(() => {
 }, 1000);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -1884,16 +1884,16 @@ const callback2 = () => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -2028,16 +2028,16 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -2147,7 +2147,7 @@ x = "test";
 const result = add(1, 2);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -2182,16 +2182,16 @@ const filtered = arr.filter((item) => {
 });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -2307,10 +2307,10 @@ if (Math.random() > 0.5) {
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -2346,10 +2346,10 @@ switch (x) {
 result;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -2384,10 +2384,10 @@ try {
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -2416,10 +2416,10 @@ for (let i = 0; i < 10; i++) {
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -2460,10 +2460,10 @@ if (Math.random() > 0.5) {
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -2500,10 +2500,10 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let arena = parser.get_arena();
@@ -2524,9 +2524,9 @@ class Foo {
 #[test]
 fn test_ts2454_variable_used_before_assigned() {
     use crate::interner::Atom;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_checker::ThinCheckerState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::checker::CheckerState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -2535,15 +2535,15 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = crate::solver::TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -2563,9 +2563,9 @@ function test() {
 /// Test that TS2454 is NOT emitted when a variable has an initializer.
 #[test]
 fn test_ts2454_no_error_with_initializer() {
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_checker::ThinCheckerState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::checker::CheckerState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -2574,15 +2574,15 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = crate::solver::TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,

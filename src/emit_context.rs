@@ -1,14 +1,14 @@
 //! EmitContext - Transform state management for the emitter
 //!
-//! This module extracts transform-specific state from ThinPrinter into a dedicated
+//! This module extracts transform-specific state from Printer into a dedicated
 //! context object. This follows the "Transform Context" pattern to:
 //!
-//! 1. Keep ThinPrinter focused on AST traversal
+//! 1. Keep Printer focused on AST traversal
 //! 2. Group related state together
 //! 3. Make transform state explicit and easier to pass around
-//! 4. Enable transforms to manage their own state without bloating ThinPrinter
+//! 4. Enable transforms to manage their own state without bloating Printer
 
-use crate::thin_emitter::{ModuleKind, NewLineKind, PrinterOptions, ScriptTarget};
+use crate::emitter::{ModuleKind, NewLineKind, PrinterOptions, ScriptTarget};
 use crate::transforms::block_scoping_es5::BlockScopeState;
 use crate::transforms::private_fields_es5::PrivateFieldState;
 
@@ -166,7 +166,7 @@ impl ModuleTransformState {
 /// The main emit context that holds all transform-specific state
 ///
 /// This is passed through the emitter and transforms, allowing them to
-/// access and modify state without bloating ThinPrinter.
+/// access and modify state without bloating Printer.
 #[derive(Debug)]
 pub struct EmitContext {
     /// Printer/emitter options

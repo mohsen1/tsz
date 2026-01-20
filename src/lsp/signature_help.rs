@@ -8,12 +8,12 @@ use crate::lsp::jsdoc::{ParsedJsdoc, jsdoc_for_node, parse_jsdoc};
 use crate::lsp::position::{LineMap, Position};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::utils::find_node_at_or_before_offset;
-use crate::parser::thin_node::{CallExprData, NodeAccess, ThinNodeArena};
+use crate::parser::node::{CallExprData, NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey};
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -79,8 +79,8 @@ impl SignatureDocs {
 }
 
 pub struct SignatureHelpProvider<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     interner: &'a TypeInterner,
     source_text: &'a str,
@@ -90,8 +90,8 @@ pub struct SignatureHelpProvider<'a> {
 
 impl<'a> SignatureHelpProvider<'a> {
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         interner: &'a TypeInterner,
         source_text: &'a str,
@@ -109,8 +109,8 @@ impl<'a> SignatureHelpProvider<'a> {
     }
 
     pub fn with_strict(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         interner: &'a TypeInterner,
         source_text: &'a str,
@@ -202,7 +202,7 @@ impl<'a> SignatureHelpProvider<'a> {
             ..Default::default()
         };
         let mut checker = if let Some(cache) = type_cache.take() {
-            ThinCheckerState::with_cache(
+            CheckerState::with_cache(
                 self.arena,
                 self.binder,
                 self.interner,
@@ -211,7 +211,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 compiler_options,
             )
         } else {
-            ThinCheckerState::new(
+            CheckerState::new(
                 self.arena,
                 self.binder,
                 self.interner,
@@ -413,7 +413,7 @@ impl<'a> SignatureHelpProvider<'a> {
     fn get_signatures_from_type(
         &self,
         type_id: TypeId,
-        checker: &ThinCheckerState,
+        checker: &CheckerState,
         call_kind: CallKind,
     ) -> Vec<SignatureCandidate> {
         let key = match self.interner.lookup(type_id) {
@@ -486,7 +486,7 @@ impl<'a> SignatureHelpProvider<'a> {
     fn format_signature(
         &self,
         shape: &FunctionShape,
-        checker: &ThinCheckerState,
+        checker: &CheckerState,
         is_constructor: bool,
     ) -> SignatureInformation {
         let mut parameters = Vec::new();
@@ -535,7 +535,7 @@ impl<'a> SignatureHelpProvider<'a> {
     fn signature_candidate(
         &self,
         shape: &FunctionShape,
-        checker: &ThinCheckerState,
+        checker: &CheckerState,
         is_constructor: bool,
     ) -> SignatureCandidate {
         let (required_params, total_params, has_rest) = self.signature_meta(&shape.params);
@@ -1033,7 +1033,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
     fn class_has_method_named(
         &self,
-        class_data: &crate::parser::thin_node::ClassData,
+        class_data: &crate::parser::node::ClassData,
         property_name: &str,
     ) -> bool {
         for &member in class_data.members.nodes.iter() {
@@ -1057,7 +1057,7 @@ impl<'a> SignatureHelpProvider<'a> {
         false
     }
 
-    fn is_static_method(&self, method: &crate::parser::thin_node::MethodDeclData) -> bool {
+    fn is_static_method(&self, method: &crate::parser::node::MethodDeclData) -> bool {
         let Some(modifiers) = method.modifiers.as_ref() else {
             return false;
         };

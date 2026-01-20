@@ -1,52 +1,52 @@
-//! Tests for ThinEmitter
+//! Tests for Emitter
 
 use crate::emit_context::EmitContext;
 use crate::lowering_pass::LoweringPass;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeInterner;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
-use crate::thin_emitter::{ModuleKind, PrinterOptions, ScriptTarget, ThinPrinter};
-use crate::thin_parser::ThinParserState;
+use crate::binder::BinderState;
+use crate::checker::CheckerState;
+use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget, Printer};
+use crate::parser::ParserState;
 use serde_json::Value;
 
 fn make_printer_with_transforms<'a>(
-    parser: &'a ThinParserState,
+    parser: &'a ParserState,
     root: NodeIndex,
     options: PrinterOptions,
     auto_detect_module: bool,
-) -> ThinPrinter<'a> {
+) -> Printer<'a> {
     let mut ctx = EmitContext::with_options(options.clone());
     ctx.auto_detect_module = auto_detect_module;
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
-    let mut printer = ThinPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
     printer.set_auto_detect_module(ctx.auto_detect_module);
     printer
 }
 
-fn make_es5_printer<'a>(parser: &'a ThinParserState, root: NodeIndex) -> ThinPrinter<'a> {
+fn make_es5_printer<'a>(parser: &'a ParserState, root: NodeIndex) -> Printer<'a> {
     let mut options = PrinterOptions::default();
     options.target = ScriptTarget::ES5;
     make_printer_with_transforms(parser, root, options, false)
 }
 
 #[test]
-fn test_thin_printer_creation() {
-    use crate::parser::thin_node::ThinNodeArena;
-    let arena = ThinNodeArena::new();
-    let printer = ThinPrinter::new(&arena);
+fn test_printer_creation() {
+    use crate::parser::node::NodeArena;
+    let arena = NodeArena::new();
+    let printer = Printer::new(&arena);
     assert!(printer.get_output().is_empty());
 }
 
 #[test]
-fn test_thin_emitter_source_map_basic() {
+fn test_emitter_source_map_basic() {
     let source = "let x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_map_text(parser.get_source_text());
     printer.enable_source_map("test.js", "test.ts");
     printer.emit(root);
@@ -64,9 +64,9 @@ fn test_thin_emitter_source_map_basic() {
 }
 
 #[test]
-fn test_thin_emitter_source_map_transform_class() {
+fn test_emitter_source_map_transform_class() {
     let source = "class Foo { constructor() {} }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -87,12 +87,12 @@ fn test_thin_emitter_source_map_transform_class() {
 }
 
 #[test]
-fn test_thin_emitter_source_map_names() {
+fn test_emitter_source_map_names() {
     let source = "const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.set_source_map_text(parser.get_source_text());
     printer.enable_source_map("test.js", "test.ts");
     printer.emit(root);
@@ -114,9 +114,9 @@ fn test_thin_emitter_source_map_names() {
 // The write functionality is tested indirectly through emit tests.
 
 #[test]
-fn test_thin_emit_variable_declaration() {
+fn test_emit_variable_declaration() {
     let source = "let x = 42";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     // Initialize scanner by parsing source file (which calls next_token)
     let root = parser.parse_source_file();
 
@@ -135,12 +135,12 @@ fn test_thin_emit_variable_declaration() {
 }
 
 #[test]
-fn test_thin_emit_variable_declaration_esnext() {
+fn test_emit_variable_declaration_esnext() {
     let source = "let x = 42";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -157,12 +157,12 @@ fn test_thin_emit_variable_declaration_esnext() {
 }
 
 #[test]
-fn test_thin_emit_function_declaration() {
+fn test_emit_function_declaration() {
     let source = "function add(a, b) { return a + b; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -184,12 +184,12 @@ fn test_thin_emit_function_declaration() {
 }
 
 #[test]
-fn test_thin_emit_function_expression() {
+fn test_emit_function_expression() {
     let source = "const fnExpr = function() { return 1; };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -206,14 +206,14 @@ fn test_thin_emit_function_expression() {
 }
 
 #[test]
-fn test_thin_emit_string_literal_single_quote() {
+fn test_emit_string_literal_single_quote() {
     let source = "const s = \"hi\";";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut options = PrinterOptions::default();
     options.single_quote = true;
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -225,12 +225,12 @@ fn test_thin_emit_string_literal_single_quote() {
 }
 
 #[test]
-fn test_thin_emit_call_expression() {
+fn test_emit_call_expression() {
     let source = "const result = foo.bar(baz[0]);";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -247,12 +247,12 @@ fn test_thin_emit_call_expression() {
 }
 
 #[test]
-fn test_thin_emit_if_statement() {
+fn test_emit_if_statement() {
     let source = "if (x > 0) { y = 1; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -261,12 +261,12 @@ fn test_thin_emit_if_statement() {
 }
 
 #[test]
-fn test_thin_emit_while_statement() {
+fn test_emit_while_statement() {
     let source = "while (x < 10) { x++; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -283,12 +283,12 @@ fn test_thin_emit_while_statement() {
 }
 
 #[test]
-fn test_thin_emit_switch_statement() {
+fn test_emit_switch_statement() {
     let source = "switch (x) { case 1: y(); break; default: z(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -310,9 +310,9 @@ fn test_thin_emit_switch_statement() {
 }
 
 #[test]
-fn test_thin_emit_for_of_es5() {
+fn test_emit_for_of_es5() {
     let source = "for (var v of arr) { v; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -342,12 +342,12 @@ fn test_thin_emit_for_of_es5() {
 }
 
 #[test]
-fn test_thin_emit_class_declaration() {
+fn test_emit_class_declaration() {
     let source = "class Foo { }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -364,12 +364,12 @@ fn test_thin_emit_class_declaration() {
 }
 
 #[test]
-fn test_thin_emit_class_extends_es6() {
+fn test_emit_class_extends_es6() {
     let source = "class Derived extends Base<T> {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -386,9 +386,9 @@ fn test_thin_emit_class_extends_es6() {
 }
 
 #[test]
-fn test_thin_emit_class_method_destructured_param_es5() {
+fn test_emit_class_method_destructured_param_es5() {
     let source = "class Foo { method({ x }) { return x; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -408,9 +408,9 @@ fn test_thin_emit_class_method_destructured_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_function_destructured_param_es5() {
+fn test_emit_function_destructured_param_es5() {
     let source = "function foo({ x }) { return x; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -430,9 +430,9 @@ fn test_thin_emit_function_destructured_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_function_default_param_es5() {
+fn test_emit_function_default_param_es5() {
     let source = "function foo(a = 1) { return a; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -452,9 +452,9 @@ fn test_thin_emit_function_default_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_function_destructured_default_param_es5() {
+fn test_emit_function_destructured_default_param_es5() {
     let source = "function foo({ x } = {}, y = x) { return y; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -482,9 +482,9 @@ fn test_thin_emit_function_destructured_default_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_function_destructured_binding_default_es5() {
+fn test_emit_function_destructured_binding_default_es5() {
     let source = "function foo({ x = 1 }) { return x; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -504,9 +504,9 @@ fn test_thin_emit_function_destructured_binding_default_es5() {
 }
 
 #[test]
-fn test_thin_emit_function_rest_param_es5() {
+fn test_emit_function_rest_param_es5() {
     let source = "function foo(a, ...rest) { return rest.length; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -531,9 +531,9 @@ fn test_thin_emit_function_rest_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_class_method_default_param_es5() {
+fn test_emit_class_method_default_param_es5() {
     let source = "class Foo { method(a = 1) { return a; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -553,9 +553,9 @@ fn test_thin_emit_class_method_default_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_class_method_nested_destructured_param_es5() {
+fn test_emit_class_method_nested_destructured_param_es5() {
     let source = "class Foo { method({ a: { b } }) { return b; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -575,9 +575,9 @@ fn test_thin_emit_class_method_nested_destructured_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_class_method_rest_param_es5() {
+fn test_emit_class_method_rest_param_es5() {
     let source = "class Foo { method(...rest) { return rest.length; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -602,9 +602,9 @@ fn test_thin_emit_class_method_rest_param_es5() {
 }
 
 #[test]
-fn test_thin_emit_object_rest_destructuring_es5() {
+fn test_emit_object_rest_destructuring_es5() {
     let source = "let { x, ...rest } = obj;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -624,9 +624,9 @@ fn test_thin_emit_object_rest_destructuring_es5() {
 }
 
 #[test]
-fn test_thin_emit_array_rest_destructuring_es5() {
+fn test_emit_array_rest_destructuring_es5() {
     let source = "let [x, ...rest] = arr;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -646,9 +646,9 @@ fn test_thin_emit_array_rest_destructuring_es5() {
 }
 
 #[test]
-fn test_thin_emit_object_literal_computed_shorthand_es5() {
+fn test_emit_object_literal_computed_shorthand_es5() {
     let source = "const key = 1; const a = 2; const obj = { [key]: a, a };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -668,9 +668,9 @@ fn test_thin_emit_object_literal_computed_shorthand_es5() {
 }
 
 #[test]
-fn test_thin_emit_object_destructuring_default_es5() {
+fn test_emit_object_destructuring_default_es5() {
     let source = "let { x = 1 } = obj;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -690,9 +690,9 @@ fn test_thin_emit_object_destructuring_default_es5() {
 }
 
 #[test]
-fn test_thin_emit_array_destructuring_default_es5() {
+fn test_emit_array_destructuring_default_es5() {
     let source = "let [x = 1] = arr;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -712,9 +712,9 @@ fn test_thin_emit_array_destructuring_default_es5() {
 }
 
 #[test]
-fn test_thin_emit_object_nested_destructuring_es5() {
+fn test_emit_object_nested_destructuring_es5() {
     let source = "let { a: { b } } = obj;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -734,9 +734,9 @@ fn test_thin_emit_object_nested_destructuring_es5() {
 }
 
 #[test]
-fn test_thin_emit_object_spread_es5() {
+fn test_emit_object_spread_es5() {
     let source = "let o = { ...a, b: 1 };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -756,9 +756,9 @@ fn test_thin_emit_object_spread_es5() {
 }
 
 #[test]
-fn test_thin_emit_array_nested_destructuring_es5() {
+fn test_emit_array_nested_destructuring_es5() {
     let source = "let [[x]] = arr;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -778,9 +778,9 @@ fn test_thin_emit_array_nested_destructuring_es5() {
 }
 
 #[test]
-fn test_thin_emit_arrow_function() {
+fn test_emit_arrow_function() {
     let source = "let f = (x) => x * 2";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -801,13 +801,13 @@ fn test_thin_emit_arrow_function() {
 }
 
 #[test]
-fn test_thin_emit_interface_declaration() {
+fn test_emit_interface_declaration() {
     // Interface declarations are TypeScript-only, so JavaScript emit should be empty
     let source = "interface Point { x: number; y: number; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -820,13 +820,13 @@ fn test_thin_emit_interface_declaration() {
 }
 
 #[test]
-fn test_thin_emit_type_alias_declaration() {
+fn test_emit_type_alias_declaration() {
     // Type alias declarations are TypeScript-only, so JavaScript emit should be empty
     let source = "type Alias = { x: number };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -838,9 +838,9 @@ fn test_thin_emit_type_alias_declaration() {
 }
 
 #[test]
-fn test_thin_emit_union_type() {
+fn test_emit_union_type() {
     let source = "type Value = string | number;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = &parser.arena;
@@ -864,7 +864,7 @@ fn test_thin_emit_union_type() {
     }
 
     let type_node = type_node.expect("expected type alias type node");
-    let mut printer = ThinPrinter::new(arena);
+    let mut printer = Printer::new(arena);
     printer.emit(type_node);
 
     let output = printer.get_output();
@@ -876,12 +876,12 @@ fn test_thin_emit_union_type() {
 }
 
 #[test]
-fn test_thin_emit_jsx_element() {
+fn test_emit_jsx_element() {
     let source = "const x = <div className=\"foo\">{bar}</div>;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -908,12 +908,12 @@ fn test_thin_emit_jsx_element() {
 }
 
 #[test]
-fn test_thin_emit_jsx_fragment_spread() {
+fn test_emit_jsx_fragment_spread() {
     let source = "const x = <><Component {...props} /></>;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -935,12 +935,12 @@ fn test_thin_emit_jsx_fragment_spread() {
 }
 
 #[test]
-fn test_thin_emit_jsx_namespaced_member_expression() {
+fn test_emit_jsx_namespaced_member_expression() {
     let source = "const a = <svg:rect width={100} />; const b = <Foo.Bar.Baz />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -957,12 +957,12 @@ fn test_thin_emit_jsx_namespaced_member_expression() {
 }
 
 #[test]
-fn test_thin_emit_jsx_namespaced_attribute() {
+fn test_emit_jsx_namespaced_attribute() {
     let source = "const x = <svg xlink:href=\"path\" />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -979,12 +979,12 @@ fn test_thin_emit_jsx_namespaced_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_namespaced_attribute_expression() {
+fn test_emit_jsx_namespaced_attribute_expression() {
     let source = "const x = <svg xlink:href={url} />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1001,12 +1001,12 @@ fn test_thin_emit_jsx_namespaced_attribute_expression() {
 }
 
 #[test]
-fn test_thin_emit_jsx_spread_attribute() {
+fn test_emit_jsx_spread_attribute() {
     let source = "const x = <div {...props} dataId={id} />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1028,12 +1028,12 @@ fn test_thin_emit_jsx_spread_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_hyphenated_attribute() {
+fn test_emit_jsx_hyphenated_attribute() {
     let source = "const x = <div data-id={id} />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1050,12 +1050,12 @@ fn test_thin_emit_jsx_hyphenated_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_hyphenated_element_name() {
+fn test_emit_jsx_hyphenated_element_name() {
     let source = "const x = <my-widget />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1067,12 +1067,12 @@ fn test_thin_emit_jsx_hyphenated_element_name() {
 }
 
 #[test]
-fn test_thin_emit_jsx_hyphenated_element_with_attribute() {
+fn test_emit_jsx_hyphenated_element_with_attribute() {
     let source = "const x = <my-widget data-id={id} />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1089,12 +1089,12 @@ fn test_thin_emit_jsx_hyphenated_element_with_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_member_element_with_attribute() {
+fn test_emit_jsx_member_element_with_attribute() {
     let source = "const x = <Foo.Bar baz=\"ok\" />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1111,12 +1111,12 @@ fn test_thin_emit_jsx_member_element_with_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_member_element_hyphenated_attribute() {
+fn test_emit_jsx_member_element_hyphenated_attribute() {
     let source = "const x = <Foo.Bar data-id={id} />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1133,12 +1133,12 @@ fn test_thin_emit_jsx_member_element_hyphenated_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_namespaced_attribute_string_literal() {
+fn test_emit_jsx_namespaced_attribute_string_literal() {
     let source = "const x = <svg xlink:href=\"#id\" />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1150,12 +1150,12 @@ fn test_thin_emit_jsx_namespaced_attribute_string_literal() {
 }
 
 #[test]
-fn test_thin_emit_jsx_member_element_namespaced_attribute() {
+fn test_emit_jsx_member_element_namespaced_attribute() {
     let source = "const x = <Foo.Bar xlink:href=\"#id\" />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1172,12 +1172,12 @@ fn test_thin_emit_jsx_member_element_namespaced_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_member_namespaced_attribute_expression() {
+fn test_emit_jsx_member_namespaced_attribute_expression() {
     let source = "const x = <Foo.Bar xlink:href={url} />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1194,12 +1194,12 @@ fn test_thin_emit_jsx_member_namespaced_attribute_expression() {
 }
 
 #[test]
-fn test_thin_emit_jsx_boolean_attribute() {
+fn test_emit_jsx_boolean_attribute() {
     let source = "const x = <input disabled />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1221,12 +1221,12 @@ fn test_thin_emit_jsx_boolean_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_member_boolean_attribute() {
+fn test_emit_jsx_member_boolean_attribute() {
     let source = "const x = <Foo.Bar disabled />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1248,12 +1248,12 @@ fn test_thin_emit_jsx_member_boolean_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_spread_and_boolean_attribute() {
+fn test_emit_jsx_spread_and_boolean_attribute() {
     let source = "const x = <input {...props} disabled />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1275,12 +1275,12 @@ fn test_thin_emit_jsx_spread_and_boolean_attribute() {
 }
 
 #[test]
-fn test_thin_emit_jsx_namespaced_and_boolean_attributes() {
+fn test_emit_jsx_namespaced_and_boolean_attributes() {
     let source = "const x = <svg xlink:href=\"#id\" focusable />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1302,12 +1302,12 @@ fn test_thin_emit_jsx_namespaced_and_boolean_attributes() {
 }
 
 #[test]
-fn test_thin_emit_jsx_member_spread_and_boolean_attribute() {
+fn test_emit_jsx_member_spread_and_boolean_attribute() {
     let source = "const x = <Foo.Bar {...props} disabled />;";
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1334,9 +1334,9 @@ fn test_thin_emit_jsx_member_spread_and_boolean_attribute() {
 }
 
 #[test]
-fn test_thin_emit_enum_declaration() {
+fn test_emit_enum_declaration() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     // ES5 target transforms enum to IIFE
@@ -1363,13 +1363,13 @@ fn test_thin_emit_enum_declaration() {
 }
 
 #[test]
-fn test_thin_emit_enum_declaration_es6() {
+fn test_emit_enum_declaration_es6() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     // ES6 mode should preserve the enum keyword (TypeScript style)
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1391,12 +1391,12 @@ fn test_thin_emit_enum_declaration_es6() {
 }
 
 #[test]
-fn test_thin_emit_const_enum_erased_es6() {
+fn test_emit_const_enum_erased_es6() {
     let source = "const enum CE { A = 0 }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1408,12 +1408,12 @@ fn test_thin_emit_const_enum_erased_es6() {
 }
 
 #[test]
-fn test_thin_emit_declare_enum_erased() {
+fn test_emit_declare_enum_erased() {
     let source = "declare enum E { A }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1424,10 +1424,10 @@ fn test_thin_emit_declare_enum_erased() {
     );
 }
 
-/// Full ThinNode pipeline integration test:
-/// ThinParser → ThinBinder → ThinChecker → ThinEmitter
+/// Full Node pipeline integration test:
+/// Parser → Binder → Checker → Emitter
 #[test]
-fn test_thin_pipeline_integration() {
+fn test_pipeline_integration() {
     let source = r#"
         function add(a: number, b: number): number {
             return a + b;
@@ -1436,13 +1436,13 @@ fn test_thin_pipeline_integration() {
     "#;
 
     // Step 1: Parse
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let source_file = parser.parse_source_file();
     assert!(!source_file.is_none(), "Source file should be parsed");
     let root = source_file;
 
     // Step 2: Bind
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, source_file);
     // Verify symbols were created
     let symbol_count = binder.symbols.len();
@@ -1455,7 +1455,7 @@ fn test_thin_pipeline_integration() {
     // Step 3: Check (type inference)
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let checker = ThinCheckerState::new(
+    let checker = CheckerState::new(
         &parser.arena,
         &binder,
         &types,
@@ -1505,12 +1505,12 @@ fn test_thin_pipeline_integration() {
 }
 
 #[test]
-fn test_thin_emit_import() {
+fn test_emit_import() {
     let source = r#"import { foo, bar } from "module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1532,12 +1532,12 @@ fn test_thin_emit_import() {
 }
 
 #[test]
-fn test_thin_emit_namespace_import_es6() {
+fn test_emit_namespace_import_es6() {
     let source = r#"import * as ns from "module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1549,12 +1549,12 @@ fn test_thin_emit_namespace_import_es6() {
 }
 
 #[test]
-fn test_thin_emit_import_type_only_erased() {
+fn test_emit_import_type_only_erased() {
     let source = r#"import type { Foo } from "module"; const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1571,12 +1571,12 @@ fn test_thin_emit_import_type_only_erased() {
 }
 
 #[test]
-fn test_thin_emit_import_type_specifier_filtered() {
+fn test_emit_import_type_specifier_filtered() {
     let source = r#"import { type Foo, bar } from "module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1593,12 +1593,12 @@ fn test_thin_emit_import_type_specifier_filtered() {
 }
 
 #[test]
-fn test_thin_emit_import_equals_external() {
+fn test_emit_import_equals_external() {
     let source = r#"import Foo = require("./bar"); Foo;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1610,12 +1610,12 @@ fn test_thin_emit_import_equals_external() {
 }
 
 #[test]
-fn test_thin_emit_import_equals_internal() {
+fn test_emit_import_equals_internal() {
     let source = "import Foo = Bar.Baz; Foo;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1627,12 +1627,12 @@ fn test_thin_emit_import_equals_internal() {
 }
 
 #[test]
-fn test_thin_emit_export() {
+fn test_emit_export() {
     let source = "export function greet() { return 'hello'; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1654,12 +1654,12 @@ fn test_thin_emit_export() {
 }
 
 #[test]
-fn test_thin_emit_export_default() {
+fn test_emit_export_default() {
     let source = "export default function () { return 1; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1676,12 +1676,12 @@ fn test_thin_emit_export_default() {
 }
 
 #[test]
-fn test_thin_emit_export_import_equals_es6() {
+fn test_emit_export_import_equals_es6() {
     let source = r#"export import Foo = require("./bar");"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1693,12 +1693,12 @@ fn test_thin_emit_export_import_equals_es6() {
 }
 
 #[test]
-fn test_thin_emit_export_type_only_erased() {
+fn test_emit_export_type_only_erased() {
     let source = r#"export type { Foo } from "module"; const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1715,12 +1715,12 @@ fn test_thin_emit_export_type_only_erased() {
 }
 
 #[test]
-fn test_thin_emit_export_type_specifier_filtered() {
+fn test_emit_export_type_specifier_filtered() {
     let source = r#"export { type Foo, bar } from "module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new_es6(&parser.arena);
+    let mut printer = Printer::new_es6(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1737,12 +1737,12 @@ fn test_thin_emit_export_type_specifier_filtered() {
 }
 
 #[test]
-fn test_thin_emit_get_accessor() {
+fn test_emit_get_accessor() {
     let source = "class Foo { get value() { return this._value; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1759,12 +1759,12 @@ fn test_thin_emit_get_accessor() {
 }
 
 #[test]
-fn test_thin_emit_set_accessor() {
+fn test_emit_set_accessor() {
     let source = "class Foo { set value(v) { this._value = v; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1781,12 +1781,12 @@ fn test_thin_emit_set_accessor() {
 }
 
 #[test]
-fn test_thin_emit_decorator() {
+fn test_emit_decorator() {
     let source = "@Component class MyComponent {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1808,9 +1808,9 @@ fn test_thin_emit_decorator() {
 }
 
 #[test]
-fn test_thin_emit_static_property() {
+fn test_emit_static_property() {
     let source = "class Foo { static count = 0; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -1826,13 +1826,13 @@ fn test_thin_emit_static_property() {
 }
 
 #[test]
-fn test_thin_emit_private_method() {
+fn test_emit_private_method() {
     // For JavaScript emit, 'private' modifier is stripped
     let source = "class Foo { private doSomething(): void {} }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1849,10 +1849,10 @@ fn test_thin_emit_private_method() {
 }
 
 #[test]
-fn test_thin_emit_static_readonly() {
+fn test_emit_static_readonly() {
     // For JavaScript emit, 'readonly' modifier is stripped and class becomes IIFE
     let source = "class Foo { static readonly MAX = 100; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -1873,9 +1873,9 @@ fn test_thin_emit_static_readonly() {
 }
 
 #[test]
-fn test_thin_emit_protected_constructor() {
+fn test_emit_protected_constructor() {
     let source = "class Singleton { protected constructor() {} }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -1896,9 +1896,9 @@ fn test_thin_emit_protected_constructor() {
 }
 
 #[test]
-fn test_thin_emit_static_get_accessor() {
+fn test_emit_static_get_accessor() {
     let source = "class Foo { static get instance(): Foo { return null; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut printer = make_es5_printer(&parser, root);
@@ -1920,13 +1920,13 @@ fn test_thin_emit_static_get_accessor() {
 }
 
 #[test]
-fn test_thin_emit_call_signature() {
+fn test_emit_call_signature() {
     // Interfaces are TypeScript-only, so JavaScript emit should be empty
     let source = "interface Callable { (): string; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1939,13 +1939,13 @@ fn test_thin_emit_call_signature() {
 }
 
 #[test]
-fn test_thin_emit_construct_signature() {
+fn test_emit_construct_signature() {
     // Interfaces are TypeScript-only, so JavaScript emit should be empty
     let source = "interface Factory { new (): MyClass; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -1958,9 +1958,9 @@ fn test_thin_emit_construct_signature() {
 }
 
 #[test]
-fn test_thin_emit_generic_call_construct_signatures() {
+fn test_emit_generic_call_construct_signatures() {
     let source = "interface Factory { <T>(value: T): T; new <T>(value: T): Factory<T>; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = &parser.arena;
@@ -1997,7 +1997,7 @@ fn test_thin_emit_generic_call_construct_signatures() {
     let call_sig = call_sig.expect("expected call signature");
     let construct_sig = construct_sig.expect("expected construct signature");
 
-    let mut printer = ThinPrinter::new(arena);
+    let mut printer = Printer::new(arena);
     printer.emit(call_sig);
     let output = printer.get_output();
     assert!(
@@ -2016,7 +2016,7 @@ fn test_thin_emit_generic_call_construct_signatures() {
         output
     );
 
-    let mut printer = ThinPrinter::new(arena);
+    let mut printer = Printer::new(arena);
     printer.emit(construct_sig);
     let output = printer.get_output();
     assert!(
@@ -2032,13 +2032,13 @@ fn test_thin_emit_generic_call_construct_signatures() {
 }
 
 #[test]
-fn test_thin_emit_readonly_property_signature() {
+fn test_emit_readonly_property_signature() {
     // Interfaces are TypeScript-only, so JavaScript emit should be empty
     let source = "interface Config { readonly name: string; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2056,13 +2056,13 @@ fn test_thin_emit_readonly_property_signature() {
 }
 
 #[test]
-fn test_thin_emit_readonly_index_signature() {
+fn test_emit_readonly_index_signature() {
     // Interfaces are TypeScript-only, so JavaScript emit should be empty
     let source = "interface ReadonlyMap { readonly [key: string]: number; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::new(&parser.arena);
+    let mut printer = Printer::new(&parser.arena);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2086,14 +2086,14 @@ fn test_thin_emit_readonly_index_signature() {
 #[test]
 fn test_commonjs_preamble() {
     let source = "export const x = 42;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2118,10 +2118,10 @@ fn test_commonjs_preamble() {
 #[test]
 fn test_auto_detect_skips_type_only_imports() {
     let source = r#"import type { Foo } from "./types"; const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::with_options(&parser.arena, PrinterOptions::default());
+    let mut printer = Printer::with_options(&parser.arena, PrinterOptions::default());
     printer.set_auto_detect_module(true);
     printer.emit(root);
 
@@ -2146,10 +2146,10 @@ fn test_auto_detect_skips_type_only_imports() {
 #[test]
 fn test_auto_detect_skips_type_only_exports() {
     let source = r#"export type { Foo } from "./types"; const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::with_options(&parser.arena, PrinterOptions::default());
+    let mut printer = Printer::with_options(&parser.arena, PrinterOptions::default());
     printer.set_auto_detect_module(true);
     printer.emit(root);
 
@@ -2174,10 +2174,10 @@ fn test_auto_detect_skips_type_only_exports() {
 #[test]
 fn test_auto_detect_skips_internal_import_equals() {
     let source = "import Foo = Bar.Baz; const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut printer = ThinPrinter::with_options(&parser.arena, PrinterOptions::default());
+    let mut printer = Printer::with_options(&parser.arena, PrinterOptions::default());
     printer.set_auto_detect_module(true);
     printer.emit(root);
 
@@ -2202,14 +2202,14 @@ fn test_auto_detect_skips_internal_import_equals() {
 #[test]
 fn test_commonjs_import_named() {
     let source = r#"import { foo, bar } from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2238,14 +2238,14 @@ fn test_commonjs_import_named() {
 #[test]
 fn test_commonjs_import_type_only_is_erased() {
     let source = r#"import type { Foo } from "./module"; const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2264,14 +2264,14 @@ fn test_commonjs_import_type_only_is_erased() {
 #[test]
 fn test_commonjs_import_side_effect() {
     let source = r#"import "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2290,14 +2290,14 @@ fn test_commonjs_import_side_effect() {
 #[test]
 fn test_commonjs_export_assignment_skips_esmodule_marker() {
     let source = r#"import "./module"; const foo = 1; export = foo;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2316,14 +2316,14 @@ fn test_commonjs_export_assignment_skips_esmodule_marker() {
 #[test]
 fn test_commonjs_import_namespace() {
     let source = r#"import * as ns from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2347,14 +2347,14 @@ fn test_commonjs_import_namespace() {
 #[test]
 fn test_commonjs_type_only_namespace_import_is_erased() {
     let source = r#"import type * as ns from "./module"; const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2378,14 +2378,14 @@ fn test_commonjs_type_only_namespace_import_is_erased() {
 #[test]
 fn test_commonjs_import_namespace_emits_helpers() {
     let source = r#"import * as ns from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2409,14 +2409,14 @@ fn test_commonjs_import_namespace_emits_helpers() {
 #[test]
 fn test_commonjs_import_namespace_helper_ordering() {
     let source = r#"import * as ns from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2442,14 +2442,14 @@ fn test_commonjs_import_namespace_helper_ordering() {
 #[test]
 fn test_commonjs_import_default() {
     let source = r#"import myDefault from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2473,14 +2473,14 @@ fn test_commonjs_import_default() {
 #[test]
 fn test_commonjs_reexport() {
     let source = r#"export { foo } from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2504,14 +2504,14 @@ fn test_commonjs_reexport() {
 #[test]
 fn test_commonjs_export_type_only_reexport_is_erased() {
     let source = r#"export type { Foo } from "./module"; const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2535,14 +2535,14 @@ fn test_commonjs_export_type_only_reexport_is_erased() {
 #[test]
 fn test_commonjs_export_star() {
     let source = r#"export * from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2566,14 +2566,14 @@ fn test_commonjs_export_star() {
 #[test]
 fn test_commonjs_export_star_emits_helpers() {
     let source = r#"export * from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2592,14 +2592,14 @@ fn test_commonjs_export_star_emits_helpers() {
 #[test]
 fn test_commonjs_export_star_helper_ordering() {
     let source = r#"export * from "./module";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2618,14 +2618,14 @@ fn test_commonjs_export_star_helper_ordering() {
 #[test]
 fn test_commonjs_helpers_before_esmodule_marker() {
     let source = r#"import * as ns from "./module"; export const x = 1;"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2644,14 +2644,14 @@ fn test_commonjs_helpers_before_esmodule_marker() {
 #[test]
 fn test_commonjs_esmodule_marker_before_exports_init() {
     let source = "export const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2670,14 +2670,14 @@ fn test_commonjs_esmodule_marker_before_exports_init() {
 #[test]
 fn test_commonjs_export_const() {
     let source = "export const x = 42;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2701,14 +2701,14 @@ fn test_commonjs_export_const() {
 #[test]
 fn test_commonjs_export_const_destructuring() {
     let source = "export const { a, b: c } = obj;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2737,14 +2737,14 @@ fn test_commonjs_export_const_destructuring() {
 #[test]
 fn test_commonjs_export_default_function() {
     let source = "export default function foo() { return 1; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2768,14 +2768,14 @@ fn test_commonjs_export_default_function() {
 #[test]
 fn test_commonjs_export_default_expression() {
     let source = "export default 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2799,14 +2799,14 @@ fn test_commonjs_export_default_expression() {
 #[test]
 fn test_commonjs_export_default_arrow() {
     let source = "export default () => 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2830,14 +2830,14 @@ fn test_commonjs_export_default_arrow() {
 #[test]
 fn test_commonjs_export_function() {
     let source = "export function add(a, b) { return a + b; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2861,14 +2861,14 @@ fn test_commonjs_export_function() {
 #[test]
 fn test_commonjs_export_import_equals() {
     let source = r#"export import Foo = require("./bar");"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2897,14 +2897,14 @@ fn test_commonjs_export_import_equals() {
 #[test]
 fn test_commonjs_export_class() {
     let source = "export class Foo { }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2929,14 +2929,14 @@ fn test_commonjs_export_class() {
 #[test]
 fn test_commonjs_export_namespace() {
     let source = "export namespace N { export function foo() { return 1; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2964,14 +2964,14 @@ fn test_commonjs_export_namespace() {
 #[test]
 fn test_legacy_amd_wrapper() {
     let source = "import { foo } from \"./bar\"; export const x = foo;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::AMD,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -2990,14 +2990,14 @@ fn test_legacy_amd_wrapper() {
 #[test]
 fn test_legacy_umd_wrapper() {
     let source = "import { foo } from \"./bar\"; export const x = foo;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::UMD,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -3016,14 +3016,14 @@ fn test_legacy_umd_wrapper() {
 #[test]
 fn test_legacy_system_wrapper() {
     let source = "import { foo } from \"./bar\"; export const x = foo;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::System,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -3042,14 +3042,14 @@ fn test_legacy_system_wrapper() {
 #[test]
 fn test_legacy_amd_wrapper_skips_pure_type_only_module() {
     let source = r#"import type { Foo } from "./types";"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::AMD,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -3063,14 +3063,14 @@ fn test_legacy_amd_wrapper_skips_pure_type_only_module() {
 #[test]
 fn test_legacy_amd_wrapper_skips_type_only_imports() {
     let source = "import { type Foo } from \"./types\"; export const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::AMD,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -3094,14 +3094,14 @@ fn test_legacy_amd_wrapper_skips_type_only_imports() {
 #[test]
 fn test_legacy_system_wrapper_skips_type_only_exports() {
     let source = "export { type Foo } from \"./types\"; export const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let options = PrinterOptions {
         module: ModuleKind::System,
         ..Default::default()
     };
-    let mut printer = ThinPrinter::with_options(&parser.arena, options);
+    let mut printer = Printer::with_options(&parser.arena, options);
     printer.emit(root);
 
     let output = printer.get_output();

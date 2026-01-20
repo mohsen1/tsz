@@ -1,8 +1,8 @@
 use super::*;
 use crate::parser::NodeIndex;
-use crate::parser::ThinNodeArena;
+use crate::parser::NodeArena;
 use crate::parser::syntax_kind_ext;
-use crate::thin_parser::ThinParserState;
+use crate::parser::ParserState;
 
 #[test]
 fn test_intrinsic_type_ids() {
@@ -13,7 +13,7 @@ fn test_intrinsic_type_ids() {
 
 #[test]
 fn test_lowering_new() {
-    let arena = ThinNodeArena::new();
+    let arena = NodeArena::new();
     let interner = TypeInterner::new();
     let _lowering = TypeLowering::new(&arena, &interner);
 }
@@ -707,8 +707,8 @@ fn test_lower_deduplicates_identical_types() {
 // =============================================================================
 
 /// Helper to parse a type alias and return the type node index
-fn parse_type_alias(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_type_alias(source: &str) -> (NodeArena, crate::parser::base::NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -736,8 +736,8 @@ fn parse_type_alias(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIn
 }
 
 /// Helper to parse a type alias and return its type node index
-fn parse_type_alias_type_node(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_type_alias_type_node(source: &str) -> (NodeArena, crate::parser::base::NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -767,8 +767,8 @@ fn parse_type_alias_type_node(source: &str) -> (ThinNodeArena, crate::parser::ba
 }
 
 /// Helper to parse a type alias and return the tuple type node index
-fn parse_tuple_type(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_tuple_type(source: &str) -> (NodeArena, crate::parser::base::NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -790,8 +790,8 @@ fn parse_tuple_type(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIn
 }
 
 /// Helper to parse a type alias and return the template literal type node index
-fn parse_template_literal_type(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_template_literal_type(source: &str) -> (NodeArena, crate::parser::base::NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -813,8 +813,8 @@ fn parse_template_literal_type(source: &str) -> (ThinNodeArena, crate::parser::b
 }
 
 /// Helper to parse a type alias and return the mapped type node index.
-fn parse_mapped_type(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_mapped_type(source: &str) -> (NodeArena, crate::parser::base::NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -839,8 +839,8 @@ fn parse_mapped_type(source: &str) -> (ThinNodeArena, crate::parser::base::NodeI
 fn parse_type_reference(
     source: &str,
     name: &str,
-) -> (ThinNodeArena, crate::parser::base::NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+) -> (NodeArena, crate::parser::base::NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -870,8 +870,8 @@ fn parse_type_reference(
 }
 
 /// Helper to parse a type alias and return the type literal node index.
-fn parse_type_literal(source: &str) -> (ThinNodeArena, crate::parser::base::NodeIndex) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_type_literal(source: &str) -> (NodeArena, crate::parser::base::NodeIndex) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -893,8 +893,8 @@ fn parse_type_literal(source: &str) -> (ThinNodeArena, crate::parser::base::Node
 }
 
 /// Helper to parse interface declarations by name.
-fn parse_interface_declarations(source: &str, name: &str) -> (ThinNodeArena, Vec<NodeIndex>) {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+fn parse_interface_declarations(source: &str, name: &str) -> (NodeArena, Vec<NodeIndex>) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),

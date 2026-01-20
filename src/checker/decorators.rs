@@ -16,7 +16,7 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::scanner::SyntaxKind;
 
 /// Decorator target types
@@ -50,7 +50,7 @@ pub enum DecoratorError {
 
 /// Decorator checker for validating decorator usage
 pub struct DecoratorChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     /// Whether experimental decorators are enabled
     experimental_decorators: bool,
     /// Whether to use the TC39 decorator semantics
@@ -58,7 +58,7 @@ pub struct DecoratorChecker<'a> {
 }
 
 impl<'a> DecoratorChecker<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             experimental_decorators: true, // Default to true for backwards compat
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_decorator_target_class() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let checker = DecoratorChecker::new(&arena);
 
         assert_eq!(
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_decorator_target_method() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let checker = DecoratorChecker::new(&arena);
 
         assert_eq!(
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_decorator_target_accessor() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let checker = DecoratorChecker::new(&arena);
 
         assert_eq!(
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_decorator_target_property() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let checker = DecoratorChecker::new(&arena);
 
         assert_eq!(
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_decorator_target_parameter() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let checker = DecoratorChecker::new(&arena);
 
         assert_eq!(
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_decorator_invalid_target() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let checker = DecoratorChecker::new(&arena);
 
         assert_eq!(

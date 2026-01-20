@@ -9,9 +9,9 @@ use crate::lsp::references::FindReferences;
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::scanner::{self, SyntaxKind};
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 use std::collections::HashMap;
 
 /// A single text edit.
@@ -60,8 +60,8 @@ impl Default for WorkspaceEdit {
 
 /// Provider for Rename functionality.
 pub struct RenameProvider<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     file_name: String,
     source_text: &'a str,
@@ -70,8 +70,8 @@ pub struct RenameProvider<'a> {
 impl<'a> RenameProvider<'a> {
     /// Create a new rename provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         file_name: String,
         source_text: &'a str,
@@ -339,18 +339,18 @@ mod rename_tests {
     use super::*;
     use crate::lsp::position::LineMap;
     use crate::lsp::resolver::ScopeCache;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_rename_variable() {
         // let oldName = 1; const b = oldName + 1;
         let source = "let oldName = 1; const b = oldName + 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -386,11 +386,11 @@ mod rename_tests {
     #[test]
     fn test_rename_uses_scope_cache() {
         let source = "let value = 1;\nvalue;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -417,10 +417,10 @@ mod rename_tests {
     #[test]
     fn test_rename_invalid_keyword() {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
         let line_map = LineMap::build(source);
         let rename_provider =
@@ -436,10 +436,10 @@ mod rename_tests {
     #[test]
     fn test_rename_invalid_chars() {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
         let line_map = LineMap::build(source);
         let rename_provider =
@@ -456,11 +456,11 @@ mod rename_tests {
     fn test_rename_function() {
         // function foo() {} foo();
         let source = "function foo() {}\nfoo();";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -488,11 +488,11 @@ mod rename_tests {
     #[test]
     fn test_rename_private_identifier() {
         let source = "class Foo {\n  #bar = 1;\n  method() {\n    this.#bar;\n  }\n}\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -517,11 +517,11 @@ mod rename_tests {
     #[test]
     fn test_rename_private_identifier_with_hash() {
         let source = "class Foo {\n  #bar = 1;\n  method() {\n    this.#bar;\n  }\n}\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -545,10 +545,10 @@ mod rename_tests {
     #[test]
     fn test_prepare_rename_invalid_position() {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
         let line_map = LineMap::build(source);
         let rename_provider =
@@ -567,10 +567,10 @@ mod rename_tests {
     #[test]
     fn test_rename_rejects_private_name_for_identifier() {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
         let line_map = LineMap::build(source);
         let rename_provider =
@@ -588,10 +588,10 @@ mod rename_tests {
     fn test_rename_to_contextual_keyword() {
         // Test that we can rename to contextual keywords like 'string', 'type', etc.
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
         let line_map = LineMap::build(source);
         let rename_provider =

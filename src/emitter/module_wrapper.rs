@@ -1,12 +1,12 @@
-use super::{ModuleKind, ThinPrinter};
+use super::{ModuleKind, Printer};
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     pub(super) fn emit_module_wrapper(
         &mut self,
         format: &crate::transform_context::ModuleFormat,
         dependencies: &[String],
-        source_node: &crate::parser::thin_node::ThinNode,
-        source: &crate::parser::thin_node::SourceFileData,
+        source_node: &crate::parser::node::Node,
+        source: &crate::parser::node::SourceFileData,
     ) {
         match format {
             crate::transform_context::ModuleFormat::AMD => {
@@ -30,7 +30,7 @@ impl<'a> ThinPrinter<'a> {
     pub(super) fn emit_amd_wrapper(
         &mut self,
         dependencies: &[String],
-        source_node: &crate::parser::thin_node::ThinNode,
+        source_node: &crate::parser::node::Node,
     ) {
         use crate::transforms::module_commonjs;
 
@@ -56,7 +56,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("});");
     }
 
-    pub(super) fn emit_umd_wrapper(&mut self, source_node: &crate::parser::thin_node::ThinNode) {
+    pub(super) fn emit_umd_wrapper(&mut self, source_node: &crate::parser::node::Node) {
         self.write("(function (factory) {");
         self.write_line();
         self.increase_indent();
@@ -92,7 +92,7 @@ impl<'a> ThinPrinter<'a> {
     pub(super) fn emit_system_wrapper(
         &mut self,
         dependencies: &[String],
-        source_node: &crate::parser::thin_node::ThinNode,
+        source_node: &crate::parser::node::Node,
     ) {
         self.write("System.register([");
         for (i, dep) in dependencies.iter().enumerate() {
@@ -129,7 +129,7 @@ impl<'a> ThinPrinter<'a> {
 
     pub(super) fn emit_module_wrapper_body(
         &mut self,
-        source_node: &crate::parser::thin_node::ThinNode,
+        source_node: &crate::parser::node::Node,
     ) {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;

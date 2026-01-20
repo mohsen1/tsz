@@ -1,7 +1,7 @@
-//! ThinBinder - Binder implementation using ThinNodeArena.
+//! Binder - Binder implementation using NodeArena.
 //!
 //! This is a clean implementation of the binder that works directly with
-//! ThinNode and ThinNodeArena, avoiding the old Node enum pattern matching.
+//! Node and NodeArena, avoiding the old Node enum pattern matching.
 
 // Allow dead code for binder infrastructure methods that will be used in future phases
 
@@ -12,7 +12,7 @@ use crate::binder::{
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
 use crate::parser::node_flags;
-use crate::parser::thin_node::{ThinNode, ThinNodeArena};
+use crate::parser::node::{Node, NodeArena};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -23,13 +23,13 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct LibContext {
     /// The AST arena for this lib file.
-    pub arena: Arc<ThinNodeArena>,
+    pub arena: Arc<NodeArena>,
     /// The binder state with symbols from this lib file.
-    pub binder: Arc<ThinBinderState>,
+    pub binder: Arc<BinderState>,
 }
 
-/// Binder state using ThinNodeArena.
-pub struct ThinBinderState {
+/// Binder state using NodeArena.
+pub struct BinderState {
     /// Arena for symbol storage
     pub symbols: SymbolArena,
     /// Current symbol table (local scope)
@@ -55,7 +55,7 @@ pub struct ThinBinderState {
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Symbol-to-arena mapping for cross-file declaration lookup
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<ThinNodeArena>>,
+    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     /// Used by the checker for control flow analysis (type narrowing)
     pub node_flow: FxHashMap<u32, FlowNodeId>,
@@ -90,7 +90,7 @@ pub struct ThinBinderState {
 
     /// Lib binders for automatic lib symbol resolution.
     /// When get_symbol() doesn't find a symbol locally, it checks these lib binders.
-    lib_binders: Vec<Arc<ThinBinderState>>,
+    lib_binders: Vec<Arc<BinderState>>,
 
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
@@ -134,12 +134,12 @@ pub struct ResolutionStats {
     pub failures: u64,
 }
 
-impl ThinBinderState {
+impl BinderState {
     pub fn new() -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
-        ThinBinderState {
+        BinderState {
             symbols: SymbolArena::new(),
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
@@ -214,7 +214,7 @@ impl ThinBinderState {
         self.debugger.get_summary()
     }
 
-    /// Create a ThinBinderState from existing bound state.
+    /// Create a BinderState from existing bound state.
     ///
     /// This is used for type checking after parallel binding and symbol merging.
     /// The symbols and node_symbols come from the merged program state.
@@ -226,7 +226,7 @@ impl ThinBinderState {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
-        ThinBinderState {
+        BinderState {
             symbols,
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
@@ -258,7 +258,7 @@ impl ThinBinderState {
         }
     }
 
-    /// Create a ThinBinderState from existing bound state, preserving scopes.
+    /// Create a BinderState from existing bound state, preserving scopes.
     pub fn from_bound_state_with_scopes(
         symbols: SymbolArena,
         file_locals: SymbolTable,
@@ -280,7 +280,7 @@ impl ThinBinderState {
         )
     }
 
-    /// Create a ThinBinderState from existing bound state, preserving scopes and global augmentations.
+    /// Create a BinderState from existing bound state, preserving scopes and global augmentations.
     ///
     /// This is used for type checking after parallel binding and symbol merging.
     /// Global augmentations are interface/type declarations inside `declare global` blocks
@@ -294,13 +294,13 @@ impl ThinBinderState {
         global_augmentations: FxHashMap<String, Vec<crate::parser::NodeIndex>>,
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
-        symbol_arenas: FxHashMap<SymbolId, Arc<ThinNodeArena>>,
+        symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
         shorthand_ambient_modules: FxHashSet<String>,
     ) -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
-        ThinBinderState {
+        BinderState {
             symbols,
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
@@ -346,7 +346,7 @@ impl ThinBinderState {
     /// - Resolution failures
     pub fn resolve_identifier(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         node_idx: NodeIndex,
     ) -> Option<SymbolId> {
         let node = arena.get(node_idx)?;
@@ -445,7 +445,7 @@ impl ThinBinderState {
 
     fn resolve_parameter_fallback(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         node_idx: NodeIndex,
         name: &str,
     ) -> Option<SymbolId> {
@@ -557,7 +557,7 @@ impl ThinBinderState {
 
     /// Find the enclosing scope for a given node by walking up the AST.
     /// Returns the ScopeId of the nearest scope-creating ancestor node.
-    fn find_enclosing_scope(&self, arena: &ThinNodeArena, node_idx: NodeIndex) -> Option<ScopeId> {
+    fn find_enclosing_scope(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<ScopeId> {
         let mut current = node_idx;
 
         // Walk up the AST using parent pointers to find the nearest scope
@@ -634,7 +634,7 @@ impl ThinBinderState {
         }
     }
 
-    fn source_file_is_external_module(&self, arena: &ThinNodeArena, root: NodeIndex) -> bool {
+    fn source_file_is_external_module(&self, arena: &NodeArena, root: NodeIndex) -> bool {
         let Some(node) = arena.get(root) else {
             return false;
         };
@@ -687,8 +687,8 @@ impl ThinBinderState {
         }
     }
 
-    /// Bind a source file using ThinNodeArena.
-    pub fn bind_source_file(&mut self, arena: &ThinNodeArena, root: NodeIndex) {
+    /// Bind a source file using NodeArena.
+    pub fn bind_source_file(&mut self, arena: &NodeArena, root: NodeIndex) {
         // Preserve lib symbols that were merged before binding (e.g., in parallel.rs)
         // When merge_lib_symbols is called before bind_source_file, lib symbols are stored
         // in file_locals and need to be preserved across the binding process.
@@ -788,7 +788,7 @@ impl ThinBinderState {
     ///
     /// # Example
     /// ```ignore
-    /// let mut binder = ThinBinderState::new();
+    /// let mut binder = BinderState::new();
     /// binder.bind_source_file(arena, root);
     /// binder.merge_lib_symbols(&lib_files);
     /// ```
@@ -836,12 +836,12 @@ impl ThinBinderState {
     /// If we bind first, the binder will emit TS2304 errors for these symbols.
     ///
     /// # Parameters
-    /// - `arena`: The ThinNodeArena containing the AST
+    /// - `arena`: The NodeArena containing the AST
     /// - `root`: The root node index of the source file
     /// - `lib_files`: Optional slice of Arc<LibFile> containing lib files
     pub fn bind_source_file_with_libs(
         &mut self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         root: NodeIndex,
         lib_files: &[Arc<lib_loader::LibFile>],
     ) {
@@ -855,7 +855,7 @@ impl ThinBinderState {
     /// Incrementally bind new statements after a prefix without rebinding the entire file.
     pub fn bind_source_file_incremental(
         &mut self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         root: NodeIndex,
         prefix_statements: &[NodeIndex],
         old_suffix_statements: &[NodeIndex],
@@ -959,7 +959,7 @@ impl ThinBinderState {
         true
     }
 
-    fn prune_incremental_maps(&mut self, arena: &ThinNodeArena, reparse_start: u32) {
+    fn prune_incremental_maps(&mut self, arena: &NodeArena, reparse_start: u32) {
         if reparse_start == 0 {
             return;
         }
@@ -977,7 +977,7 @@ impl ThinBinderState {
     }
 
     /// Collect hoisted declarations from statements.
-    fn collect_hoisted_declarations(&mut self, arena: &ThinNodeArena, statements: &NodeList) {
+    fn collect_hoisted_declarations(&mut self, arena: &NodeArena, statements: &NodeList) {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = arena.get(stmt_idx) {
                 match node.kind {
@@ -1019,7 +1019,7 @@ impl ThinBinderState {
         }
     }
 
-    fn collect_hoisted_var_decl(&mut self, arena: &ThinNodeArena, decl_list_idx: NodeIndex) {
+    fn collect_hoisted_var_decl(&mut self, arena: &NodeArena, decl_list_idx: NodeIndex) {
         if let Some(node) = arena.get(decl_list_idx) {
             if let Some(list) = arena.get_variable(node) {
                 // Check if this is a var declaration (not let/const)
@@ -1049,7 +1049,7 @@ impl ThinBinderState {
         }
     }
 
-    fn collect_hoisted_from_node(&mut self, arena: &ThinNodeArena, idx: NodeIndex) {
+    fn collect_hoisted_from_node(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if let Some(node) = arena.get(idx) {
             if node.kind == syntax_kind_ext::BLOCK {
                 if let Some(block) = arena.get_block(node) {
@@ -1060,7 +1060,7 @@ impl ThinBinderState {
     }
 
     /// Process hoisted function declarations.
-    fn process_hoisted_functions(&mut self, arena: &ThinNodeArena) {
+    fn process_hoisted_functions(&mut self, arena: &NodeArena) {
         let functions = std::mem::take(&mut self.hoisted_functions);
         for func_idx in functions {
             if let Some(node) = arena.get(func_idx) {
@@ -1083,7 +1083,7 @@ impl ThinBinderState {
     }
 
     /// Bind a node and its children.
-    fn bind_node(&mut self, arena: &ThinNodeArena, idx: NodeIndex) {
+    fn bind_node(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if idx.is_none() {
             return;
         }
@@ -1647,7 +1647,7 @@ impl ThinBinderState {
     }
 
     /// Get identifier name from a node index.
-    fn get_identifier_name<'a>(&self, arena: &'a ThinNodeArena, idx: NodeIndex) -> Option<&'a str> {
+    fn get_identifier_name<'a>(&self, arena: &'a NodeArena, idx: NodeIndex) -> Option<&'a str> {
         if let Some(node) = arena.get(idx) {
             if let Some(id) = arena.get_identifier(node) {
                 return Some(&id.escaped_text);
@@ -1658,7 +1658,7 @@ impl ThinBinderState {
 
     fn collect_binding_identifiers(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         idx: NodeIndex,
         out: &mut Vec<NodeIndex>,
     ) {
@@ -1697,7 +1697,7 @@ impl ThinBinderState {
 
     fn collect_file_scope_names_for_statements(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         statements: &[NodeIndex],
         out: &mut FxHashSet<String>,
     ) {
@@ -1708,7 +1708,7 @@ impl ThinBinderState {
 
     fn collect_file_scope_names_for_statement(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         idx: NodeIndex,
         out: &mut FxHashSet<String>,
     ) {
@@ -1811,7 +1811,7 @@ impl ThinBinderState {
 
     fn collect_hoisted_file_scope_names(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         idx: NodeIndex,
         out: &mut FxHashSet<String>,
     ) {
@@ -1867,7 +1867,7 @@ impl ThinBinderState {
 
     fn collect_hoisted_file_scope_from_node(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         idx: NodeIndex,
         out: &mut FxHashSet<String>,
     ) {
@@ -1884,7 +1884,7 @@ impl ThinBinderState {
 
     fn collect_variable_decl_names(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         decl_list_idx: NodeIndex,
         include_block_scoped: bool,
         out: &mut FxHashSet<String>,
@@ -1921,8 +1921,8 @@ impl ThinBinderState {
 
     fn collect_import_names(
         &self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         out: &mut FxHashSet<String>,
     ) {
         if let Some(import) = arena.get_import_decl(node) {
@@ -1968,7 +1968,7 @@ impl ThinBinderState {
 
     fn collect_statement_symbol_nodes(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         statements: &[NodeIndex],
         out: &mut Vec<NodeIndex>,
     ) {
@@ -2009,7 +2009,7 @@ impl ThinBinderState {
 
     fn collect_variable_decl_symbol_nodes(
         &self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         decl_list_idx: NodeIndex,
         out: &mut Vec<NodeIndex>,
     ) {
@@ -2038,8 +2038,8 @@ impl ThinBinderState {
 
     fn collect_import_symbol_nodes(
         &self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         out: &mut Vec<NodeIndex>,
     ) {
         if let Some(import) = arena.get_import_decl(node) {
@@ -2078,8 +2078,8 @@ impl ThinBinderState {
 
     fn collect_export_symbol_nodes(
         &self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         out: &mut Vec<NodeIndex>,
     ) {
         if let Some(export) = arena.get_export_decl(node) {
@@ -2102,7 +2102,7 @@ impl ThinBinderState {
     }
 
     /// Check if modifiers list contains the 'abstract' keyword.
-    fn has_abstract_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+    fn has_abstract_modifier(&self, arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
         use crate::scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -2118,7 +2118,7 @@ impl ThinBinderState {
     }
 
     /// Check if modifiers list contains the 'static' keyword.
-    fn has_static_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+    fn has_static_modifier(&self, arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
         use crate::scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -2134,7 +2134,7 @@ impl ThinBinderState {
     }
 
     /// Check if modifiers list contains the 'export' keyword.
-    fn has_export_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+    fn has_export_modifier(&self, arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
         use crate::scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -2150,7 +2150,7 @@ impl ThinBinderState {
     }
 
     /// Check if modifiers list contains the 'declare' keyword.
-    fn has_declare_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+    fn has_declare_modifier(&self, arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
         use crate::scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -2166,7 +2166,7 @@ impl ThinBinderState {
     }
 
     /// Check if modifiers list contains the 'const' keyword.
-    fn has_const_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+    fn has_const_modifier(&self, arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
         use crate::scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -2183,7 +2183,7 @@ impl ThinBinderState {
 
     /// Check if a node is exported.
     /// Handles walking up the tree for VariableDeclaration -> VariableStatement.
-    fn is_node_exported(&self, arena: &ThinNodeArena, idx: NodeIndex) -> bool {
+    fn is_node_exported(&self, arena: &NodeArena, idx: NodeIndex) -> bool {
         let Some(node) = arena.get(idx) else {
             return false;
         };
@@ -2382,7 +2382,7 @@ impl ThinBinderState {
         self.enter_persistent_scope(kind, node);
     }
 
-    fn exit_scope(&mut self, arena: &ThinNodeArena) {
+    fn exit_scope(&mut self, arena: &NodeArena) {
         // Capture exports before popping if this is a module/namespace
         if let Some(ctx) = self.scope_chain.get(self.current_scope_idx) {
             match ctx.container_kind {
@@ -2476,8 +2476,8 @@ impl ThinBinderState {
 
     fn bind_variable_declaration(
         &mut self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         idx: NodeIndex,
     ) {
         if let Some(decl) = arena.get_variable_declaration(node) {
@@ -2532,8 +2532,8 @@ impl ThinBinderState {
 
     fn bind_function_declaration(
         &mut self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         idx: NodeIndex,
     ) {
         if let Some(func) = arena.get_function(node) {
@@ -2562,7 +2562,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_parameter(&mut self, arena: &ThinNodeArena, idx: NodeIndex) {
+    fn bind_parameter(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if let Some(node) = arena.get(idx) {
             if let Some(param) = arena.get_parameter(node) {
                 self.bind_modifiers(arena, &param.modifiers);
@@ -2597,7 +2597,7 @@ impl ThinBinderState {
     }
 
     /// Bind an arrow function expression - creates a scope and binds the body.
-    fn bind_arrow_function(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_arrow_function(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(func) = arena.get_function(node) {
             self.bind_modifiers(arena, &func.modifiers);
             // Enter function scope
@@ -2622,7 +2622,7 @@ impl ThinBinderState {
     }
 
     /// Bind a function expression - creates a scope and binds the body.
-    fn bind_function_expression(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_function_expression(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(func) = arena.get_function(node) {
             self.bind_modifiers(arena, &func.modifiers);
             // Enter function scope
@@ -2649,7 +2649,7 @@ impl ThinBinderState {
 
     fn bind_callable_body(
         &mut self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         parameters: &NodeList,
         body: NodeIndex,
         idx: NodeIndex,
@@ -2670,7 +2670,7 @@ impl ThinBinderState {
         self.exit_scope(arena);
     }
 
-    fn bind_modifiers(&mut self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) {
+    fn bind_modifiers(&mut self, arena: &NodeArena, modifiers: &Option<NodeList>) {
         if let Some(list) = modifiers {
             for &modifier_idx in &list.nodes {
                 self.bind_node(arena, modifier_idx);
@@ -2687,7 +2687,7 @@ impl ThinBinderState {
         );
     }
 
-    fn bind_class_declaration(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_class_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(class) = arena.get_class(node) {
             self.bind_modifiers(arena, &class.modifiers);
             if let Some(name) = self.get_identifier_name(arena, class.name) {
@@ -2716,7 +2716,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_class_expression(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_class_expression(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(class) = arena.get_class(node) {
             self.bind_modifiers(arena, &class.modifiers);
             self.enter_scope(ContainerKind::Class, idx);
@@ -2738,7 +2738,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_class_member(&mut self, arena: &ThinNodeArena, idx: NodeIndex) {
+    fn bind_class_member(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if let Some(node) = arena.get(idx) {
             match node.kind {
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -2837,8 +2837,8 @@ impl ThinBinderState {
 
     fn bind_interface_declaration(
         &mut self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         idx: NodeIndex,
     ) {
         if let Some(iface) = arena.get_interface(node) {
@@ -2862,8 +2862,8 @@ impl ThinBinderState {
 
     fn bind_type_alias_declaration(
         &mut self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         idx: NodeIndex,
     ) {
         if let Some(alias) = arena.get_type_alias(node) {
@@ -2876,7 +2876,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_enum_declaration(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_enum_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(enum_decl) = arena.get_enum(node) {
             if let Some(name) = self.get_identifier_name(arena, enum_decl.name) {
                 // Check if exported BEFORE allocating symbol
@@ -2936,7 +2936,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_switch_statement(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_switch_statement(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         self.record_flow(idx);
         if let Some(switch_data) = arena.get_switch(node) {
             self.bind_expression(arena, switch_data.expression);
@@ -2988,8 +2988,8 @@ impl ThinBinderState {
 
     fn clause_allows_fallthrough(
         &self,
-        arena: &ThinNodeArena,
-        clause: &crate::parser::thin_node::CaseClauseData,
+        arena: &NodeArena,
+        clause: &crate::parser::node::CaseClauseData,
     ) -> bool {
         let Some(&last_stmt_idx) = clause.statements.nodes.last() else {
             return true;
@@ -3011,7 +3011,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_try_statement(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_try_statement(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         self.record_flow(idx);
         if let Some(try_data) = arena.get_try(node) {
             let pre_try_flow = self.current_flow;
@@ -3059,7 +3059,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_import_declaration(&mut self, arena: &ThinNodeArena, node: &ThinNode, _idx: NodeIndex) {
+    fn bind_import_declaration(&mut self, arena: &NodeArena, node: &Node, _idx: NodeIndex) {
         if let Some(import) = arena.get_import_decl(node) {
             // Get module specifier for cross-file module resolution
             let module_specifier = if !import.module_specifier.is_none() {
@@ -3197,8 +3197,8 @@ impl ThinBinderState {
     /// Bind import equals declaration: import x = ns.member or import x = require("...")
     fn bind_import_equals_declaration(
         &mut self,
-        arena: &ThinNodeArena,
-        node: &ThinNode,
+        arena: &NodeArena,
+        node: &Node,
         idx: NodeIndex,
     ) {
         if let Some(import) = arena.get_import_decl(node) {
@@ -3227,7 +3227,7 @@ impl ThinBinderState {
     /// Mark symbols associated with a declaration node as exported.
     /// This is required because the parser wraps exported declarations in ExportDeclaration
     /// nodes instead of attaching modifiers to the declaration itself.
-    fn mark_exported_symbols(&mut self, arena: &ThinNodeArena, idx: NodeIndex) {
+    fn mark_exported_symbols(&mut self, arena: &NodeArena, idx: NodeIndex) {
         // 1. Try direct symbol lookup (Function, Class, Enum, Module, Interface, TypeAlias)
         if let Some(sym_id) = self.node_symbols.get(&idx.0) {
             if let Some(sym) = self.symbols.get_mut(*sym_id) {
@@ -3259,7 +3259,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_export_declaration(&mut self, arena: &ThinNodeArena, node: &ThinNode, _idx: NodeIndex) {
+    fn bind_export_declaration(&mut self, arena: &NodeArena, node: &Node, _idx: NodeIndex) {
         if let Some(export) = arena.get_export_decl(node) {
             // Export clause can be:
             // - NamedExports: export { foo, bar }
@@ -3478,7 +3478,7 @@ impl ThinBinderState {
             || kind == syntax_kind_ext::MODULE_DECLARATION
     }
 
-    fn bind_module_declaration(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
+    fn bind_module_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(module) = arena.get_module(node) {
             let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0
                 || arena
@@ -3598,7 +3598,7 @@ impl ThinBinderState {
     /// Populate the exports table of a module/namespace symbol based on exported declarations in its body.
     fn populate_module_exports(
         &mut self,
-        arena: &ThinNodeArena,
+        arena: &NodeArena,
         body_idx: NodeIndex,
         module_symbol_id: SymbolId,
     ) {
@@ -3752,7 +3752,7 @@ impl ThinBinderState {
     }
 
     /// Check if any modifier in a NodeList is the export keyword.
-    fn has_export_modifier_any(&self, arena: &ThinNodeArena, modifiers: &NodeList) -> bool {
+    fn has_export_modifier_any(&self, arena: &NodeArena, modifiers: &NodeList) -> bool {
         for &mod_idx in &modifiers.nodes {
             if let Some(mod_node) = arena.get(mod_idx) {
                 if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
@@ -3784,7 +3784,7 @@ impl ThinBinderState {
     pub fn get_symbol_with_libs<'a>(
         &'a self,
         id: SymbolId,
-        lib_binders: &'a [Arc<ThinBinderState>],
+        lib_binders: &'a [Arc<BinderState>],
     ) -> Option<&'a Symbol> {
         // First try local symbols
         if let Some(sym) = self.symbols.get(id) {
@@ -3983,7 +3983,7 @@ impl ThinBinderState {
         )
     }
 
-    fn is_array_mutation_call(&self, arena: &ThinNodeArena, call_idx: NodeIndex) -> bool {
+    fn is_array_mutation_call(&self, arena: &NodeArena, call_idx: NodeIndex) -> bool {
         let Some(call_node) = arena.get(call_idx) else {
             return false;
         };
@@ -4029,7 +4029,7 @@ impl ThinBinderState {
     }
 
     // Avoid deep recursion on large left-associative binary expression chains.
-    fn bind_binary_expression_iterative(&mut self, arena: &ThinNodeArena, root: NodeIndex) {
+    fn bind_binary_expression_iterative(&mut self, arena: &NodeArena, root: NodeIndex) {
         enum WorkItem {
             Visit(NodeIndex),
             PostAssign(NodeIndex),
@@ -4076,7 +4076,7 @@ impl ThinBinderState {
         }
     }
 
-    fn bind_binary_expression_flow_iterative(&mut self, arena: &ThinNodeArena, root: NodeIndex) {
+    fn bind_binary_expression_flow_iterative(&mut self, arena: &NodeArena, root: NodeIndex) {
         enum WorkItem {
             Visit(NodeIndex),
             PostAssign(NodeIndex),
@@ -4126,7 +4126,7 @@ impl ThinBinderState {
 
     /// Bind an expression and record flow positions for identifiers.
     /// This is used for condition expressions in if/while/for statements.
-    fn bind_expression(&mut self, arena: &ThinNodeArena, idx: NodeIndex) {
+    fn bind_expression(&mut self, arena: &NodeArena, idx: NodeIndex) {
         if idx.is_none() {
             return;
         }
@@ -4558,7 +4558,7 @@ impl ThinBinderState {
     }
 }
 
-impl Default for ThinBinderState {
+impl Default for BinderState {
     fn default() -> Self {
         Self::new()
     }

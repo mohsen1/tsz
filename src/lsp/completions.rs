@@ -14,12 +14,12 @@ use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{NodeAccess, ThinNodeArena};
+use crate::parser::node::{NodeAccess, NodeArena};
 use crate::solver::{
     ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, TypeKey, apparent_primitive_members,
 };
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
 
 /// The kind of completion item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -86,8 +86,8 @@ impl CompletionItem {
 /// 4. Collecting all visible identifiers from the scope chain
 /// 5. Returning them as completion items
 pub struct Completions<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     source_text: &'a str,
     interner: Option<&'a TypeInterner>,
@@ -152,8 +152,8 @@ const KEYWORDS: &[&str] = &[
 impl<'a> Completions<'a> {
     /// Create a new Completions provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         source_text: &'a str,
     ) -> Self {
@@ -170,8 +170,8 @@ impl<'a> Completions<'a> {
 
     /// Create a completions provider with type-aware member completion support.
     pub fn new_with_types(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         interner: &'a TypeInterner,
         source_text: &'a str,
@@ -190,8 +190,8 @@ impl<'a> Completions<'a> {
 
     /// Create a completions provider with type-aware member completion support and explicit strict mode.
     pub fn with_strict(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         interner: &'a TypeInterner,
         source_text: &'a str,
@@ -449,7 +449,7 @@ impl<'a> Completions<'a> {
         };
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
-                ThinCheckerState::with_cache(
+                CheckerState::with_cache(
                     self.arena,
                     self.binder,
                     interner,
@@ -458,7 +458,7 @@ impl<'a> Completions<'a> {
                     compiler_options.clone(),
                 )
             } else {
-                ThinCheckerState::new(
+                CheckerState::new(
                     self.arena,
                     self.binder,
                     interner,
@@ -467,7 +467,7 @@ impl<'a> Completions<'a> {
                 )
             }
         } else {
-            ThinCheckerState::new(
+            CheckerState::new(
                 self.arena,
                 self.binder,
                 interner,
@@ -504,7 +504,7 @@ impl<'a> Completions<'a> {
         &self,
         type_id: TypeId,
         interner: &TypeInterner,
-        checker: &mut ThinCheckerState,
+        checker: &mut CheckerState,
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
@@ -655,7 +655,7 @@ impl<'a> Completions<'a> {
         };
         let mut checker = if let Some(cache) = cache_ref.as_deref_mut() {
             if let Some(cache_value) = cache.take() {
-                ThinCheckerState::with_cache(
+                CheckerState::with_cache(
                     self.arena,
                     self.binder,
                     interner,
@@ -664,7 +664,7 @@ impl<'a> Completions<'a> {
                     compiler_options.clone(),
                 )
             } else {
-                ThinCheckerState::new(
+                CheckerState::new(
                     self.arena,
                     self.binder,
                     interner,
@@ -673,7 +673,7 @@ impl<'a> Completions<'a> {
                 )
             }
         } else {
-            ThinCheckerState::new(
+            CheckerState::new(
                 self.arena,
                 self.binder,
                 interner,
@@ -811,7 +811,7 @@ impl<'a> Completions<'a> {
     fn get_contextual_type(
         &self,
         node_idx: NodeIndex,
-        checker: &mut ThinCheckerState,
+        checker: &mut CheckerState,
     ) -> Option<TypeId> {
         let ext = self.arena.get_extended(node_idx)?;
         let parent_idx = ext.parent;
@@ -877,7 +877,7 @@ impl<'a> Completions<'a> {
         &self,
         type_id: TypeId,
         name: &str,
-        checker: &mut ThinCheckerState,
+        checker: &mut CheckerState,
     ) -> Option<TypeId> {
         let mut props = FxHashMap::default();
         let mut visited = FxHashSet::default();
@@ -909,7 +909,7 @@ impl<'a> Completions<'a> {
         &self,
         func_type: TypeId,
         param_index: usize,
-        _checker: &mut ThinCheckerState,
+        _checker: &mut CheckerState,
     ) -> Option<TypeId> {
         let interner = self.interner?;
 
@@ -940,8 +940,8 @@ mod completions_tests {
     use super::*;
     use crate::lsp::position::LineMap;
     use crate::solver::TypeInterner;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_completions_simple() {
@@ -949,11 +949,11 @@ mod completions_tests {
         // const y = 2;
         // |  <- cursor here
         let source = "const x = 1;\nconst y = 2;\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -984,11 +984,11 @@ mod completions_tests {
         //   |  <- cursor here (should see both x and y)
         // }
         let source = "const x = 1;\nfunction foo() {\n  const y = 2;\n  \n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1022,11 +1022,11 @@ mod completions_tests {
         //   |  <- cursor here (should see inner x, not outer x)
         // }
         let source = "const x = 1;\nfunction foo() {\n  const x = 2;\n  \n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1054,11 +1054,11 @@ mod completions_tests {
     #[test]
     fn test_completions_member_object_literal() {
         let source = "const obj = { foo: 1, bar: \"hi\" };\nobj.";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1087,11 +1087,11 @@ mod completions_tests {
     #[test]
     fn test_completions_member_string_literal() {
         let source = "const s = \"hello\";\ns.";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1122,11 +1122,11 @@ mod completions_tests {
     #[test]
     fn test_completions_includes_keywords() {
         let source = "const x = 1;\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1156,11 +1156,11 @@ mod completions_tests {
     fn test_completions_jsdoc_documentation() {
         // Test that JSDoc comments are included in completion items
         let source = "/** This is a test function */\nfunction foo() {}\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);

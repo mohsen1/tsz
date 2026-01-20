@@ -5,16 +5,16 @@
 //! - Tracking line/column positions for source maps
 //! - Managing indentation
 //!
-//! The emitter (ThinPrinter) delegates all text output to SourceWriter,
+//! The emitter (Printer) delegates all text output to SourceWriter,
 //! allowing for accurate source map generation and cleaner separation of concerns.
 
 use crate::source_map::{Mapping, SourceMapGenerator};
-use crate::thin_emitter::NewLineKind;
+use crate::emitter::NewLineKind;
 
 /// A source position from the original AST
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SourcePosition {
-    /// Byte offset in original source (from ThinNode.pos)
+    /// Byte offset in original source (from Node.pos)
     pub pos: u32,
     /// Line number (0-indexed, computed from source text)
     pub line: u32,

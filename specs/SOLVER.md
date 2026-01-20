@@ -719,7 +719,7 @@ This process must be recursive. If `?0` was used inside a nested object or funct
 
 ## 6. Operational Architecture
 
-**Goal:** Concrete mapping of the theoretical framework to the Rust ecosystem (`salsa`, `ena`) and the `ThinNode` architecture.
+**Goal:** Concrete mapping of the theoretical framework to the Rust ecosystem (`salsa`, `ena`) and the `Node` architecture.
 
 This section defines the **Physical Layout** of the solver. We move from "Mathematical Sets" to "Rust Structs" and "Salsa Queries."
 
@@ -743,7 +743,7 @@ pub struct TypeJar(
     ProgramSource,
 
     // Core Queries
-    lower_type,         // ThinNode -> Type
+    lower_type,         // Node -> Type
     solve_subtype,      // (Type, Type) -> bool
     check_expression,   // (ExpressionNode) -> Type
     resolve_symbol,     // (SymbolId) -> Type
@@ -776,15 +776,15 @@ We define pure functions that the database manages.
 
 ### 6.2 The Lowering Bridge (Synthesis)
 
-The **Bridge** connects the raw `ThinNode` AST (Phase 0.1) to the Semantic Solver. This is a **Just-In-Time (JIT) Compiler** for types.
+The **Bridge** connects the raw `Node` AST (Phase 0.1) to the Semantic Solver. This is a **Just-In-Time (JIT) Compiler** for types.
 
-**Input:** `ThinNode` (Syntax)
+**Input:** `Node` (Syntax)
 **Output:** `Type` (Semantics)
 
 **Algorithm:**
 
 ```rust
-fn lower_type(db: &dyn Db, node: ThinNodeId) -> Type {
+fn lower_type(db: &dyn Db, node: NodeId) -> Type {
     let arena = db.program_source().arena();
     let node_ref = arena.get(node);
 
@@ -997,7 +997,7 @@ You can add this to your `migration_plan.md` or use it as your task tracker.
   ├── jar.rs          // The TypeJar struct
   ├── type_id.rs      // The TypeId wrapper (Interned)
   ├── type_key.rs     // The TypeKey enum (Data)
-  ├── lower.rs        // ThinNode -> TypeKey (Synthesis)
+  ├── lower.rs        // Node -> TypeKey (Synthesis)
   ├── logic.rs        // solve_subtype (The Algorithm)
   └── infer.rs        // Unification table (Inference)
   ```
@@ -1017,11 +1017,11 @@ You can add this to your `migration_plan.md` or use it as your task tracker.
 
 ## Step 3: The Bridge (Lowering)
 
-**Goal:** Convert `ThinNode` AST into `Type`s.
+**Goal:** Convert `Node` AST into `Type`s.
 
 * \[ ] **Implement `lower_type` Query:**
   * Signature: `fn lower_type(db, node: NodeIndex) -> Type`.
-  * Match on `ThinNode.kind`.
+  * Match on `Node.kind`.
   * **Case Primitive:** Map `SyntaxKind::StringKeyword` -> `Intrinsic::String`.
   * **Case Literal:** Extract text from scanner -> `Literal::String`.
   * **Case Interface:**
@@ -1082,7 +1082,7 @@ Start with **Step 1 & 2** to establish the data structures.
 ```rust
 // wasm/src/solver/type_key.rs
 
-use crate::parser::thin_node::NodeIndex;
+use crate::parser::NodeIndex;
 use crate::interner::Atom;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

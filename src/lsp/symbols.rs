@@ -6,10 +6,10 @@
 //! # Example
 //! ```ignore
 //! use wasm::lsp::symbols::{DocumentSymbols, SymbolKind};
-//! use wasm::thin_parser::ThinParserState;
+//! use wasm::parser::ParserState;
 //!
 //! let source = "function foo() {}";
-//! let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+//! let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
 //! let root = parser.parse_source_file();
 //!
 //! let symbols = DocumentSymbols::new(parser.get_arena(), source);
@@ -22,7 +22,7 @@ pub use super::document_symbols::{DocumentSymbol, DocumentSymbolProvider, Symbol
 ///
 /// This provides a simplified interface to the DocumentSymbolProvider.
 pub struct DocumentSymbols<'a> {
-    arena: &'a crate::parser::thin_node::ThinNodeArena,
+    arena: &'a crate::parser::node::NodeArena,
     line_map: crate::lsp::position::LineMap,
     source_text: &'a str,
 }
@@ -33,7 +33,7 @@ impl<'a> DocumentSymbols<'a> {
     /// # Arguments
     /// * `arena` - The AST node arena
     /// * `source_text` - The source code text
-    pub fn new(arena: &'a crate::parser::thin_node::ThinNodeArena, source_text: &'a str) -> Self {
+    pub fn new(arena: &'a crate::parser::node::NodeArena, source_text: &'a str) -> Self {
         let line_map = crate::lsp::position::LineMap::build(source_text);
         Self {
             arena,
@@ -58,12 +58,12 @@ impl<'a> DocumentSymbols<'a> {
 #[cfg(test)]
 mod symbols_tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_symbols_api_simple() {
         let source = "function foo() {}\nconst x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let symbols = DocumentSymbols::new(parser.get_arena(), source);
@@ -84,7 +84,7 @@ class MyClass {
     property1: number;
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let symbols = DocumentSymbols::new(parser.get_arena(), source);
@@ -108,7 +108,7 @@ interface Point {
     y: number;
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let symbols = DocumentSymbols::new(parser.get_arena(), source);
@@ -123,7 +123,7 @@ interface Point {
     #[test]
     fn test_symbols_api_enum() {
         let source = "enum Color { Red, Green, Blue }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let symbols = DocumentSymbols::new(parser.get_arena(), source);
@@ -145,7 +145,7 @@ namespace MyNamespace {
     const bar = 1;
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let symbols = DocumentSymbols::new(parser.get_arena(), source);

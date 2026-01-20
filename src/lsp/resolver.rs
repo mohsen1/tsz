@@ -1,14 +1,14 @@
 //! Symbol resolution for LSP operations.
 //!
-//! The ThinBinder maps declaration nodes to symbols, but LSP needs to resolve
+//! The Binder maps declaration nodes to symbols, but LSP needs to resolve
 //! identifier *usages* to symbols as well. This module provides a lightweight
 //! scope walker that reconstructs scope chains on demand.
 
 use crate::binder::{SymbolId, SymbolTable};
-use crate::parser::thin_node::{NodeAccess, ThinNode, ThinNodeArena};
+use crate::parser::node::{NodeAccess, Node, NodeArena};
 use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 
@@ -35,8 +35,8 @@ pub type ScopeCache = FxHashMap<u32, Vec<SymbolTable>>;
 /// This mimics the binder's scope logic but focuses on resolving identifiers
 /// to symbols, rather than creating new symbols.
 pub struct ScopeWalker<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     /// Stack of active scopes (maps name -> SymbolId)
     scope_stack: Vec<SymbolTable>,
     /// Indices of function-scoped entries within scope_stack
@@ -45,7 +45,7 @@ pub struct ScopeWalker<'a> {
 
 impl<'a> ScopeWalker<'a> {
     /// Create a new scope walker.
-    pub fn new(arena: &'a ThinNodeArena, binder: &'a ThinBinderState) -> Self {
+    pub fn new(arena: &'a NodeArena, binder: &'a BinderState) -> Self {
         Self {
             arena,
             binder,
@@ -1488,7 +1488,7 @@ impl<'a> ScopeWalker<'a> {
         result
     }
 
-    fn is_var_declaration_list(&self, node: &ThinNode) -> bool {
+    fn is_var_declaration_list(&self, node: &Node) -> bool {
         (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0
     }
 
@@ -1969,18 +1969,18 @@ impl<'a> ScopeWalker<'a> {
 #[cfg(test)]
 mod resolver_tests {
     use super::*;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_resolve_simple_variable() {
         // const x = 1; x + 1;
         let source = "const x = 1; x + 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         // Should have a symbol for 'x'

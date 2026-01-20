@@ -1,7 +1,7 @@
 //! Flow Graph Builder for Control Flow Analysis.
 //!
 //! This module provides the `FlowGraph` side-table and `FlowGraphBuilder` for
-//! constructing control flow graphs from ThinNode AST post-binding.
+//! constructing control flow graphs from Node AST post-binding.
 //!
 //! The FlowGraph is a side-table that tracks:
 //! - Flow nodes for each control flow point (conditions, branches, loops)
@@ -11,7 +11,7 @@
 //! This enables type narrowing analysis without mutating AST nodes.
 
 use crate::binder::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;
@@ -80,13 +80,13 @@ impl Default for FlowGraph {
     }
 }
 
-/// Builder for constructing a FlowGraph from ThinNode AST.
+/// Builder for constructing a FlowGraph from Node AST.
 ///
 /// The FlowGraphBuilder traverses the AST post-binding and constructs
 /// the control flow graph without mutating the AST nodes.
 pub struct FlowGraphBuilder<'a> {
-    /// Reference to the ThinNodeArena
-    arena: &'a ThinNodeArena,
+    /// Reference to the NodeArena
+    arena: &'a NodeArena,
     /// The flow graph being constructed
     graph: FlowGraph,
     /// Current flow node during construction
@@ -126,7 +126,7 @@ enum FlowContextType {
 
 impl<'a> FlowGraphBuilder<'a> {
     /// Create a new FlowGraphBuilder.
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         let mut graph = FlowGraph::new();
         let start_flow = graph.nodes.alloc(flow_flags::START);
 
@@ -175,7 +175,7 @@ impl<'a> FlowGraphBuilder<'a> {
     /// Reference to the built flow graph
     pub fn build_function_body(
         &mut self,
-        body: &crate::parser::thin_node::BlockData,
+        body: &crate::parser::node::BlockData,
     ) -> &FlowGraph {
         // Reset the builder state for a new function
         self.graph = FlowGraph::new();
@@ -394,7 +394,7 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Arguments
     /// * `block` - The block statement to build flow graph for
-    pub fn build_block(&mut self, block: &crate::parser::thin_node::BlockData) {
+    pub fn build_block(&mut self, block: &crate::parser::node::BlockData) {
         for &stmt_idx in &block.statements.nodes {
             if !stmt_idx.is_none() {
                 self.build_statement(stmt_idx);
@@ -403,7 +403,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for an if statement.
-    fn build_if_statement(&mut self, if_stmt: &crate::parser::thin_node::IfStatementData) {
+    fn build_if_statement(&mut self, if_stmt: &crate::parser::node::IfStatementData) {
         // Save flow before the condition
         let pre_condition_flow = self.current_flow;
 
@@ -455,7 +455,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for a while statement.
-    fn build_while_statement(&mut self, loop_data: &crate::parser::thin_node::LoopData) {
+    fn build_while_statement(&mut self, loop_data: &crate::parser::node::LoopData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none() {
@@ -502,7 +502,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for a do-while statement.
-    fn build_do_while_statement(&mut self, loop_data: &crate::parser::thin_node::LoopData) {
+    fn build_do_while_statement(&mut self, loop_data: &crate::parser::node::LoopData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none() {
@@ -556,7 +556,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for a for statement.
-    fn build_for_statement(&mut self, loop_data: &crate::parser::thin_node::LoopData) {
+    fn build_for_statement(&mut self, loop_data: &crate::parser::node::LoopData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none() {
@@ -624,7 +624,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for a for-in statement.
-    fn build_for_in_statement(&mut self, for_in_of: &crate::parser::thin_node::ForInOfData) {
+    fn build_for_in_statement(&mut self, for_in_of: &crate::parser::node::ForInOfData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none() {
@@ -665,7 +665,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for a for-of statement.
-    fn build_for_of_statement(&mut self, for_in_of: &crate::parser::thin_node::ForInOfData) {
+    fn build_for_of_statement(&mut self, for_in_of: &crate::parser::node::ForInOfData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none() {
@@ -706,7 +706,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for a switch statement.
-    fn build_switch_statement(&mut self, switch_data: &crate::parser::thin_node::SwitchData) {
+    fn build_switch_statement(&mut self, switch_data: &crate::parser::node::SwitchData) {
         let pre_switch_flow = self.current_flow;
 
         // Create branch label for end of switch
@@ -796,7 +796,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Build flow graph for a try statement.
-    fn build_try_statement(&mut self, try_data: &crate::parser::thin_node::TryData) {
+    fn build_try_statement(&mut self, try_data: &crate::parser::node::TryData) {
         let pre_try_flow = self.current_flow;
         let has_finally = !try_data.finally_block.is_none();
 
@@ -878,7 +878,7 @@ impl<'a> FlowGraphBuilder<'a> {
     /// Build flow graph for a variable declaration.
     fn build_variable_declaration(
         &mut self,
-        var_decl: &crate::parser::thin_node::VariableDeclarationData,
+        var_decl: &crate::parser::node::VariableDeclarationData,
         idx: NodeIndex,
     ) {
         // Track the variable declaration
@@ -1120,7 +1120,7 @@ impl<'a> FlowGraphBuilder<'a> {
     /// * `decl_node` - The AST node index of the declaration
     fn track_variable_declaration(
         &mut self,
-        var_decl: &crate::parser::thin_node::VariableDeclarationData,
+        var_decl: &crate::parser::node::VariableDeclarationData,
         decl_node: NodeIndex,
     ) {
         // Record the flow node at the declaration point
@@ -1504,7 +1504,7 @@ impl<'a> FlowGraphBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_flow_graph_builder_basic() {
@@ -1517,7 +1517,7 @@ if (typeof x === "string") {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let mut builder = FlowGraphBuilder::new(parser.get_arena());
@@ -1540,7 +1540,7 @@ if (x) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1565,7 +1565,7 @@ while (true) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1592,7 +1592,7 @@ try {
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1624,7 +1624,7 @@ try {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1646,7 +1646,7 @@ try {
 let x = await bar();
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1670,7 +1670,7 @@ let x = await bar();
 const result = await bar() + await baz();
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1697,7 +1697,7 @@ if (condition) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1722,7 +1722,7 @@ while (condition) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1749,7 +1749,7 @@ try {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1772,7 +1772,7 @@ try {
 const x = await bar();
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1804,7 +1804,7 @@ yield 2;
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1840,7 +1840,7 @@ console.log(x);
 yield* otherGenerator();
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1867,7 +1867,7 @@ while (counter < 10) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1894,7 +1894,7 @@ try {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1922,7 +1922,7 @@ yield await fetch('/api/data2');
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -1976,7 +1976,7 @@ yield 2;
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2016,7 +2016,7 @@ for await (const item of asyncIterable) {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2050,7 +2050,7 @@ if (condition) {
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2090,7 +2090,7 @@ for (const val of innerGenerator()) {
 yield 3;
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2135,7 +2135,7 @@ class Foo {
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2161,7 +2161,7 @@ class Foo {
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2196,7 +2196,7 @@ class Base {}
 class Derived extends Base {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2223,7 +2223,7 @@ class Foo {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2256,7 +2256,7 @@ class Foo {
 console.log(x, y);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();
@@ -2284,7 +2284,7 @@ const Foo = class {
 console.log(x);
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         let arena = parser.get_arena();

@@ -6,7 +6,7 @@
 //! 3. Template literal expressions with errors
 //! 4. Object destructuring patterns with missing commas
 
-use crate::thin_parser::ThinParserState;
+use crate::parser::ParserState;
 use crate::test_harness::{run_with_timeout, TestResult};
 use std::time::Duration;
 
@@ -30,7 +30,7 @@ class MyClass {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse successfully with one error
@@ -54,7 +54,7 @@ class MyClass {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse both members
@@ -73,7 +73,7 @@ interface A extends B C D {
     x: number;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse successfully with errors
@@ -92,7 +92,7 @@ interface A extends B, C, {
     x: number;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse successfully
@@ -107,7 +107,7 @@ interface A extends 123, B {
     x: number;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse successfully with error
@@ -126,7 +126,7 @@ interface A extends {
     x: number;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse successfully with error
@@ -150,7 +150,7 @@ fn test_p1_template_unterminated_expression() {
     let source = r#"
 const x = `hello ${world`;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse with error
@@ -170,7 +170,7 @@ fn test_p1_template_missing_closing_backtick() {
     let source = r#"
 const x = `hello ${name};
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse with error
@@ -191,7 +191,7 @@ fn test_p1_destructuring_missing_commas() {
     let source = r#"
 const { x y z } = obj;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse with errors
@@ -208,7 +208,7 @@ fn test_p1_destructuring_trailing_comma() {
     let source = r#"
 const { x, y, z, } = obj;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse successfully (trailing comma is valid)
@@ -221,7 +221,7 @@ fn test_p1_destructuring_missing_colon() {
     let source = r#"
 const { x y } = obj;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse with errors
@@ -239,7 +239,7 @@ fn test_p1_nested_destructuring_errors() {
         let source = r#"
 const { a: { x y }, b } = obj;
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         parser.parse_source_file();
 
         // Should parse with errors
@@ -275,7 +275,7 @@ interface Bar extends A B {
 
 const { a b } = obj;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     // Should parse entire file despite errors

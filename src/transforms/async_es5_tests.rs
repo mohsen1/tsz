@@ -1,8 +1,8 @@
 use super::*;
-use crate::thin_parser::ThinParserState;
+use crate::parser::ParserState;
 
 fn parse_and_emit_async(source: &str) -> String {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -127,7 +127,7 @@ fn test_async_await_in_variable_initializer() {
 
 #[test]
 fn test_body_contains_await_detection() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { await x; }".to_string(),
     );
@@ -152,7 +152,7 @@ fn test_body_contains_await_detection() {
 
 #[test]
 fn test_body_contains_await_ignores_nested_async() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { const inner = async () => { await bar(); }; return 1; }"
             .to_string(),
@@ -178,7 +178,7 @@ fn test_body_contains_await_ignores_nested_async() {
 
 #[test]
 fn test_body_contains_await_in_conditional_property_access() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { return cond ? (await bar()).baz : (await qux())[idx]; }"
             .to_string(),
@@ -204,7 +204,7 @@ fn test_body_contains_await_in_conditional_property_access() {
 
 #[test]
 fn test_body_contains_await_in_object_literal_computed_name() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { return { [await key()]: value }; }".to_string(),
     );
@@ -229,7 +229,7 @@ fn test_body_contains_await_in_object_literal_computed_name() {
 
 #[test]
 fn test_body_contains_await_in_try_finally() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { try { await bar(); } finally { baz(); } }".to_string(),
     );
@@ -254,7 +254,7 @@ fn test_body_contains_await_in_try_finally() {
 
 #[test]
 fn test_no_await_in_simple_function() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { return 1; }".to_string(),
     );
@@ -342,7 +342,7 @@ fn test_async_with_throw() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_array_destructuring() {
     // Test that we can detect await in for-await-of with array destructuring
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const [a, b] of stream) { use(a, b); } }".to_string(),
     );
@@ -372,7 +372,7 @@ fn test_body_contains_await_detects_for_await_of_array_destructuring() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_object_destructuring() {
     // Test for-await-of with object destructuring pattern
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const { x, y } of stream) { use(x, y); } }".to_string(),
     );
@@ -399,7 +399,7 @@ fn test_body_contains_await_detects_for_await_of_object_destructuring() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_nested_destructuring() {
     // Test for-await-of with nested destructuring pattern
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const { data: [first, second] } of stream) { use(first, second); } }".to_string(),
     );
@@ -426,7 +426,7 @@ fn test_body_contains_await_detects_for_await_of_nested_destructuring() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_with_defaults() {
     // Test for-await-of with destructuring and default values
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const { x = 1, y = 2 } of stream) { use(x, y); } }"
             .to_string(),
@@ -454,7 +454,7 @@ fn test_body_contains_await_detects_for_await_of_with_defaults() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_rest_element() {
     // Test for-await-of with rest element in array destructuring
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const [first, ...rest] of stream) { use(first, rest); } }".to_string(),
     );
@@ -481,7 +481,7 @@ fn test_body_contains_await_detects_for_await_of_rest_element() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_computed_property() {
     // Test for-await-of with computed property in object destructuring
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { const key = 'x'; for await (const { [key]: value } of stream) { use(value); } }".to_string(),
     );
@@ -508,7 +508,7 @@ fn test_body_contains_await_detects_for_await_of_computed_property() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_renamed_properties() {
     // Test for-await-of with renamed object properties
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const { name: n, value: v } of stream) { use(n, v); } }"
             .to_string(),
@@ -536,7 +536,7 @@ fn test_body_contains_await_detects_for_await_of_renamed_properties() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_mixed_nested() {
     // Test for-await-of with mixed array/object nested destructuring
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const [{ a, b }, { c }] of stream) { use(a, b, c); } }"
             .to_string(),
@@ -564,7 +564,7 @@ fn test_body_contains_await_detects_for_await_of_mixed_nested() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_with_await_in_body() {
     // Test for-await-of with await expression inside loop body
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const item of stream) { await process(item); } }"
             .to_string(),
@@ -592,7 +592,7 @@ fn test_body_contains_await_detects_for_await_of_with_await_in_body() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_let_binding() {
     // Test for-await-of with let instead of const
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (let { x, y } of stream) { x++; use(x, y); } }"
             .to_string(),
@@ -620,7 +620,7 @@ fn test_body_contains_await_detects_for_await_of_let_binding() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_skipped_elements() {
     // Test for-await-of with skipped array elements (elision)
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const [, second, , fourth] of stream) { use(second, fourth); } }".to_string(),
     );
@@ -647,7 +647,7 @@ fn test_body_contains_await_detects_for_await_of_skipped_elements() {
 #[test]
 fn test_body_contains_await_detects_for_await_of_deep_nesting() {
     // Test for-await-of with deeply nested destructuring
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for await (const { outer: { inner: { value } } } of stream) { use(value); } }".to_string(),
     );
@@ -724,7 +724,7 @@ fn test_async_await_in_conditional_expression() {
 
 #[test]
 fn test_body_contains_await_in_if_statement() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { if (cond) { await bar(); } }".to_string(),
     );
@@ -749,7 +749,7 @@ fn test_body_contains_await_in_if_statement() {
 
 #[test]
 fn test_body_contains_await_in_else_branch() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { if (cond) { return 1; } else { await bar(); } }".to_string(),
     );
@@ -774,7 +774,7 @@ fn test_body_contains_await_in_else_branch() {
 
 #[test]
 fn test_body_contains_await_in_if_condition() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { if (await check()) { return 1; } }".to_string(),
     );
@@ -799,7 +799,7 @@ fn test_body_contains_await_in_if_condition() {
 
 #[test]
 fn test_body_contains_await_in_while_body() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { while (true) { await delay(100); } }".to_string(),
     );
@@ -824,7 +824,7 @@ fn test_body_contains_await_in_while_body() {
 
 #[test]
 fn test_body_contains_await_in_for_body() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { for (let i = 0; i < 10; i++) { await process(i); } }".to_string(),
     );
@@ -849,7 +849,7 @@ fn test_body_contains_await_in_for_body() {
 
 #[test]
 fn test_body_contains_await_in_do_while_body() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { do { await work(); } while (shouldContinue()); }".to_string(),
     );
@@ -874,7 +874,7 @@ fn test_body_contains_await_in_do_while_body() {
 
 #[test]
 fn test_body_contains_await_in_switch_case() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { switch (x) { case 1: await bar(); break; } }".to_string(),
     );
@@ -899,7 +899,7 @@ fn test_body_contains_await_in_switch_case() {
 
 #[test]
 fn test_body_contains_await_in_catch_block() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { try { throw new Error(); } catch (e) { await report(e); } }"
             .to_string(),
@@ -925,7 +925,7 @@ fn test_body_contains_await_in_catch_block() {
 
 #[test]
 fn test_body_contains_await_in_finally_block() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function foo() { try { work(); } finally { await cleanup(); } }".to_string(),
     );
@@ -955,7 +955,7 @@ fn test_body_contains_await_in_finally_block() {
 #[test]
 fn test_body_contains_await_ignores_nested_async_function_declaration() {
     // Outer function should not detect await inside nested async function declaration
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { async function inner() { await bar(); } return 1; }".to_string(),
     );
@@ -981,7 +981,7 @@ fn test_body_contains_await_ignores_nested_async_function_declaration() {
 #[test]
 fn test_body_contains_await_ignores_nested_async_arrow() {
     // Outer function should not detect await inside nested async arrow function
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { const inner = async () => await bar(); return 1; }".to_string(),
     );
@@ -1007,7 +1007,7 @@ fn test_body_contains_await_ignores_nested_async_arrow() {
 #[test]
 fn test_body_contains_await_ignores_nested_async_function_expression() {
     // Outer function should not detect await inside nested async function expression
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { const inner = async function() { await bar(); }; return 1; }"
             .to_string(),
@@ -1035,7 +1035,7 @@ fn test_body_contains_await_ignores_nested_async_function_expression() {
 fn test_body_contains_await_with_sync_closure_containing_await() {
     // Sync closure inside async function cannot have await (would be parse error)
     // But this tests that we detect await at outer level, not in nested sync function
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { await foo(); const sync = function() { return 1; }; }"
             .to_string(),
@@ -1062,7 +1062,7 @@ fn test_body_contains_await_with_sync_closure_containing_await() {
 #[test]
 fn test_body_contains_await_ignores_deeply_nested_async() {
     // Deeply nested async functions should all be ignored
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { const a = async () => { const b = async () => { await deep(); }; }; return 1; }".to_string(),
     );
@@ -1088,7 +1088,7 @@ fn test_body_contains_await_ignores_deeply_nested_async() {
 #[test]
 fn test_body_contains_await_mixed_nested_sync_and_async() {
     // Mix of sync and async nested functions - only outer await matters
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { await start(); const sync = () => { const inner = async () => await nested(); }; await end(); }".to_string(),
     );
@@ -1149,7 +1149,7 @@ fn test_async_callback_pattern() {
 #[test]
 fn test_async_method_in_object_literal() {
     // Test that we can parse async methods in object literals
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { const obj = { async method() { await bar(); } }; return obj; }"
             .to_string(),
@@ -1177,7 +1177,7 @@ fn test_async_method_in_object_literal() {
 #[test]
 fn test_async_arrow_in_array() {
     // Test async arrows used in array
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { const handlers = [async () => await a(), async () => await b()]; return handlers; }".to_string(),
     );
@@ -1203,7 +1203,7 @@ fn test_async_arrow_in_array() {
 #[test]
 fn test_async_arrow_as_argument() {
     // Test async arrow passed as function argument
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { await runWith(async (x) => await process(x)); }".to_string(),
     );
@@ -1229,7 +1229,7 @@ fn test_async_arrow_as_argument() {
 #[test]
 fn test_async_closure_capturing_variable() {
     // Test async closure that captures outer variable
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function outer() { const x = 1; const fn = async () => { const y = await bar(); return x + y; }; return fn; }".to_string(),
     );
@@ -1451,7 +1451,7 @@ fn test_async_nested_promise_all() {
 
 #[test]
 fn test_async_promise_all_in_try_catch() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function safeAll() { try { return await Promise.all([p1(), p2()]); } catch (e) { return []; } }".to_string(),
     );
@@ -1577,7 +1577,7 @@ fn test_async_await_in_finally_block() {
 
 #[test]
 fn test_async_nested_try_catch() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function nestedTry() { try { try { await inner(); } catch (e1) { throw e1; } } catch (e2) { await handleOuter(e2); } }".to_string(),
     );
@@ -1656,7 +1656,7 @@ fn test_async_try_with_return_in_finally() {
 
 #[test]
 fn test_async_try_catch_with_type_guard() {
-    let mut parser = ThinParserState::new(
+    let mut parser = ParserState::new(
         "test.ts".to_string(),
         "async function typeGuardCatch() { try { await operation(); } catch (e) { if (e instanceof TypeError) { await handleType(e); } else { throw e; } } }".to_string(),
     );
@@ -1724,7 +1724,7 @@ fn test_async_catch_and_rethrow_new_error() {
 fn parse_and_emit_async_class_method(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -1766,7 +1766,7 @@ fn parse_and_emit_async_class_method(source: &str) -> String {
 fn class_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -1955,7 +1955,7 @@ fn test_async_class_method_conditional_await() {
 fn parse_and_emit_async_arrow(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2027,7 +2027,7 @@ fn parse_and_emit_async_arrow(source: &str) -> String {
 fn arrow_body_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2232,7 +2232,7 @@ fn test_async_arrow_conditional_expression() {
 fn parse_and_emit_async_method_expr(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2298,7 +2298,7 @@ fn parse_and_emit_async_method_expr(source: &str) -> String {
 fn method_expr_body_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2525,7 +2525,7 @@ fn test_async_method_expr_computed_name() {
 
 /// Helper to parse an async generator function and emit its body
 fn parse_and_emit_async_generator(source: &str) -> String {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2552,7 +2552,7 @@ fn parse_and_emit_async_generator(source: &str) -> String {
 
 /// Helper to check if async generator body contains await
 fn async_generator_body_contains_await(source: &str) -> bool {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2717,7 +2717,7 @@ fn test_async_generator_return_value() {
 fn parse_and_emit_async_iife(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2776,7 +2776,7 @@ fn parse_and_emit_async_iife(source: &str) -> String {
 fn iife_body_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -2971,7 +2971,7 @@ fn test_async_iife_multiple_awaits() {
 fn parse_and_emit_async_callback(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3033,7 +3033,7 @@ fn parse_and_emit_async_callback(source: &str) -> String {
 fn callback_body_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3226,7 +3226,7 @@ fn test_async_callback_array_method_pattern() {
 fn parse_and_emit_async_super_method(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3277,7 +3277,7 @@ fn parse_and_emit_async_super_method(source: &str) -> String {
 fn super_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3471,7 +3471,7 @@ fn test_async_super_method_conditional() {
 fn parse_and_emit_async_private_field(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3516,7 +3516,7 @@ fn parse_and_emit_async_private_field(source: &str) -> String {
 fn private_field_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3699,7 +3699,7 @@ fn test_async_private_field_conditional() {
 fn parse_and_emit_async_decorated(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3744,7 +3744,7 @@ fn parse_and_emit_async_decorated(source: &str) -> String {
 fn decorated_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3920,7 +3920,7 @@ fn test_async_decorator_factory() {
 fn parse_and_emit_async_computed_prop(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -3965,7 +3965,7 @@ fn parse_and_emit_async_computed_prop(source: &str) -> String {
 fn computed_prop_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -4143,7 +4143,7 @@ fn test_async_computed_prop_multiple_awaits() {
 fn parse_and_emit_async_field_initializer(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -4205,7 +4205,7 @@ fn parse_and_emit_async_field_initializer(source: &str) -> String {
 fn async_field_initializer_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -4398,7 +4398,7 @@ fn test_async_field_expression_body() {
 fn parse_and_emit_async_super_property(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -4447,7 +4447,7 @@ fn parse_and_emit_async_super_property(source: &str) -> String {
 fn super_property_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -4629,7 +4629,7 @@ fn test_async_super_property_conditional() {
 fn parse_and_emit_async_private_access(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -4673,7 +4673,7 @@ fn parse_and_emit_async_private_access(source: &str) -> String {
 fn private_access_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root) {
@@ -4851,7 +4851,7 @@ fn test_async_private_access_conditional() {
 
 fn parse_and_emit_async_static_access(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -4892,7 +4892,7 @@ fn parse_and_emit_async_static_access(source: &str) -> String {
 
 fn static_access_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5068,7 +5068,7 @@ fn test_async_static_access_conditional() {
 
 fn parse_and_emit_async_optional_chaining(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5095,7 +5095,7 @@ fn parse_and_emit_async_optional_chaining(source: &str) -> String {
 
 fn optional_chaining_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5259,7 +5259,7 @@ fn test_async_optional_chaining_conditional() {
 
 fn parse_and_emit_async_nullish_coalescing(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5286,7 +5286,7 @@ fn parse_and_emit_async_nullish_coalescing(source: &str) -> String {
 
 fn nullish_coalescing_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5452,7 +5452,7 @@ fn test_async_nullish_coalescing_conditional() {
 
 fn parse_and_emit_async_logical_assignment(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5479,7 +5479,7 @@ fn parse_and_emit_async_logical_assignment(source: &str) -> String {
 
 fn logical_assignment_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5645,7 +5645,7 @@ fn test_async_logical_assignment_conditional() {
 
 fn parse_and_emit_async_spread(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5672,7 +5672,7 @@ fn parse_and_emit_async_spread(source: &str) -> String {
 
 fn spread_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5835,7 +5835,7 @@ fn test_async_spread_conditional() {
 
 fn parse_and_emit_async_destructuring(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -5862,7 +5862,7 @@ fn parse_and_emit_async_destructuring(source: &str) -> String {
 
 fn destructuring_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6028,7 +6028,7 @@ fn test_async_destructuring_conditional() {
 
 fn parse_and_emit_async_template_literal(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6055,7 +6055,7 @@ fn parse_and_emit_async_template_literal(source: &str) -> String {
 
 fn template_literal_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6217,7 +6217,7 @@ fn test_async_template_literal_conditional() {
 
 fn parse_and_emit_async_class_expression(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6244,7 +6244,7 @@ fn parse_and_emit_async_class_expression(source: &str) -> String {
 
 fn class_expression_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6410,7 +6410,7 @@ fn test_async_class_expression_conditional() {
 
 fn parse_and_emit_async_object_method(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6437,7 +6437,7 @@ fn parse_and_emit_async_object_method(source: &str) -> String {
 
 fn object_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6603,7 +6603,7 @@ fn test_async_object_method_conditional() {
 
 fn parse_and_emit_async_generator_method(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6630,7 +6630,7 @@ fn parse_and_emit_async_generator_method(source: &str) -> String {
 
 fn async_generator_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6796,7 +6796,7 @@ fn test_async_generator_method_conditional() {
 
 fn parse_and_emit_async_arrow_expression(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6823,7 +6823,7 @@ fn parse_and_emit_async_arrow_expression(source: &str) -> String {
 
 fn async_arrow_expression_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -6989,7 +6989,7 @@ fn test_async_arrow_expression_conditional() {
 
 fn parse_and_emit_async_function_expression(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7016,7 +7016,7 @@ fn parse_and_emit_async_function_expression(source: &str) -> String {
 
 fn async_function_expression_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7184,7 +7184,7 @@ fn test_async_function_expression_conditional() {
 
 fn parse_and_emit_async_method_decorator(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7225,7 +7225,7 @@ fn parse_and_emit_async_method_decorator(source: &str) -> String {
 
 fn async_method_decorator_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7395,7 +7395,7 @@ fn test_async_method_decorator_conditional() {
 
 fn parse_and_emit_async_class_method_extra(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7436,7 +7436,7 @@ fn parse_and_emit_async_class_method_extra(source: &str) -> String {
 
 fn async_class_method_extra_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7607,7 +7607,7 @@ fn test_async_class_method_conditional_extra() {
 
 fn parse_and_emit_async_with_accessor(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7648,7 +7648,7 @@ fn parse_and_emit_async_with_accessor(source: &str) -> String {
 
 fn async_with_accessor_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7819,7 +7819,7 @@ fn test_async_getter_setter_conditional() {
 
 fn parse_and_emit_async_static_method(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -7860,7 +7860,7 @@ fn parse_and_emit_async_static_method(source: &str) -> String {
 
 fn async_static_method_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8030,7 +8030,7 @@ fn test_async_static_method_conditional() {
 
 fn parse_and_emit_async_generator_delegation(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8057,7 +8057,7 @@ fn parse_and_emit_async_generator_delegation(source: &str) -> String {
 
 fn async_generator_delegation_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8216,7 +8216,7 @@ fn test_async_generator_delegation_conditional() {
 
 fn parse_and_emit_async_error_propagation(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8243,7 +8243,7 @@ fn parse_and_emit_async_error_propagation(source: &str) -> String {
 
 fn async_error_propagation_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8400,7 +8400,7 @@ fn test_async_error_propagation_conditional() {
 
 fn parse_and_emit_async_class_inheritance(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8441,7 +8441,7 @@ fn parse_and_emit_async_class_inheritance(source: &str) -> String {
 
 fn async_class_inheritance_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8611,7 +8611,7 @@ fn test_async_class_inheritance_conditional() {
 
 fn parse_and_emit_async_for_of_loop(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8638,7 +8638,7 @@ fn parse_and_emit_async_for_of_loop(source: &str) -> String {
 
 fn async_for_of_loop_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8797,7 +8797,7 @@ fn test_async_for_of_loop_conditional() {
 
 fn parse_and_emit_async_while_loop(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8824,7 +8824,7 @@ fn parse_and_emit_async_while_loop(source: &str) -> String {
 
 fn async_while_loop_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -8986,7 +8986,7 @@ fn test_async_while_loop_conditional() {
 
 fn parse_and_emit_async_do_while_loop(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9013,7 +9013,7 @@ fn parse_and_emit_async_do_while_loop(source: &str) -> String {
 
 fn async_do_while_loop_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9175,7 +9175,7 @@ fn test_async_do_while_loop_conditional() {
 
 fn parse_and_emit_async_switch_statement(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9202,7 +9202,7 @@ fn parse_and_emit_async_switch_statement(source: &str) -> String {
 
 fn async_switch_statement_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9362,7 +9362,7 @@ fn test_async_switch_statement_with_return() {
 
 fn parse_and_emit_async_conditional_expression(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9389,7 +9389,7 @@ fn parse_and_emit_async_conditional_expression(source: &str) -> String {
 
 fn async_conditional_expression_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9545,7 +9545,7 @@ fn test_async_short_circuit_chained() {
 
 fn parse_and_emit_async_labeled_statement(source: &str) -> String {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9572,7 +9572,7 @@ fn parse_and_emit_async_labeled_statement(source: &str) -> String {
 
 fn async_labeled_statement_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {
@@ -9708,7 +9708,7 @@ fn test_async_labeled_do_while() {
 
 fn async_with_statement_contains_await(source: &str) -> bool {
     use crate::parser::syntax_kind_ext;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root) {
         if let Some(source_file) = parser.arena.get_source_file(root_node) {

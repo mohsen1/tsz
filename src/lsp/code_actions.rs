@@ -24,9 +24,9 @@ use crate::lsp::rename::{TextEdit, WorkspaceEdit};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{NodeAccess, ThinNode, ThinNodeArena};
+use crate::parser::node::{NodeAccess, Node, NodeArena};
 use crate::scanner::SyntaxKind;
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 
@@ -129,8 +129,8 @@ pub struct CodeActionContext {
 
 /// Provides code actions for a given position/range in the source code.
 pub struct CodeActionProvider<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     file_name: String,
     source: &'a str,
@@ -139,8 +139,8 @@ pub struct CodeActionProvider<'a> {
 impl<'a> CodeActionProvider<'a> {
     /// Create a new code action provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         file_name: String,
         source: &'a str,
@@ -346,7 +346,7 @@ impl<'a> CodeActionProvider<'a> {
     /// Get the range for removing a declaration, including handling for multi-line declarations.
     fn declaration_removal_range(
         &self,
-        node: &crate::parser::thin_node::ThinNode,
+        node: &crate::parser::node::Node,
     ) -> (Range, String) {
         let mut end = node.end;
 
@@ -914,7 +914,7 @@ impl<'a> CodeActionProvider<'a> {
         Some((edit, title))
     }
 
-    fn import_decl_range(&self, node: &crate::parser::thin_node::ThinNode) -> (Range, String) {
+    fn import_decl_range(&self, node: &crate::parser::node::Node) -> (Range, String) {
         let mut end = node.end;
         if let Some(import_decl) = self.arena.get_import_decl(node) {
             if let Some(module_node) = self.arena.get(import_decl.module_specifier) {
@@ -1303,7 +1303,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn named_imports_has_local_name(
         &self,
-        named: &crate::parser::thin_node::NamedImportsData,
+        named: &crate::parser::node::NamedImportsData,
         local_name: &str,
     ) -> bool {
         for &spec_idx in &named.elements.nodes {
@@ -1353,7 +1353,7 @@ impl<'a> CodeActionProvider<'a> {
     fn build_named_import_insertion_edits(
         &self,
         named_idx: NodeIndex,
-        named: &crate::parser::thin_node::NamedImportsData,
+        named: &crate::parser::node::NamedImportsData,
         spec_text: &str,
     ) -> Option<Vec<TextEdit>> {
         let named_node = self.arena.get(named_idx)?;
@@ -1506,8 +1506,8 @@ impl<'a> CodeActionProvider<'a> {
 
     fn build_default_import_insertion_edit(
         &self,
-        clause_node: &crate::parser::thin_node::ThinNode,
-        clause: &crate::parser::thin_node::ImportClauseData,
+        clause_node: &crate::parser::node::Node,
+        clause: &crate::parser::node::ImportClauseData,
         candidate: &ImportCandidate,
     ) -> Option<TextEdit> {
         let bindings_idx = clause.named_bindings;
@@ -1635,8 +1635,8 @@ impl<'a> CodeActionProvider<'a> {
 
     fn object_literal_property_edits(
         &self,
-        object_node: &crate::parser::thin_node::ThinNode,
-        literal: &crate::parser::thin_node::LiteralExprData,
+        object_node: &crate::parser::node::Node,
+        literal: &crate::parser::node::LiteralExprData,
         property_text: &str,
     ) -> Option<Vec<TextEdit>> {
         let close_offset = self.find_closing_brace_offset(object_node)?;
@@ -1843,7 +1843,7 @@ impl<'a> CodeActionProvider<'a> {
         None
     }
 
-    fn find_closing_brace_offset(&self, node: &crate::parser::thin_node::ThinNode) -> Option<u32> {
+    fn find_closing_brace_offset(&self, node: &crate::parser::node::Node) -> Option<u32> {
         let slice = self.source.get(node.pos as usize..node.end as usize)?;
         let rel = slice.rfind('}')?;
         Some(node.pos + rel as u32)
@@ -1979,7 +1979,7 @@ impl<'a> CodeActionProvider<'a> {
         }
     }
 
-    fn format_extracted_initializer(&self, expr_node: &ThinNode, selected_text: &str) -> String {
+    fn format_extracted_initializer(&self, expr_node: &Node, selected_text: &str) -> String {
         if self.needs_parentheses_for_extraction(expr_node) {
             if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                 return selected_text.to_string();
@@ -1989,7 +1989,7 @@ impl<'a> CodeActionProvider<'a> {
         selected_text.to_string()
     }
 
-    fn expression_text_span(&self, expr_idx: NodeIndex, expr_node: &ThinNode) -> (u32, u32) {
+    fn expression_text_span(&self, expr_idx: NodeIndex, expr_node: &Node) -> (u32, u32) {
         let mut start = expr_node.pos;
         let mut end = expr_node.end;
 
@@ -2042,7 +2042,7 @@ impl<'a> CodeActionProvider<'a> {
         (start, end)
     }
 
-    fn needs_parentheses_for_extraction(&self, expr_node: &ThinNode) -> bool {
+    fn needs_parentheses_for_extraction(&self, expr_node: &Node) -> bool {
         if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             if let Some(paren) = self.arena.get_parenthesized(expr_node) {
                 if let Some(inner) = self.arena.get(paren.expression) {
@@ -2061,7 +2061,7 @@ impl<'a> CodeActionProvider<'a> {
         false
     }
 
-    fn should_preserve_parenthesized_replacement(&self, expr_node: &ThinNode) -> bool {
+    fn should_preserve_parenthesized_replacement(&self, expr_node: &Node) -> bool {
         if expr_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             return false;
         }
@@ -2076,7 +2076,7 @@ impl<'a> CodeActionProvider<'a> {
         !self.is_comma_expression(inner)
     }
 
-    fn is_comma_expression(&self, expr_node: &ThinNode) -> bool {
+    fn is_comma_expression(&self, expr_node: &Node) -> bool {
         if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             if let Some(paren) = self.arena.get_parenthesized(expr_node) {
                 if let Some(inner) = self.arena.get(paren.expression) {

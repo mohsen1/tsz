@@ -36,14 +36,14 @@
 //! ```
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::emit_utils;
 
 /// Enum ES5 emitter
 pub struct EnumES5Emitter<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     output: String,
     indent_level: u32,
     /// Track last numeric value for auto-incrementing
@@ -51,7 +51,7 @@ pub struct EnumES5Emitter<'a> {
 }
 
 impl<'a> EnumES5Emitter<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         EnumES5Emitter {
             arena,
             output: String::with_capacity(1024),
@@ -378,10 +378,10 @@ impl<'a> EnumES5Emitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     fn emit_enum(source: &str) -> String {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {

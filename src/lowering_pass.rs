@@ -1,7 +1,7 @@
 //! Lowering Pass - Phase 1 of the Transform/Print Architecture
 //!
 //! This module implements the first phase of emission: analyzing the AST and
-//! producing transform directives. The lowering pass walks the ThinNode AST
+//! producing transform directives. The lowering pass walks the Node AST
 //! and determines which nodes need transformation based on compiler options
 //! (ES5 target, module format, etc.).
 //!
@@ -39,10 +39,10 @@
 
 use crate::emit_context::EmitContext;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{ThinNode, ThinNodeArena};
+use crate::parser::node::{Node, NodeArena};
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::thin_emitter::ModuleKind;
+use crate::emitter::ModuleKind;
 use crate::transform_context::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
 use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::private_fields_es5::is_private_identifier;
@@ -52,7 +52,7 @@ use std::sync::Arc;
 ///
 /// Walks the AST and produces transform directives based on compiler options.
 pub struct LoweringPass<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     ctx: &'a EmitContext,
     transforms: TransformContext,
     commonjs_mode: bool,
@@ -61,7 +61,7 @@ pub struct LoweringPass<'a> {
 
 impl<'a> LoweringPass<'a> {
     /// Create a new lowering pass
-    pub fn new(arena: &'a ThinNodeArena, ctx: &'a EmitContext) -> Self {
+    pub fn new(arena: &'a NodeArena, ctx: &'a EmitContext) -> Self {
         LoweringPass {
             arena,
             ctx,
@@ -529,7 +529,7 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    fn visit_for_in_statement(&mut self, node: &ThinNode) {
+    fn visit_for_in_statement(&mut self, node: &Node) {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
@@ -539,7 +539,7 @@ impl<'a> LoweringPass<'a> {
         self.visit(for_in_of.statement);
     }
 
-    fn visit_for_of_statement(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_for_of_statement(&mut self, node: &Node, idx: NodeIndex) {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
@@ -556,19 +556,19 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Visit a class declaration
-    fn visit_class_declaration(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
         self.lower_class_declaration(node, idx, false, false);
     }
 
-    fn visit_enum_declaration(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_enum_declaration(&mut self, node: &Node, idx: NodeIndex) {
         self.lower_enum_declaration(node, idx, false);
     }
 
-    fn visit_module_declaration(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
         self.lower_module_declaration(node, idx, false);
     }
 
-    fn visit_export_declaration(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    fn visit_export_declaration(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(export_decl) = self.arena.get_export_decl(node) else {
             return;
         };
@@ -689,7 +689,7 @@ impl<'a> LoweringPass<'a> {
     fn commonjs_default_export_function_directive(
         &mut self,
         function_node: NodeIndex,
-        func: &crate::parser::thin_node::FunctionData,
+        func: &crate::parser::node::FunctionData,
     ) -> TransformDirective {
         let mut directives = Vec::new();
         if self.ctx.target_es5 {
@@ -714,7 +714,7 @@ impl<'a> LoweringPass<'a> {
 
     fn lower_class_declaration(
         &mut self,
-        node: &ThinNode,
+        node: &Node,
         idx: NodeIndex,
         force_export: bool,
         force_default: bool,
@@ -805,7 +805,7 @@ impl<'a> LoweringPass<'a> {
 
     fn lower_function_declaration(
         &mut self,
-        node: &ThinNode,
+        node: &Node,
         idx: NodeIndex,
         force_export: bool,
         force_default: bool,
@@ -883,7 +883,7 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    fn lower_enum_declaration(&mut self, node: &ThinNode, idx: NodeIndex, force_export: bool) {
+    fn lower_enum_declaration(&mut self, node: &Node, idx: NodeIndex, force_export: bool) {
         let Some(enum_decl) = self.arena.get_enum(node) else {
             return;
         };
@@ -949,7 +949,7 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    fn lower_module_declaration(&mut self, node: &ThinNode, idx: NodeIndex, force_export: bool) {
+    fn lower_module_declaration(&mut self, node: &Node, idx: NodeIndex, force_export: bool) {
         let Some(module_decl) = self.arena.get_module(node) else {
             return;
         };
@@ -1005,12 +1005,12 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Visit a function declaration
-    fn visit_function_declaration(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_function_declaration(&mut self, node: &Node, idx: NodeIndex) {
         self.lower_function_declaration(node, idx, false, false);
     }
 
     /// Visit an arrow function
-    fn visit_arrow_function(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_arrow_function(&mut self, node: &Node, idx: NodeIndex) {
         let Some(arrow) = self.arena.get_function(node) else {
             return;
         };
@@ -1041,11 +1041,11 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Visit a variable statement
-    fn visit_variable_statement(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_variable_statement(&mut self, node: &Node, idx: NodeIndex) {
         self.lower_variable_statement(node, idx, false);
     }
 
-    fn lower_variable_statement(&mut self, node: &ThinNode, idx: NodeIndex, force_export: bool) {
+    fn lower_variable_statement(&mut self, node: &Node, idx: NodeIndex, force_export: bool) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
@@ -1074,7 +1074,7 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    fn visit_function_expression(&mut self, node: &ThinNode, idx: NodeIndex) {
+    fn visit_function_expression(&mut self, node: &Node, idx: NodeIndex) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -1250,7 +1250,7 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    fn class_has_private_members(&self, class_data: &crate::parser::thin_node::ClassData) -> bool {
+    fn class_has_private_members(&self, class_data: &crate::parser::node::ClassData) -> bool {
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -1418,7 +1418,7 @@ impl<'a> LoweringPass<'a> {
         None
     }
 
-    fn get_block_like(&self, node: &ThinNode) -> Option<&crate::parser::thin_node::BlockData> {
+    fn get_block_like(&self, node: &Node) -> Option<&crate::parser::node::BlockData> {
         if node.kind == syntax_kind_ext::BLOCK || node.kind == syntax_kind_ext::CASE_BLOCK {
             self.arena.blocks.get(node.data_index as usize)
         } else {
@@ -1658,7 +1658,7 @@ impl<'a> LoweringPass<'a> {
 
     fn import_has_runtime_dependency(
         &self,
-        import_decl: &crate::parser::thin_node::ImportDeclData,
+        import_decl: &crate::parser::node::ImportDeclData,
     ) -> bool {
         if import_decl.import_clause.is_none() {
             return true;
@@ -1732,7 +1732,7 @@ impl<'a> LoweringPass<'a> {
 
     fn export_decl_has_runtime_value(
         &self,
-        export_decl: &crate::parser::thin_node::ExportDeclData,
+        export_decl: &crate::parser::node::ExportDeclData,
     ) -> bool {
         if export_decl.is_type_only {
             return false;
@@ -1780,7 +1780,7 @@ impl<'a> LoweringPass<'a> {
         true
     }
 
-    fn export_clause_is_type_only(&self, clause_node: &ThinNode) -> bool {
+    fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
         match clause_node.kind {
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => true,
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => true,
@@ -1821,7 +1821,7 @@ impl<'a> LoweringPass<'a> {
 
     fn export_has_runtime_dependency(
         &self,
-        export_decl: &crate::parser::thin_node::ExportDeclData,
+        export_decl: &crate::parser::node::ExportDeclData,
     ) -> bool {
         if export_decl.is_type_only {
             return false;
@@ -1884,11 +1884,11 @@ impl<'a> LoweringPass<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::thin_node::ThinNodeArena;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::node::NodeArena;
+    use crate::parser::ParserState;
 
-    fn parse(source: &str) -> (ThinNodeArena, NodeIndex) {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    fn parse(source: &str) -> (NodeArena, NodeIndex) {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         (parser.arena, root)
     }
@@ -1923,7 +1923,7 @@ mod tests {
     fn test_lowering_pass_commonjs_export() {
         let (arena, root) = parse("export class Foo {}");
         let mut ctx = EmitContext::default();
-        ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+        ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
         let lowering = LoweringPass::new(&arena, &ctx);
         let transforms = lowering.run(root);
@@ -1936,7 +1936,7 @@ mod tests {
     fn test_lowering_pass_commonjs_export_vars() {
         let (arena, root) = parse("export const a = 1, b = 2;");
         let mut ctx = EmitContext::default();
-        ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+        ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
         let lowering = LoweringPass::new(&arena, &ctx);
         let transforms = lowering.run(root);
@@ -1951,7 +1951,7 @@ mod tests {
     fn test_lowering_pass_commonjs_export_name_indices() {
         let (arena, root) = parse("export const x = 1;");
         let mut ctx = EmitContext::default();
-        ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+        ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
         let lowering = LoweringPass::new(&arena, &ctx);
         let transforms = lowering.run(root);
@@ -1992,7 +1992,7 @@ mod tests {
     fn test_lowering_pass_commonjs_non_export_function_no_transforms() {
         let (arena, root) = parse("function foo() {}");
         let mut ctx = EmitContext::default();
-        ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+        ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
         let lowering = LoweringPass::new(&arena, &ctx);
         let transforms = lowering.run(root);

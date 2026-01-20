@@ -382,7 +382,7 @@ function runWasm(testCase: ParsedTestCase): { codes: number[]; crashed: boolean;
       return { codes, crashed: false, oom: false };
     } else {
       const file = testCase.files[0];
-      const parser = new wasmModule.ThinParser(file.name, file.content);
+      const parser = new wasmModule.Parser(file.name, file.content);
       
       // Add lib.d.ts unless noLib
       if (!testCase.options.nolib && libSource) {

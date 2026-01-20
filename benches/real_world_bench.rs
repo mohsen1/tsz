@@ -4,7 +4,7 @@
 //! of varying sizes to simulate real-world scenarios.
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
-use wasm::{thin_emitter::ThinPrinter, thin_parser::ThinParserState};
+use wasm::{emitter::Printer, parser::ParserState};
 
 /// Generate a synthetic TypeScript file with many class definitions
 fn generate_large_ts(class_count: usize) -> String {
@@ -66,11 +66,11 @@ fn bench_large_synthetic_parse_emit(c: &mut Criterion) {
 
     group.bench_function("synthetic_100_classes_full_pipeline", |b| {
         b.iter(|| {
-            let mut parser = ThinParserState::new("synthetic.ts".to_string(), source.clone());
+            let mut parser = ParserState::new("synthetic.ts".to_string(), source.clone());
             let root = parser.parse_source_file();
 
             let capacity = source.len() * 3 / 2;
-            let mut printer = ThinPrinter::with_capacity(&parser.arena, capacity);
+            let mut printer = Printer::with_capacity(&parser.arena, capacity);
             printer.emit(root);
             black_box(printer.take_output())
         })
@@ -85,7 +85,7 @@ fn bench_large_synthetic_emit_only(c: &mut Criterion) {
     let bytes = source.len() as u64;
 
     // Pre-parse once
-    let mut parser = ThinParserState::new("synthetic.ts".to_string(), source.clone());
+    let mut parser = ParserState::new("synthetic.ts".to_string(), source.clone());
     let root = parser.parse_source_file();
 
     let mut group = c.benchmark_group("real_world");
@@ -95,7 +95,7 @@ fn bench_large_synthetic_emit_only(c: &mut Criterion) {
     group.bench_function("synthetic_100_classes_emit_only", |b| {
         b.iter(|| {
             let capacity = source.len() * 3 / 2;
-            let mut printer = ThinPrinter::with_capacity(&parser.arena, capacity);
+            let mut printer = Printer::with_capacity(&parser.arena, capacity);
             printer.emit(root);
             black_box(printer.take_output())
         })

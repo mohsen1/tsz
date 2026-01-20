@@ -1,6 +1,6 @@
 //! Type lowering: AST nodes → TypeId
 //!
-//! This module implements the "bridge" that converts raw AST nodes (ThinNode)
+//! This module implements the "bridge" that converts raw AST nodes (Node)
 //! into the structural type system (TypeId).
 //!
 //! Lowering is lazy - types are only computed when queried.
@@ -9,7 +9,7 @@ use crate::interner::Atom;
 use crate::parser::NodeList;
 use crate::parser::base::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{IndexSignatureData, SignatureData, ThinNodeArena, TypeAliasData};
+use crate::parser::node::{IndexSignatureData, SignatureData, NodeArena, TypeAliasData};
 use crate::scanner::SyntaxKind;
 use crate::solver::subtype::{SubtypeChecker, TypeResolver};
 use crate::solver::types::*;
@@ -23,7 +23,7 @@ use crate::solver::TypeInterner;
 /// Type lowering context.
 /// Converts AST type nodes into interned TypeIds.
 pub struct TypeLowering<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     interner: &'a dyn TypeDatabase,
     /// Optional type resolver - resolves identifier nodes to SymbolIds.
     /// If provided, this enables correct abstract class detection.
@@ -173,7 +173,7 @@ impl InterfaceParts {
 }
 
 impl<'a> TypeLowering<'a> {
-    pub fn new(arena: &'a ThinNodeArena, interner: &'a dyn QueryDatabase) -> Self {
+    pub fn new(arena: &'a NodeArena, interner: &'a dyn QueryDatabase) -> Self {
         TypeLowering {
             arena,
             interner: interner.as_type_database(),
@@ -186,7 +186,7 @@ impl<'a> TypeLowering<'a> {
     /// Create a TypeLowering with a symbol resolver.
     /// The resolver converts identifier names to actual SymbolIds from the binder.
     pub fn with_resolver(
-        arena: &'a ThinNodeArena,
+        arena: &'a NodeArena,
         interner: &'a dyn QueryDatabase,
         resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
     ) -> Self {
@@ -201,7 +201,7 @@ impl<'a> TypeLowering<'a> {
 
     /// Create a TypeLowering with separate type/value resolvers.
     pub fn with_resolvers(
-        arena: &'a ThinNodeArena,
+        arena: &'a NodeArena,
         interner: &'a dyn QueryDatabase,
         type_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
         value_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,

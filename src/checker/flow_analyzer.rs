@@ -12,7 +12,7 @@
 //! block-scoped variables (let/const) and detect use-before-definite-assignment errors.
 
 use crate::binder::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;
@@ -143,8 +143,8 @@ impl DefiniteAssignmentResult {
 /// This performs a forward dataflow analysis over the control flow graph,
 /// tracking assignment states for variables at each program point.
 pub struct DefiniteAssignmentAnalyzer<'a> {
-    /// Reference to the ThinNodeArena for AST access
-    arena: &'a ThinNodeArena,
+    /// Reference to the NodeArena for AST access
+    arena: &'a NodeArena,
     /// Reference to the flow node arena
     flow_arena: &'a FlowNodeArena,
     /// Assignment states at each flow node
@@ -155,7 +155,7 @@ pub struct DefiniteAssignmentAnalyzer<'a> {
 
 impl<'a> DefiniteAssignmentAnalyzer<'a> {
     /// Create a new definite assignment analyzer.
-    pub fn new(arena: &'a ThinNodeArena, flow_arena: &'a FlowNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena, flow_arena: &'a FlowNodeArena) -> Self {
         Self {
             arena,
             flow_arena,

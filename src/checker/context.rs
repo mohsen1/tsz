@@ -53,9 +53,9 @@ impl CheckerOptions {
         self
     }
 }
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]
@@ -149,11 +149,11 @@ impl TypeCache {
 
 /// Shared state for type checking.
 pub struct CheckerContext<'a> {
-    /// The ThinNodeArena containing the AST.
-    pub arena: &'a ThinNodeArena,
+    /// The NodeArena containing the AST.
+    pub arena: &'a NodeArena,
 
     /// The binder state with symbols.
-    pub binder: &'a ThinBinderState,
+    pub binder: &'a BinderState,
 
     /// Type interner for structural type interning.
     pub types: &'a TypeInterner,
@@ -261,7 +261,7 @@ pub struct CheckerContext<'a> {
 
     /// All arenas for cross-file resolution (indexed by file_idx from Symbol.decl_file_idx).
     /// Set during multi-file type checking to allow resolving declarations across files.
-    pub all_arenas: Option<Vec<Arc<ThinNodeArena>>>,
+    pub all_arenas: Option<Vec<Arc<NodeArena>>>,
 
     /// Resolved module specifiers for this file (multi-file CLI mode).
     pub resolved_modules: Option<HashSet<String>>,
@@ -284,16 +284,16 @@ pub struct CheckerContext<'a> {
 #[derive(Clone)]
 pub struct LibContext {
     /// The AST arena for this lib file.
-    pub arena: Arc<ThinNodeArena>,
+    pub arena: Arc<NodeArena>,
     /// The binder state with symbols from this lib file.
-    pub binder: Arc<ThinBinderState>,
+    pub binder: Arc<BinderState>,
 }
 
 impl<'a> CheckerContext<'a> {
     /// Create a new CheckerContext.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         compiler_options: CheckerOptions,
@@ -349,8 +349,8 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a new CheckerContext with explicit compiler options.
     pub fn with_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         compiler_options: &CheckerOptions,
@@ -407,8 +407,8 @@ impl<'a> CheckerContext<'a> {
     /// Create a new CheckerContext with a persistent cache.
     /// This allows reusing type checking results from previous queries.
     pub fn with_cache(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: TypeCache,
@@ -465,8 +465,8 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a new CheckerContext with explicit compiler options and a persistent cache.
     pub fn with_cache_and_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: TypeCache,
@@ -527,13 +527,13 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set all arenas for cross-file resolution.
-    pub fn set_all_arenas(&mut self, arenas: Vec<Arc<ThinNodeArena>>) {
+    pub fn set_all_arenas(&mut self, arenas: Vec<Arc<NodeArena>>) {
         self.all_arenas = Some(arenas);
     }
 
     /// Get the arena for a specific file index.
     /// Returns the current arena if file_idx is u32::MAX (single-file mode).
-    pub fn get_arena_for_file(&self, file_idx: u32) -> &ThinNodeArena {
+    pub fn get_arena_for_file(&self, file_idx: u32) -> &NodeArena {
         if file_idx == u32::MAX {
             return self.arena;
         }

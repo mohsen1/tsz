@@ -7,10 +7,10 @@ use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_or_before_offset;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::solver::TypeInterner;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
 
 /// Information returned for a hover request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -23,8 +23,8 @@ pub struct HoverInfo {
 
 /// Hover provider.
 pub struct HoverProvider<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     interner: &'a TypeInterner,
     source_text: &'a str,
@@ -35,8 +35,8 @@ pub struct HoverProvider<'a> {
 impl<'a> HoverProvider<'a> {
     /// Create a new Hover provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         interner: &'a TypeInterner,
         source_text: &'a str,
@@ -55,8 +55,8 @@ impl<'a> HoverProvider<'a> {
 
     /// Create a new Hover provider with explicit strict mode setting.
     pub fn with_strict(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         interner: &'a TypeInterner,
         source_text: &'a str,
@@ -143,7 +143,7 @@ impl<'a> HoverProvider<'a> {
             ..Default::default()
         };
         let mut checker = if let Some(cache) = type_cache.take() {
-            ThinCheckerState::with_cache(
+            CheckerState::with_cache(
                 self.arena,
                 self.binder,
                 self.interner,
@@ -152,7 +152,7 @@ impl<'a> HoverProvider<'a> {
                 compiler_options,
             )
         } else {
-            ThinCheckerState::new(
+            CheckerState::new(
                 self.arena,
                 self.binder,
                 self.interner,
@@ -288,8 +288,8 @@ mod hover_tests {
     use super::*;
     use crate::lsp::position::LineMap;
     use crate::solver::TypeInterner;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_hover_variable_type() {
@@ -297,10 +297,10 @@ mod hover_tests {
         // const x = 42;
         // x;
         let source = "/** The answer */\nconst x = 42;\nx;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let interner = TypeInterner::new();
@@ -343,10 +343,10 @@ mod hover_tests {
         // const x = 42;
         // x
         let source = "/** The answer */\nconst x = 42;\nx";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let interner = TypeInterner::new();
@@ -379,10 +379,10 @@ mod hover_tests {
     #[test]
     fn test_hover_incomplete_member_access() {
         let source = "const foo = 1;\nfoo.";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let interner = TypeInterner::new();
@@ -416,10 +416,10 @@ mod hover_tests {
     #[test]
     fn test_hover_jsdoc_summary_and_params() {
         let source = "/**\n * Adds two numbers.\n * @param a First number.\n * @param b Second number.\n */\nfunction add(a: number, b: number): number { return a + b; }\nadd(1, 2);";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let interner = TypeInterner::new();
@@ -455,10 +455,10 @@ mod hover_tests {
     #[test]
     fn test_hover_no_symbol() {
         let source = "const x = 42;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let interner = TypeInterner::new();
@@ -484,10 +484,10 @@ mod hover_tests {
     #[test]
     fn test_hover_function() {
         let source = "function foo() { return 1; }\nfoo();";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let interner = TypeInterner::new();
