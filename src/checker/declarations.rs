@@ -805,9 +805,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             }
                             // TS2664: Check if the module being augmented exists
                             // declare module "nonexistent" { } -> Error if module doesn't exist
-                            // Only emit TS2664 in .ts files, not .d.ts files
-                            // In .d.ts files, module augmentations are allowed even if the module doesn't exist
-                            else if !self.module_exists(&lit.text) && !self.is_declaration_file() {
+                            // Only emit TS2664 if:
+                            // 1. The file is a module file (has import/export statements)
+                            // 2. The file is not a .d.ts file
+                            // In script files (no imports/exports), declare module "xxx" declares
+                            // an ambient external module, which is always valid.
+                            else if !self.module_exists(&lit.text) 
+                                && !self.is_declaration_file()
+                                && self.is_external_module() {
                                 let message = format_message(
                                     diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION,
                                     &[&lit.text]
@@ -834,6 +839,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check if the current file is a declaration file (.d.ts).
     fn is_declaration_file(&self) -> bool {
         self.ctx.file_name.ends_with(".d.ts")
+    }
+
+    /// Check if the current file is an external module (has import/export statements).
+    /// Script files (global scope) don't have imports/exports.
+    fn is_external_module(&self) -> bool {
+        // Check if the binder detected this file as a module (has imports/exports)
+        self.ctx.binder.is_external_module()
     }
 
     /// Check if a module exists (for TS2664 check).
