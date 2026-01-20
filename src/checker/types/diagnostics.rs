@@ -383,6 +383,7 @@ pub mod diagnostic_codes {
     pub const HAS_NO_DEFAULT_EXPORT: u32 = 2613;
     pub const EXPORT_ASSIGNMENT_CANNOT_BE_USED: u32 = 2714;
     pub const AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME: u32 = 5061;
+    pub const AMBIENT_MODULES_CANNOT_BE_NESTED: u32 = 2435; // Ambient modules cannot be nested in other modules or namespaces.
 
     // Promise/async errors
     pub const AWAIT_OUTSIDE_ASYNC: u32 = 1308;
