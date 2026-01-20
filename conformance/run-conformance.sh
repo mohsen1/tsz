@@ -95,7 +95,7 @@ fi
 
 echo ""
 echo "🚀 Running tests in Docker container..."
-echo "   (Memory: 4GB, CPUs: 2, Timeout: ${TIMEOUT}s)"
+echo "   (Memory: 8GB, CPUs: $WORKERS, Timeout: ${TIMEOUT}s)"
 echo ""
 
 # Build runner args
@@ -105,11 +105,12 @@ if [ "$VERBOSE" = true ]; then
 fi
 
 # Run tests in Docker with resource limits
+# Memory: ~1GB per worker, CPUs: match worker count
 docker run --rm \
-    --memory="4g" \
-    --memory-swap="4g" \
-    --cpus="2" \
-    --pids-limit=100 \
+    --memory="8g" \
+    --memory-swap="8g" \
+    --cpus="$WORKERS" \
+    --pids-limit=500 \
     -v "$ROOT_DIR/pkg:/app/pkg:ro" \
     -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
     -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
