@@ -9,10 +9,10 @@ This guide covers the testing infrastructure for the Rust/WASM TypeScript compil
 ./scripts/test.sh
 
 # 2. Run conformance tests (compare against TypeScript)
-./conformance/run-conformance.sh --max=1000
+./conformance/run-conformance.sh --max=500
 
 # 3. Test a specific file
-node scripts/run-single-test.mjs tests/cases/compiler/2dArrays.ts
+node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/2dArrays.ts
 ```
 
 ## Test Types
@@ -24,37 +24,42 @@ node scripts/run-single-test.mjs tests/cases/compiler/2dArrays.ts
 
 ```bash
 ./scripts/test.sh                    # All tests
-./scripts/test.sh parser_tests       # Specific module
-./scripts/test.sh --bench            # Performance benchmarks
+cargo test --lib parser::            # Specific module
+cargo test --lib solver::            # Solver tests
 ```
 
 ### 📊 Conformance Tests  
 **Location**: `./conformance/`  
 **Purpose**: Compare WASM output against TypeScript compiler  
-**Speed**: Medium-Slow (1-15 mins depending on scope)
+**Speed**: ~70 tests/sec
+
+⚠️ **Always run in Docker** - Tests can cause infinite loops or OOM.
 
 ```bash
-# Quick iteration (1000 tests, ~1 min)
-./conformance/run-conformance.sh --max=1000
+# Quick iteration (500 tests, ~7s)
+./conformance/run-conformance.sh --max=500
 
-# Full suite (45K tests, ~15 mins) 
+# Medium suite (2000 tests, ~30s)
+./conformance/run-conformance.sh --max=2000
+
+# Full suite (12K+ tests, ~3 mins)
 ./conformance/run-conformance.sh --all
 
-# Specific categories
+# Verbose output (shows individual failures)
+./conformance/run-conformance.sh --max=100 --verbose
+
+# Specific category
 ./conformance/run-conformance.sh --category=compiler
 ./conformance/run-conformance.sh --category=conformance
 ```
 
-### 🔍 Individual Test Scripts
-**Location**: `./scripts/`  
-**Purpose**: Debug specific issues and compare detailed output
+### 🔍 Single Test Script
+**Location**: `./scripts/run-single-test.mjs`  
+**Purpose**: Debug specific test files
 
 ```bash
-# Test single file with verbose output
-node scripts/run-single-test.mjs tests/cases/compiler/arrayLiterals.ts --verbose
-
-# Compare baselines for first N tests
-node scripts/compare-baselines.mjs 50 compiler
+# Test single file
+node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/arrayLiterals.ts
 
 # Validate WASM module
 node scripts/validate-wasm.mjs
@@ -65,16 +70,19 @@ node scripts/validate-wasm.mjs
 ### 🚀 When Starting Work
 ```bash
 # 1. Make sure everything builds
+cargo build --release
+
+# 2. Run unit tests
 ./scripts/test.sh
 
-# 2. Get baseline conformance
-./conformance/run-conformance.sh --max=1000
+# 3. Get baseline conformance
+./conformance/run-conformance.sh --max=500
 ```
 
 ### 🔧 During Development  
 ```bash
-# Test specific areas you're working on
-node scripts/run-single-test.mjs tests/cases/compiler/yourTest.ts --verbose
+# Test specific file you're working on
+node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/yourTest.ts
 
 # Quick conformance check
 ./conformance/run-conformance.sh --max=500
@@ -94,63 +102,40 @@ node scripts/run-single-test.mjs tests/cases/compiler/yourTest.ts --verbose
 
 ## Understanding Conformance Metrics
 
-The conformance test outputs several key metrics:
+The conformance test runner outputs:
 
-- **Exact Match**: % of tests with identical output (target: 50%+)
-- **Missing Errors**: % where WASM accepts but TypeScript rejects (target: <30%)  
-- **Extra Errors**: % where WASM rejects but TypeScript accepts (target: <20%)
-- **Parse Errors**: Absolute count of parse failures (target: <100)
+```
+Pass Rate: 30.0% (150/500)
+Time: 7.4s (68 tests/sec)
 
-### Current Priority Areas
-
-Focus testing on these high-impact areas:
-
-1. **TS2454 (Used before assigned)**: 573 missing errors
-   ```bash
-   node conformance/find-ts2454.mjs
-   ```
-
-2. **TS2322 (Type not assignable)**: 310 missing errors  
-   ```bash
-   node conformance/find-ts2322.mjs
-   ```
-
-3. **TS2339 (Property doesn't exist)**: 292 extra errors
-   ```bash  
-   node conformance/find-ts2339.mjs
-   ```
-
-## Performance Testing
-
-```bash
-# Benchmark parsing speed
-./scripts/test.sh --bench
-
-# Profile specific test
-node --prof scripts/run-single-test.mjs tests/cases/compiler/largeFile.ts
+Summary:
+  ✓ Passed:   150
+  ✗ Failed:   350
+  💥 Crashed:  0
+  💾 OOM:      0
+  ⏱ Timeout:  0
 ```
 
-## Debugging Failed Tests
+### Key Metrics
+- **Pass Rate**: % of tests with identical error codes (target: 50%+)
+- **Crashes**: Tests that caused WASM exceptions (target: 0)
+- **OOM**: Tests that ran out of memory (target: 0)
+- **Timeout**: Tests that took >10s (target: 0)
 
-1. **Individual test fails**:
-   ```bash
-   node scripts/run-single-test.mjs path/to/test.ts --verbose
-   ```
+### Error Analysis
+The runner shows top missing and extra errors:
 
-2. **Conformance regression**:
-   ```bash  
-   # Find new failures
-   ./conformance/run-conformance.sh --max=1000 | grep "FAIL"
-   
-   # Debug specific error type
-   node conformance/find-ts2322.mjs
-   ```
+```
+Top Missing Errors (we should emit but don't):
+  TS2318: 696x  - Cannot find global type (@noLib tests)
+  TS2583: 298x  - Cannot find name (ES2015+ lib)
+  TS2304: 59x   - Cannot find name
 
-3. **Parser issues**:
-   ```bash
-   # Check if it's a parsing problem
-   node scripts/run-single-test.mjs path/to/test.ts --thin
-   ```
+Top Extra Errors (we emit but shouldn't):
+  TS2300: 60x   - Duplicate identifier
+  TS1005: 58x   - Expected token (parser)
+  TS2339: 34x   - Property does not exist
+```
 
 ## Directory Structure
 
@@ -159,24 +144,27 @@ scripts/
 ├── test.sh                     # Main Rust test runner
 ├── bench.sh                    # Benchmark runner
 ├── build-wasm.sh               # WASM build script
-├── docker/                     # Docker files
+├── docker/                     # Docker configuration
 │   ├── Dockerfile              # Main Dockerfile
 │   └── Dockerfile.bench        # Benchmark Dockerfile
 ├── run-single-test.mjs         # Test one file
-├── compare-baselines.mjs       # Compare against baselines
-├── run-batch-tests.mjs         # Run multiple tests
-└── validate-wasm.mjs           # WASM module validation
+├── validate-wasm.mjs           # WASM module validation
+└── help.mjs                    # Help/usage info
 
 conformance/                    # Conformance test suite
-├── run-conformance.sh          # Main conformance runner
-├── find-ts2454.mjs             # Find specific error types
-└── ...                         # Error-specific analyzers
+├── run-conformance.sh          # Main runner (Docker-based)
+├── src/
+│   ├── runner.ts               # Test orchestrator
+│   ├── worker.ts               # Parallel worker
+│   └── baseline.ts             # Baseline comparison
+└── package.json                # Node dependencies
 ```
 
 ## Tips
 
-- Use `--max=1000` for quick feedback during development
-- Use `--all` for comprehensive testing before major commits  
-- Focus on the error types that have highest counts in conformance report
-- Test both `--thin` and `--legacy` parser modes for completeness
-- Run benchmarks periodically to catch performance regressions
+- Use `--max=500` for quick feedback during development (~7s)
+- Use `--max=2000` for thorough testing before commits (~30s)
+- Use `--all` for comprehensive testing before major changes (~3 mins)
+- Always run conformance tests in Docker to prevent system hangs
+- Focus on reducing the top extra errors (we emit but shouldn't)
+- Run `./scripts/test.sh` before every commit
