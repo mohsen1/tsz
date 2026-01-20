@@ -1,57 +1,112 @@
 #!/bin/bash
-# Docker-based conformance test runner
+#
+# TSZ Conformance Test Runner
 # 
-# ⚠️ IMPORTANT: Always use this script or ./scripts/test.sh to run conformance tests.
-# Running tests directly on the host can cause infinite loops or OOM crashes.
+# Runs TypeScript conformance tests in Docker for safety.
+# Tests can cause infinite loops or OOM - Docker provides isolation.
+#
+# Usage:
+#   ./run-conformance.sh                    # Run 500 tests
+#   ./run-conformance.sh --max=100          # Run 100 tests  
+#   ./run-conformance.sh --all              # Run all tests
+#   ./run-conformance.sh --category=compiler # Run compiler tests only
+#   ./run-conformance.sh --verbose          # Show detailed output
+#   ./run-conformance.sh --rebuild          # Rebuild Docker image
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-IMAGE_NAME="ts-conformance-runner"
+IMAGE_NAME="tsz-conformance"
 
+# Defaults
 MAX_TESTS=500
 REBUILD=false
 VERBOSE=false
-CATEGORIES="conformance"
+CATEGORIES="conformance,compiler"
+TIMEOUT=600  # 10 minutes default
 
+# Parse arguments
 for arg in "$@"; do
     case $arg in
         --rebuild) REBUILD=true ;;
-        --all) MAX_TESTS=999999 ;;
+        --all) MAX_TESTS=99999; TIMEOUT=3600 ;;
         --max=*) MAX_TESTS="${arg#*=}" ;;
         --verbose|-v) VERBOSE=true ;;
         --category=*) CATEGORIES="${arg#*=}" ;;
+        --timeout=*) TIMEOUT="${arg#*=}" ;;
+        --help|-h)
+            echo "TSZ Conformance Test Runner"
+            echo ""
+            echo "Usage: ./run-conformance.sh [options]"
+            echo ""
+            echo "Options:"
+            echo "  --max=N         Run N tests (default: 500)"
+            echo "  --all           Run all tests (may take hours)"
+            echo "  --category=X    Test category: conformance, compiler, or both"
+            echo "  --verbose, -v   Show detailed output"
+            echo "  --timeout=S     Timeout in seconds (default: 600)"
+            echo "  --rebuild       Force rebuild Docker image"
+            echo "  --help, -h      Show this help"
+            exit 0
+            ;;
     esac
 done
 
-echo "======================================"
-echo "  Conformance Test Runner (Docker)"
-echo "======================================"
-echo "  Tests:      $MAX_TESTS"
-echo "  Categories: $CATEGORIES"
-echo "  Verbose:    $VERBOSE"
-echo "======================================"
-
-if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-    echo "Building Docker image..."
-    docker build -t "$IMAGE_NAME" -f - "$SCRIPT_DIR" << 'EOF'
-FROM node:22
-RUN npm install -g typescript
-WORKDIR /app
-EOF
+# Check Docker is available
+if ! command -v docker &> /dev/null; then
+    echo "❌ Docker is required but not installed."
+    echo "   Install Docker: https://docs.docker.com/get-docker/"
+    exit 1
 fi
 
-echo "Running conformance tests..."
+# Check Docker daemon is running
+if ! docker info &> /dev/null; then
+    echo "❌ Docker daemon is not running."
+    echo "   Start Docker Desktop or run: sudo systemctl start docker"
+    exit 1
+fi
 
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║         TSZ Conformance Test Runner (Docker)             ║"
+echo "╠══════════════════════════════════════════════════════════╣"
+echo "║  Tests:      $(printf '%-43s' "$MAX_TESTS") ║"
+echo "║  Categories: $(printf '%-43s' "$CATEGORIES") ║"
+echo "║  Timeout:    $(printf '%-43s' "${TIMEOUT}s") ║"
+echo "║  Verbose:    $(printf '%-43s' "$VERBOSE") ║"
+echo "╚══════════════════════════════════════════════════════════╝"
+
+# Build Docker image if needed
+if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+    echo ""
+    echo "📦 Building Docker image..."
+    docker build -t "$IMAGE_NAME" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
+FROM node:22-slim
+RUN npm install -g typescript
+WORKDIR /app
+# Pre-create directories
+RUN mkdir -p /app/conformance /app/pkg /app/TypeScript/tests
+DOCKERFILE
+    echo "✅ Docker image built"
+fi
+
+echo ""
+echo "🚀 Running tests in Docker container..."
+echo "   (Memory: 4GB, CPUs: 2, Timeout: ${TIMEOUT}s)"
+echo ""
+
+# Build runner args
 RUNNER_ARGS="--max=$MAX_TESTS --category=$CATEGORIES"
 if [ "$VERBOSE" = true ]; then
     RUNNER_ARGS="$RUNNER_ARGS --verbose"
 fi
 
+# Run tests in Docker with resource limits
 docker run --rm \
     --memory="4g" \
+    --memory-swap="4g" \
     --cpus="2" \
+    --pids-limit=100 \
     -v "$ROOT_DIR/pkg:/app/pkg:ro" \
     -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
     -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
@@ -60,7 +115,14 @@ docker run --rm \
     "$IMAGE_NAME" sh -c "
         cd /app/conformance
         npm install --silent 2>/dev/null || true
-        timeout 300s node dist/runner.js $RUNNER_ARGS || echo 'Tests completed or timed out'
+        timeout ${TIMEOUT}s node dist/runner.js $RUNNER_ARGS
+        EXIT_CODE=\$?
+        if [ \$EXIT_CODE -eq 124 ]; then
+            echo ''
+            echo '⏱️  Tests timed out after ${TIMEOUT}s'
+        fi
+        exit \$EXIT_CODE
     "
 
-echo "Done!"
+echo ""
+echo "✅ Done!"

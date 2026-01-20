@@ -2,34 +2,44 @@
 
 Testing and build scripts for Project Zang.
 
-## Scripts
+## Important: Docker Required
 
-| Script | Purpose | Usage |
-|--------|---------|-------|
-| `help.mjs` | Show all available commands | `node scripts/help.mjs` |
-| `run-single-test.mjs` | Test individual TypeScript files | `node scripts/run-single-test.mjs path/to/test.ts` |
-| `validate-wasm.mjs` | Validate WASM module loads correctly | `node scripts/validate-wasm.mjs` |
-| `test.sh` | Run Rust unit tests in Docker | `./scripts/test.sh` |
-| `build-wasm.sh` | Build WASM module | `./scripts/build-wasm.sh` |
+**Conformance tests MUST run in Docker.** Direct execution can cause:
+- Infinite loops (freezes your machine)
+- Out of memory crashes
+- System instability
 
 ## Quick Start
 
 ```bash
-# See all available commands
+# Show all available commands
 node scripts/help.mjs
 
-# Test a specific file
-node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/2dArrays.ts
+# Run conformance tests (500 tests, in Docker)
+./conformance/run-conformance.sh
 
-# Run conformance tests (in Docker)
-./conformance/run-conformance.sh --max=100
+# Run with options
+./conformance/run-conformance.sh --max=100           # Fewer tests
+./conformance/run-conformance.sh --all               # All tests
+./conformance/run-conformance.sh --verbose           # Detailed output
+./conformance/run-conformance.sh --category=compiler # Compiler tests only
 ```
 
-## ⚠️ Safety Warning
+## Scripts
 
-**Always run conformance tests in Docker.** Direct execution can cause:
-- Infinite loops that freeze your machine
-- Out of memory crashes
-- System instability
+| Script | Purpose |
+|--------|---------|
+| `conformance/run-conformance.sh` | Run conformance tests (Docker) |
+| `scripts/test.sh` | Run Rust unit tests (Docker) |
+| `scripts/build-wasm.sh` | Build WASM module |
+| `scripts/run-single-test.mjs` | Debug single file (host) |
+| `scripts/validate-wasm.mjs` | Validate WASM loads |
+| `scripts/help.mjs` | Show all commands |
 
-See `docs/TESTING_CLEANUP_PLAN.md` for details.
+## Docker Configuration
+
+The conformance runner uses these limits:
+- **Memory**: 4GB (prevents OOM from killing host)
+- **CPUs**: 2 (prevents CPU saturation)
+- **PIDs**: 100 (prevents fork bombs)
+- **Timeout**: 600s default (kills runaway tests)

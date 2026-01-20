@@ -6,45 +6,50 @@
  */
 
 const commands = {
-  "Rust Unit Tests": {
+  "Conformance Tests (Docker - SAFE)": {
+    "Run 500 tests": "./conformance/run-conformance.sh",
+    "Run 100 tests": "./conformance/run-conformance.sh --max=100",
+    "Run all tests": "./conformance/run-conformance.sh --all",
+    "Compiler tests only": "./conformance/run-conformance.sh --category=compiler",
+    "Verbose output": "./conformance/run-conformance.sh --verbose",
+  },
+  
+  "Rust Unit Tests (Docker)": {
     "Run all tests": "./scripts/test.sh",
     "Run specific test": "./scripts/test.sh test_name",
     "Run benchmarks": "./scripts/test.sh --bench",
-    "Rebuild Docker image": "./scripts/test.sh --rebuild"
   },
   
-  "TypeScript Conformance (Docker)": {
-    "Quick conformance (100)": "./conformance/run-conformance.sh --max=100",
-    "Standard conformance (500)": "./conformance/run-conformance.sh --max=500",
-    "Verbose output": "./conformance/run-conformance.sh --max=100 --verbose",
-    "Full conformance suite": "./conformance/run-conformance.sh --all"
-  },
-  
-  "Single File Testing": {
+  "Single File Debugging (⚠️ Host)": {
     "Test single file": "node scripts/run-single-test.mjs path/to/test.ts",
-    "Test with verbose output": "node scripts/run-single-test.mjs path/to/test.ts --verbose",
-    "Validate WASM module": "node scripts/validate-wasm.mjs"
+    "Validate WASM": "node scripts/validate-wasm.mjs",
   },
 
   "Build": {
     "Build WASM": "./scripts/build-wasm.sh",
-    "Build conformance runner": "cd conformance && npm run build"
+    "Build runner": "cd conformance && npm run build",
   }
 };
 
-console.log("🧪 Project Zang - Testing Commands\n");
+console.log(`
+╔══════════════════════════════════════════════════════════╗
+║              🧪 Project Zang - Test Commands             ║
+╚══════════════════════════════════════════════════════════╝
+`);
 
 Object.entries(commands).forEach(([category, cmds]) => {
   console.log(`📁 ${category}`);
-  console.log("─".repeat(50));
+  console.log("─".repeat(58));
   
   Object.entries(cmds).forEach(([desc, cmd]) => {
-    console.log(`  ${desc.padEnd(30)} ${cmd}`);
+    console.log(`  ${desc.padEnd(25)} ${cmd}`);
   });
   
   console.log("");
 });
 
-console.log("⚠️  Always run conformance tests in Docker to prevent OOM/hangs");
-console.log("📖 See docs/TESTING_CLEANUP_PLAN.md for details");
-console.log("");
+console.log(`╔══════════════════════════════════════════════════════════╗
+║  ⚠️  Always use Docker scripts for conformance tests!    ║
+║  Direct execution can cause OOM/hangs on your machine.   ║
+╚══════════════════════════════════════════════════════════╝
+`);
