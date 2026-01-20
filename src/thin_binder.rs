@@ -2248,12 +2248,22 @@ impl ThinBinderState {
             self.debugger
                 .record_merge(name, existing_id, existing_flags, flags, combined_flags);
 
-            if let Some(sym) = self.symbols.get_mut(existing_id) {
+            // Special case: static vs instance members should create separate symbols
+            let existing_is_static = (existing_flags & symbol_flags::STATIC) != 0;
+            let new_is_static = (flags & symbol_flags::STATIC) != 0;
+            let is_static_vs_instance = existing_is_static != new_is_static
+                && ((existing_flags & symbol_flags::CLASS_MEMBER_MASK) != 0
+                    || (flags & symbol_flags::CLASS_MEMBER_MASK) != 0);
+
+            if is_static_vs_instance {
+                // Fall through to create a new symbol below for static/instance distinction
+            } else if let Some(sym) = self.symbols.get_mut(existing_id) {
+                // Either mergeable, or non-mergeable but should share a symbol for duplicate detection
                 if can_merge {
                     sym.flags |= flags;
-                    if sym.value_declaration.is_none() && (flags & symbol_flags::VALUE) != 0 {
-                        sym.value_declaration = declaration;
-                    }
+                }
+                if sym.value_declaration.is_none() && (flags & symbol_flags::VALUE) != 0 {
+                    sym.value_declaration = declaration;
                 }
 
                 if !sym.declarations.contains(&declaration) {
@@ -2267,17 +2277,18 @@ impl ThinBinderState {
                 self.debugger.record_declaration(
                     name,
                     existing_id,
-                    combined_flags,
+                    if can_merge { combined_flags } else { existing_flags },
                     sym.declarations.len(),
                     true,
                 );
-            }
 
-            self.node_symbols.insert(declaration.0, existing_id);
-            self.declare_in_persistent_scope(name.to_string(), existing_id);
-            return existing_id;
+                self.node_symbols.insert(declaration.0, existing_id);
+                self.declare_in_persistent_scope(name.to_string(), existing_id);
+                return existing_id;
+            }
         }
 
+        // Create a new symbol
         let sym_id = self.symbols.alloc(flags, name.to_string());
         if let Some(sym) = self.symbols.get_mut(sym_id) {
             sym.declarations.push(declaration);
@@ -2300,6 +2311,25 @@ impl ThinBinderState {
     /// Check if two symbol flag sets can be merged.
     /// Made public for use in checker to detect duplicate identifiers (TS2300).
     pub fn can_merge_flags(existing_flags: u32, new_flags: u32) -> bool {
+        // Static and instance members with the same name cannot be merged
+        // They are separate symbols and should trigger TS2300 if declared in the same class
+        let existing_is_static = (existing_flags & symbol_flags::STATIC) != 0;
+        let new_is_static = (new_flags & symbol_flags::STATIC) != 0;
+        if existing_is_static != new_is_static {
+            // Only apply this check when we're dealing with class members (METHOD or PROPERTY)
+            // This prevents false positives for other symbol types
+            let existing_is_class_member = (existing_flags
+                & (symbol_flags::METHOD | symbol_flags::PROPERTY | symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR))
+                != 0;
+            let new_is_class_member = (new_flags
+                & (symbol_flags::METHOD | symbol_flags::PROPERTY | symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR))
+                != 0;
+
+            if existing_is_class_member && new_is_class_member {
+                return false;
+            }
+        }
+
         if (existing_flags & symbol_flags::INTERFACE) != 0
             && (new_flags & symbol_flags::INTERFACE) != 0
         {

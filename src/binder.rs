@@ -56,6 +56,7 @@ pub mod symbol_flags {
     pub const STATIC: u32 = 1 << 31; // Static member
 
     // Composite flags
+    pub const CLASS_MEMBER_MASK: u32 = METHOD | PROPERTY | GET_ACCESSOR | SET_ACCESSOR;
     pub const ENUM: u32 = REGULAR_ENUM | CONST_ENUM;
     pub const VARIABLE: u32 = FUNCTION_SCOPED_VARIABLE | BLOCK_SCOPED_VARIABLE;
     pub const VALUE: u32 = VARIABLE

@@ -25020,6 +25020,186 @@ class DuplicateProperties {
 }
 
 #[test]
+fn test_static_instance_members_no_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::thin_parser::ThinParserState;
+
+    // Test that static and instance members with the same name are allowed
+    let source = r#"
+class Foo {
+    x: number;
+    static x: string;
+}
+"#;
+
+    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = ThinBinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should NOT have TS2300 errors - static and instance members can coexist
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2300).count(),
+        0,
+        "Expected NO TS2300 errors for static/instance members with same name, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_static_instance_methods_no_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::thin_parser::ThinParserState;
+
+    // Test that static and instance methods with the same name are allowed
+    let source = r#"
+class Foo {
+    method() {}
+    static method() {}
+}
+"#;
+
+    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = ThinBinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should NOT have TS2300 errors
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2300).count(),
+        0,
+        "Expected NO TS2300 errors for static/instance methods with same name, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_duplicate_instance_properties_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::thin_parser::ThinParserState;
+
+    // Test that duplicate instance properties still emit TS2300
+    let source = r#"
+class Foo {
+    x: number;
+    x: string;
+}
+"#;
+
+    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = ThinBinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should have TS2300 errors for duplicate instance properties
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2300).count(),
+        2,
+        "Expected 2 TS2300 errors for duplicate instance properties, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_duplicate_static_properties_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::thin_parser::ThinParserState;
+
+    // Test that duplicate static properties still emit TS2300
+    let source = r#"
+class Foo {
+    static x: number;
+    static x: string;
+}
+"#;
+
+    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = ThinBinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = ThinCheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should have TS2300 errors for duplicate static properties
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2300).count(),
+        2,
+        "Expected 2 TS2300 errors for duplicate static properties, got: {:?}",
+        codes
+    );
+}
+
+#[test]
 fn test_duplicate_object_literal_properties() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::thin_parser::ThinParserState;
