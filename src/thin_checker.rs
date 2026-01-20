@@ -5652,6 +5652,16 @@ impl<'a> ThinCheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
+                // TS2524: 'await' in default parameter - emit specific error
+                if name == "await" && self.is_in_default_parameter(idx) {
+                    use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::AWAIT_IN_PARAMETER_DEFAULT,
+                        diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
+                    );
+                    return TypeId::ERROR;
+                }
                 // Report "cannot find name" error
                 self.error_cannot_find_name_at(name, idx);
                 TypeId::ERROR
@@ -6230,6 +6240,73 @@ impl<'a> ThinCheckerState<'a> {
             };
             if ext.parent.is_none() {
                 return false;
+            }
+            current = ext.parent;
+        }
+    }
+
+    /// Check if a node is within a parameter's default value initializer.
+    /// This is used to detect `await` used in default parameter values (TS2524).
+    fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        loop {
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) => ext,
+                None => return false,
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            
+            // Check if parent is a parameter and we're in its initializer
+            if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
+                if parent_node.kind == syntax_kind_ext::PARAMETER {
+                    if let Some(param) = self.ctx.arena.get_parameter(parent_node) {
+                        // Check if current node is within the initializer
+                        if !param.initializer.is_none() {
+                            let init_idx = param.initializer;
+                            // Check if idx is within the initializer subtree
+                            if self.is_node_within(idx, init_idx) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                // Stop at function/arrow boundaries - parameters are only at the top level
+                if matches!(parent_node.kind,
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION ||
+                         k == syntax_kind_ext::FUNCTION_EXPRESSION ||
+                         k == syntax_kind_ext::ARROW_FUNCTION ||
+                         k == syntax_kind_ext::METHOD_DECLARATION ||
+                         k == syntax_kind_ext::CONSTRUCTOR ||
+                         k == syntax_kind_ext::GET_ACCESSOR ||
+                         k == syntax_kind_ext::SET_ACCESSOR
+                ) {
+                    return false;
+                }
+            }
+            
+            current = parent_idx;
+        }
+    }
+
+    /// Check if node_idx is the same as or within the subtree of root_idx.
+    fn is_node_within(&self, node_idx: NodeIndex, root_idx: NodeIndex) -> bool {
+        if node_idx == root_idx {
+            return true;
+        }
+        let mut current = node_idx;
+        loop {
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) => ext,
+                None => return false,
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            if ext.parent == root_idx {
+                return true;
             }
             current = ext.parent;
         }
