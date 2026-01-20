@@ -204,6 +204,8 @@ pub mod diagnostic_messages {
     pub const CANNOT_FIND_NAME_DID_YOU_MEAN: &str = "Cannot find name '{0}'. Did you mean '{1}'?";
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: &str =
         "An 'await' expression is only allowed within an async function.";
+    pub const AWAIT_IN_PARAMETER_DEFAULT: &str =
+        "'await' expressions cannot be used in a parameter default value.";
 
     // Scanner/parser errors
     pub const NUMERIC_SEPARATORS_NOT_ALLOWED_HERE: &str =
@@ -389,7 +391,10 @@ pub mod diagnostic_codes {
     pub const TYPE_INSTANTIATION_EXCESSIVELY_DEEP: u32 = 2589;
 
     // Definite assignment errors
-    pub const PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT: u32 = 2524;
+    pub const PROPERTY_NO_INITIALIZER_NO_DEFINITE_ASSIGNMENT: u32 = 2564;
+
+    // Parameter default value errors
+    pub const AWAIT_IN_PARAMETER_DEFAULT: u32 = 2524; // 'await' expressions cannot be used in a parameter default value.
 
     // Enum errors
     pub const ENUM_MEMBER_MUST_HAVE_INITIALIZER: u32 = 2432;
