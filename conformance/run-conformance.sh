@@ -25,6 +25,7 @@ REBUILD=false
 VERBOSE=false
 CATEGORIES="conformance,compiler"
 TIMEOUT=600  # 10 minutes default
+WORKERS=8    # Worker threads for parallelism
 
 # Parse arguments
 for arg in "$@"; do
@@ -32,6 +33,7 @@ for arg in "$@"; do
         --rebuild) REBUILD=true ;;
         --all) MAX_TESTS=99999; TIMEOUT=3600 ;;
         --max=*) MAX_TESTS="${arg#*=}" ;;
+        --workers=*) WORKERS="${arg#*=}" ;;
         --verbose|-v) VERBOSE=true ;;
         --category=*) CATEGORIES="${arg#*=}" ;;
         --timeout=*) TIMEOUT="${arg#*=}" ;;
@@ -42,7 +44,8 @@ for arg in "$@"; do
             echo ""
             echo "Options:"
             echo "  --max=N         Run N tests (default: 500)"
-            echo "  --all           Run all tests (may take hours)"
+            echo "  --workers=N     Number of parallel workers (default: 8)"
+            echo "  --all           Run all tests"
             echo "  --category=X    Test category: conformance, compiler, or both"
             echo "  --verbose, -v   Show detailed output"
             echo "  --timeout=S     Timeout in seconds (default: 600)"
@@ -68,12 +71,12 @@ if ! docker info &> /dev/null; then
 fi
 
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║         TSZ Conformance Test Runner (Docker)             ║"
+echo "║      TSZ Parallel Conformance Test Runner (Docker)       ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 echo "║  Tests:      $(printf '%-43s' "$MAX_TESTS") ║"
+echo "║  Workers:    $(printf '%-43s' "$WORKERS") ║"
 echo "║  Categories: $(printf '%-43s' "$CATEGORIES") ║"
 echo "║  Timeout:    $(printf '%-43s' "${TIMEOUT}s") ║"
-echo "║  Verbose:    $(printf '%-43s' "$VERBOSE") ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 
 # Build Docker image if needed
@@ -96,7 +99,7 @@ echo "   (Memory: 4GB, CPUs: 2, Timeout: ${TIMEOUT}s)"
 echo ""
 
 # Build runner args
-RUNNER_ARGS="--max=$MAX_TESTS --category=$CATEGORIES"
+RUNNER_ARGS="--max=$MAX_TESTS --workers=$WORKERS --category=$CATEGORIES"
 if [ "$VERBOSE" = true ]; then
     RUNNER_ARGS="$RUNNER_ARGS --verbose"
 fi
