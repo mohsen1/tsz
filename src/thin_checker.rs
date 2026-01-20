@@ -883,16 +883,16 @@ impl<'a> ThinCheckerState<'a> {
             // void expression
             k if k == syntax_kind_ext::VOID_EXPRESSION => TypeId::UNDEFINED,
 
-            // await expression - unwrap Promise<T> to get T
+            // await expression - unwrap Promise<T> to get T, or return T if not Promise-like
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
                 if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
                     let expr_type = self.get_type_of_node(unary.expression);
                     // If the awaited type is Promise-like, extract the type argument
-                    // Otherwise, return UNKNOWN as a fallback (consistent with Task 4-6 changes)
+                    // Otherwise, return the original type (TypeScript allows awaiting non-Promises)
+                    // This matches TSC behavior: `await 5` has type `number`, not `unknown`
                     self.promise_like_return_type_argument(expr_type)
-                        .unwrap_or(TypeId::UNKNOWN)
+                        .unwrap_or(expr_type)
                 } else {
-                    // Return UNKNOWN instead of ANY when await expression cannot be resolved
                     TypeId::UNKNOWN
                 }
             }
