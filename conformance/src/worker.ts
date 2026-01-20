@@ -6,9 +6,12 @@
  */
 
 import { parentPort, workerData } from 'worker_threads';
+import { createRequire } from 'module';
 import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
+
+const require = createRequire(import.meta.url);
 
 interface TestJob {
   id: number;
@@ -506,9 +509,9 @@ process.on('unhandledRejection', (reason) => {
   // Load WASM module once
   try {
     const wasmPath = path.join(data.wasmPkgPath, 'wasm.js');
-    const module = await import(wasmPath);
-    if (typeof module.default === 'function') await module.default();
-    wasmModule = module;
+    // For --target nodejs, we use require() instead of dynamic import
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    wasmModule = require(wasmPath);
   } catch (e) {
     parentPort?.postMessage({
       type: 'error',

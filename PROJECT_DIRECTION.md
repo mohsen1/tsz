@@ -62,9 +62,9 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `src/thin_checker.rs` | Type checker | 25,315 |
-| `src/thin_parser.rs` | Parser | 10,704 |
-| `src/thin_binder.rs` | Symbol binding | 4,452 |
+| `src/thin_checker.rs` | Type checker | 25,965 |
+| `src/thin_parser.rs` | Parser | 10,720 |
+| `src/thin_binder.rs` | Symbol binding | 4,537 |
 | `src/solver/` | Type resolution | 37 files |
 
 ---

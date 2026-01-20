@@ -236,7 +236,7 @@ jobs:
           cd conformance && npm install
 
       - name: Build WASM
-        run: wasm-pack build --target web --out-dir pkg
+        run: wasm-pack build --target nodejs --out-dir pkg
 
       - name: Fetch TypeScript conformance tests
         run: |
