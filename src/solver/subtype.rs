@@ -904,6 +904,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::True
             }
 
+            // Literal string extends template literal pattern
+            // E.g., "foo_bar" extends `foo_${string}`
+            (TypeKey::Literal(LiteralValue::String(s_lit)), TypeKey::TemplateLiteral(t_spans)) => {
+                let t_spans = self.interner.template_list(*t_spans);
+                if self.literal_string_matches_template(s_lit, &t_spans) {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
+            }
+
             // Default: not a subtype
             _ => SubtypeResult::False,
         }
@@ -2213,6 +2224,96 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             | TypeKey::UniqueSymbol(_)
             | TypeKey::Error => false,
         }
+    }
+
+    /// Check if a literal string matches a template literal pattern.
+    /// E.g., "foo_bar" matches `foo_${string}`
+    fn literal_string_matches_template(&self, lit: &Atom, template_spans: &[TemplateSpan]) -> bool {
+        // Convert the literal to a string
+        let lit_str = self.interner.resolve_atom_ref(*lit);
+
+        // Build the expected string from the template
+        let mut expected = String::new();
+        let mut has_wildcard = false;
+
+        for span in template_spans {
+            match span {
+                TemplateSpan::Text(text) => {
+                    let text_str = self.interner.resolve_atom_ref(*text);
+                    expected.push_str(text_str.as_ref());
+                }
+                TemplateSpan::Type(type_id) => {
+                    // Check if the type is string, number, etc.
+                    // For now, we'll treat any type as a wildcard
+                    has_wildcard = true;
+                    // We can't match the exact value without knowing the type
+                    // For pattern matching, we just need to check if the prefix/suffix match
+                }
+            }
+        }
+
+        if !has_wildcard {
+            // No wildcards, check exact match
+            return lit_str.as_ref() == expected.as_str();
+        }
+
+        // Simple pattern matching: check if the literal starts with the prefix
+        // For now, just check if the literal starts with the text parts
+        let mut pos = 0;
+        for span in template_spans {
+            match span {
+                TemplateSpan::Text(text) => {
+                    let text_str = self.interner.resolve_atom_ref(*text);
+                    if !lit_str[pos..].starts_with(text_str.as_ref()) {
+                        return false;
+                    }
+                    pos += text_str.len();
+                }
+                TemplateSpan::Type(_) => {
+                    // Wildcard - skip any characters
+                    // For simplicity, just break and check if we've matched all text parts
+                    // Check that the remaining text starts with the remaining text parts
+                }
+            }
+        }
+
+        // Check that all text parts match
+        let mut lit_pos = 0;
+        for span in template_spans {
+            match span {
+                TemplateSpan::Text(text) => {
+                    let text_str = self.interner.resolve_atom_ref(*text);
+                    if !lit_str[lit_pos..].starts_with(text_str.as_ref()) {
+                        return false;
+                    }
+                    lit_pos += text_str.len();
+                }
+                TemplateSpan::Type(_) => {
+                    // Skip characters until we find the next text part
+                }
+            }
+        }
+
+        // Check that we've matched the entire string up to the last text part
+        // For simplicity, just check if the literal contains all the text parts in order
+        let mut last_pos = 0;
+        for span in template_spans {
+            match span {
+                TemplateSpan::Text(text) => {
+                    let text_str = self.interner.resolve_atom_ref(*text);
+                    if let Some(pos) = lit_str[last_pos..].find(text_str.as_ref()) {
+                        last_pos += pos + text_str.len();
+                    } else {
+                        return false;
+                    }
+                }
+                TemplateSpan::Type(_) => {
+                    // Wildcard
+                }
+            }
+        }
+
+        true
     }
 
     fn are_this_parameters_compatible(
