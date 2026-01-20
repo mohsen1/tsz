@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 57,
+    "title": "Improve TypeScript Conformance Test Pass Rate to 50%+",
+    "body": "# Project Zang\n\nTypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.\n\n## Current Status\n\n| Metric | Value |\n|--------|-------|\n| Conformance (500 tests) | **30.0%** (150/500) |\n| Driver Tests | 113/113 passing |\n| Test Speed | **68 tests/sec** |\n| Crashes | 0 | OOM: 0 | Timeout: 0 |\n\n### Recent Improvements\n- TS2571 \"Object is of type 'unknown'\" reduced 64% (use ANY for unresolved symbols)\n- TS2300 \"Duplicate identifier\" reduced 14% (static vs instance member fix)\n- Crashes eliminated: 865 → 0 (comprehensive compiler options support)\n\n---\n\n## Priority List\n\n### 1. Improve Conformance Test Pass Rate\n\n**Target: 50%+ (currently 30%)**\n\n#### Top Missing Errors (we should emit but don't)\n| Error | Count | Description |\n|-------|-------|-------------|\n| TS2318 | 696x | Cannot find global type (expected with @noLib tests) |\n| TS2583 | 298x | Cannot find name (need ES2015+ lib) |\n| TS2304 | 59x | Cannot find name |\n| TS2307 | 53x | Cannot find module |\n| TS7006 | 27x | Parameter implicitly has 'any' type |\n\n#### Top Extra Errors (we emit but shouldn't)\n| Error | Count | Description |\n|-------|-------|-------------|\n| TS2300 | 60x | Duplicate identifier |\n| TS1005 | 58x | Expected token (parser) |\n| TS2339 | 34x | Property does not exist |\n| TS1202 | 28x | Import assignment in ESM |\n| TS2454 | 26x | Variable used before assigned |\n\n### 2. Make Flow Analysis Iterative\n\n`src/checker/flow_analyzer.rs`: `check_flow` is recursive. Deeply nested control flow will blow the stack. **Needs iterative worklist algorithm.**\n\n### 3. Fix Transform Pipeline\n\n`src/transforms/` mixes AST manipulation with string emission. Transforms should produce a lowered AST, then the printer should emit strings.\n\n### 4. Code Hygiene\n\n- Remove `#![allow(dead_code)]` and fix unused code\n- Add proper tracing infrastructure (replace print statements)\n- Clean up Clippy ignores in `clippy.toml`\n\n---\n\n## Key Files\n\n| File | Purpose | Lines |\n|------|---------|-------|\n| `src/thin_checker.rs` | Type checker | 25,315 |\n| `src/thin_parser.rs` | Parser | 10,704 |\n| `src/thin_binder.rs` | Symbol binding | 4,452 |\n| `src/solver/` | Type resolution | 37 files |\n\n---\n\n## Commands\n\n```bash\ncargo build                              # Build\ncargo test --lib                         # Run all tests\ncargo test --lib solver::                # Run specific module\nwasm-pack build --target nodejs          # Build WASM\n./conformance/run-conformance.sh --max=500   # Run 500 conformance tests\n./conformance/run-conformance.sh --all       # Run all conformance tests\n```\n\n---\n\n## Rules\n\n- All commits must pass unit tests\n- No test-aware code in source\n- Fix root causes, not symptoms\n\n| Don't | Do Instead |\n|-------|------------|\n| Check file names in checker | Fix the underlying logic |\n| Suppress errors for specific tests | Implement correct behavior |\n\n---\n\n## Merge Criteria\n\n1. `cargo build` passes\n2. `cargo test` passes\n3. Tests run in < 30 seconds\n"
+  },
+  "repo": {
+    "owner": "mohsen1",
+    "name": "tsz"
+  },
+  "phase": "final_merge",
+  "workBranch": "cco/57-improve-typescript-conformance-test-pass-rate-to-5",
+  "baseBranch": "main",
+  "ems": [
+    {
+      "id": 1,
+      "task": "Implement missing error diagnostics to reduce top missing errors: TS2318 (global type not found), TS2583 (ES2015+ lib support), TS2304 (cannot find name), TS2307 (module resolution), and TS7006 (implicit any type). Focus on type checker and binder integration.",
+      "focusArea": "Error Diagnostics - Missing Errors",
+      "branch": "cco/issue-57-em-1",
+      "status": "pr_created",
+      "workers": [],
+      "reviewsAddressed": 0,
+      "startedAt": "2026-01-20T05:50:26.802Z",
+      "error": "No workers merged - all had conflicts"
+    },
+    {
+      "id": 2,
+      "task": "Eliminate top extra errors: fix remaining TS2300 (duplicate identifier) edge cases, resolve TS1005 parser expectations, fix TS2339 property existence checks, handle TS1202 ESM import assignments, and resolve TS2454 variable usage analysis.",
+      "focusArea": "Error Diagnostics - Extra Errors & Parser",
+      "branch": "cco/issue-57-em-2",
+      "status": "pr_created",
+      "workers": [
+        {
+          "id": 1,
+          "task": "Fix TS2300 duplicate identifier errors - handle static vs instance member conflicts, module augmentation collisions, and namespace merging edge cases",
+          "files": [
+            "src/thin_binder.rs",
+            "src/checker/symbol_table.rs",
+            "src/checker/duplicate_checker.rs"
+          ],
+          "branch": "cco/issue-57-em-2-w-1",
+          "status": "merged",
+          "reviewsAddressed": 0,
+          "startedAt": "2026-01-20T07:48:38.153Z",
+          "prNumber": 62,
+          "prUrl": "https://github.com/mohsen1/tsz/pull/62",
+          "completedAt": "2026-01-20T08:22:55.314Z"
+        },
+        {
+          "id": 2,
+          "task": "Fix TS1005 parser expectation errors - handle missing semicolons, trailing commas in strict mode, async/await syntax, and JSX/TSX token expectations",
+          "files": [
+            "src/thin_parser.rs",
+            "src/parser/tokenizer.rs",
+            "src/parser/expression_parser.rs"
+          ],
+          "branch": "cco/issue-57-em-2-w-2",
+          "status": "merged",
+          "reviewsAddressed": 0,
+          "startedAt": "2026-01-20T08:22:57.429Z",
+          "prNumber": 64,
+          "prUrl": "https://github.com/mohsen1/tsz/pull/64",
+          "completedAt": "2026-01-20T08:40:03.166Z"
+        },
+        {
+          "id": 3,
+          "task": "Fix TS2339 property existence, TS2454 variable usage before assignment, and TS1202 ESM import assignment errors",
+          "files": [
+            "src/checker/property_checker.rs",
+            "src/checker/flow_analyzer.rs",
+            "src/checker/import_checker.rs",
+            "src/solver/type_resolver.rs"
+          ],
+          "branch": "cco/issue-57-em-2-w-3",
+          "status": "merged",
+          "reviewsAddressed": 0,
+          "startedAt": "2026-01-20T08:40:03.968Z",
+          "prNumber": 65,
+          "prUrl": "https://github.com/mohsen1/tsz/pull/65",
+          "completedAt": "2026-01-20T09:46:11.719Z"
+        }
+      ],
+      "reviewsAddressed": 0,
+      "startedAt": "2026-01-20T05:50:26.802Z",
+      "prNumber": 63,
+      "prUrl": "https://github.com/mohsen1/tsz/pull/63"
+    },
+    {
+      "id": 3,
+      "task": "Rewrite flow analyzer from recursive to iterative worklist algorithm to prevent stack overflow on deeply nested control flow. Also address transform pipeline architecture by separating AST manipulation from string emission.",
+      "focusArea": "Flow Analysis & Architecture",
+      "branch": "cco/issue-57-em-3",
+      "status": "merged",
+      "workers": [
+        {
+          "id": 1,
+          "task": "Rewrite flow analyzer from recursive to iterative worklist algorithm in src/checker/flow_analyzer.rs. This prevents stack overflow on deeply nested control flow. The worker will implement a worklist-based approach using a VecDeque or similar structure to track basic blocks that need processing, replacing the current recursive call pattern.",
+          "files": [
+            "src/checker/flow_analyzer.rs"
+          ],
+          "branch": "cco/issue-57-em-3-w-1",
+          "status": "merged",
+          "reviewsAddressed": 0,
+          "startedAt": "2026-01-20T09:51:27.180Z",
+          "prNumber": 66,
+          "prUrl": "https://github.com/mohsen1/tsz/pull/66",
+          "completedAt": "2026-01-20T10:03:21.852Z"
+        },
+        {
+          "id": 2,
+          "task": "Separate AST manipulation from string emission in src/transforms/ directory. Create a new intermediate representation layer where transforms output a lowered AST structure. Add a new src/transforms/ast_lowering.rs module to define the lowered AST nodes, and update transform modules to produce this AST instead of strings. The printer (already separate) will then emit from this lowered AST.",
+          "files": [
+            "src/transforms/ast_lowering.rs",
+            "src/transforms/mod.rs",
+            "src/transforms/emitter.rs"
+          ],
+          "branch": "cco/issue-57-em-3-w-2",
+          "status": "merged",
+          "reviewsAddressed": 0,
+          "startedAt": "2026-01-20T10:03:22.819Z",
+          "prNumber": 69,
+          "prUrl": "https://github.com/mohsen1/tsz/pull/69",
+          "completedAt": "2026-01-20T10:19:19.905Z"
+        },
+        {
+          "id": 3,
+          "task": "Fix duplicate identifier errors (TS2300) by improving static vs instance member detection in src/checker/. Implement proper distinction between class static members and instance members during symbol binding and type checking. This addresses the 60x extra errors currently emitted incorrectly.",
+          "files": [
+            "src/checker/class_checker.rs",
+            "src/checker/member_resolution.rs",
+            "src/binder.rs"
+          ],
+          "branch": "cco/issue-57-em-3-w-3",
+          "status": "merged",
+          "reviewsAddressed": 0,
+          "startedAt": "2026-01-20T10:19:20.909Z",
+          "prNumber": 70,
+          "prUrl": "https://github.com/mohsen1/tsz/pull/70",
+          "completedAt": "2026-01-20T10:39:22.304Z"
+        }
+      ],
+      "reviewsAddressed": 0,
+      "startedAt": "2026-01-20T05:50:26.802Z",
+      "prNumber": 67,
+      "prUrl": "https://github.com/mohsen1/tsz/pull/67"
+    }
+  ],
+  "config": {
+    "maxEms": 3,
+    "maxWorkersPerEm": 3,
+    "reviewWaitMinutes": 5,
+    "prLabel": "cco"
+  },
+  "createdAt": "2026-01-20T05:50:00.445Z",
+  "updatedAt": "2026-01-20T10:44:27.574Z",
+  "analysisSummary": "Improve TypeScript conformance test pass rate from 30% to 50%+ by implementing missing error diagnostics (TS2318, TS2583, TS2304, TS2307, TS7006), eliminating extra errors, and fixing the flow analyzer stack overflow issue through iterative worklist algorithm."
+}
