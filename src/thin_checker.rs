@@ -15798,8 +15798,10 @@ impl<'a> ThinCheckerState<'a> {
                 checker.check_module_declaration(stmt_idx);
 
                 // Check module body for function overload implementations
+                // Skip for ambient modules (declare module 'xxx') - they don't need implementations
                 if let Some(module) = self.ctx.arena.get_module(node) {
-                    if !module.body.is_none() {
+                    let is_ambient = self.has_declare_modifier(&module.modifiers);
+                    if !module.body.is_none() && !is_ambient {
                         self.check_module_body(module.body);
                     }
                 }
