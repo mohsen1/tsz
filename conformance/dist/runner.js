@@ -18,6 +18,7 @@ const DEFAULT_CONFIG = {
     verbose: false,
     categories: ['conformance', 'compiler'],
     workers: Math.max(1, os.cpus().length - 1),
+    testTimeout: 5000, // 5 seconds per test
 };
 const colors = {
     reset: '\x1b[0m',
@@ -182,7 +183,7 @@ export async function runConformanceTests(config = {}) {
     log(`  Workers: ${cfg.workers}`, colors.dim);
     if (allTestFiles.length === 0) {
         log('\nNo test files found!', colors.yellow);
-        return { total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, byCategory: {}, missingCodes: new Map(), extraCodes: new Map() };
+        return { total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, timedOut: 0, byCategory: {}, missingCodes: new Map(), extraCodes: new Map() };
     }
     // Create worker pool
     const workerPath = path.join(__dirname, 'worker.js');
@@ -191,13 +192,14 @@ export async function runConformanceTests(config = {}) {
     await pool.ready();
     log(`  Workers ready!`, colors.green);
     // Run tests in parallel
-    log(`\nRunning tests...`, colors.cyan);
+    log(`\nRunning tests (${cfg.testTimeout}ms timeout per test)...`, colors.cyan);
     const stats = {
         total: allTestFiles.length,
         passed: 0,
         failed: 0,
         crashed: 0,
         skipped: 0,
+        timedOut: 0,
         byCategory: {},
         missingCodes: new Map(),
         extraCodes: new Map(),
@@ -215,6 +217,7 @@ export async function runConformanceTests(config = {}) {
             filePath,
             libSource,
             testsBasePath: cfg.testsBasePath,
+            timeout: cfg.testTimeout,
         });
         completed++;
         if (!cfg.verbose)
@@ -224,6 +227,14 @@ export async function runConformanceTests(config = {}) {
             stats.byCategory[result.category] = { total: 0, passed: 0 };
         }
         stats.byCategory[result.category].total++;
+        if (result.timedOut) {
+            stats.timedOut++;
+            stats.failed++;
+            if (cfg.verbose) {
+                log(`\n  ${result.relPath}: TIMEOUT`, colors.red);
+            }
+            return;
+        }
         if (result.skipped) {
             stats.skipped++;
             return;
@@ -274,6 +285,7 @@ export async function runConformanceTests(config = {}) {
     log(`  Passed:   ${stats.passed}`, colors.green);
     log(`  Failed:   ${stats.failed}`, stats.failed > 0 ? colors.red : colors.dim);
     log(`  Crashed:  ${stats.crashed}`, stats.crashed > 0 ? colors.red : colors.dim);
+    log(`  Timeout:  ${stats.timedOut}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
     log(`  Skipped:  ${stats.skipped}`, colors.dim);
     log('\nBy Category:', colors.bold);
     for (const [cat, catStats] of Object.entries(stats.byCategory)) {
