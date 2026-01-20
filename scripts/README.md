@@ -1,16 +1,16 @@
-# WASM Test Scripts
+# Scripts
 
-This directory contains scripts for testing individual aspects of the WASM TypeScript compiler implementation.
+Testing and build scripts for Project Zang.
 
 ## Scripts
 
-| Script | Purpose | Usage Example |
-|--------|---------|---------------|
-| `help.mjs` | Show all available test commands | `node scripts/help.mjs` |
-| `run-single-test.mjs` | Test individual TypeScript files | `node scripts/run-single-test.mjs tests/cases/compiler/2dArrays.ts` |
-| `compare-baselines.mjs` | Compare outputs against TypeScript baselines | `node scripts/compare-baselines.mjs 100 compiler` |
-| `run-batch-tests.mjs` | Run multiple tests in sequence | `node scripts/run-batch-tests.mjs` |
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `help.mjs` | Show all available commands | `node scripts/help.mjs` |
+| `run-single-test.mjs` | Test individual TypeScript files | `node scripts/run-single-test.mjs path/to/test.ts` |
 | `validate-wasm.mjs` | Validate WASM module loads correctly | `node scripts/validate-wasm.mjs` |
+| `test.sh` | Run Rust unit tests in Docker | `./scripts/test.sh` |
+| `build-wasm.sh` | Build WASM module | `./scripts/build-wasm.sh` |
 
 ## Quick Start
 
@@ -18,22 +18,18 @@ This directory contains scripts for testing individual aspects of the WASM TypeS
 # See all available commands
 node scripts/help.mjs
 
-# Test a specific file with detailed output  
-node scripts/run-single-test.mjs tests/cases/compiler/arrayLiterals.ts --verbose
+# Test a specific file
+node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/2dArrays.ts
 
-# Compare first 50 compiler tests against baselines
-node scripts/compare-baselines.mjs 50 compiler
+# Run conformance tests (in Docker)
+./conformance/run-conformance.sh --max=100
 ```
 
-## Development Workflow
+## ⚠️ Safety Warning
 
-1. **Start with validation**: `node scripts/validate-wasm.mjs`
-2. **Test specific functionality**: `node scripts/run-single-test.mjs path/to/test.ts --verbose`  
-3. **Compare against TypeScript**: `node scripts/compare-baselines.mjs 10 compiler`
+**Always run conformance tests in Docker.** Direct execution can cause:
+- Infinite loops that freeze your machine
+- Out of memory crashes
+- System instability
 
-For comprehensive testing, use the main conformance runner:
-```bash
-./conformance/run-conformance.sh --max=1000
-```
-
-See [TESTING.md](../TESTING.md) for complete testing guide.
+See `docs/TESTING_CLEANUP_PLAN.md` for details.

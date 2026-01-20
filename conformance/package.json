@@ -8,18 +8,9 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "test": "npm run build && node dist/runner.js",
-    "test:conformance": "npm run build && node dist/runner.js --category=conformance",
-    "test:compiler": "npm run build && node dist/runner.js --category=compiler",
-    "test:projects": "npm run build && node dist/runner.js --category=projects",
-    "test:all": "npm run build && node dist/runner.js --category=conformance,compiler,projects",
     "test:100": "npm run build && node dist/runner.js --max=100",
     "test:500": "npm run build && node dist/runner.js --max=500",
-    "test:1000": "npm run build && node dist/runner.js --max=1000",
-    "test:verbose": "npm run build && node dist/runner.js --verbose",
-    "runner": "node conformance-runner.mjs",
-    "runner:simple": "node conformance-simple.mjs",
-    "runner:parallel": "node parallel-conformance.mjs",
-    "runner:embedded": "node conformance-embedded.mjs"
+    "test:verbose": "npm run build && node dist/runner.js --max=100 --verbose"
   },
   "dependencies": {
     "typescript": "^5.9.3"

@@ -10,30 +10,25 @@ const commands = {
     "Run all tests": "./scripts/test.sh",
     "Run specific test": "./scripts/test.sh test_name",
     "Run benchmarks": "./scripts/test.sh --bench",
-    "Rebuild Docker image": "./scripts/test.sh --rebuild",
-    "Clean cache": "./scripts/test.sh --clean"
+    "Rebuild Docker image": "./scripts/test.sh --rebuild"
   },
   
-  "TypeScript Conformance": {
-    "Quick conformance check": "./conformance/run-conformance.sh --max=1000",
-    "Full conformance suite": "./conformance/run-conformance.sh --all",
-    "Test compiler category": "./conformance/run-conformance.sh --category=compiler",
-    "Test conformance category": "./conformance/run-conformance.sh --category=conformance"
+  "TypeScript Conformance (Docker)": {
+    "Quick conformance (100)": "./conformance/run-conformance.sh --max=100",
+    "Standard conformance (500)": "./conformance/run-conformance.sh --max=500",
+    "Verbose output": "./conformance/run-conformance.sh --max=100 --verbose",
+    "Full conformance suite": "./conformance/run-conformance.sh --all"
   },
   
-  "Error Analysis": {
-    "Find TS2454 (used before assigned)": "node conformance/find-ts2454.mjs",
-    "Find TS2322 (not assignable)": "node conformance/find-ts2322.mjs", 
-    "Find TS2339 (property doesn't exist)": "node conformance/find-ts2339.mjs",
-    "Find TS2564 (property not initialized)": "node conformance/find-ts2564.mjs"
+  "Single File Testing": {
+    "Test single file": "node scripts/run-single-test.mjs path/to/test.ts",
+    "Test with verbose output": "node scripts/run-single-test.mjs path/to/test.ts --verbose",
+    "Validate WASM module": "node scripts/validate-wasm.mjs"
   },
-  
-  "Individual Testing": {
-    "Test single file": "node scripts/run-single-test.mjs tests/cases/compiler/2dArrays.ts",
-    "Test with verbose output": "node scripts/run-single-test.mjs path/to/test.ts --verbose --thin",
-    "Compare baselines": "node scripts/compare-baselines.mjs 100 compiler",
-    "Validate WASM module": "node scripts/validate-wasm.mjs",
-    "Run batch tests": "node scripts/run-batch-tests.mjs"
+
+  "Build": {
+    "Build WASM": "./scripts/build-wasm.sh",
+    "Build conformance runner": "cd conformance && npm run build"
   }
 };
 
@@ -44,12 +39,12 @@ Object.entries(commands).forEach(([category, cmds]) => {
   console.log("─".repeat(50));
   
   Object.entries(cmds).forEach(([desc, cmd]) => {
-    console.log(`  ${desc.padEnd(35)} ${cmd}`);
+    console.log(`  ${desc.padEnd(30)} ${cmd}`);
   });
   
   console.log("");
 });
 
-console.log("📖 For detailed testing guide, see: TESTING.md");
-console.log("📊 For conformance metrics, run: ./conformance/run-conformance.sh --max=1000");
+console.log("⚠️  Always run conformance tests in Docker to prevent OOM/hangs");
+console.log("📖 See docs/TESTING_CLEANUP_PLAN.md for details");
 console.log("");

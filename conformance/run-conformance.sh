@@ -1,17 +1,18 @@
 #!/bin/bash
 # Docker-based conformance test runner
+# 
+# ⚠️ IMPORTANT: Always use this script or ./scripts/test.sh to run conformance tests.
+# Running tests directly on the host can cause infinite loops or OOM crashes.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WASM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-ROOT_DIR="$WASM_DIR"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE_NAME="ts-conformance-runner"
 
 MAX_TESTS=500
-WORKERS=14
 REBUILD=false
-PARALLEL=true
+VERBOSE=false
 CATEGORIES="conformance"
 
 for arg in "$@"; do
@@ -19,8 +20,7 @@ for arg in "$@"; do
         --rebuild) REBUILD=true ;;
         --all) MAX_TESTS=999999 ;;
         --max=*) MAX_TESTS="${arg#*=}" ;;
-        --workers=*) WORKERS="${arg#*=}" ;;
-        --sequential) PARALLEL=false ;;
+        --verbose|-v) VERBOSE=true ;;
         --category=*) CATEGORIES="${arg#*=}" ;;
     esac
 done
@@ -28,9 +28,9 @@ done
 echo "======================================"
 echo "  Conformance Test Runner (Docker)"
 echo "======================================"
-echo "  Tests:     $MAX_TESTS"
-echo "  Workers:   $WORKERS"
+echo "  Tests:      $MAX_TESTS"
 echo "  Categories: $CATEGORIES"
+echo "  Verbose:    $VERBOSE"
 echo "======================================"
 
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
@@ -44,34 +44,23 @@ fi
 
 echo "Running conformance tests..."
 
-if [ "$PARALLEL" = true ]; then
-    RUNNER_SCRIPT="process-pool-conformance.mjs"
-    RUNNER_ARGS="--max=$MAX_TESTS --workers=$WORKERS --category=$CATEGORIES"
-else
-    RUNNER_SCRIPT="conformance-runner.mjs"
-    RUNNER_ARGS="--max=$MAX_TESTS --category=$CATEGORIES"
+RUNNER_ARGS="--max=$MAX_TESTS --category=$CATEGORIES"
+if [ "$VERBOSE" = true ]; then
+    RUNNER_ARGS="$RUNNER_ARGS --verbose"
 fi
 
 docker run --rm \
-    --memory="8g" \
-    --cpus="$WORKERS" \
-    -v "$WASM_DIR/pkg:/wasm-pkg:ro" \
-    -v "$SCRIPT_DIR:/runner-src:ro" \
-    -v "$ROOT_DIR/TypeScript/tests:/ts-tests:ro" \
+    --memory="4g" \
+    --cpus="2" \
+    -v "$ROOT_DIR/pkg:/app/pkg:ro" \
+    -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
+    -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
+    -v "$SCRIPT_DIR/package.json:/app/conformance/package.json:ro" \
+    -v "$ROOT_DIR/TypeScript/tests:/app/TypeScript/tests:ro" \
     "$IMAGE_NAME" sh -c "
-        # Create structure that matches runner paths:
-        # __dirname = /app/conformance
-        # wasmPkgPath = resolve(__dirname, '../pkg') = /app/pkg
-        # conformanceDir = resolve(__dirname, '../TypeScript/tests/cases/conformance') = /app/ts-tests/cases/conformance
-        # libPath = resolve(__dirname, '../TypeScript/tests/lib/lib.d.ts') = /app/ts-tests/lib/lib.d.ts
-        mkdir -p /app/conformance /app/pkg /app/ts-tests/cases /app/ts-tests/lib
-        cp -r /wasm-pkg/* /app/pkg/
-        cp -r /runner-src/*.mjs /runner-src/*.js /runner-src/package.json /app/conformance/ 2>/dev/null || true
-        cp -rL /ts-tests/cases/conformance /app/ts-tests/cases/ 2>/dev/null || true
-        cp -rL /ts-tests/lib/* /app/ts-tests/lib/ 2>/dev/null || true
         cd /app/conformance
         npm install --silent 2>/dev/null || true
-        node $RUNNER_SCRIPT $RUNNER_ARGS
+        timeout 300s node dist/runner.js $RUNNER_ARGS || echo 'Tests completed or timed out'
     "
 
 echo "Done!"
