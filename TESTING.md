@@ -27,6 +27,30 @@ cargo test --lib parser::            # Specific module
 cargo test --lib solver::            # Solver tests
 ```
 
+#### Using nextest (Recommended)
+
+For better timeout handling and parallel execution, use [cargo-nextest](https://nexte.st/):
+
+```bash
+# Install nextest
+cargo install cargo-nextest
+
+# Run all tests with timeouts (30s default)
+cargo nextest run
+
+# Quick profile (10s timeout, fail-fast)
+cargo nextest run --profile quick
+
+# CI profile (60s timeout)
+cargo nextest run --profile ci
+
+# Run specific tests
+cargo nextest run solver::
+cargo nextest run test_conditional_infer
+```
+
+Configuration is in `.cargo/nextest.toml`.
+
 ### 📊 Conformance Tests  
 **Location**: `./conformance/`  
 **Purpose**: Compare WASM output against TypeScript compiler

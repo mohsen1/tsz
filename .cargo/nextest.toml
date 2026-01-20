@@ -1,0 +1,35 @@
+# nextest configuration for tsz
+# Run tests with: cargo nextest run
+# Install with: cargo install cargo-nextest
+
+[profile.default]
+# Default timeout for all tests (30 seconds)
+slow-timeout = { period = "30s", terminate-after = 2 }
+# Fail fast on first failure
+fail-fast = false
+# Number of retries for flaky tests
+retries = 0
+# Test threads - use all available cores
+test-threads = "num-cpus"
+
+[profile.default.junit]
+path = "target/nextest/default/junit.xml"
+
+# CI profile with stricter timeouts
+[profile.ci]
+slow-timeout = { period = "60s", terminate-after = 1 }
+fail-fast = true
+retries = 0
+
+# Quick profile for fast feedback during development
+[profile.quick]
+slow-timeout = { period = "10s", terminate-after = 1 }
+fail-fast = true
+# Run fewer threads for better error messages
+test-threads = 4
+
+# Long-running tests profile (for conformance tests)
+[profile.conformance]
+slow-timeout = { period = "120s", terminate-after = 2 }
+fail-fast = false
+retries = 1
