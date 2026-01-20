@@ -76,8 +76,10 @@ The project mimics TypeScript's architecture *too* closely in some places (like 
 
 ### Improve Conformance Test Pass Rate
 
-Current pass rate: **52.5%** on 100 tests, 0 crashes.
+Current pass rate: **40%** on 500 tests, 0 crashes.
 Target: 95%+. Recent fixes:
+- Implemented TS1042: async getters/setters
+- Implemented TS1202: import equals in ESM context
 - Implemented TS2372: parameter cannot reference itself (`function f(x = x)`)
 - Implemented shorthand ambient modules (`declare module "x"` → `any` typed imports)
 - Fixed TS2524 for 'await' in default parameter values
@@ -88,8 +90,8 @@ Target: 95%+. Recent fixes:
 - Fixed TS2391 to skip ambient modules (function implementation check)
 - Fixed TS2705 false positives for async functions with Promise return types
 
-Top remaining extra errors: TS2571 (7), TS2322 (4), TS2349 (3).
-Top remaining missing errors: TS1109, TS1359, TS2304, TS2403.
+Top remaining extra errors: TS2571, TS2322, TS2349.
+Top remaining missing errors: TS1109 (parser), TS1359 (parser), TS2304, TS2403.
 
 ### Clean Up Clippy Ignores
 
