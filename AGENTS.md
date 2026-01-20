@@ -117,3 +117,7 @@ Before merging changes:
 ## When work is done?
 
 All unit tests should pass. There should be zero clippy warnings. It's okay if conformance goes down after some work but a huge drop in conformance is not acceptables
+
+## Run commands with a reasonable timeout
+
+ALWAYS run commands with a reasonable timeout to avoid commands that will hang
