@@ -4344,7 +4344,10 @@ impl ThinParserState {
             SyntaxKind::AsyncKeyword => {
                 // declare async function
                 if self.look_ahead_is_async_function() {
-                    self.parse_async_function_declaration()
+                    // Pass the declare modifier to the function
+                    self.parse_expected(SyntaxKind::AsyncKeyword);
+                    let modifiers = Some(self.make_node_list(vec![declare_modifier]));
+                    self.parse_function_declaration_with_async(true, modifiers)
                 } else {
                     self.error_declaration_expected();
                     self.parse_expression_statement()
