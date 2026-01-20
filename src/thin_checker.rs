@@ -20687,7 +20687,7 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Check that all method/constructor overload signatures have implementations.
-    /// Reports errors 2389, 2390, 2391.
+    /// Reports errors 2389, 2390, 2391, 1042.
     fn check_class_member_implementations(&mut self, members: &[NodeIndex]) {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
@@ -20700,6 +20700,29 @@ impl<'a> ThinCheckerState<'a> {
             };
 
             match node.kind {
+                // TS1042: 'async' modifier cannot be used on getters/setters
+                syntax_kind_ext::GET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                        if self.has_async_modifier(&accessor.modifiers) {
+                            self.error_at_node(
+                                member_idx,
+                                "'async' modifier cannot be used here.",
+                                diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+                            );
+                        }
+                    }
+                }
+                syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                        if self.has_async_modifier(&accessor.modifiers) {
+                            self.error_at_node(
+                                member_idx,
+                                "'async' modifier cannot be used here.",
+                                diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+                            );
+                        }
+                    }
+                }
                 syntax_kind_ext::CONSTRUCTOR => {
                     if let Some(ctor) = self.ctx.arena.get_constructor(node) {
                         if ctor.body.is_none() {
