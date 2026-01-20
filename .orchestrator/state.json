@@ -9,7 +9,7 @@
     "owner": "mohsen1",
     "name": "tsz"
   },
-  "phase": "initialized",
+  "phase": "analyzing",
   "workBranch": "cco/72-fix-unit-tests",
   "baseBranch": "main",
   "ems": [],
@@ -20,5 +20,5 @@
     "prLabel": "cco"
   },
   "createdAt": "2026-01-20T14:26:48.737Z",
-  "updatedAt": "2026-01-20T14:26:49.199Z"
+  "updatedAt": "2026-01-20T14:26:49.769Z"
 }
