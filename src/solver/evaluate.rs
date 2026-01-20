@@ -696,14 +696,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
-                    else {
-                        let false_inst =
-                            instantiate_type_with_infer(self.interner, cond.false_type, &subst);
-                        return self.evaluate(false_inst);
-                    };
-                    inferred = filtered;
+                    inferred = self.filter_inferred_by_constraint_or_undefined(
+                        inferred,
+                        constraint,
+                        &mut checker,
+                    );
                     subst.insert(info.name, inferred);
                 }
 
@@ -942,14 +939,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
-                    else {
-                        let false_inst =
-                            instantiate_type_with_infer(self.interner, cond.false_type, &subst);
-                        return self.evaluate(false_inst);
-                    };
-                    inferred = filtered;
+                    if prop_optional {
+                        let Some(filtered) =
+                            self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                        else {
+                            let false_inst =
+                                instantiate_type_with_infer(self.interner, cond.false_type, &subst);
+                            return self.evaluate(false_inst);
+                        };
+                        inferred = filtered;
+                    } else {
+                        inferred = self.filter_inferred_by_constraint_or_undefined(
+                            inferred,
+                            constraint,
+                            &mut checker,
+                        );
+                    }
                     subst.insert(info.name, inferred);
                 }
 
@@ -1053,14 +1058,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
-                    else {
-                        let false_inst =
-                            instantiate_type_with_infer(self.interner, cond.false_type, &subst);
-                        return self.evaluate(false_inst);
-                    };
-                    inferred = filtered;
+                    inferred = self.filter_inferred_by_constraint_or_undefined(
+                        inferred,
+                        constraint,
+                        &mut checker,
+                    );
                     subst.insert(info.name, inferred);
                 }
 
@@ -2439,6 +2441,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(inferred)
         } else {
             None
+        }
+    }
+
+    fn filter_inferred_by_constraint_or_undefined(
+        &self,
+        inferred: TypeId,
+        constraint: TypeId,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> TypeId {
+        if inferred == constraint {
+            return inferred;
+        }
+
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(inferred) {
+            let members = self.interner.type_list(members);
+            let mut filtered = Vec::new();
+            let mut had_non_matching = false;
+            for &member in members.iter() {
+                if checker.is_subtype_of(member, constraint) {
+                    filtered.push(member);
+                } else {
+                    had_non_matching = true;
+                }
+            }
+
+            if had_non_matching {
+                filtered.push(TypeId::UNDEFINED);
+            }
+
+            return match filtered.len() {
+                0 => TypeId::UNDEFINED,
+                1 => filtered[0],
+                _ => self.interner.union(filtered),
+            };
+        }
+
+        if checker.is_subtype_of(inferred, constraint) {
+            inferred
+        } else {
+            TypeId::UNDEFINED
         }
     }
 
