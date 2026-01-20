@@ -134,6 +134,8 @@ pub struct BindResult {
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
+    /// Shorthand ambient modules (`declare module "foo"` without body)
+    pub shorthand_ambient_modules: FxHashSet<String>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
 }
@@ -173,6 +175,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 scopes: binder.scopes,
                 node_scope_ids: binder.node_scope_ids,
                 parse_diagnostics,
+                shorthand_ambient_modules: binder.shorthand_ambient_modules,
                 global_augmentations: binder.global_augmentations,
             }
         })
@@ -200,6 +203,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         scopes: binder.scopes,
         node_scope_ids: binder.node_scope_ids,
         parse_diagnostics,
+        shorthand_ambient_modules: binder.shorthand_ambient_modules,
         global_augmentations: binder.global_augmentations,
     }
 }
@@ -367,6 +371,7 @@ pub fn parse_and_bind_parallel_with_libs(
                 scopes: binder.scopes,
                 node_scope_ids: binder.node_scope_ids,
                 parse_diagnostics,
+                shorthand_ambient_modules: binder.shorthand_ambient_modules,
                 global_augmentations: binder.global_augmentations,
             }
         })
@@ -413,6 +418,8 @@ pub struct MergedProgram {
     pub file_locals: Vec<SymbolTable>,
     /// Ambient module declarations across all files
     pub declared_modules: FxHashSet<String>,
+    /// Shorthand ambient modules (`declare module "foo"` without body) - imports from these are `any`
+    pub shorthand_ambient_modules: FxHashSet<String>,
     /// Module exports: maps file name (or module specifier) to its exported symbols
     /// This enables cross-file module resolution: import { X } from './file' can find X's symbol
     pub module_exports: FxHashMap<String, SymbolTable>,
@@ -507,6 +514,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
     let mut declared_modules = FxHashSet::default();
+    let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_exports: FxHashMap<String, SymbolTable> = FxHashMap::default();
 
     // Track which symbols have been merged to avoid duplicate processing
@@ -514,6 +522,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
     for result in results {
         declared_modules.extend(result.declared_modules.iter().cloned());
+        shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
         // Copy symbols from this file to global arena, getting new IDs
         let mut id_remap: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
         for i in 0..result.symbols.len() {
@@ -779,6 +788,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         globals,
         file_locals: file_locals_list,
         declared_modules,
+        shorthand_ambient_modules,
         module_exports,
         reexports: FxHashMap::default(),
         type_interner: TypeInterner::new(),
@@ -1061,7 +1071,7 @@ fn create_binder_from_bound_file(
         program.module_exports.clone(),
         program.reexports.clone(),
         program.symbol_arenas.clone(),
-        FxHashSet::default(), // shorthand_ambient_modules - TODO: populate from program
+        program.shorthand_ambient_modules.clone(),
     );
 
     binder.declared_modules = program.declared_modules.clone();

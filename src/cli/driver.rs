@@ -521,6 +521,7 @@ fn build_program_with_cache(
                     scopes: Vec::new(),
                     node_scope_ids: Default::default(),
                     parse_diagnostics: Vec::new(),
+                    shorthand_ambient_modules: Default::default(),
                     global_augmentations: Default::default(),
                 }
             }
@@ -3064,7 +3065,7 @@ fn create_binder_from_bound_file(
         program.module_exports.clone(),
         program.reexports.clone(),
         program.symbol_arenas.clone(),
-        FxHashSet::default(), // shorthand_ambient_modules - TODO: populate from program
+        program.shorthand_ambient_modules.clone(),
     );
 
     binder.declared_modules = program.declared_modules.clone();

@@ -7047,6 +7047,12 @@ impl<'a> ThinCheckerState<'a> {
 
             // For ES6 imports with import_module set, resolve using module_exports
             if let Some(ref module_name) = symbol.import_module {
+                // Check if this is a shorthand ambient module (declare module "foo" without body)
+                // Imports from shorthand ambient modules are typed as `any`
+                if self.ctx.binder.shorthand_ambient_modules.contains(module_name) {
+                    return (TypeId::ANY, Vec::new());
+                }
+                
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
                 let export_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
                 if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name) {
