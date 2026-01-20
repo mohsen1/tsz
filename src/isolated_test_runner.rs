@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::test_harness::{TestResult, DEFAULT_TEST_TIMEOUT};
+use crate::test_harness::{TestResult, default_test_timeout};
 
 /// Resource limits for isolated test execution
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
             max_memory_mb: Some(512), // 512 MB default
-            timeout: DEFAULT_TEST_TIMEOUT,
+            timeout: default_test_timeout(),
             max_file_descriptors: Some(1024),
             enable_monitoring: true,
         }
@@ -240,36 +240,42 @@ where
     });
 
     // Wait for test completion
-    let test_duration = start.elapsed();
-    let result = match handle.join() {
-        Ok(Ok(())) => TestResult::Passed {
-            duration: test_duration,
-        },
-        Ok(Err(panic_info)) => {
-            let message = extract_panic_message(panic_info);
-            TestResult::Panicked {
-                message,
-                duration: test_duration,
-            }
-        }
-        Err(_) => TestResult::Panicked {
-            message: "Thread join failed".to_string(),
-            duration: test_duration,
-        },
-    };
-
-    // Get monitor outcome
+    // Wait for monitor outcome first so we can short-circuit on timeouts without blocking on join.
     let monitor_outcome = monitor_handle.join().unwrap_or(MonitorOutcome::MonitorCrashed);
 
     match monitor_outcome {
-        MonitorOutcome::Completed { peak_memory } => MonitoredTestResult {
-            result,
-            peak_memory_bytes: Some(peak_memory),
-            was_terminated: false,
-            termination_signal: None,
-        },
+        MonitorOutcome::Completed { peak_memory } => {
+            let test_duration = start.elapsed();
+            let result = match handle.join() {
+                Ok(Ok(())) => TestResult::Passed {
+                    duration: test_duration,
+                },
+                Ok(Err(panic_info)) => {
+                    let message = extract_panic_message(panic_info);
+                    TestResult::Panicked {
+                        message,
+                        duration: test_duration,
+                    }
+                }
+                Err(_) => TestResult::Panicked {
+                    message: "Thread join failed".to_string(),
+                    duration: test_duration,
+                },
+            };
+
+            MonitoredTestResult {
+                result,
+                peak_memory_bytes: Some(peak_memory),
+                was_terminated: false,
+                termination_signal: None,
+            }
+        }
         MonitorOutcome::TimedOut { peak_memory } => {
-            // Mark as terminated
+            // Best-effort: if the worker finished between timeout and here, join to avoid leaks.
+            if completed.load(Ordering::SeqCst) {
+                let _ = handle.join();
+            }
+
             MonitoredTestResult {
                 result: TestResult::TimedOut {
                     timeout: config.limits.timeout,
@@ -282,23 +288,29 @@ where
         MonitorOutcome::MemoryLimitExceeded {
             peak_memory,
             limit_bytes,
-        } => MonitoredTestResult {
-            result: TestResult::Failed {
-                message: format!(
-                    "Memory limit exceeded: {} MB used, {} MB limit",
-                    peak_memory / 1024 / 1024,
-                    limit_bytes / 1024 / 1024
-                ),
-                duration: test_duration,
-            },
-            peak_memory_bytes: Some(peak_memory),
-            was_terminated: true,
-            termination_signal: None,
-        },
+        } => {
+            if completed.load(Ordering::SeqCst) {
+                let _ = handle.join();
+            }
+
+            MonitoredTestResult {
+                result: TestResult::Failed {
+                    message: format!(
+                        "Memory limit exceeded: {} MB used, {} MB limit",
+                        peak_memory / 1024 / 1024,
+                        limit_bytes / 1024 / 1024
+                    ),
+                    duration: start.elapsed(),
+                },
+                peak_memory_bytes: Some(peak_memory),
+                was_terminated: true,
+                termination_signal: None,
+            }
+        }
         MonitorOutcome::MonitorCrashed => MonitoredTestResult {
             result: TestResult::Failed {
                 message: "Monitor thread crashed".to_string(),
-                duration: test_duration,
+                duration: start.elapsed(),
             },
             peak_memory_bytes: None,
             was_terminated: false,

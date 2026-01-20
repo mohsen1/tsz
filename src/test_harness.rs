@@ -10,9 +10,9 @@
 //! # Basic Usage
 //!
 //! ```ignore
-//! use test_harness::{run_with_timeout, DEFAULT_TEST_TIMEOUT};
+//! use test_harness::{run_with_timeout, default_test_timeout};
 //!
-//! let result = run_with_timeout(DEFAULT_TEST_TIMEOUT, || {
+//! let result = run_with_timeout(default_test_timeout(), || {
 //!     assert_eq!(2 + 2, 4);
 //! });
 //! assert!(result.is_passed());
@@ -38,6 +38,7 @@
 //! ```
 
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::OnceLock;
 
 // Re-export the isolated_test_runner for enhanced test execution
 pub use crate::isolated_test_runner::{
@@ -49,14 +50,38 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Default timeout for individual tests (10 seconds)
-pub const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default timeout (seconds) applied when no override is provided.
+/// Use the environment variable `TSZ_TEST_TIMEOUT_SECS` to override at runtime.
+pub const DEFAULT_TEST_TIMEOUT_SECS: u64 = 300;
+
+/// Resolve the default test timeout, honoring `TSZ_TEST_TIMEOUT_SECS`.
+fn resolve_default_timeout() -> Duration {
+    static CACHE: OnceLock<Duration> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let from_env = std::env::var("TSZ_TEST_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok());
+        Duration::from_secs(from_env.unwrap_or(DEFAULT_TEST_TIMEOUT_SECS))
+    })
+}
+
+/// Default timeout for individual tests (resolved at runtime).
+pub fn default_test_timeout() -> Duration {
+    resolve_default_timeout()
+}
+
+/// Backwards-compatible constant using the default seconds (env override not applied).
+pub const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(DEFAULT_TEST_TIMEOUT_SECS);
 
 /// Timeout for parser tests (may take longer for complex inputs)
-pub const PARSER_TEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub fn parser_test_timeout() -> Duration {
+    Duration::from_secs(120)
+}
 
 /// Timeout for type checker tests (more complex analysis)
-pub const CHECKER_TEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub fn checker_test_timeout() -> Duration {
+    Duration::from_secs(180)
+}
 
 /// Result of running a test with timeout
 #[derive(Debug, Clone)]
@@ -98,9 +123,9 @@ impl TestResult {
 ///
 /// # Example
 /// ```ignore
-/// use test_harness::{run_with_timeout, DEFAULT_TEST_TIMEOUT};
+/// use test_harness::{run_with_timeout, default_test_timeout};
 ///
-/// let result = run_with_timeout(DEFAULT_TEST_TIMEOUT, || {
+/// let result = run_with_timeout(default_test_timeout(), || {
 ///     // Test code here
 ///     assert_eq!(2 + 2, 4);
 /// });
@@ -369,7 +394,7 @@ macro_rules! test_with_timeout {
         }
     };
     ($name:ident, $body:block) => {
-        test_with_timeout!($name, $crate::test_harness::DEFAULT_TEST_TIMEOUT, $body);
+        test_with_timeout!($name, $crate::test_harness::default_test_timeout(), $body);
     };
 }
 

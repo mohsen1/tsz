@@ -7,6 +7,8 @@
 //! 4. Object destructuring patterns with missing commas
 
 use crate::thin_parser::ThinParserState;
+use crate::test_harness::{run_with_timeout, TestResult};
+use std::time::Duration;
 
 // ===========================================================================
 // Test 1: Class Body Error Recovery
@@ -233,18 +235,25 @@ const { x y } = obj;
 /// Test nested object destructuring with errors
 #[test]
 fn test_p1_nested_destructuring_errors() {
-    let source = r#"
+    let result = run_with_timeout(Duration::from_secs(5), || {
+        let source = r#"
 const { a: { x y }, b } = obj;
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
-    parser.parse_source_file();
+        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
 
-    // Should parse with errors
-    let diags = parser.get_diagnostics();
-    assert!(!diags.is_empty(), "Should report error");
+        // Should parse with errors
+        let diags = parser.get_diagnostics();
+        assert!(!diags.is_empty(), "Should report error");
 
-    // Should still parse the outer pattern
-    assert!(parser.arena.len() > 0, "Should parse destructuring");
+        // Should still parse the outer pattern
+        assert!(parser.arena.len() > 0, "Should parse destructuring");
+    });
+
+    match result {
+        TestResult::Passed { .. } => {}
+        other => panic!("Nested destructuring test did not finish: {:?}", other),
+    }
 }
 
 // ===========================================================================

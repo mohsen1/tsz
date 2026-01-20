@@ -8,7 +8,10 @@ engine on top to match TypeScript behavior while preserving correctness where po
 
 
 ## Status
-This project is not ready for general use yet. The interface and distribution are in progress.
+
+Work in progress.
+
+This project is not ready for general use yet.
 
 ---
 

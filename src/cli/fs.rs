@@ -92,7 +92,14 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                 }
             }
 
-            let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            // Avoid canonicalizing unless following links; canonicalizing can change
+            // the base prefix (e.g., /var -> /private/var on macOS) which breaks
+            // relative path expectations in the CLI.
+            let resolved = if options.follow_links {
+                std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+            } else {
+                path.to_path_buf()
+            };
             files.insert(resolved);
         }
     }
