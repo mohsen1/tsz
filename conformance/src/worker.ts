@@ -11,6 +11,7 @@ interface TestJob {
   filePath: string;
   libSource: string;
   testsBasePath: string;
+  timeout?: number;  // Per-test timeout in ms (default: 5000)
 }
 
 interface TestFile {
@@ -51,6 +52,7 @@ interface WorkerResult {
   crashed: boolean;
   error?: string;
   skipped: boolean;
+  timedOut?: boolean;
 }
 
 // Initialize WASM module once per worker
@@ -283,13 +285,36 @@ async function processJob(job: TestJob): Promise<WorkerResult> {
   }
 }
 
+// Timeout wrapper
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutResult: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => setTimeout(() => resolve(timeoutResult), ms))
+  ]);
+}
+
 // Worker main
 (async () => {
   const { wasmPkgPath } = workerData as { wasmPkgPath: string };
   await initWasm(wasmPkgPath);
 
   parentPort!.on('message', async (job: TestJob) => {
-    const result = await processJob(job);
+    const timeout = job.timeout || 5000; // 5 second default per test
+    const relPath = job.filePath.replace(job.testsBasePath + path.sep, '');
+    
+    const timeoutResult: WorkerResult = {
+      filePath: job.filePath,
+      relPath,
+      category: 'unknown',
+      tscCodes: [],
+      wasmCodes: [],
+      crashed: false,
+      skipped: false,
+      timedOut: true,
+      error: `Test timed out after ${timeout}ms`,
+    };
+
+    const result = await withTimeout(processJob(job), timeout, timeoutResult);
     parentPort!.postMessage(result);
   });
 

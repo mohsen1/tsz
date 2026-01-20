@@ -20,6 +20,7 @@ interface RunnerConfig {
   verbose: boolean;
   categories: string[];
   workers: number;
+  testTimeout: number;  // Per-test timeout in ms
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -32,6 +33,7 @@ const DEFAULT_CONFIG: RunnerConfig = {
   verbose: false,
   categories: ['conformance', 'compiler'],
   workers: Math.max(1, os.cpus().length - 1),
+  testTimeout: 5000,  // 5 seconds per test
 };
 
 interface WorkerResult {
@@ -43,6 +45,7 @@ interface WorkerResult {
   crashed: boolean;
   error?: string;
   skipped: boolean;
+  timedOut?: boolean;
 }
 
 interface TestStats {
@@ -51,6 +54,7 @@ interface TestStats {
   failed: number;
   crashed: number;
   skipped: number;
+  timedOut: number;
   byCategory: Record<string, { total: number; passed: number }>;
   missingCodes: Map<number, number>;
   extraCodes: Map<number, number>;
@@ -215,7 +219,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 
   if (allTestFiles.length === 0) {
     log('\nNo test files found!', colors.yellow);
-    return { total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, byCategory: {}, missingCodes: new Map(), extraCodes: new Map() };
+    return { total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, timedOut: 0, byCategory: {}, missingCodes: new Map(), extraCodes: new Map() };
   }
 
   // Create worker pool
@@ -227,13 +231,14 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   log(`  Workers ready!`, colors.green);
 
   // Run tests in parallel
-  log(`\nRunning tests...`, colors.cyan);
+  log(`\nRunning tests (${cfg.testTimeout}ms timeout per test)...`, colors.cyan);
   const stats: TestStats = {
     total: allTestFiles.length,
     passed: 0,
     failed: 0,
     crashed: 0,
     skipped: 0,
+    timedOut: 0,
     byCategory: {},
     missingCodes: new Map(),
     extraCodes: new Map(),
@@ -253,6 +258,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
       filePath,
       libSource,
       testsBasePath: cfg.testsBasePath,
+      timeout: cfg.testTimeout,
     });
 
     completed++;
@@ -264,6 +270,14 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     }
     stats.byCategory[result.category].total++;
 
+    if (result.timedOut) {
+      stats.timedOut++;
+      stats.failed++;
+      if (cfg.verbose) {
+        log(`\n  ${result.relPath}: TIMEOUT`, colors.red);
+      }
+      return;
+    }
     if (result.skipped) {
       stats.skipped++;
       return;
@@ -319,6 +333,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   log(`  Passed:   ${stats.passed}`, colors.green);
   log(`  Failed:   ${stats.failed}`, stats.failed > 0 ? colors.red : colors.dim);
   log(`  Crashed:  ${stats.crashed}`, stats.crashed > 0 ? colors.red : colors.dim);
+  log(`  Timeout:  ${stats.timedOut}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
   log(`  Skipped:  ${stats.skipped}`, colors.dim);
 
   log('\nBy Category:', colors.bold);

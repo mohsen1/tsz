@@ -12,6 +12,7 @@ interface RunnerConfig {
     verbose: boolean;
     categories: string[];
     workers: number;
+    testTimeout: number;
 }
 interface TestStats {
     total: number;
@@ -19,6 +20,7 @@ interface TestStats {
     failed: number;
     crashed: number;
     skipped: number;
+    timedOut: number;
     byCategory: Record<string, {
         total: number;
         passed: number;
