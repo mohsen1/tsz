@@ -60,3 +60,6 @@ yarn.lock
 /*.md
 Dockerfile
 Dockerfile.*
+
+
+.claude/

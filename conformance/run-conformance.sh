@@ -19,13 +19,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE_NAME="tsz-conformance"
 
-# Defaults
+# Detect CPU cores
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    CPU_CORES=$(sysctl -n hw.ncpu)
+else
+    CPU_CORES=$(nproc 2>/dev/null || echo 4)
+fi
+
+# Defaults - use all cores
 MAX_TESTS=500
 REBUILD=false
 VERBOSE=false
 CATEGORIES="conformance,compiler"
 TIMEOUT=600  # 10 minutes default
-WORKERS=8    # Worker threads for parallelism
+WORKERS=$CPU_CORES  # Use all CPU cores
 
 # Parse arguments
 for arg in "$@"; do
@@ -93,9 +100,13 @@ DOCKERFILE
     echo "✅ Docker image built"
 fi
 
+# Calculate memory: ~1.5GB per worker, minimum 4GB
+MEMORY_GB=$(( WORKERS * 3 / 2 ))
+if [ $MEMORY_GB -lt 4 ]; then MEMORY_GB=4; fi
+
 echo ""
 echo "🚀 Running tests in Docker container..."
-echo "   (Memory: 8GB, CPUs: $WORKERS, Timeout: ${TIMEOUT}s)"
+echo "   (Memory: ${MEMORY_GB}GB, CPUs: $WORKERS, Timeout: ${TIMEOUT}s)"
 echo ""
 
 # Build runner args
@@ -105,12 +116,12 @@ if [ "$VERBOSE" = true ]; then
 fi
 
 # Run tests in Docker with resource limits
-# Memory: ~1GB per worker, CPUs: match worker count
+# Memory: ~1.5GB per worker, CPUs: match worker count
 docker run --rm \
-    --memory="8g" \
-    --memory-swap="8g" \
+    --memory="${MEMORY_GB}g" \
+    --memory-swap="${MEMORY_GB}g" \
     --cpus="$WORKERS" \
-    --pids-limit=500 \
+    --pids-limit=1000 \
     -v "$ROOT_DIR/pkg:/app/pkg:ro" \
     -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
     -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
