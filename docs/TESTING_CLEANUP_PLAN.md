@@ -27,6 +27,7 @@ This document outlines the plan to consolidate and improve the testing infrastru
 cd conformance && npm run test:100  # Can hang or OOM
 ```
 
+
 ### Docker Configuration
 
 The Docker container enforces resource limits:
@@ -251,7 +252,7 @@ if (optionMatch) {
 **Currently Supported:**
 - [x] `@target`
 - [x] `@strict`
-- [ ] `@filename` / `@Filename` ← **NEEDS FIX** (case-insensitive)
+- [x] `@filename` / `@Filename` ✅ (case-insensitive, fixed)
 - [x] `@noImplicitAny`
 - [x] `@strictNullChecks`
 - [x] `@declaration`
@@ -375,16 +376,16 @@ scripts/
 
 ## Part 4: Implementation Checklist
 
-### Immediate (Phase 1-2)
-- [ ] Run dependency scan for references to deleted files
-- [ ] Update scripts/test.sh if needed
-- [ ] Delete 10 redundant .mjs files in conformance/
-- [ ] Delete 3 unused scripts in scripts/
-- [ ] Update conformance/package.json
-- [ ] Verify `npm run test:100` still works
+### Immediate (Phase 1-2) ✅ COMPLETED
+- [x] Run dependency scan for references to deleted files
+- [x] Update run-conformance.sh to use TypeScript runner
+- [x] Delete 10 redundant .mjs files in conformance/
+- [x] Delete 3 unused scripts in scripts/
+- [x] Update conformance/package.json
+- [x] Verify conformance tests still work
 
 ### Short-term (Phase 3-4)
-- [ ] Fix case-insensitive directive matching (`@Filename`)
+- [x] Fix case-insensitive directive matching (`@Filename`)
 - [ ] Add missing directive support (`@module`, `@lib`, etc.)
 - [ ] Implement baseline file loading
 - [ ] Implement `.errors.txt` parsing (header format)
