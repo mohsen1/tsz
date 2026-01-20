@@ -915,11 +915,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         });
                                     } else if prop_optional {
                                         inferred_members.push(TypeId::UNDEFINED);
-                                    } else {
-                                        return self.evaluate(cond.false_type);
                                     }
+                                    // If property not found and not optional, skip this member
+                                    // (don't add anything to inferred_members)
                                 }
-                                _ => return self.evaluate(cond.false_type),
+                                _ => {
+                                    // Non-object member: add undefined as a fallback
+                                    // This handles cases like: { a: string } | number extending { a: infer R }
+                                    // where number doesn't have the property, so it contributes undefined
+                                    inferred_members.push(TypeId::UNDEFINED);
+                                }
                             }
                         }
                         if inferred_members.is_empty() {
@@ -942,15 +947,39 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
-                    else {
-                        let false_inst =
-                            instantiate_type_with_infer(self.interner, cond.false_type, &subst);
-                        return self.evaluate(false_inst);
-                    };
-                    inferred = filtered;
-                    subst.insert(info.name, inferred);
+
+                    // For unions, filter each member by constraint
+                    if let Some(TypeKey::Union(members)) = self.interner.lookup(inferred) {
+                        let members = self.interner.type_list(members);
+                        let filtered_members: Vec<TypeId> = members
+                            .iter()
+                            .filter(|&&member| checker.is_subtype_of(member, constraint))
+                            .copied()
+                            .collect();
+
+                        if filtered_members.is_empty() {
+                            // All members filtered out, return false_type
+                            return self.evaluate(cond.false_type);
+                        } else if filtered_members.len() != members.len() {
+                            // Some members were filtered, update inferred
+                            inferred = if filtered_members.len() == 1 {
+                                filtered_members[0]
+                            } else {
+                                self.interner.union(filtered_members)
+                            };
+                            subst.insert(info.name, inferred);
+                        }
+                        // If no members were filtered, inferred stays the same
+                    } else {
+                        // Non-union type: check constraint
+                        let Some(filtered) =
+                            self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                        else {
+                            return self.evaluate(cond.false_type);
+                        };
+                        inferred = filtered;
+                        subst.insert(info.name, inferred);
+                    }
                 }
 
                 let true_inst = instantiate_type_with_infer(self.interner, cond.true_type, &subst);
@@ -1141,6 +1170,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         let mut results: Vec<TypeId> = Vec::with_capacity(members.len());
 
+        // Check if extends_type has an infer pattern for object property or callable signature
+        let has_object_infer = match self.interner.lookup(extends_type) {
+            Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                shape.properties.iter().any(|p| {
+                    matches!(self.interner.lookup(p.type_id), Some(TypeKey::Infer(_)))
+                })
+            }
+            Some(TypeKey::Callable(_)) => {
+                // Callable types with infer signatures are handled separately
+                self.type_contains_infer(extends_type)
+            }
+            _ => false,
+        };
+
         for &member in members {
             // Substitute the specific member if true_type or false_type references the original check_type
             // This handles cases like: NonNullable<T> = T extends null ? never : T
@@ -1167,7 +1211,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Recursively evaluate (handles nested unions, type parameters)
             let result = self.evaluate_conditional(&member_cond);
-            results.push(result);
+
+            // Special handling: if we're inferring from an object/callable pattern and the member
+            // doesn't match (returns never), add undefined instead for distributive conditionals
+            // This matches TypeScript's behavior where non-matching union members contribute undefined
+            if has_object_infer && result == TypeId::NEVER {
+                results.push(TypeId::UNDEFINED);
+            } else {
+                results.push(result);
+            }
         }
 
         // Combine results into a union
