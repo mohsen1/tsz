@@ -23,7 +23,7 @@ fn bench_concurrent_interning(c: &mut Criterion) {
             |b, &thread_count| {
                 // Use a thread pool for consistent thread counts
                 let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(*thread_count)
+                    .num_threads(thread_count)
                     .build()
                     .unwrap();
 
@@ -60,7 +60,7 @@ fn bench_concurrent_objects(c: &mut Criterion) {
             thread_count,
             |b, &thread_count| {
                 let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(*thread_count)
+                    .num_threads(thread_count)
                     .build()
                     .unwrap();
 
@@ -110,7 +110,7 @@ fn bench_scaling_efficiency(c: &mut Criterion) {
             thread_count,
             |b, &thread_count| {
                 let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(*thread_count)
+                    .num_threads(thread_count)
                     .build()
                     .unwrap();
 
@@ -184,7 +184,7 @@ fn bench_property_lookup(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(2));
 
     group.bench_function("small_object", |b| {
-        use wasm::solver::{ObjectShape, ObjectShapeId, PropertyInfo};
+        use wasm::solver::{ObjectShape, PropertyInfo};
         let interner = TypeInterner::new();
 
         // Create a small object (under cache threshold)
