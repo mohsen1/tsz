@@ -15047,8 +15047,42 @@ impl<'a> ThinCheckerState<'a> {
             syntax_kind_ext::INTERFACE_DECLARATION => Some(symbol_flags::INTERFACE),
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some(symbol_flags::TYPE_ALIAS),
             syntax_kind_ext::ENUM_DECLARATION => Some(symbol_flags::REGULAR_ENUM),
-            syntax_kind_ext::GET_ACCESSOR => Some(symbol_flags::GET_ACCESSOR),
-            syntax_kind_ext::SET_ACCESSOR => Some(symbol_flags::SET_ACCESSOR),
+            syntax_kind_ext::GET_ACCESSOR => {
+                let mut flags = symbol_flags::GET_ACCESSOR;
+                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        flags |= symbol_flags::STATIC;
+                    }
+                }
+                Some(flags)
+            }
+            syntax_kind_ext::SET_ACCESSOR => {
+                let mut flags = symbol_flags::SET_ACCESSOR;
+                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    if self.has_static_modifier(&accessor.modifiers) {
+                        flags |= symbol_flags::STATIC;
+                    }
+                }
+                Some(flags)
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                let mut flags = symbol_flags::METHOD;
+                if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    if self.has_static_modifier(&method.modifiers) {
+                        flags |= symbol_flags::STATIC;
+                    }
+                }
+                Some(flags)
+            }
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let mut flags = symbol_flags::PROPERTY;
+                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+                    if self.has_static_modifier(&prop.modifiers) {
+                        flags |= symbol_flags::STATIC;
+                    }
+                }
+                Some(flags)
+            }
             syntax_kind_ext::CONSTRUCTOR => Some(symbol_flags::CONSTRUCTOR),
             _ => None,
         }
@@ -15086,6 +15120,13 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     fn declarations_conflict(flags_a: u32, flags_b: u32) -> bool {
+        // Static and instance members with the same name don't conflict
+        let a_is_static = (flags_a & symbol_flags::STATIC) != 0;
+        let b_is_static = (flags_b & symbol_flags::STATIC) != 0;
+        if a_is_static != b_is_static {
+            return false;
+        }
+        
         let excludes_a = Self::excluded_symbol_flags(flags_a);
         let excludes_b = Self::excluded_symbol_flags(flags_b);
         (flags_a & excludes_b) != 0 || (flags_b & excludes_a) != 0
@@ -15171,7 +15212,14 @@ impl<'a> ThinCheckerState<'a> {
                 for j in (i + 1)..declarations.len() {
                     let (decl_idx, decl_flags) = declarations[i];
                     let (other_idx, other_flags) = declarations[j];
-                    if Self::declarations_conflict(decl_flags, other_flags) {
+                    
+                    // Skip conflict check if declarations are in different files
+                    // (external modules are isolated, same-name declarations don't conflict)
+                    // Check by comparing if both nodes exist in our arena
+                    let both_in_same_file = self.ctx.arena.get(decl_idx).is_some() 
+                        && self.ctx.arena.get(other_idx).is_some();
+                    
+                    if both_in_same_file && Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
                     }
