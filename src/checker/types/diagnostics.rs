@@ -228,6 +228,7 @@ pub mod diagnostic_codes {
     pub const UNEXPECTED_TOKEN: u32 = 1012;
     pub const REST_PARAMETER_MUST_BE_LAST: u32 = 1014;
     pub const PARAMETER_CANNOT_HAVE_INITIALIZER: u32 = 1015;
+    pub const ASYNC_MODIFIER_IN_AMBIENT_CONTEXT: u32 = 1040; // 'async' modifier cannot be used in an ambient context.
     pub const ASYNC_MODIFIER_CANNOT_BE_USED_HERE: u32 = 1042; // 'async' modifier cannot be used here.
     pub const SETTER_MUST_HAVE_EXACTLY_ONE_PARAMETER: u32 = 1049;
     pub const SETTER_PARAMETER_CANNOT_HAVE_INITIALIZER: u32 = 1052; // A 'set' accessor parameter cannot have an initializer.

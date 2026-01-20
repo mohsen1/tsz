@@ -21922,7 +21922,22 @@ impl<'a> ThinCheckerState<'a> {
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                 if let Some(func) = self.ctx.arena.get_function(node) {
                     if func.body.is_none() {
-                        if self.has_declare_modifier(&func.modifiers) {
+                        let is_declared = self.has_declare_modifier(&func.modifiers);
+                        // Use func.is_async as the parser stores async as a flag, not a modifier
+                        let is_async = func.is_async;
+                        
+                        // TS1040: 'async' modifier cannot be used in an ambient context
+                        if is_declared && is_async {
+                            self.error_at_node(
+                                stmt_idx,
+                                "'async' modifier cannot be used in an ambient context.",
+                                diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                            );
+                            i += 1;
+                            continue;
+                        }
+                        
+                        if is_declared {
                             i += 1;
                             continue;
                         }
