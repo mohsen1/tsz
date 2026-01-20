@@ -20,20 +20,20 @@
 //! ```
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
 
 /// Decorator transformer producing IR nodes
 pub struct DecoratorTransformer<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     /// Whether to emit decorator metadata
     emit_decorator_metadata: bool,
 }
 
 impl<'a> DecoratorTransformer<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             emit_decorator_metadata: false,
@@ -384,7 +384,7 @@ pub enum MemberKind {
 
 /// Collect all decorator information from a class
 pub fn collect_class_decorator_info<'a>(
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     class_idx: NodeIndex,
 ) -> Option<ClassDecoratorInfo> {
     let class_node = arena.get(class_idx)?;
@@ -479,7 +479,7 @@ pub struct ClassDecoratorInfo {
     pub member_decorators: Vec<MemberDecoratorInfo>,
 }
 
-fn has_static_modifier(arena: &ThinNodeArena, modifiers: &Option<crate::parser::NodeList>) -> bool {
+fn has_static_modifier(arena: &NodeArena, modifiers: &Option<crate::parser::NodeList>) -> bool {
     if let Some(mods) = modifiers {
         for &mod_idx in &mods.nodes {
             if let Some(mod_node) = arena.get(mod_idx) {
@@ -492,7 +492,7 @@ fn has_static_modifier(arena: &ThinNodeArena, modifiers: &Option<crate::parser::
     false
 }
 
-fn get_member_name(arena: &ThinNodeArena, name_idx: NodeIndex) -> Option<String> {
+fn get_member_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<String> {
     let name_node = arena.get(name_idx)?;
     if name_node.kind == SyntaxKind::Identifier as u16 {
         let ident = arena.get_identifier(name_node)?;
@@ -511,14 +511,14 @@ mod tests {
 
     #[test]
     fn test_decorator_transformer_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let transformer = DecoratorTransformer::new(&arena);
         assert!(!transformer.emit_decorator_metadata);
     }
 
     #[test]
     fn test_collect_empty_decorators() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let transformer = DecoratorTransformer::new(&arena);
         let decorators = transformer.collect_decorators(&None);
         assert!(decorators.is_empty());
@@ -526,7 +526,7 @@ mod tests {
 
     #[test]
     fn test_transform_class_decorators_empty() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let transformer = DecoratorTransformer::new(&arena);
         let result = transformer.transform_class_decorators("Foo", &[]);
         assert!(result.is_none());

@@ -20,14 +20,14 @@
 
 use crate::binder::{FlowNode, FlowNodeArena, FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use crate::interner::Atom;
-use crate::parser::thin_node::{BinaryExprData, CallExprData, ThinNodeArena};
+use crate::parser::node::{BinaryExprData, CallExprData, NodeArena};
 use crate::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{
     LiteralValue, NarrowingContext, ParamInfo, TypeId, TypeInterner, TypeKey, TypePredicate,
     TypePredicateTarget,
 };
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -104,8 +104,8 @@ impl<'a> FlowGraph<'a> {
 /// Walks the control flow graph backwards from a reference point to determine
 /// what type narrowing applies at that location.
 pub struct FlowAnalyzer<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     interner: &'a TypeInterner,
     node_types: Option<&'a FxHashMap<u32, TypeId>>,
     flow_graph: Option<FlowGraph<'a>>,
@@ -134,8 +134,8 @@ struct PredicateSignature {
 impl<'a> FlowAnalyzer<'a> {
     /// Create a new FlowAnalyzer.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         interner: &'a TypeInterner,
     ) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
@@ -149,8 +149,8 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub fn with_node_types(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         interner: &'a TypeInterner,
         node_types: &'a FxHashMap<u32, TypeId>,
     ) -> Self {
@@ -1194,7 +1194,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     fn find_property_in_object_literal(
         &self,
-        literal: &crate::parser::thin_node::LiteralExprData,
+        literal: &crate::parser::node::LiteralExprData,
         target: Atom,
     ) -> Option<NodeIndex> {
         for &elem in &literal.elements.nodes {
@@ -1717,7 +1717,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn narrow_by_binary_expr(
         &self,
         type_id: TypeId,
-        bin: &crate::parser::thin_node::BinaryExprData,
+        bin: &crate::parser::node::BinaryExprData,
         target: NodeIndex,
         is_true_branch: bool,
         narrowing: &NarrowingContext,
@@ -1809,7 +1809,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn narrow_by_logical_expr(
         &self,
         type_id: TypeId,
-        bin: &crate::parser::thin_node::BinaryExprData,
+        bin: &crate::parser::node::BinaryExprData,
         target: NodeIndex,
         is_true_branch: bool,
         visited_aliases: &mut Vec<SymbolId>,
@@ -2266,7 +2266,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn narrow_by_instanceof(
         &self,
         type_id: TypeId,
-        bin: &crate::parser::thin_node::BinaryExprData,
+        bin: &crate::parser::node::BinaryExprData,
         target: NodeIndex,
         is_true_branch: bool,
     ) -> TypeId {
@@ -2345,7 +2345,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn narrow_by_in_operator(
         &self,
         type_id: TypeId,
-        bin: &crate::parser::thin_node::BinaryExprData,
+        bin: &crate::parser::node::BinaryExprData,
         target: NodeIndex,
         is_true_branch: bool,
     ) -> TypeId {
@@ -3506,7 +3506,7 @@ impl<'a> FlowAnalyzer<'a> {
 /// Check whether a function body can fall through to the end.
 /// Returns true if execution can reach the end of the function body without
 /// encountering a return/throw statement.
-pub fn function_body_falls_through(_arena: &ThinNodeArena, _body_idx: NodeIndex) -> bool {
+pub fn function_body_falls_through(_arena: &NodeArena, _body_idx: NodeIndex) -> bool {
     // Simplified stub: assume function bodies can fall through
     // A full implementation would analyze control flow to detect
     // if all paths have return/throw statements
@@ -3515,7 +3515,7 @@ pub fn function_body_falls_through(_arena: &ThinNodeArena, _body_idx: NodeIndex)
 
 /// Check whether a statement can fall through to the next statement.
 /// Returns true if execution can continue past this statement.
-pub fn statement_falls_through(_arena: &ThinNodeArena, _stmt_idx: NodeIndex) -> bool {
+pub fn statement_falls_through(_arena: &NodeArena, _stmt_idx: NodeIndex) -> bool {
     // Simplified stub: assume statements can fall through
     // A full implementation would analyze control flow
     true
@@ -3525,9 +3525,9 @@ pub fn statement_falls_through(_arena: &ThinNodeArena, _stmt_idx: NodeIndex) -> 
 mod tests {
     use super::*;
     use crate::solver::PropertyInfo;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
-    fn get_if_condition(arena: &ThinNodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
+    fn get_if_condition(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
         let root_node = arena.get(root).expect("root node");
         let source_file = arena.get_source_file(root_node).expect("source file");
         let if_idx = *source_file
@@ -3547,10 +3547,10 @@ let x: string | number | boolean | null | undefined;
 if (x) {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let arena = parser.get_arena();
@@ -3593,10 +3593,10 @@ let x: string | number;
 if (typeof x === "string") {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let arena = parser.get_arena();
@@ -3624,10 +3624,10 @@ let x: string | number;
 if (x && typeof x === "string") {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let arena = parser.get_arena();
@@ -3653,10 +3653,10 @@ let x: "a" | "b" | "c";
 if (x === "a" || x === "b") {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let arena = parser.get_arena();
@@ -3693,10 +3693,10 @@ let action: any;
 if (action.type === "add") {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let arena = parser.get_arena();
@@ -3752,10 +3752,10 @@ let x: string | number;
 if (x === "a") {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let arena = parser.get_arena();
@@ -3783,10 +3783,10 @@ let x: string | null | undefined;
 if (x == null) {}
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let arena = parser.get_arena();

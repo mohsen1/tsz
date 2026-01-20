@@ -23,7 +23,7 @@
 
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;
@@ -41,7 +41,7 @@ pub struct EnumTransformOptions {
 
 /// Enum transformer that handles const enum inlining and emission
 pub struct EnumTransformer<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     options: EnumTransformOptions,
     /// Cache of enum values by enum node index
     enum_value_cache: FxHashMap<NodeIndex, FxHashMap<String, EnumValue>>,
@@ -53,7 +53,7 @@ pub struct EnumTransformer<'a> {
 
 impl<'a> EnumTransformer<'a> {
     /// Create a new enum transformer
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         EnumTransformer {
             arena,
             options: EnumTransformOptions::default(),
@@ -64,7 +64,7 @@ impl<'a> EnumTransformer<'a> {
     }
 
     /// Create with options
-    pub fn with_options(arena: &'a ThinNodeArena, options: EnumTransformOptions) -> Self {
+    pub fn with_options(arena: &'a NodeArena, options: EnumTransformOptions) -> Self {
         EnumTransformer {
             arena,
             options,
@@ -446,7 +446,7 @@ pub struct ConstEnumInliner<'a> {
 }
 
 impl<'a> ConstEnumInliner<'a> {
-    pub fn new(arena: &'a ThinNodeArena, source_text: &'a str) -> Self {
+    pub fn new(arena: &'a NodeArena, source_text: &'a str) -> Self {
         ConstEnumInliner {
             transformer: EnumTransformer::new(arena),
             source_text,
@@ -488,10 +488,10 @@ impl<'a> ConstEnumInliner<'a> {
 mod tests {
     use super::*;
     use crate::parser::NodeIndex;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
-    fn create_parser(source: &str) -> (ThinParserState, NodeIndex) {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    fn create_parser(source: &str) -> (ParserState, NodeIndex) {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root_idx = parser.parse_source_file();
         (parser, root_idx)
     }

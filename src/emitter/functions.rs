@@ -1,15 +1,15 @@
-use super::{ParamTransformPlan, ThinPrinter};
+use super::{ParamTransformPlan, Printer};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNode;
+use crate::parser::node::Node;
 use crate::transforms::arrow_es5::contains_this_reference;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Functions
     // =========================================================================
 
-    pub(super) fn emit_arrow_function(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    pub(super) fn emit_arrow_function(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -24,7 +24,7 @@ impl<'a> ThinPrinter<'a> {
     }
 
     /// Emit native ES6+ arrow function syntax
-    fn emit_arrow_function_native(&mut self, func: &crate::parser::thin_node::FunctionData) {
+    fn emit_arrow_function_native(&mut self, func: &crate::parser::node::FunctionData) {
         if func.is_async {
             self.write("async ");
         }
@@ -42,7 +42,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(func.body);
     }
 
-    pub(super) fn emit_function_expression(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    pub(super) fn emit_function_expression(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -191,7 +191,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_parameter(&mut self, node: &ThinNode) {
+    pub(super) fn emit_parameter(&mut self, node: &Node) {
         let Some(param) = self.arena.get_parameter(node) else {
             return;
         };

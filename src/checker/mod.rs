@@ -12,8 +12,8 @@
 //! - `reachability_analyzer` - Unreachable code detection
 //! - `control_flow` - Flow analyzer for type narrowing
 //!
-//! Note: CheckerState has been replaced by ThinCheckerState in thin_checker.rs
-//! The types module is still used by both ThinChecker and Solver.
+//! Note: The thin checker is the unified checker pipeline; `CheckerState`
+//! is an alias to the thin checker. The types module is shared with the solver.
 
 pub mod arena;
 pub mod context;
@@ -25,6 +25,7 @@ pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod jsx;
 pub mod nullish;
+pub mod state;
 pub mod optional_chain;
 pub mod reachability_analyzer;
 pub mod statements;
@@ -46,6 +47,7 @@ pub use flow_analyzer::{
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
 pub use reachability_analyzer::ReachabilityAnalyzer;
 pub use statements::StatementChecker;
+pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use types::{
     ArrayTypeInfo, ConditionalType, EnumTypeInfo, FunctionType, IndexInfo, IndexType,
     IndexedAccessType, IntersectionType, IntrinsicType, LiteralType, LiteralValue, MappedType,

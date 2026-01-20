@@ -1,13 +1,13 @@
-use super::ThinPrinter;
+use super::Printer;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNode;
+use crate::parser::node::Node;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Template Literals
     // =========================================================================
 
-    pub(super) fn emit_tagged_template_expression(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    pub(super) fn emit_tagged_template_expression(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(tagged) = self.arena.get_tagged_template(node) else {
             return;
         };
@@ -16,7 +16,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(tagged.template);
     }
 
-    pub(super) fn emit_template_expression(&mut self, node: &ThinNode) {
+    pub(super) fn emit_template_expression(&mut self, node: &Node) {
         let Some(tpl) = self.arena.get_template_expr(node) else {
             self.write("``");
             return;
@@ -31,7 +31,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_no_substitution_template(&mut self, node: &ThinNode) {
+    pub(super) fn emit_no_substitution_template(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             self.write("`");
             self.write(&lit.text);
@@ -39,7 +39,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_template_span(&mut self, node: &ThinNode) {
+    pub(super) fn emit_template_span(&mut self, node: &Node) {
         let Some(span) = self.arena.get_template_span(node) else {
             return;
         };
@@ -52,7 +52,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(span.literal);
     }
 
-    pub(super) fn emit_template_head(&mut self, node: &ThinNode) {
+    pub(super) fn emit_template_head(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Template head starts with ` and ends with ${
             self.write("`");
@@ -60,14 +60,14 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_template_middle(&mut self, node: &ThinNode) {
+    pub(super) fn emit_template_middle(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Template middle is between } and ${
             self.write(&lit.text);
         }
     }
 
-    pub(super) fn emit_template_tail(&mut self, node: &ThinNode) {
+    pub(super) fn emit_template_tail(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Template tail ends with `
             self.write(&lit.text);

@@ -2,27 +2,27 @@ use super::*;
 use std::mem::size_of;
 
 #[test]
-fn test_thin_node_size() {
-    // This is the critical test - ThinNode MUST be 16 bytes
+fn test_node_size() {
+    // This is the critical test - Node MUST be 16 bytes
     assert_eq!(
-        size_of::<ThinNode>(),
+        size_of::<Node>(),
         16,
-        "ThinNode must be exactly 16 bytes"
+        "Node must be exactly 16 bytes"
     );
 
     // 4 nodes per cache line
-    let nodes_per_cache_line = 64 / size_of::<ThinNode>();
+    let nodes_per_cache_line = 64 / size_of::<Node>();
     assert_eq!(
         nodes_per_cache_line, 4,
-        "Should fit 4 ThinNodes per 64-byte cache line"
+        "Should fit 4 Nodes per 64-byte cache line"
     );
 }
 
 #[test]
-fn test_thin_node_arena_basic() {
+fn test_node_arena_basic() {
     use crate::scanner::SyntaxKind;
 
-    let mut arena = ThinNodeArena::new();
+    let mut arena = NodeArena::new();
 
     // Add a token (no data)
     let token = arena.add_token(SyntaxKind::AsteriskToken as u16, 0, 5);
@@ -75,7 +75,7 @@ fn test_data_pool_sizes() {
 fn test_node_view() {
     use crate::scanner::SyntaxKind;
 
-    let mut arena = ThinNodeArena::new();
+    let mut arena = NodeArena::new();
 
     // Add an identifier
     let ident_idx = arena.add_identifier(
@@ -105,23 +105,23 @@ fn test_node_kind_utilities() {
     use super::super::syntax_kind_ext::*;
     use crate::scanner::SyntaxKind;
 
-    let ident = ThinNode::new(SyntaxKind::Identifier as u16, 0, 5);
+    let ident = Node::new(SyntaxKind::Identifier as u16, 0, 5);
     assert!(ident.is_identifier());
     assert!(!ident.is_string_literal());
 
-    let func = ThinNode::new(FUNCTION_DECLARATION, 0, 100);
+    let func = Node::new(FUNCTION_DECLARATION, 0, 100);
     assert!(func.is_function_declaration());
     assert!(func.is_function_like());
     assert!(func.is_declaration());
 
-    let class = ThinNode::new(CLASS_DECLARATION, 0, 200);
+    let class = Node::new(CLASS_DECLARATION, 0, 200);
     assert!(class.is_class_declaration());
     assert!(class.is_declaration());
 
-    let block = ThinNode::new(BLOCK, 0, 50);
+    let block = Node::new(BLOCK, 0, 50);
     assert!(block.is_statement());
 
-    let type_ref = ThinNode::new(TYPE_REFERENCE, 0, 10);
+    let type_ref = Node::new(TYPE_REFERENCE, 0, 10);
     assert!(type_ref.is_type_node());
 }
 
@@ -129,7 +129,7 @@ fn test_node_kind_utilities() {
 fn test_node_access_trait() {
     use crate::scanner::SyntaxKind;
 
-    let mut arena = ThinNodeArena::new();
+    let mut arena = NodeArena::new();
 
     // Add an identifier
     let ident_idx = arena.add_identifier(
@@ -163,7 +163,7 @@ fn test_parent_mapping() {
     use crate::parser::syntax_kind_ext::BINARY_EXPRESSION;
     use crate::scanner::SyntaxKind;
 
-    let mut arena = ThinNodeArena::new();
+    let mut arena = NodeArena::new();
 
     // Create a simple expression tree: (a + b)
     // Binary expression with two identifier children
@@ -226,7 +226,7 @@ fn test_parent_mapping_nested() {
     use crate::parser::syntax_kind_ext::BINARY_EXPRESSION;
     use crate::scanner::SyntaxKind;
 
-    let mut arena = ThinNodeArena::new();
+    let mut arena = NodeArena::new();
 
     // Create nested expression: (a + b) * c
     // This creates a tree where:
@@ -302,7 +302,7 @@ fn test_parent_mapping_function() {
     use crate::parser::syntax_kind_ext::{BLOCK, FUNCTION_DECLARATION, RETURN_STATEMENT};
     use crate::scanner::SyntaxKind;
 
-    let mut arena = ThinNodeArena::new();
+    let mut arena = NodeArena::new();
 
     // Create a simple function: function foo() { return 42; }
     let name = arena.add_identifier(

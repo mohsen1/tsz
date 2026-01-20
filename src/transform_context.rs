@@ -1,7 +1,7 @@
 //! Transform Context - Projection Layer for AST Transforms
 //!
 //! This module implements the "Projection Layer" approach to separate Transform logic
-//! from Print logic. Since our ThinNode AST is read-only (Data-Oriented Design), we
+//! from Print logic. Since our Node AST is read-only (Data-Oriented Design), we
 //! cannot mutate nodes. Instead, we create lightweight "transform directives" that tell
 //! the printer how to emit a node differently than its literal AST representation.
 //!
@@ -13,7 +13,7 @@
 //! in a `TransformContext`.
 //!
 //! ## Phase 2: Print Pass
-//! The `ThinPrinter` checks the `TransformContext` before emitting each node. If a
+//! The `Printer` checks the `TransformContext` before emitting each node. If a
 //! directive exists, it uses that to guide emission; otherwise it emits the node directly.
 //!
 //! # Benefits

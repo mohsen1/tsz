@@ -36,7 +36,7 @@
 //! ```
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::class_es5::ClassES5Emitter;
@@ -44,14 +44,14 @@ use crate::transforms::emit_utils;
 
 /// Namespace ES5 emitter
 pub struct NamespaceES5Emitter<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     output: String,
     indent_level: u32,
     is_commonjs: bool,
 }
 
 impl<'a> NamespaceES5Emitter<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         NamespaceES5Emitter {
             arena,
             output: String::with_capacity(4096),
@@ -61,7 +61,7 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     /// Create a namespace emitter with CommonJS mode
-    pub fn with_commonjs(arena: &'a ThinNodeArena, is_commonjs: bool) -> Self {
+    pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
         NamespaceES5Emitter {
             arena,
             output: String::with_capacity(4096),
@@ -1148,10 +1148,10 @@ impl<'a> NamespaceES5Emitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     fn emit_namespace(source: &str) -> String {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         // Find the namespace declaration

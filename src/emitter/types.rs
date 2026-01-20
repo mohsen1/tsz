@@ -1,12 +1,12 @@
-use super::ThinPrinter;
-use crate::parser::thin_node::ThinNode;
+use super::Printer;
+use crate::parser::node::Node;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Types
     // =========================================================================
 
-    pub(super) fn emit_type_reference(&mut self, node: &ThinNode) {
+    pub(super) fn emit_type_reference(&mut self, node: &Node) {
         let Some(type_ref) = self.arena.get_type_ref(node) else {
             return;
         };
@@ -22,7 +22,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_union_type(&mut self, node: &ThinNode) {
+    pub(super) fn emit_union_type(&mut self, node: &Node) {
         let Some(union) = self.arena.get_composite_type(node) else {
             return;
         };
@@ -37,7 +37,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_intersection_type(&mut self, node: &ThinNode) {
+    pub(super) fn emit_intersection_type(&mut self, node: &Node) {
         let Some(intersection) = self.arena.get_composite_type(node) else {
             return;
         };
@@ -52,7 +52,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_array_type(&mut self, node: &ThinNode) {
+    pub(super) fn emit_array_type(&mut self, node: &Node) {
         let Some(array) = self.arena.get_array_type(node) else {
             return;
         };
@@ -61,7 +61,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("[]");
     }
 
-    pub(super) fn emit_tuple_type(&mut self, node: &ThinNode) {
+    pub(super) fn emit_tuple_type(&mut self, node: &Node) {
         let Some(tuple) = self.arena.get_tuple_type(node) else {
             self.write("[]");
             return;
@@ -72,7 +72,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("]");
     }
 
-    pub(super) fn emit_function_type(&mut self, node: &ThinNode) {
+    pub(super) fn emit_function_type(&mut self, node: &Node) {
         let Some(func_type) = self.arena.get_function_type(node) else {
             return;
         };
@@ -95,7 +95,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(func_type.type_annotation);
     }
 
-    pub(super) fn emit_type_literal(&mut self, node: &ThinNode) {
+    pub(super) fn emit_type_literal(&mut self, node: &Node) {
         let Some(type_lit) = self.arena.get_type_literal(node) else {
             self.write("{}");
             return;
@@ -120,7 +120,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("}");
     }
 
-    pub(super) fn emit_parenthesized_type(&mut self, node: &ThinNode) {
+    pub(super) fn emit_parenthesized_type(&mut self, node: &Node) {
         let Some(paren_type) = self.arena.get_wrapped_type(node) else {
             return;
         };
@@ -130,7 +130,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(")");
     }
 
-    pub(super) fn emit_type_parameter(&mut self, node: &ThinNode) {
+    pub(super) fn emit_type_parameter(&mut self, node: &Node) {
         let Some(param) = self.arena.get_type_parameter(node) else {
             return;
         };
@@ -152,7 +152,7 @@ impl<'a> ThinPrinter<'a> {
     // Interface/Type Members (Signatures)
     // =========================================================================
 
-    pub(super) fn emit_property_signature(&mut self, node: &ThinNode) {
+    pub(super) fn emit_property_signature(&mut self, node: &Node) {
         let Some(sig) = self.arena.get_signature(node) else {
             return;
         };
@@ -174,7 +174,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_method_signature(&mut self, node: &ThinNode) {
+    pub(super) fn emit_method_signature(&mut self, node: &Node) {
         let Some(sig) = self.arena.get_signature(node) else {
             return;
         };
@@ -199,7 +199,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_call_signature(&mut self, node: &ThinNode) {
+    pub(super) fn emit_call_signature(&mut self, node: &Node) {
         let Some(sig) = self.arena.get_signature(node) else {
             return;
         };
@@ -224,7 +224,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_construct_signature(&mut self, node: &ThinNode) {
+    pub(super) fn emit_construct_signature(&mut self, node: &Node) {
         let Some(sig) = self.arena.get_signature(node) else {
             return;
         };
@@ -251,7 +251,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_index_signature(&mut self, node: &ThinNode) {
+    pub(super) fn emit_index_signature(&mut self, node: &Node) {
         let Some(sig) = self.arena.get_index_signature(node) else {
             return;
         };

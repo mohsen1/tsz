@@ -10,9 +10,9 @@
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{NodeAccess, ThinNodeArena};
+use crate::parser::node::{NodeAccess, NodeArena};
 use crate::scanner::SyntaxKind;
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 use serde::{Deserialize, Serialize};
 
 /// Kind of inlay hint.
@@ -76,9 +76,9 @@ impl InlayHint {
 /// Provider for inlay hints.
 pub struct InlayHintsProvider<'a> {
     /// The AST node arena.
-    pub arena: &'a ThinNodeArena,
+    pub arena: &'a NodeArena,
     /// The binder state with symbols.
-    pub binder: &'a ThinBinderState,
+    pub binder: &'a BinderState,
     /// Line map for position calculations.
     pub line_map: &'a LineMap,
     /// Source file text.
@@ -88,8 +88,8 @@ pub struct InlayHintsProvider<'a> {
 impl<'a> InlayHintsProvider<'a> {
     /// Create a new inlay hints provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         source: &'a str,
     ) -> Self {
@@ -275,7 +275,7 @@ impl<'a> InlayHintsProvider<'a> {
         // 2. Get the inferred type from the checker
         // 3. Add a hint showing the inferred type
         //
-        // This requires access to the TypeInterner and ThinCheckerState,
+        // This requires access to the TypeInterner and CheckerState,
         // which would need to be added to InlayHintsProvider.
     }
 }

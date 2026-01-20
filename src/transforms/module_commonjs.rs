@@ -21,7 +21,7 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{ThinNode, ThinNodeArena};
+use crate::parser::node::{Node, NodeArena};
 use crate::scanner::SyntaxKind;
 
 /// Emit the CommonJS module preamble
@@ -42,8 +42,8 @@ pub fn emit_commonjs_preamble(writer: &mut impl std::fmt::Write) -> std::fmt::Re
 
 /// Helper function to collect export name from a single declaration node
 fn collect_export_name_from_declaration(
-    arena: &ThinNodeArena,
-    decl_node: &ThinNode,
+    arena: &NodeArena,
+    decl_node: &Node,
     exports: &mut Vec<String>,
 ) {
     match decl_node.kind {
@@ -115,7 +115,7 @@ fn collect_export_name_from_declaration(
 /// Collect all export names from a source file for the exports initialization
 ///
 /// Returns a list of exported names (e.g., ["foo", "bar"])
-pub fn collect_export_names(arena: &ThinNodeArena, statements: &[NodeIndex]) -> Vec<String> {
+pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<String> {
     let mut exports = Vec::new();
 
     for &stmt_idx in statements {
@@ -269,8 +269,8 @@ pub fn emit_exports_init(
 /// var module_1 = require("./module");
 /// ```
 pub fn transform_import_to_require(
-    arena: &ThinNodeArena,
-    node: &ThinNode,
+    arena: &NodeArena,
+    node: &Node,
     module_counter: &mut u32,
 ) -> Option<(String, String)> {
     let import = arena.get_import_decl(node)?;
@@ -307,8 +307,8 @@ pub fn transform_import_to_require(
 /// var myDefault = module_1.default;
 /// ```
 pub fn get_import_bindings(
-    arena: &ThinNodeArena,
-    node: &ThinNode,
+    arena: &NodeArena,
+    node: &Node,
     module_var: &str,
 ) -> Vec<String> {
     let mut bindings = Vec::new();
@@ -411,7 +411,7 @@ pub fn emit_reexport_property(export_name: &str, module_var: &str, import_name: 
 
 /// Check if modifiers contain a specific modifier kind
 fn has_modifier(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     modifiers: &Option<crate::parser::NodeList>,
     kind: u16,
 ) -> bool {
@@ -429,7 +429,7 @@ fn has_modifier(
 
 /// Check if a node has the `export` modifier
 fn has_export_modifier_from_list(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     modifiers: &Option<crate::parser::NodeList>,
 ) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::ExportKeyword as u16)
@@ -437,7 +437,7 @@ fn has_export_modifier_from_list(
 
 /// Check if a node has the `declare` modifier
 fn has_declare_modifier_from_list(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     modifiers: &Option<crate::parser::NodeList>,
 ) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::DeclareKeyword as u16)
@@ -445,7 +445,7 @@ fn has_declare_modifier_from_list(
 
 /// Check if a node has the `const` modifier
 fn has_const_modifier_from_list(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     modifiers: &Option<crate::parser::NodeList>,
 ) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::ConstKeyword as u16)
@@ -453,7 +453,7 @@ fn has_const_modifier_from_list(
 
 /// Check if a node has the `default` modifier
 pub fn has_default_modifier_from_list(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     modifiers: &Option<crate::parser::NodeList>,
 ) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::DefaultKeyword as u16)
@@ -461,7 +461,7 @@ pub fn has_default_modifier_from_list(
 
 /// Collect exported names from a variable declaration (identifier or binding pattern).
 fn collect_declaration_names(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     decl_idx: NodeIndex,
     exports: &mut Vec<String>,
 ) {
@@ -483,7 +483,7 @@ fn collect_declaration_names(
     }
 }
 
-fn collect_binding_names(arena: &ThinNodeArena, name_idx: NodeIndex, exports: &mut Vec<String>) {
+fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, exports: &mut Vec<String>) {
     if name_idx.is_none() {
         return;
     }
@@ -519,7 +519,7 @@ fn collect_binding_names(arena: &ThinNodeArena, name_idx: NodeIndex, exports: &m
 }
 
 fn collect_binding_names_from_element(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     elem_idx: NodeIndex,
     exports: &mut Vec<String>,
 ) {
@@ -537,7 +537,7 @@ fn collect_binding_names_from_element(
 }
 
 /// Get identifier text from a node index
-fn get_identifier_text(arena: &ThinNodeArena, idx: NodeIndex) -> Option<String> {
+fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
     if node.kind == SyntaxKind::Identifier as u16 {
         arena.get_identifier(node).map(|id| id.escaped_text.clone())
@@ -547,7 +547,7 @@ fn get_identifier_text(arena: &ThinNodeArena, idx: NodeIndex) -> Option<String> 
 }
 
 /// Get string literal text from a node index
-fn get_string_literal_text(arena: &ThinNodeArena, idx: NodeIndex) -> Option<String> {
+fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
     if node.kind == SyntaxKind::StringLiteral as u16 {
         arena.get_literal(node).map(|s| s.text.clone())

@@ -31,10 +31,10 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 
 /// Checks if a node or its descendants contain `this` references
-pub fn contains_this_reference(arena: &ThinNodeArena, node_idx: NodeIndex) -> bool {
+pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(node_idx) else {
         return false;
     };
@@ -308,7 +308,7 @@ impl ArrowTransformContext {
     }
 
     /// Analyze an arrow function to determine if `this` capture is needed
-    pub fn analyze_arrow(&mut self, arena: &ThinNodeArena, func_idx: NodeIndex) {
+    pub fn analyze_arrow(&mut self, arena: &NodeArena, func_idx: NodeIndex) {
         let Some(func_node) = arena.get(func_idx) else {
             return;
         };
@@ -327,12 +327,12 @@ impl ArrowTransformContext {
 mod tests {
     use super::*;
     use crate::scanner::SyntaxKind;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_detect_this_in_arrow() {
         let source = "const f = () => this.x;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let _root = parser.parse_source_file();
 
         // Simple test: the source contains "this" keyword
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn test_no_this_in_arrow() {
         let source = "const add = (a, b) => a + b;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let _root = parser.parse_source_file();
 
         // Simple test: the source doesn't contain "this"

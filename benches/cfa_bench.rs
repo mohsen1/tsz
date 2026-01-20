@@ -4,10 +4,10 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use wasm::checker::CheckerOptions;
+use wasm::checker::state::CheckerState;
 use wasm::solver::{TypeId, TypeInterner};
-use wasm::thin_binder::ThinBinderState;
-use wasm::thin_checker::ThinCheckerState;
-use wasm::thin_parser::ThinParserState;
+use wasm::binder::BinderState;
+use wasm::parser::ParserState;
 
 /// Simple code without complex control flow.
 const SIMPLE_CODE: &str = r#"
@@ -198,9 +198,9 @@ fn bench_parse_and_bind(c: &mut Criterion) {
     for (name, code) in test_cases {
         group.bench_with_input(BenchmarkId::new("parse_bind", name), code, |b, code| {
             b.iter(|| {
-                let mut parser = ThinParserState::new("bench.ts".to_string(), code.to_string());
+                let mut parser = ParserState::new("bench.ts".to_string(), code.to_string());
                 let root = parser.parse_source_file();
-                let mut binder = ThinBinderState::new();
+                let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 black_box(root)
             })
@@ -230,13 +230,13 @@ fn bench_type_check(c: &mut Criterion) {
     for (name, code) in test_cases {
         group.bench_with_input(BenchmarkId::new("check", name), code, |b, code| {
             b.iter(|| {
-                let mut parser = ThinParserState::new("bench.ts".to_string(), code.to_string());
+                let mut parser = ParserState::new("bench.ts".to_string(), code.to_string());
                 let root = parser.parse_source_file();
-                let mut binder = ThinBinderState::new();
+                let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 let types = TypeInterner::new();
                 let compiler_options = wasm::cli::config::CheckerOptions::default();
-                let mut checker = ThinCheckerState::new(
+                let mut checker = CheckerState::new(
                     parser.get_arena(),
                     &binder,
                     &types,
@@ -268,9 +268,9 @@ fn bench_flow_analysis(c: &mut Criterion) {
     for (name, code) in test_cases {
         group.bench_with_input(BenchmarkId::new("bind_with_flow", name), code, |b, code| {
             b.iter(|| {
-                let mut parser = ThinParserState::new("bench.ts".to_string(), code.to_string());
+                let mut parser = ParserState::new("bench.ts".to_string(), code.to_string());
                 let root = parser.parse_source_file();
-                let mut binder = ThinBinderState::new();
+                let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 black_box(root)
             })
@@ -300,12 +300,12 @@ fn bench_scaling(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("branches", n), &code, |b, code| {
             b.iter(|| {
-                let mut parser = ThinParserState::new("bench.ts".to_string(), code.clone());
+                let mut parser = ParserState::new("bench.ts".to_string(), code.clone());
                 let root = parser.parse_source_file();
-                let mut binder = ThinBinderState::new();
+                let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 let types = TypeInterner::new();
-                let mut checker = ThinCheckerState::new(
+                let mut checker = CheckerState::new(
                     parser.get_arena(),
                     &binder,
                     &types,
@@ -334,12 +334,12 @@ fn bench_scaling(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("nesting", depth), &code, |b, code| {
             b.iter(|| {
-                let mut parser = ThinParserState::new("bench.ts".to_string(), code.clone());
+                let mut parser = ParserState::new("bench.ts".to_string(), code.clone());
                 let root = parser.parse_source_file();
-                let mut binder = ThinBinderState::new();
+                let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 let types = TypeInterner::new();
-                let mut checker = ThinCheckerState::new(
+                let mut checker = CheckerState::new(
                     parser.get_arena(),
                     &binder,
                     &types,

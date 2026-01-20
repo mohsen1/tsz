@@ -8,7 +8,7 @@
 //! - Serialization overhead (critical for JS boundary)
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use wasm::thin_parser::ThinParserState;
+use wasm::parser::ParserState;
 
 /// Small TypeScript source
 const SMALL_SOURCE: &str = r#"
@@ -200,7 +200,7 @@ fn bench_parse_small(c: &mut Criterion) {
     c.bench_function("parse_small", |b| {
         b.iter(|| {
             let mut parser =
-                ThinParserState::new("bench.ts".to_string(), black_box(SMALL_SOURCE.to_string()));
+                ParserState::new("bench.ts".to_string(), black_box(SMALL_SOURCE.to_string()));
             let root = parser.parse_source_file();
             black_box(root)
         })
@@ -212,7 +212,7 @@ fn bench_parse_medium(c: &mut Criterion) {
     c.bench_function("parse_medium", |b| {
         b.iter(|| {
             let mut parser =
-                ThinParserState::new("bench.ts".to_string(), black_box(MEDIUM_SOURCE.to_string()));
+                ParserState::new("bench.ts".to_string(), black_box(MEDIUM_SOURCE.to_string()));
             let root = parser.parse_source_file();
             black_box(root)
         })
@@ -223,7 +223,7 @@ fn bench_parse_medium(c: &mut Criterion) {
 fn bench_parse_complex(c: &mut Criterion) {
     c.bench_function("parse_complex", |b| {
         b.iter(|| {
-            let mut parser = ThinParserState::new(
+            let mut parser = ParserState::new(
                 "bench.ts".to_string(),
                 black_box(COMPLEX_SOURCE.to_string()),
             );
@@ -246,7 +246,7 @@ fn bench_parse_throughput(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("parse", &label), &source, |b, source| {
             b.iter(|| {
                 let mut parser =
-                    ThinParserState::new("bench.ts".to_string(), black_box(source.clone()));
+                    ParserState::new("bench.ts".to_string(), black_box(source.clone()));
                 let root = parser.parse_source_file();
                 black_box(root)
             })
@@ -256,14 +256,14 @@ fn bench_parse_throughput(c: &mut Criterion) {
     group.finish();
 }
 
-// Benchmark removed - get_source_file_json no longer exists in ThinParser
+// Benchmark removed - get_source_file_json no longer exists in Parser
 
 /// Benchmark: Node allocation overhead
 fn bench_node_allocation(c: &mut Criterion) {
     c.bench_function("node_allocation", |b| {
         b.iter(|| {
             let mut parser =
-                ThinParserState::new("bench.ts".to_string(), MEDIUM_SOURCE.to_string());
+                ParserState::new("bench.ts".to_string(), MEDIUM_SOURCE.to_string());
             let root = parser.parse_source_file();
             let count = parser.get_node_count();
             black_box((root, count))
@@ -284,7 +284,7 @@ fn bench_incremental_reparse(c: &mut Criterion) {
 
         b.iter(|| {
             for source in &sources {
-                let mut parser = ThinParserState::new("bench.ts".to_string(), source.clone());
+                let mut parser = ParserState::new("bench.ts".to_string(), source.clone());
                 let root = parser.parse_source_file();
                 black_box(root);
             }
@@ -293,136 +293,10 @@ fn bench_incremental_reparse(c: &mut Criterion) {
 }
 
 // =============================================================================
-// ThinParser Benchmarks - Cache-Optimized 16-byte Nodes
+// Parser Benchmarks - Cache-Optimized 16-byte Nodes
 // =============================================================================
 
-/// Simple source for ThinParser (no classes/interfaces/types yet)
-const THIN_SIMPLE_SOURCE: &str = r#"
-const x = 42;
-const y = "hello";
-function add(a, b) {
-    return a + b;
-}
-let result = add(x, 10);
-if (result > 50) {
-    console.log("big");
-} else {
-    console.log("small");
-}
-for (let i = 0; i < 10; i++) {
-    result = result + i;
-}
-"#;
-
-/// Benchmark: ThinParser parse small source
-fn bench_thin_parse_small(c: &mut Criterion) {
-    c.bench_function("thin_parse_small", |b| {
-        b.iter(|| {
-            let mut parser = ThinParserState::new(
-                "bench.ts".to_string(),
-                black_box(THIN_SIMPLE_SOURCE.to_string()),
-            );
-            let root = parser.parse_source_file();
-            black_box(root)
-        })
-    });
-}
-
-/// Benchmark: Compare regular Parser vs ThinParser on same source
-fn bench_parser_comparison(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parser_comparison");
-
-    // Use THIN_SIMPLE_SOURCE since ThinParser doesn't support all constructs yet
-    let source = THIN_SIMPLE_SOURCE;
-    let bytes = source.len() as u64;
-
-    group.throughput(Throughput::Bytes(bytes));
-
-    group.bench_function("regular_parser", |b| {
-        b.iter(|| {
-            let mut parser =
-                ThinParserState::new("bench.ts".to_string(), black_box(source.to_string()));
-            let root = parser.parse_source_file();
-            black_box(root)
-        })
-    });
-
-    group.bench_function("thin_parser", |b| {
-        b.iter(|| {
-            let mut parser =
-                ThinParserState::new("bench.ts".to_string(), black_box(source.to_string()));
-            let root = parser.parse_source_file();
-            black_box(root)
-        })
-    });
-
-    group.finish();
-}
-
-/// Benchmark: ThinParser memory efficiency (node count vs memory)
-fn bench_thin_parser_memory(c: &mut Criterion) {
-    c.bench_function("thin_parser_node_allocation", |b| {
-        b.iter(|| {
-            let mut parser =
-                ThinParserState::new("bench.ts".to_string(), THIN_SIMPLE_SOURCE.to_string());
-            let root = parser.parse_source_file();
-            let count = parser.get_node_count();
-            // ThinNode = 16 bytes vs Node = 208 bytes
-            // Memory savings = count * (208 - 16) = count * 192 bytes saved
-            black_box((root, count))
-        })
-    });
-}
-
-/// Benchmark: ThinParser throughput for generated code
-fn bench_thin_parse_throughput(c: &mut Criterion) {
-    let mut group = c.benchmark_group("thin_parser_throughput");
-
-    // Generate simple source without classes/interfaces
-    fn generate_thin_source(functions: usize, statements_per_fn: usize) -> String {
-        let mut source = String::with_capacity(functions * statements_per_fn * 50);
-        source.push_str("// Generated source for ThinParser benchmarking\n\n");
-
-        for f in 0..functions {
-            source.push_str(&format!("function fn{}(x, y) {{\n", f));
-            for s in 0..statements_per_fn {
-                source.push_str(&format!("    let v{} = x + {};\n", s, s));
-            }
-            source.push_str("    return x + y;\n");
-            source.push_str("}\n\n");
-        }
-
-        // Add some calls
-        for f in 0..functions {
-            source.push_str(&format!("let r{} = fn{}(1, 2);\n", f, f));
-        }
-
-        source
-    }
-
-    for (functions, statements) in [(10, 5), (20, 10), (50, 5)].iter() {
-        let source = generate_thin_source(*functions, *statements);
-        let bytes = source.len() as u64;
-        let label = format!("{}fn_{}stmt", functions, statements);
-
-        group.throughput(Throughput::Bytes(bytes));
-        group.bench_with_input(
-            BenchmarkId::new("thin_parse", &label),
-            &source,
-            |b, source| {
-                b.iter(|| {
-                    let mut parser =
-                        ThinParserState::new("bench.ts".to_string(), black_box(source.clone()));
-                    let root = parser.parse_source_file();
-                    black_box(root)
-                })
-            },
-        );
-    }
-
-    group.finish();
-}
-
+/// Simple source for Parser (no classes/interfaces/types yet)
 criterion_group!(
     benches,
     bench_parse_small,
@@ -431,11 +305,6 @@ criterion_group!(
     bench_parse_throughput,
     bench_node_allocation,
     bench_incremental_reparse,
-    // ThinParser benchmarks
-    bench_thin_parse_small,
-    bench_parser_comparison,
-    bench_thin_parser_memory,
-    bench_thin_parse_throughput,
 );
 
 criterion_main!(benches);

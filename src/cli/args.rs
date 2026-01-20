@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
-use crate::thin_emitter::{ModuleKind, ScriptTarget};
+use crate::emitter::{ModuleKind, ScriptTarget};
 
 /// CLI arguments for the tsz binary.
 #[derive(Parser, Debug)]

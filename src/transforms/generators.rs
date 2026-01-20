@@ -61,7 +61,7 @@
 //! - 6: catch
 //! - 7: endfinally
 
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::source_map::Mapping;
@@ -198,7 +198,7 @@ impl GeneratorTransformState {
 
 /// Generator ES5 transformer for converting generator functions to state machines.
 pub struct GeneratorES5Transformer<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     output: String,
     indent_level: u32,
     source_text: Option<&'a str>,
@@ -211,7 +211,7 @@ pub struct GeneratorES5Transformer<'a> {
 }
 
 impl<'a> GeneratorES5Transformer<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             output: String::with_capacity(1024),
@@ -1693,12 +1693,12 @@ impl<'a> GeneratorES5Transformer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_simple_generator_transform() {
         let source = r#"function* gen() { yield 1; yield 2; return 3; }"#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         // Navigate to function declaration
@@ -1721,7 +1721,7 @@ mod tests {
     #[test]
     fn test_generator_with_yield_star() {
         let source = r#"function* delegating() { yield* [1, 2, 3]; }"#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.get_arena().get(root) {
@@ -1742,7 +1742,7 @@ mod tests {
     #[test]
     fn test_empty_generator() {
         let source = r#"function* empty() { }"#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.get_arena().get(root) {

@@ -271,8 +271,8 @@ impl ParserTestFixture {
     }
 
     /// Parse the source and return the parser state
-    pub fn parse(&self) -> crate::thin_parser::ThinParserState {
-        let mut parser = crate::thin_parser::ThinParserState::new(
+    pub fn parse(&self) -> crate::parser::ParserState {
+        let mut parser = crate::parser::ParserState::new(
             self.file_name.clone(),
             self.source.clone(),
         );
@@ -281,14 +281,14 @@ impl ParserTestFixture {
     }
 
     /// Parse and bind the source, returning both parser and binder states
-    pub fn parse_and_bind(&self) -> (crate::thin_parser::ThinParserState, crate::thin_binder::ThinBinderState) {
-        let mut parser = crate::thin_parser::ThinParserState::new(
+    pub fn parse_and_bind(&self) -> (crate::parser::ParserState, crate::binder::BinderState) {
+        let mut parser = crate::parser::ParserState::new(
             self.file_name.clone(),
             self.source.clone(),
         );
         let root = parser.parse_source_file();
 
-        let mut binder = crate::thin_binder::ThinBinderState::new();
+        let mut binder = crate::binder::BinderState::new();
         binder.bind_source_file(&parser.arena, root);
 
         (parser, binder)

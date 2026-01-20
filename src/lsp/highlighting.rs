@@ -7,8 +7,8 @@
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::references::FindReferences;
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
-use crate::thin_binder::ThinBinderState;
+use crate::parser::node::NodeArena;
+use crate::binder::BinderState;
 
 /// The kind of highlight - distinguishes between reads and writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -65,8 +65,8 @@ impl DocumentHighlight {
 
 /// Provider for document highlighting.
 pub struct DocumentHighlightProvider<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     source_text: &'a str,
 }
@@ -74,8 +74,8 @@ pub struct DocumentHighlightProvider<'a> {
 impl<'a> DocumentHighlightProvider<'a> {
     /// Create a new document highlight provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         source_text: &'a str,
     ) -> Self {
@@ -252,17 +252,17 @@ impl<'a> DocumentHighlightProvider<'a> {
 mod highlighting_tests {
     use super::*;
     use crate::lsp::position::LineMap;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_document_highlight_simple_variable() {
         let source = "let x = 1;\nlet y = x + 1;\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -285,11 +285,11 @@ mod highlighting_tests {
     #[test]
     fn test_document_highlight_function() {
         let source = "function foo() {\n  return 1;\n}\nfoo();\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -312,11 +312,11 @@ mod highlighting_tests {
     #[test]
     fn test_document_highlight_compound_assignment() {
         let source = "let count = 0;\ncount += 1;\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -339,11 +339,11 @@ mod highlighting_tests {
     #[test]
     fn test_document_highlight_no_symbol() {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -359,11 +359,11 @@ mod highlighting_tests {
     #[test]
     fn test_document_highlight_read_kind() {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -378,11 +378,11 @@ mod highlighting_tests {
     #[test]
     fn test_document_highlight_structs() {
         let source = "let x = 1;\nconsole.log(x);\n";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);

@@ -1,12 +1,12 @@
-//! ThinChecker - Type checker using ThinNodeArena and Solver
+//! Checker - Type checker using NodeArena and Solver
 //!
-//! This checker uses the ThinNode architecture for cache-optimized AST access
+//! This checker uses the Node architecture for cache-optimized AST access
 //! and the Solver's type system for structural type interning.
 //!
 //! # Architecture
 //!
-//! - Uses ThinNodeArena for AST access (16-byte cache-optimized nodes)
-//! - Uses ThinBinderState for symbol information
+//! - Uses NodeArena for AST access (16-byte cache-optimized nodes)
+//! - Uses BinderState for symbol information
 //! - Uses Solver's TypeInterner for structural type equality (O(1) comparison)
 //! - Uses solver::lower::TypeLower for AST-to-type conversion
 //!
@@ -22,27 +22,27 @@ use crate::checker::types::diagnostics::{
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
 use crate::interner::Atom;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{ImportDeclData, ThinNodeArena};
+use crate::parser::node::{ImportDeclData, NodeArena};
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::solver::{ContextualTypeContext, TypeId, TypeInterner};
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 // =============================================================================
-// ThinCheckerState
+// CheckerState
 // =============================================================================
 
-/// Type checker state using ThinNodeArena and Solver type system.
+/// Type checker state using NodeArena and Solver type system.
 ///
 /// This is a performance-optimized checker that works directly with the
-/// cache-friendly ThinNode architecture and uses the solver's TypeInterner
+/// cache-friendly Node architecture and uses the solver's TypeInterner
 /// for structural type equality.
 ///
 /// The state is stored in a `CheckerContext` which can be shared with
 /// specialized checker modules (expressions, statements, declarations).
-pub struct ThinCheckerState<'a> {
+pub struct CheckerState<'a> {
     /// Shared checker context containing all state.
     pub ctx: CheckerContext<'a>,
 }
@@ -102,8 +102,8 @@ struct FlowResult {
     exits: Option<FxHashSet<PropertyKey>>,
 }
 
-impl<'a> ThinCheckerState<'a> {
-    /// Create a new ThinCheckerState.
+impl<'a> CheckerState<'a> {
+    /// Create a new CheckerState.
     ///
     /// # Arguments
     /// * `arena` - The AST node arena
@@ -112,18 +112,18 @@ impl<'a> ThinCheckerState<'a> {
     /// * `file_name` - The source file name
     /// * `compiler_options` - Compiler options for type checking
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
-        ThinCheckerState {
+        CheckerState {
             ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
     }
 
-    /// Create a new ThinCheckerState with a persistent cache.
+    /// Create a new CheckerState with a persistent cache.
     /// This allows reusing type checking results from previous queries.
     ///
     /// # Arguments
@@ -134,14 +134,14 @@ impl<'a> ThinCheckerState<'a> {
     /// * `cache` - The persistent type cache from previous queries
     /// * `compiler_options` - Compiler options for type checking
     pub fn with_cache(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: crate::checker::TypeCache,
         compiler_options: CheckerOptions,
     ) -> Self {
-        ThinCheckerState {
+        CheckerState {
             ctx: CheckerContext::with_cache(
                 arena,
                 binder,
@@ -153,7 +153,7 @@ impl<'a> ThinCheckerState<'a> {
         }
     }
 
-    /// Create a new ThinCheckerState with explicit compiler options.
+    /// Create a new CheckerState with explicit compiler options.
     ///
     /// # Arguments
     /// * `arena` - The AST node arena
@@ -162,27 +162,27 @@ impl<'a> ThinCheckerState<'a> {
     /// * `file_name` - The source file name
     /// * `compiler_options` - Compiler options for type checking
     pub fn with_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        ThinCheckerState {
+        CheckerState {
             ctx: CheckerContext::with_options(arena, binder, types, file_name, compiler_options),
         }
     }
 
-    /// Create a new ThinCheckerState with explicit compiler options and a persistent cache.
+    /// Create a new CheckerState with explicit compiler options and a persistent cache.
     pub fn with_cache_and_options(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         types: &'a TypeInterner,
         file_name: String,
         cache: crate::checker::TypeCache,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        ThinCheckerState {
+        CheckerState {
             ctx: CheckerContext::with_cache_and_options(
                 arena,
                 binder,
@@ -407,7 +407,7 @@ impl<'a> ThinCheckerState<'a> {
         let name = self.ctx.arena.get_identifier(node)?.escaped_text.as_str();
 
         // Collect lib binders for cross-arena symbol lookup
-        let lib_binders: Vec<Arc<crate::thin_binder::ThinBinderState>> = self
+        let lib_binders: Vec<Arc<crate::binder::BinderState>> = self
             .ctx
             .lib_contexts
             .iter()
@@ -3175,7 +3175,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn extract_params_from_signature_in_type_literal(
         &mut self,
-        sig: &crate::parser::thin_node::SignatureData,
+        sig: &crate::parser::node::SignatureData,
     ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
         let Some(ref params_list) = sig.parameters else {
             return (Vec::new(), None);
@@ -4281,7 +4281,7 @@ impl<'a> ThinCheckerState<'a> {
     /// Helper to extract parameters from a SignatureData.
     fn extract_params_from_signature(
         &mut self,
-        sig: &crate::parser::thin_node::SignatureData,
+        sig: &crate::parser::node::SignatureData,
     ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
         use crate::solver::ParamInfo;
 
@@ -4528,7 +4528,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn call_signature_from_function(
         &mut self,
-        func: &crate::parser::thin_node::FunctionData,
+        func: &crate::parser::node::FunctionData,
     ) -> crate::solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&func.parameters);
@@ -4547,7 +4547,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn call_signature_from_method(
         &mut self,
-        method: &crate::parser::thin_node::MethodDeclData,
+        method: &crate::parser::node::MethodDeclData,
     ) -> crate::solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
@@ -4566,7 +4566,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn call_signature_from_constructor(
         &mut self,
-        ctor: &crate::parser::thin_node::ConstructorData,
+        ctor: &crate::parser::node::ConstructorData,
         instance_type: TypeId,
         class_type_params: &[crate::solver::TypeParamInfo],
     ) -> crate::solver::CallSignature {
@@ -4591,7 +4591,7 @@ impl<'a> ThinCheckerState<'a> {
     fn get_class_instance_type(
         &mut self,
         class_idx: NodeIndex,
-        class: &crate::parser::thin_node::ClassData,
+        class: &crate::parser::node::ClassData,
     ) -> TypeId {
         use rustc_hash::FxHashSet;
 
@@ -4602,7 +4602,7 @@ impl<'a> ThinCheckerState<'a> {
     fn get_class_instance_type_inner(
         &mut self,
         class_idx: NodeIndex,
-        class: &crate::parser::thin_node::ClassData,
+        class: &crate::parser::node::ClassData,
         visited: &mut rustc_hash::FxHashSet<crate::binder::SymbolId>,
     ) -> TypeId {
         use crate::scanner::SyntaxKind;
@@ -5287,7 +5287,7 @@ impl<'a> ThinCheckerState<'a> {
     fn get_class_constructor_type(
         &mut self,
         class_idx: NodeIndex,
-        class: &crate::parser::thin_node::ClassData,
+        class: &crate::parser::node::ClassData,
     ) -> TypeId {
         use crate::scanner::SyntaxKind;
         use crate::solver::{
@@ -6935,7 +6935,7 @@ impl<'a> ThinCheckerState<'a> {
         // from the current arena, delegate to a checker using the correct arena.
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
             if !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena) {
-                let mut checker = ThinCheckerState::new(
+                let mut checker = CheckerState::new(
                     symbol_arena.as_ref(),
                     self.ctx.binder,
                     self.ctx.types,
@@ -8174,7 +8174,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn class_declaration_from_identifier_in_block(
         &self,
-        block: &crate::parser::thin_node::BlockData,
+        block: &crate::parser::node::BlockData,
         name: &str,
     ) -> Option<NodeIndex> {
         for &stmt_idx in &block.statements.nodes {
@@ -8214,7 +8214,7 @@ impl<'a> ThinCheckerState<'a> {
     fn mixin_base_param_index(
         &self,
         class_expr_idx: NodeIndex,
-        func: &crate::parser::thin_node::FunctionData,
+        func: &crate::parser::node::FunctionData,
     ) -> Option<usize> {
         let class_node = self.ctx.arena.get(class_expr_idx)?;
         let class_data = self.ctx.arena.get_class(class_node)?;
@@ -9376,7 +9376,7 @@ impl<'a> ThinCheckerState<'a> {
     fn get_type_of_property_access_by_name(
         &mut self,
         idx: NodeIndex,
-        access: &crate::parser::thin_node::AccessExprData,
+        access: &crate::parser::node::AccessExprData,
         object_type: TypeId,
         property_name: &str,
     ) -> TypeId {
@@ -9431,7 +9431,7 @@ impl<'a> ThinCheckerState<'a> {
     fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
-        access: &crate::parser::thin_node::AccessExprData,
+        access: &crate::parser::node::AccessExprData,
         name_idx: NodeIndex,
         object_type: TypeId,
     ) -> TypeId {
@@ -11995,7 +11995,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn constructor_accessibility_mismatch_for_var_decl(
         &self,
-        var_decl: &crate::parser::thin_node::VariableDeclarationData,
+        var_decl: &crate::parser::node::VariableDeclarationData,
     ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
         if var_decl.initializer.is_none() {
             return None;
@@ -12124,7 +12124,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         fn parse_type(
-            checker: &mut ThinCheckerState,
+            checker: &mut CheckerState,
             text: &str,
             pos: &mut usize,
         ) -> Option<TypeId> {
@@ -12147,7 +12147,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         fn parse_function_type(
-            checker: &mut ThinCheckerState,
+            checker: &mut CheckerState,
             text: &str,
             pos: &mut usize,
         ) -> Option<TypeId> {
@@ -13237,7 +13237,7 @@ impl<'a> ThinCheckerState<'a> {
                 let mut map_signature = |sig: &CallSignature,
                                          this_type: TypeId,
                                          cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
-                                         ctx: &mut ThinCheckerState|
+                                         ctx: &mut CheckerState|
                  -> CallSignature {
                     let mut local_changed = false;
                     let params: Vec<ParamInfo> = sig
@@ -13825,7 +13825,7 @@ impl<'a> ThinCheckerState<'a> {
     ) -> Vec<crate::solver::TypeParamInfo> {
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
             if !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena) {
-                let mut checker = ThinCheckerState::new(
+                let mut checker = CheckerState::new(
                     symbol_arena.as_ref(),
                     self.ctx.binder,
                     self.ctx.types,
@@ -16539,7 +16539,7 @@ impl<'a> ThinCheckerState<'a> {
 
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
-        let compute_final_type = |checker: &mut ThinCheckerState| -> TypeId {
+        let compute_final_type = |checker: &mut CheckerState| -> TypeId {
             let mut has_type_annotation = !var_decl.type_annotation.is_none();
             let mut declared_type = if has_type_annotation {
                 checker.get_type_from_type_node(var_decl.type_annotation)
@@ -16889,7 +16889,7 @@ impl<'a> ThinCheckerState<'a> {
         pattern_kind: u16,
         element_index: usize,
         parent_type: TypeId,
-        element_data: &crate::parser::thin_node::BindingElementData,
+        element_data: &crate::parser::node::BindingElementData,
     ) -> TypeId {
         use crate::solver::TypeKey;
 
@@ -17377,7 +17377,7 @@ impl<'a> ThinCheckerState<'a> {
         }
 
         fn collect_candidates<'a>(
-            checker: &ThinCheckerState<'a>,
+            checker: &CheckerState<'a>,
             type_id: TypeId,
             out: &mut Vec<NodeIndex>,
         ) {
@@ -18197,7 +18197,7 @@ impl<'a> ThinCheckerState<'a> {
     fn check_class_expression(
         &mut self,
         class_idx: NodeIndex,
-        class: &crate::parser::thin_node::ClassData,
+        class: &crate::parser::node::ClassData,
     ) {
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
@@ -18229,7 +18229,7 @@ impl<'a> ThinCheckerState<'a> {
     fn check_property_initialization(
         &mut self,
         _class_idx: NodeIndex,
-        class: &crate::parser::thin_node::ClassData,
+        class: &crate::parser::node::ClassData,
         is_declared: bool,
         _is_abstract: bool,
     ) {
@@ -18372,7 +18372,7 @@ impl<'a> ThinCheckerState<'a> {
     fn property_requires_initialization(
         &mut self,
         member_idx: NodeIndex,
-        prop: &crate::parser::thin_node::PropertyDeclData,
+        prop: &crate::parser::node::PropertyDeclData,
         is_derived_class: bool,
     ) -> bool {
         use crate::scanner::SyntaxKind;
@@ -18434,7 +18434,7 @@ impl<'a> ThinCheckerState<'a> {
         !self.type_includes_undefined(prop_type)
     }
 
-    fn class_has_base(&self, class: &crate::parser::thin_node::ClassData) -> bool {
+    fn class_has_base(&self, class: &crate::parser::node::ClassData) -> bool {
         use crate::scanner::SyntaxKind;
 
         let Some(ref heritage_clauses) = class.heritage_clauses else {
@@ -19233,7 +19233,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn analyze_try_statement(
         &self,
-        try_data: &crate::parser::thin_node::TryData,
+        try_data: &crate::parser::node::TryData,
         assigned_in: &FxHashSet<PropertyKey>,
         tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
@@ -19292,7 +19292,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn analyze_switch_statement(
         &self,
-        switch_data: &crate::parser::thin_node::SwitchData,
+        switch_data: &crate::parser::node::SwitchData,
         assigned_in: &FxHashSet<PropertyKey>,
         tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
@@ -20255,7 +20255,7 @@ impl<'a> ThinCheckerState<'a> {
 
     /// Check if a node's modifiers include the 'export' keyword.
     /// Helper for is_file_module to check export on declarations.
-    fn has_export_modifier_on_modifiers(&self, node: &crate::parser::thin_node::ThinNode) -> bool {
+    fn has_export_modifier_on_modifiers(&self, node: &crate::parser::node::Node) -> bool {
         let modifiers = match node.kind {
             syntax_kind_ext::FUNCTION_DECLARATION => self
                 .ctx
@@ -21616,7 +21616,7 @@ impl<'a> ThinCheckerState<'a> {
     fn check_property_inheritance_compatibility(
         &mut self,
         _class_idx: NodeIndex,
-        class_data: &crate::parser::thin_node::ClassData,
+        class_data: &crate::parser::node::ClassData,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
         use crate::scanner::SyntaxKind;
@@ -21921,7 +21921,7 @@ impl<'a> ThinCheckerState<'a> {
     fn check_interface_extension_compatibility(
         &mut self,
         _iface_idx: NodeIndex,
-        iface_data: &crate::parser::thin_node::InterfaceData,
+        iface_data: &crate::parser::node::InterfaceData,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
         use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
@@ -22233,7 +22233,7 @@ impl<'a> ThinCheckerState<'a> {
     fn check_abstract_member_implementations(
         &mut self,
         class_idx: NodeIndex,
-        class_data: &crate::parser::thin_node::ClassData,
+        class_data: &crate::parser::node::ClassData,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
         use crate::scanner::SyntaxKind;
@@ -22448,7 +22448,7 @@ impl<'a> ThinCheckerState<'a> {
     fn check_implements_clauses(
         &mut self,
         _class_idx: NodeIndex,
-        class_data: &crate::parser::thin_node::ClassData,
+        class_data: &crate::parser::node::ClassData,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
         use crate::scanner::SyntaxKind;
@@ -23080,7 +23080,7 @@ impl<'a> ThinCheckerState<'a> {
 
     fn maybe_report_implicit_any_parameter(
         &mut self,
-        param: &crate::parser::thin_node::ParameterData,
+        param: &crate::parser::node::ParameterData,
         has_contextual_type: bool,
     ) {
         use crate::checker::types::diagnostics::{
@@ -25425,7 +25425,7 @@ impl<'a> ThinCheckerState<'a> {
         try_falls || catch_falls
     }
 
-    fn loop_falls_through(&mut self, node: &crate::parser::thin_node::ThinNode) -> bool {
+    fn loop_falls_through(&mut self, node: &crate::parser::node::Node) -> bool {
         let Some(loop_data) = self.ctx.arena.get_loop(node) else {
             return true;
         };

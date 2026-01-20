@@ -1,14 +1,14 @@
 //! Utility functions for LSP operations.
 //!
-//! Provides efficient node lookup using the flat ThinNodeArena structure.
+//! Provides efficient node lookup using the flat NodeArena structure.
 
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 
 /// Find the most specific node containing the given byte offset.
 ///
 /// This performs a linear scan over the arena, which is extremely cache-efficient
-/// because ThinNodes are 16 bytes each and stored contiguously. This is much faster
+/// because Nodes are 16 bytes each and stored contiguously. This is much faster
 /// than pointer-chasing a traditional tree structure.
 ///
 /// Returns the smallest (most specific) node that contains the offset.
@@ -16,7 +16,7 @@ use crate::parser::thin_node::ThinNodeArena;
 /// this returns the identifier node, not the call expression.
 ///
 /// Returns `NodeIndex::NONE` if no node contains the offset.
-pub fn find_node_at_offset(arena: &ThinNodeArena, offset: u32) -> NodeIndex {
+pub fn find_node_at_offset(arena: &NodeArena, offset: u32) -> NodeIndex {
     let mut best_match = NodeIndex::NONE;
     let mut min_len = u32::MAX;
 
@@ -38,7 +38,7 @@ pub fn find_node_at_offset(arena: &ThinNodeArena, offset: u32) -> NodeIndex {
 /// Find the nearest node at or before an offset, skipping whitespace and
 /// optional chaining/member access punctuation when no node is found.
 pub fn find_node_at_or_before_offset(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     offset: u32,
     source: &str,
 ) -> NodeIndex {
@@ -83,7 +83,7 @@ pub fn find_node_at_or_before_offset(
 /// Find all nodes that overlap with a given range.
 ///
 /// Returns nodes where [node.pos, node.end) overlaps with [start, end).
-pub fn find_nodes_in_range(arena: &ThinNodeArena, start: u32, end: u32) -> Vec<NodeIndex> {
+pub fn find_nodes_in_range(arena: &NodeArena, start: u32, end: u32) -> Vec<NodeIndex> {
     let mut result = Vec::new();
 
     for (i, node) in arena.nodes.iter().enumerate() {
@@ -99,12 +99,12 @@ pub fn find_nodes_in_range(arena: &ThinNodeArena, start: u32, end: u32) -> Vec<N
 #[cfg(test)]
 mod utils_tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_find_node_at_offset_simple() {
         // const x = 1;
-        let mut parser = ThinParserState::new("test.ts".to_string(), "const x = 1;".to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), "const x = 1;".to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -123,7 +123,7 @@ mod utils_tests {
 
     #[test]
     fn test_find_node_at_offset_none() {
-        let mut parser = ThinParserState::new("test.ts".to_string(), "const x = 1;".to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), "const x = 1;".to_string());
         let _ = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -134,7 +134,7 @@ mod utils_tests {
 
     #[test]
     fn test_find_nodes_in_range() {
-        let mut parser = ThinParserState::new(
+        let mut parser = ParserState::new(
             "test.ts".to_string(),
             "const x = 1;\nlet y = 2;".to_string(),
         );

@@ -9,7 +9,7 @@
 //! - Getter/setter inference
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
@@ -17,12 +17,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Object literal type checker
 pub struct ObjectLiteralChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     types: &'a TypeInterner,
 }
 
 impl<'a> ObjectLiteralChecker<'a> {
-    pub fn new(arena: &'a ThinNodeArena, types: &'a TypeInterner) -> Self {
+    pub fn new(arena: &'a NodeArena, types: &'a TypeInterner) -> Self {
         Self { arena, types }
     }
 

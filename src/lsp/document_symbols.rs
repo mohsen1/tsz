@@ -4,7 +4,7 @@
 //! functions, classes, interfaces, types, variables, etc.
 
 use crate::lsp::position::{LineMap, Position, Range};
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
@@ -84,14 +84,14 @@ impl DocumentSymbol {
 
 /// Document symbol provider.
 pub struct DocumentSymbolProvider<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     line_map: &'a LineMap,
     source_text: &'a str,
 }
 
 impl<'a> DocumentSymbolProvider<'a> {
     /// Create a new document symbol provider.
-    pub fn new(arena: &'a ThinNodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
+    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
         Self {
             arena,
             line_map,
@@ -579,12 +579,12 @@ impl<'a> DocumentSymbolProvider<'a> {
 mod document_symbols_tests {
     use super::*;
     use crate::lsp::position::LineMap;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_document_symbols_class_with_members() {
         let source = "class Foo {\n  bar() {}\n  prop: number;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let line_map = LineMap::build(source);
 
@@ -606,7 +606,7 @@ mod document_symbols_tests {
     #[test]
     fn test_document_symbols_function_and_variable() {
         let source = "function baz() {}\nconst x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let line_map = LineMap::build(source);
 
@@ -625,7 +625,7 @@ mod document_symbols_tests {
     #[test]
     fn test_document_symbols_interface() {
         let source = "interface Point {\n  x: number;\n  y: number;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let line_map = LineMap::build(source);
 
@@ -640,7 +640,7 @@ mod document_symbols_tests {
     #[test]
     fn test_document_symbols_enum() {
         let source = "enum Color { Red, Green, Blue }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let line_map = LineMap::build(source);
 
@@ -659,7 +659,7 @@ mod document_symbols_tests {
     #[test]
     fn test_document_symbols_multiple_variables() {
         let source = "const a = 1, b = 2;\nlet c = 3;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let line_map = LineMap::build(source);
 

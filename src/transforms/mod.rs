@@ -18,7 +18,7 @@
 //! - Printer can apply formatting consistently
 //! - Future optimizations (minification, pretty-print) only need to change the printer
 //!
-//! The transforms are used by thin_emitter.rs for ES5 downleveling.
+//! The transforms are used by the emitter for ES5 downleveling.
 
 pub mod arrow_es5;
 pub mod async_es5;

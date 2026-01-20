@@ -7,18 +7,18 @@
 //! - Contextual typing from expected types
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
 use crate::solver::{TypeId, TypeInterner};
 
 /// Array literal type checker
 pub struct ArrayLiteralChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     types: &'a TypeInterner,
 }
 
 impl<'a> ArrayLiteralChecker<'a> {
-    pub fn new(arena: &'a ThinNodeArena, types: &'a TypeInterner) -> Self {
+    pub fn new(arena: &'a NodeArena, types: &'a TypeInterner) -> Self {
         Self { arena, types }
     }
 
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_array_literal_checker_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let types = TypeInterner::new();
         let _checker = ArrayLiteralChecker::new(&arena, &types);
     }

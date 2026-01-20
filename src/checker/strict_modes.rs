@@ -10,13 +10,13 @@
 //! - useUnknownInCatchVariables: catch variables as unknown
 //! - exactOptionalPropertyTypes: precise optional property handling
 
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
 use crate::solver::{TypeId, TypeInterner, TypeKey};
 
 /// Strict modes checker that applies various strict mode rules
 pub struct StrictModesChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     types: &'a TypeInterner,
     strict_null_checks: bool,
     strict_function_types: bool,
@@ -30,7 +30,7 @@ pub struct StrictModesChecker<'a> {
 
 impl<'a> StrictModesChecker<'a> {
     pub fn new(
-        arena: &'a ThinNodeArena,
+        arena: &'a NodeArena,
         types: &'a TypeInterner,
         strict_null_checks: bool,
         strict_function_types: bool,
@@ -57,7 +57,7 @@ impl<'a> StrictModesChecker<'a> {
 
     /// Create from CheckerOptions
     pub fn from_options(
-        arena: &'a ThinNodeArena,
+        arena: &'a NodeArena,
         types: &'a TypeInterner,
         options: &crate::checker::context::CheckerOptions,
     ) -> Self {
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_strict_modes_checker_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let types = TypeInterner::new();
         let checker = StrictModesChecker::new(
             &arena,
@@ -335,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_catch_variable_type() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let types = TypeInterner::new();
 
         // With useUnknownInCatchVariables

@@ -22,8 +22,8 @@ The pipeline is linear but separates **Syntax** (Parser) from **Semantics** (Sol
 ```mermaid
 graph LR
     A[Source Text] -->|Zero-Copy Slice| B(Scanner)
-    B -->|Lazy Tokens| C(ThinParser)
-    C -->|Node Indices| D[ThinNodeArena]
+    B -->|Lazy Tokens| C(Parser)
+    C -->|Node Indices| D[NodeArena]
 
     subgraph "Phase 1: Syntax (Parallel)"
     B
@@ -43,17 +43,17 @@ graph LR
     G --> H[JavaScript Output]
 ```
 
-### 3. Memory Architecture: The "ThinNode" System
+### 3. Memory Architecture: The "Node" System
 
-The core innovation is the **ThinNode** representation. Benchmarks confirm the Emitter achieves **500 MB/s** throughput due to this layout.
+The core innovation is the **Node** representation. Benchmarks confirm the Emitter achieves **500 MB/s** throughput due to this layout.
 
 #### 3.1. The 16-Byte Header
 
-Every AST node is a fixed-size, 16-byte header stored in `Vec<ThinNode>`.
+Every AST node is a fixed-size, 16-byte header stored in `Vec<Node>`.
 
 ```rust
 #[repr(C)]
-pub struct ThinNode {
+pub struct Node {
     pub kind: u16,        // SyntaxKind
     pub flags: u16,       // NodeFlags (Contextual info)
     pub pos: u32,         // Start position (byte offset)
@@ -97,10 +97,10 @@ _Exceptions:_ Strings requiring escape sequence processing (e.g., `"foo\nbar"`) 
 
 ### 5. The Parser Implementation
 
-The parser (`thin_parser.rs`) is a recursive descent parser constructing the `ThinNodeArena`.
+The parser (`parser/state.rs`) is a recursive descent parser constructing the `NodeArena`.
 
 - **Error Recovery:** No `Result<T, E>`. Errors are pushed to a side `Vec<Diagnostic>`, and the parser inserts "Missing" nodes to maintain tree integrity.
-- **Incremental Parsing:** Since nodes are just arrays of integers (`Vec<ThinNode>`), incremental updates can reuse chunks of the array (future capability).
+- **Incremental Parsing:** Since nodes are just arrays of integers (`Vec<Node>`), incremental updates can reuse chunks of the array (future capability).
 - **Recursion Guard:** Explicit depth checks (`recursion_depth`) are required to prevent stack overflows on deep trees, as the Solver handles logic recursion, but the Parser handles syntactic recursion.
 
 ## Semantic Analysis (The "Brain")
@@ -115,7 +115,7 @@ The Semantic Layer is split into three distinct components to enforce separation
 
 ### 1. The Binder: Stateless Scope Resolution
 
-The Binder (`thin_binder.rs`) performs a single pass over the AST to build a persistent **Scope Graph**.
+The Binder (`binder/state.rs`) performs a single pass over the AST to build a persistent **Scope Graph**.
 
 #### 1.1. No Transient Scopes
 
@@ -172,7 +172,7 @@ We use the **`ena`** crate (Union-Find) to solve generic constraints.
 
 ### 3. The Checker: The Logic Judge
 
-The Checker (`thin_checker.rs`) implements the TypeScript "Business Logic". It answers questions like "Is A a subtype of B?".
+The Checker (`checker/state.rs`) implements the TypeScript "Business Logic". It answers questions like "Is A a subtype of B?".
 
 #### 3.1. The "Tracer" Pattern (Zero-Cost Abstraction)
 
@@ -242,7 +242,7 @@ fn is_subtype(&mut self, a, b) {
 
 ### 1. The Emitter: A Dumb Printer
 
-The Emitter (`thin_emitter.rs`) must be stripped of all business logic. Its sole responsibility is **Code Generation** (writing strings and source maps), not **Transformation** (restructuring code).
+The Emitter (`emitter/`) must be stripped of all business logic. Its sole responsibility is **Code Generation** (writing strings and source maps), not **Transformation** (restructuring code).
 
 #### 1.1. Separation of Concerns
 
@@ -263,12 +263,12 @@ fn emit_class(&mut self, class: Class) {
 **Correct Architecture (The Pipeline):**
 The Emitter accepts a stream of **Print Commands** or traverses a **Virtual AST**.
 
-1.  **Transforms** run first (conceptually). They convert `ThinNode` (Source) $\to$ `VirtualNode` (Target).
+1.  **Transforms** run first (conceptually). They convert `Node` (Source) $\to$ `VirtualNode` (Target).
 2.  **Printer** simply executes the structure provided by the transform.
 
 #### 1.2. Source Maps
 
-- **SourceWriter:** The low-level buffer wrapper. It tracks line/column offsets and maps generated positions back to original `ThinNode.pos`.
+- **SourceWriter:** The low-level buffer wrapper. It tracks line/column offsets and maps generated positions back to original `Node.pos`.
 - **VLQ Encoding:** Optimized to write directly to the output buffer without intermediate string allocations.
 
 ---
@@ -279,7 +279,7 @@ Transformations handles the complexity of downleveling (ES6 $\to$ ES5, Async $\t
 
 #### 2.1. Strategy: Virtual Nodes / Projection
 
-Since the `ThinNodeArena` is immutable during the emit phase, we cannot modify the AST in place. We use **Projections**.
+Since the `NodeArena` is immutable during the emit phase, we cannot modify the AST in place. We use **Projections**.
 
 A Transform implementation takes a `NodeIndex` and "projects" it into a sequence of emit operations.
 
@@ -317,7 +317,7 @@ The LSP layer requires random access to the AST and semantic data.
 
 LSP operations often require walking _up_ the tree (e.g., `SignatureHelp` needs to find the `CallExpression` containing the cursor).
 
-- **Problem:** `ThinNode` (16 bytes) does not store a parent pointer to save space.
+- **Problem:** `Node` (16 bytes) does not store a parent pointer to save space.
 - **Solution:** A **Side Table** `Vec<NodeIndex>` (ParentMap) computed once post-parse.
   - Index = `Child NodeIndex`
   - Value = `Parent NodeIndex`
@@ -348,6 +348,6 @@ The Parser produces "Error Nodes" or "Missing Nodes" when syntax is invalid. The
 2.  **Shard Interner:** Make `TypeInterner` concurrent-safe (sharded `RwLock`).
 3.  **Refactor Logic:**
     - Merge `check_subtype` / `explain_failure` using the **Tracer Pattern**.
-    - Remove manual scope stacks from `ThinChecker`.
+    - Remove manual scope stacks from `Checker`.
 4.  **Refactor Emitter:** Extract ES5/CommonJS logic into `transforms/` modules implementing a standard `Transformer` trait.
 5.  **Benchmark:** Verify parser throughput exceeds **200 MB/s** on real-world inputs (e.g., `three.js`).

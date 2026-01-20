@@ -10,7 +10,7 @@
  *   node scripts/run-single-test.mjs tests/cases/compiler/2dArrays.ts
  *
  * Flags:
- *   --thin    Use ThinParser (high-performance, 16-byte nodes)
+ *   --thin    Use Parser (high-performance, 16-byte nodes)
  *   --legacy  Use legacy ParserState (208-byte nodes)
  *   --verbose Show detailed parsing/checking output
  *
@@ -71,8 +71,8 @@ console.log(`  .types:  ${existsSync(typesBaseline) ? '✓' : '✗'}`);
 console.log(`  .errors: ${existsSync(errorsBaseline) ? '✓' : '✗'}`);
 console.log('');
 
-// Determine which parser to use (default: ThinParser)
-const parserType = useLegacy ? 'legacy' : 'thin';
+// Determine which parser to use (default: Parser)
+const parserType = useLegacy ? 'legacy' : 'parser';
 console.log(`=== Rust Compiler Output (${parserType} parser) ===\n`);
 
 const startTime = performance.now();
@@ -114,9 +114,9 @@ if (useLegacy) {
     checkTime = performance.now() - checkStart;
     checkResult = JSON.parse(checkJson);
 } else {
-    // ThinParser (16-byte nodes) - High performance path
-    if (!wasm.ThinParser && !wasm.createThinParser) {
-        console.error('ThinParser not available in WASM module. Rebuild with: wasm-pack build wasm --target nodejs');
+    // Parser (16-byte nodes) - High performance path
+    if (!wasm.Parser && !wasm.createParser) {
+        console.error('Parser not available in WASM module. Rebuild with: wasm-pack build wasm --target nodejs');
         console.error('Falling back to legacy parser...\n');
         // Fall through to legacy
         parser = wasm.createParser(testFile, source);
@@ -132,7 +132,7 @@ if (useLegacy) {
         checkResult = JSON.parse(parser.checkSourceFile());
         checkTime = performance.now() - checkStart;
     } else {
-        parser = wasm.createThinParser ? wasm.createThinParser(testFile, source) : new wasm.ThinParser(testFile, source);
+        parser = wasm.createParser ? wasm.createParser(testFile, source) : new wasm.Parser(testFile, source);
         rootIdx = parser.parseSourceFile();
         parseTime = performance.now() - startTime;
 
@@ -149,7 +149,7 @@ if (useLegacy) {
         }
 
         const bindStart = performance.now();
-        const bindingJson = parser.bindSourceFile();  // No rootIdx param for ThinParser
+        const bindingJson = parser.bindSourceFile();  // No rootIdx param for Parser
         bindTime = performance.now() - bindStart;
         binding = JSON.parse(bindingJson);
 

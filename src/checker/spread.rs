@@ -7,18 +7,18 @@
 //! - Array destructuring: [a, ...rest] = arr
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
 use crate::solver::{LiteralValue, TypeId, TypeInterner, TypeKey};
 
 /// Spread operator type checker
 pub struct SpreadChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     types: &'a TypeInterner,
 }
 
 impl<'a> SpreadChecker<'a> {
-    pub fn new(arena: &'a ThinNodeArena, types: &'a TypeInterner) -> Self {
+    pub fn new(arena: &'a NodeArena, types: &'a TypeInterner) -> Self {
         Self { arena, types }
     }
 
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_spread_checker_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let types = TypeInterner::new();
         let _checker = SpreadChecker::new(&arena, &types);
     }

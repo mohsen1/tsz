@@ -19,7 +19,7 @@
 //! ```
 
 use crate::parser::NodeIndex;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::transforms::ir::*;
 
 /// IR Printer - converts IR nodes to JavaScript strings
@@ -28,7 +28,7 @@ pub struct IRPrinter<'a> {
     indent_level: u32,
     indent_str: &'static str,
     /// Optional arena for handling ASTRef nodes
-    arena: Option<&'a ThinNodeArena>,
+    arena: Option<&'a NodeArena>,
     /// Source text for emitting ASTRef nodes
     source_text: Option<&'a str>,
 }
@@ -46,7 +46,7 @@ impl<'a> IRPrinter<'a> {
     }
 
     /// Create an IR printer with an arena for ASTRef handling
-    pub fn with_arena(arena: &'a ThinNodeArena) -> Self {
+    pub fn with_arena(arena: &'a NodeArena) -> Self {
         Self {
             output: String::with_capacity(4096),
             indent_level: 0,

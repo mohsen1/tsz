@@ -1,6 +1,6 @@
 //! Binder shared types for Project Zang.
 //!
-//! The Thin binder implementation lives in `src/thin_binder.rs`.
+//! The binder implementation lives in `src/binder/state.rs`.
 //! This module provides the shared data structures used across binding, checking,
 //! control-flow analysis, and language service features:
 //! - `Symbol`, `SymbolId`, `SymbolTable`, `SymbolArena`
@@ -13,6 +13,9 @@
 use crate::parser::NodeIndex;
 use rustc_hash::FxHashMap;
 use serde::Serialize;
+
+pub mod state;
+pub use state::{BinderState, LibContext};
 
 // =============================================================================
 // Symbol Flags
@@ -545,7 +548,7 @@ impl Scope {
     }
 }
 
-/// Scope context - tracks scope chain and hoisting (used by ThinBinderState).
+/// Scope context - tracks scope chain and hoisting (used by BinderState).
 #[derive(Clone, Debug)]
 pub struct ScopeContext {
     /// The symbol table for this scope

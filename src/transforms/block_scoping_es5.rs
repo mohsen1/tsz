@@ -30,7 +30,7 @@
 //! }
 //! ```
 
-use crate::parser::thin_node::{ThinNode, ThinNodeArena};
+use crate::parser::node::{Node, NodeArena};
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashSet;
@@ -128,7 +128,7 @@ pub struct LoopCaptureInfo {
 ///
 /// This is needed to determine if we need the IIFE pattern for the loop
 pub fn analyze_loop_capture(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     body_idx: NodeIndex,
     loop_vars: &[String],
 ) -> LoopCaptureInfo {
@@ -148,7 +148,7 @@ pub fn analyze_loop_capture(
 
 /// Recursively check for closures that capture variables from the loop
 fn check_closure_capture(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     idx: NodeIndex,
     loop_vars: &FxHashSet<&str>,
     info: &mut LoopCaptureInfo,
@@ -198,7 +198,7 @@ fn check_closure_capture(
 }
 
 /// Helper to visit children of a node
-fn visit_children<F: FnMut(NodeIndex)>(arena: &ThinNodeArena, node: &ThinNode, mut visitor: F) {
+fn visit_children<F: FnMut(NodeIndex)>(arena: &NodeArena, node: &Node, mut visitor: F) {
     match node.kind {
         k if k == syntax_kind_ext::BLOCK => {
             if let Some(block) = arena.get_block(node) {
@@ -291,7 +291,7 @@ fn visit_children<F: FnMut(NodeIndex)>(arena: &ThinNodeArena, node: &ThinNode, m
 }
 
 /// Collect variable names from a for loop initializer
-pub fn collect_loop_vars(arena: &ThinNodeArena, initializer_idx: NodeIndex) -> Vec<String> {
+pub fn collect_loop_vars(arena: &NodeArena, initializer_idx: NodeIndex) -> Vec<String> {
     let mut vars = Vec::new();
 
     let Some(node) = arena.get(initializer_idx) else {

@@ -1,13 +1,13 @@
 use super::is_valid_identifier_name;
-use super::{ModuleKind, ThinPrinter};
+use super::{ModuleKind, Printer};
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNode;
+use crate::parser::node::Node;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transform_context::IdentifierId;
 use crate::transforms::class_es5::ClassES5Emitter;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     pub(super) fn emit_commonjs_export<F>(
         &mut self,
         names: &[IdentifierId],
@@ -48,7 +48,7 @@ impl<'a> ThinPrinter<'a> {
         self.write_line();
     }
 
-    pub(super) fn emit_commonjs_default_export_expr(&mut self, node: &ThinNode, idx: NodeIndex) {
+    pub(super) fn emit_commonjs_default_export_expr(&mut self, node: &Node, idx: NodeIndex) {
         self.emit_commonjs_default_export_assignment(|this| {
             this.emit_commonjs_default_export_expr_inner(node, idx);
         });
@@ -56,7 +56,7 @@ impl<'a> ThinPrinter<'a> {
 
     pub(super) fn emit_commonjs_default_export_expr_inner(
         &mut self,
-        node: &ThinNode,
+        node: &Node,
         idx: NodeIndex,
     ) {
         match node.kind {
@@ -125,7 +125,7 @@ impl<'a> ThinPrinter<'a> {
     // Imports/Exports
     // =========================================================================
 
-    pub(super) fn emit_import_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_import_declaration(&mut self, node: &Node) {
         if self.ctx.is_commonjs() {
             self.emit_import_declaration_commonjs(node);
         } else {
@@ -133,7 +133,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_import_declaration_es6(&mut self, node: &ThinNode) {
+    pub(super) fn emit_import_declaration_es6(&mut self, node: &Node) {
         let Some(import) = self.arena.get_import_decl(node) else {
             return;
         };
@@ -211,7 +211,7 @@ impl<'a> ThinPrinter<'a> {
         self.write_semicolon();
     }
 
-    pub(super) fn emit_import_declaration_commonjs(&mut self, node: &ThinNode) {
+    pub(super) fn emit_import_declaration_commonjs(&mut self, node: &Node) {
         use crate::transforms::module_commonjs;
 
         let Some(import) = self.arena.get_import_decl(node) else {
@@ -296,12 +296,12 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_import_equals_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_import_equals_declaration(&mut self, node: &Node) {
         self.emit_import_equals_declaration_inner(node);
         self.write_semicolon();
     }
 
-    pub(super) fn emit_import_equals_declaration_inner(&mut self, node: &ThinNode) {
+    pub(super) fn emit_import_equals_declaration_inner(&mut self, node: &Node) {
         let Some(import) = self.arena.get_import_decl(node) else {
             return;
         };
@@ -330,7 +330,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit_entity_name(import.module_specifier);
     }
 
-    pub(super) fn emit_import_clause(&mut self, node: &ThinNode) {
+    pub(super) fn emit_import_clause(&mut self, node: &Node) {
         let Some(clause) = self.arena.get_import_clause(node) else {
             return;
         };
@@ -352,7 +352,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_named_imports(&mut self, node: &ThinNode) {
+    pub(super) fn emit_named_imports(&mut self, node: &Node) {
         let Some(imports) = self.arena.get_named_imports(node) else {
             return;
         };
@@ -368,7 +368,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(" }");
     }
 
-    pub(super) fn emit_import_specifier(&mut self, node: &ThinNode) {
+    pub(super) fn emit_import_specifier(&mut self, node: &Node) {
         let Some(spec) = self.arena.get_specifier(node) else {
             return;
         };
@@ -380,7 +380,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(spec.name);
     }
 
-    pub(super) fn emit_export_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_export_declaration(&mut self, node: &Node) {
         if self.ctx.is_commonjs() {
             self.emit_export_declaration_commonjs(node);
         } else {
@@ -388,7 +388,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_export_declaration_es6(&mut self, node: &ThinNode) {
+    pub(super) fn emit_export_declaration_es6(&mut self, node: &Node) {
         let Some(export) = self.arena.get_export_decl(node) else {
             return;
         };
@@ -458,7 +458,7 @@ impl<'a> ThinPrinter<'a> {
         self.write_semicolon();
     }
 
-    pub(super) fn emit_export_declaration_commonjs(&mut self, node: &ThinNode) {
+    pub(super) fn emit_export_declaration_commonjs(&mut self, node: &Node) {
         use crate::transforms::module_commonjs;
 
         let Some(export) = self.arena.get_export_decl(node) else {
@@ -765,7 +765,7 @@ impl<'a> ThinPrinter<'a> {
     }
 
     /// Emit export assignment (export = expr or export default expr)
-    pub(super) fn emit_export_assignment(&mut self, node: &ThinNode) {
+    pub(super) fn emit_export_assignment(&mut self, node: &Node) {
         let Some(export_assign) = self.arena.get_export_assignment(node) else {
             return;
         };
@@ -790,7 +790,7 @@ impl<'a> ThinPrinter<'a> {
     }
 
     /// Collect variable names from a VARIABLE_STATEMENT node
-    pub(super) fn collect_variable_names_from_node(&self, node: &ThinNode) -> Vec<String> {
+    pub(super) fn collect_variable_names_from_node(&self, node: &Node) -> Vec<String> {
         let mut names = Vec::new();
         if let Some(var_stmt) = self.arena.get_variable(node) {
             // VARIABLE_STATEMENT has declarations containing VARIABLE_DECLARATION_LIST
@@ -886,7 +886,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_named_exports(&mut self, node: &ThinNode) {
+    pub(super) fn emit_named_exports(&mut self, node: &Node) {
         // Named exports uses the same data structure as named imports
         let Some(exports) = self.arena.get_named_imports(node) else {
             self.write("{ }");
@@ -898,7 +898,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(" }");
     }
 
-    pub(super) fn emit_export_specifier(&mut self, node: &ThinNode) {
+    pub(super) fn emit_export_specifier(&mut self, node: &Node) {
         let Some(spec) = self.arena.get_specifier(node) else {
             return;
         };
@@ -925,7 +925,7 @@ impl<'a> ThinPrinter<'a> {
         specs
     }
 
-    pub(super) fn export_clause_is_type_only(&self, clause_node: &ThinNode) -> bool {
+    pub(super) fn export_clause_is_type_only(&self, clause_node: &Node) -> bool {
         match clause_node.kind {
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => true,
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => true,
@@ -1114,7 +1114,7 @@ impl<'a> ThinPrinter<'a> {
 
     pub(super) fn import_decl_has_runtime_value(
         &self,
-        import_decl: &crate::parser::thin_node::ImportDeclData,
+        import_decl: &crate::parser::node::ImportDeclData,
     ) -> bool {
         if import_decl.import_clause.is_none() {
             return true;
@@ -1188,7 +1188,7 @@ impl<'a> ThinPrinter<'a> {
 
     pub(super) fn export_decl_has_runtime_value(
         &self,
-        export_decl: &crate::parser::thin_node::ExportDeclData,
+        export_decl: &crate::parser::node::ExportDeclData,
     ) -> bool {
         if export_decl.is_type_only {
             return false;

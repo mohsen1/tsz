@@ -54,7 +54,7 @@
 //! ```
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
@@ -70,14 +70,14 @@ pub struct SpreadTransformOptions {
 
 /// ES5 Spread Transformer - produces IR nodes for spread operator lowering
 pub struct ES5SpreadTransformer<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     options: SpreadTransformOptions,
     /// Counter for temporary variable names
     temp_var_counter: u32,
 }
 
 impl<'a> ES5SpreadTransformer<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             options: SpreadTransformOptions::default(),
@@ -85,7 +85,7 @@ impl<'a> ES5SpreadTransformer<'a> {
         }
     }
 
-    pub fn with_options(arena: &'a ThinNodeArena, options: SpreadTransformOptions) -> Self {
+    pub fn with_options(arena: &'a NodeArena, options: SpreadTransformOptions) -> Self {
         Self {
             arena,
             options,
@@ -669,11 +669,11 @@ enum ObjectSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::thin_node::ThinNodeArena;
+    use crate::parser::node::NodeArena;
 
     #[test]
     fn test_transformer_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let transformer = ES5SpreadTransformer::new(&arena);
         assert!(!transformer.array_contains_spread(NodeIndex::NONE));
         assert!(!transformer.call_contains_spread(NodeIndex::NONE));
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn test_transformer_with_options() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let options = SpreadTransformOptions {
             use_spread_helper: true,
             use_assign_helper: true,

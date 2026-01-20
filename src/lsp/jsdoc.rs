@@ -3,7 +3,7 @@
 //! Provides shared extraction and parsing for hover and signature help.
 
 use crate::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use std::collections::HashMap;
 
@@ -22,7 +22,7 @@ impl ParsedJsdoc {
 /// Extract the nearest JSDoc comment preceding a node.
 /// Uses cached comment ranges from SourceFileData for O(log N) performance.
 pub fn jsdoc_for_node(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     root: NodeIndex,
     node_idx: NodeIndex,
     source_text: &str,

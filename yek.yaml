@@ -24,21 +24,21 @@ ignore_patterns:
 priority_rules:
   # Core type checking and solving (most important)
   - score: 100
-    pattern: "^src/(thin_checker|thin_binder|binder|lowering_pass)\\.rs$"
+    pattern: "^src/(checker/state\\.rs|binder/state\\.rs|binder\\.rs|lowering_pass\\.rs)$"
   - score: 95
     pattern: "^src/(checker|solver)/"
 
   # Parser and scanner
   - score: 90
-    pattern: "^src/(thin_parser|scanner|parser|lib)\\.rs$"
+    pattern: "^src/(scanner|lib)\\.rs$|^src/parser/state\\.rs$"
   - score: 85
     pattern: "^src/(parser|scanner)/"
 
   # Emitter and code generation
   - score: 80
-    pattern: "^src/(thin_emitter|declaration_emitter|source_writer|source_map|emit_context)\\.rs$"
+    pattern: "^src/(declaration_emitter|source_writer|source_map|emit_context|printer)\\.rs$|^src/emitter/"
   - score: 75
-    pattern: "^src/thin_emitter/"
+    pattern: "^src/emitter/"
   - score: 70
     pattern: "^src/transforms/"
 

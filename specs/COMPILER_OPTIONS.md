@@ -4,7 +4,7 @@ This document describes the compiler options supported by the WASM API.
 
 ## Overview
 
-The WASM API provides a `setCompilerOptions` method on the `ThinParser` class that accepts compiler options in JSON format. These options control type checking behavior.
+The WASM API provides a `setCompilerOptions` method on the `Parser` class that accepts compiler options in JSON format. These options control type checking behavior.
 
 ## Supported Options
 
@@ -122,9 +122,9 @@ Specify module code generation. Maps to `ModuleKind` enum values:
 ### JavaScript/TypeScript
 
 ```javascript
-import { ThinParser } from 'tsc-clone';
+import { Parser } from 'tsc-clone';
 
-const parser = new ThinParser('file.ts', sourceCode);
+const parser = new Parser('file.ts', sourceCode);
 
 // Set compiler options
 parser.setCompilerOptions(JSON.stringify({
@@ -178,9 +178,9 @@ For example:
 
 The compiler options are passed to `CheckerContext` through the following flow:
 
-1. `ThinParser.setCompilerOptions()` parses JSON and stores `CompilerOptions` struct
+1. `Parser.setCompilerOptions()` parses JSON and stores `CompilerOptions` struct
 2. When type checking, options are extracted using getter methods
-3. Options are passed to `ThinCheckerState::with_options()`
+3. Options are passed to `CheckerState::with_options()`
 4. `CheckerContext` stores the individual option flags
 5. Type checker uses these flags during analysis
 
@@ -200,14 +200,14 @@ function test(x) {
 `;
 
 // Test with strict mode off
-const parser1 = new ThinParser('test.ts', source);
+const parser1 = new Parser('test.ts', source);
 parser1.setCompilerOptions(JSON.stringify({ strict: false }));
 parser1.parseSourceFile();
 const result1 = JSON.parse(parser1.checkSourceFile());
 // Should have 0 diagnostics
 
 // Test with strict mode on
-const parser2 = new ThinParser('test.ts', source);
+const parser2 = new Parser('test.ts', source);
 parser2.setCompilerOptions(JSON.stringify({ strict: true }));
 parser2.parseSourceFile();
 const result2 = JSON.parse(parser2.checkSourceFile());

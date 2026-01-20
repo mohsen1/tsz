@@ -2,14 +2,14 @@
 //!
 //! These tests demonstrate the complete two-phase emission pipeline:
 //! 1. LoweringPass analyzes AST and produces TransformDirective entries
-//! 2. ThinPrinter consults TransformContext and applies transforms during emission
+//! 2. Printer consults TransformContext and applies transforms during emission
 
 use crate::emit_context::EmitContext;
 use crate::lowering_pass::LoweringPass;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::thin_emitter::ThinPrinter;
-use crate::thin_parser::ThinParserState;
+use crate::emitter::Printer;
+use crate::parser::ParserState;
 use crate::transform_context::{TransformContext, TransformDirective};
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ use std::sync::Arc;
 fn test_two_phase_emission_es5_class() {
     // Parse source
     let source = "class Point { constructor(x, y) { this.x = x; this.y = y; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -35,7 +35,7 @@ fn test_two_phase_emission_es5_class() {
     );
 
     // Phase 2: Print Pass (with Transforms)
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -59,7 +59,7 @@ fn test_two_phase_emission_es5_class() {
 #[test]
 fn test_two_phase_emission_es5_class_expression() {
     let source = "const C = class { method() { return 1; } };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -86,7 +86,7 @@ fn test_two_phase_emission_es5_class_expression() {
         "LoweringPass should generate ES5ClassExpression transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -117,7 +117,7 @@ class Derived extends Base {
     constructor() { prep(); super(); post(); }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -127,7 +127,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -184,7 +184,7 @@ const t = tag`hi ${name}`;
 class Base {}
 class Derived extends Base { #count = 0; }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -215,7 +215,7 @@ class Derived extends Base { #count = 0; }
 #[test]
 fn test_lowering_pass_es5_class_heritage_clause() {
     let source = "class Base {} class Derived extends Base {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -280,7 +280,7 @@ class Derived extends Base {
     getCount() { return this.#count; }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -288,7 +288,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -330,7 +330,7 @@ class Derived extends Base {
     method() { return super.m(arguments[0]); }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -338,7 +338,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -368,7 +368,7 @@ class Derived extends Base {
     method() { return super["m"](arguments[0]); }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -376,7 +376,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -403,7 +403,7 @@ class Derived extends Base {
     constructor() { super(); }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -411,7 +411,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -440,7 +440,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -448,7 +448,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -481,7 +481,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -489,7 +489,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -527,7 +527,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -535,7 +535,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -573,7 +573,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -581,7 +581,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -615,7 +615,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -623,7 +623,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -662,7 +662,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -670,7 +670,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -704,7 +704,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -712,7 +712,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -749,7 +749,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -757,7 +757,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -789,7 +789,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -797,7 +797,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -834,7 +834,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -842,7 +842,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -884,7 +884,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -892,7 +892,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -941,7 +941,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -949,7 +949,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -997,7 +997,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1005,7 +1005,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1047,7 +1047,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1055,7 +1055,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1094,7 +1094,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1102,7 +1102,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1149,7 +1149,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1157,7 +1157,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1199,7 +1199,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1207,7 +1207,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1245,7 +1245,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1253,7 +1253,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1291,7 +1291,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1299,7 +1299,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1337,7 +1337,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1345,7 +1345,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1388,7 +1388,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1396,7 +1396,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1434,7 +1434,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1442,7 +1442,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1481,7 +1481,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1489,7 +1489,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1533,7 +1533,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1541,7 +1541,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1584,7 +1584,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1592,7 +1592,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1630,7 +1630,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1638,7 +1638,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1686,7 +1686,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1694,7 +1694,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1732,7 +1732,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1740,7 +1740,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1778,7 +1778,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1786,7 +1786,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1829,7 +1829,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1837,7 +1837,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1885,7 +1885,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1893,7 +1893,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1931,7 +1931,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1939,7 +1939,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -1982,7 +1982,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -1990,7 +1990,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2040,7 +2040,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2048,7 +2048,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2097,7 +2097,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2105,7 +2105,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2148,7 +2148,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2156,7 +2156,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2199,7 +2199,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2207,7 +2207,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2244,7 +2244,7 @@ class Foo {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2252,7 +2252,7 @@ class Foo {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2285,7 +2285,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2293,7 +2293,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2326,7 +2326,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2334,7 +2334,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2379,7 +2379,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2387,7 +2387,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2432,7 +2432,7 @@ class Derived extends Base {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2440,7 +2440,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2480,7 +2480,7 @@ class Derived extends Base {
     field = () => this.x;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2488,7 +2488,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2522,7 +2522,7 @@ class Foo {
     field = () => () => this.x;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2530,7 +2530,7 @@ class Foo {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2560,7 +2560,7 @@ class Foo {
     second = () => () => this.y;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2568,7 +2568,7 @@ class Foo {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2602,7 +2602,7 @@ class Foo {
     static field = () => this.x;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2610,7 +2610,7 @@ class Foo {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2647,7 +2647,7 @@ class Foo {
     };
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2655,7 +2655,7 @@ class Foo {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2698,7 +2698,7 @@ class Foo {
     };
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2706,7 +2706,7 @@ class Foo {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2740,7 +2740,7 @@ class Foo {
     }
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2748,7 +2748,7 @@ class Foo {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2783,7 +2783,7 @@ class Derived extends Base {
     field = () => super.m();
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2791,7 +2791,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2821,7 +2821,7 @@ class Derived extends Base {
     field = () => super.m() + this.x;
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2829,7 +2829,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2864,7 +2864,7 @@ class Derived extends Base {
     field = () => super["m"](this.x);
 }
 "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2872,7 +2872,7 @@ class Derived extends Base {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2903,7 +2903,7 @@ class Derived extends Base {
 fn test_two_phase_emission_es6_class_no_transform() {
     // Parse source
     let source = "class Point { constructor(x, y) { this.x = x; this.y = y; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2920,7 +2920,7 @@ fn test_two_phase_emission_es6_class_no_transform() {
     );
 
     // Phase 2: Print Pass (with empty Transforms)
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(false); // ES6 target
     printer.emit(root);
 
@@ -2941,7 +2941,7 @@ fn test_two_phase_emission_es6_class_no_transform() {
 fn test_two_phase_emission_es5_class_try_throw_parenthesized() {
     let source =
         "class Foo { method() { try { throw new Error(\"x\"); } catch (e) { return (e); } } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -2951,7 +2951,7 @@ fn test_two_phase_emission_es5_class_try_throw_parenthesized() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -2981,7 +2981,7 @@ fn test_two_phase_emission_es5_class_try_throw_parenthesized() {
 #[test]
 fn test_two_phase_emission_es5_class_template_literal_downlevel() {
     let source = "class Foo { method(name) { return `hi ${name}`; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let source_text = parser.get_source_text().to_string();
     let arena = parser.arena;
@@ -2990,7 +2990,7 @@ fn test_two_phase_emission_es5_class_template_literal_downlevel() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.set_source_text(&source_text);
     printer.emit(root);
@@ -3016,7 +3016,7 @@ fn test_two_phase_emission_es5_class_template_literal_downlevel() {
 #[test]
 fn test_two_phase_emission_es5_class_tagged_template_downlevel() {
     let source = "class Foo { method(name) { return tag`hi ${name}`; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let source_text = parser.get_source_text().to_string();
     let arena = parser.arena;
@@ -3025,7 +3025,7 @@ fn test_two_phase_emission_es5_class_tagged_template_downlevel() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.set_source_text(&source_text);
     printer.emit(root);
@@ -3051,7 +3051,7 @@ fn test_two_phase_emission_es5_class_tagged_template_downlevel() {
 #[test]
 fn test_two_phase_emission_es5_class_for_destructuring() {
     let source = "class Foo { method(obj) { for (var { x, y } = obj; ; ) { return x + y; } } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3061,7 +3061,7 @@ fn test_two_phase_emission_es5_class_for_destructuring() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3076,7 +3076,7 @@ fn test_two_phase_emission_es5_class_for_destructuring() {
 #[test]
 fn test_two_phase_emission_es5_class_object_rest_param() {
     let source = "class Foo { method({ x, ...rest }) { return rest; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3086,7 +3086,7 @@ fn test_two_phase_emission_es5_class_object_rest_param() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3106,7 +3106,7 @@ fn test_two_phase_emission_es5_class_object_rest_param() {
 #[test]
 fn test_lowering_pass_es5_object_literal_directive() {
     let source = "const obj = { a: 1, [key]: 2 };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3158,7 +3158,7 @@ fn test_lowering_pass_es5_object_literal_directive() {
 #[test]
 fn test_lowering_pass_es5_template_literal_directive() {
     let source = "const msg = `hi ${name}`; const plain = `bye`;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3199,7 +3199,7 @@ fn test_lowering_pass_es5_template_literal_directive() {
 #[test]
 fn test_lowering_pass_es5_variable_declaration_list_directive() {
     let source = "let { x, y } = obj;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3239,7 +3239,7 @@ fn test_lowering_pass_es5_variable_declaration_list_directive() {
 #[test]
 fn test_two_phase_emission_es5_variable_declaration_list_uses_var() {
     let source = "let x = 1; const y = 2;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3247,7 +3247,7 @@ fn test_two_phase_emission_es5_variable_declaration_list_uses_var() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3267,7 +3267,7 @@ fn test_two_phase_emission_es5_variable_declaration_list_uses_var() {
 #[test]
 fn test_lowering_pass_es5_function_parameters_directive() {
     let source = "function foo(x = 1) { return x; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3298,7 +3298,7 @@ fn test_lowering_pass_es5_function_parameters_directive() {
 #[test]
 fn test_two_phase_emission_es5_object_literal_computed() {
     let source = "const obj = { a: 1, [key]: 2 };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3306,7 +3306,7 @@ fn test_two_phase_emission_es5_object_literal_computed() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3331,7 +3331,7 @@ fn test_two_phase_emission_es5_object_literal_computed() {
 #[test]
 fn test_two_phase_emission_es5_variable_destructuring() {
     let source = "let { x, y } = obj;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3339,7 +3339,7 @@ fn test_two_phase_emission_es5_variable_destructuring() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3359,7 +3359,7 @@ fn test_two_phase_emission_es5_variable_destructuring() {
 #[test]
 fn test_two_phase_emission_es5_function_parameters_downlevel() {
     let source = "function foo(x = 1) { return x; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3367,7 +3367,7 @@ fn test_two_phase_emission_es5_function_parameters_downlevel() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3382,7 +3382,7 @@ fn test_two_phase_emission_es5_function_parameters_downlevel() {
 #[test]
 fn test_two_phase_emission_es5_object_literal_shorthand_method() {
     let source = "var x = 1; var obj = { x, method(y = 1) { return y + x; } };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3390,7 +3390,7 @@ fn test_two_phase_emission_es5_object_literal_shorthand_method() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3416,7 +3416,7 @@ fn test_two_phase_emission_es5_object_literal_shorthand_method() {
 fn test_two_phase_emission_es5_class_for_in_of() {
     let source =
         "class Foo { method(obj, arr) { for (var k in obj) { k; } for (var v of arr) { v; } } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3426,7 +3426,7 @@ fn test_two_phase_emission_es5_class_for_in_of() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3456,7 +3456,7 @@ fn test_two_phase_emission_es5_class_for_in_of() {
 #[test]
 fn test_two_phase_emission_es5_for_of_statement() {
     let source = "for (var v of arr) { v; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3466,7 +3466,7 @@ fn test_two_phase_emission_es5_for_of_statement() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3491,7 +3491,7 @@ fn test_two_phase_emission_es5_for_of_statement() {
 #[test]
 fn test_two_phase_emission_es5_class_switch_break_continue_do() {
     let source = "class Foo { method(x) { while (x) { continue; } switch (x) { case 1: break; default: return; } do { x--; } while (x); } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3501,7 +3501,7 @@ fn test_two_phase_emission_es5_class_switch_break_continue_do() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3557,19 +3557,19 @@ fn test_two_phase_emission_es5_class_switch_break_continue_do() {
 fn test_two_phase_backward_compatibility() {
     // Parse source
     let source = "class Foo {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     // Old way: printer without transforms (backward compatibility)
-    let mut printer_old = ThinPrinter::new(&arena);
+    let mut printer_old = Printer::new(&arena);
     printer_old.set_target_es5(true);
     printer_old.emit(root);
     let output_old = printer_old.get_output();
 
     // New way: printer with empty transforms
     let transforms = crate::transform_context::TransformContext::new();
-    let mut printer_new = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer_new = Printer::with_transforms(&arena, transforms);
     printer_new.set_target_es5(true);
     printer_new.emit(root);
     let output_new = printer_new.get_output();
@@ -3584,7 +3584,7 @@ fn test_two_phase_backward_compatibility() {
 #[test]
 fn test_two_phase_emission_es5_arrow_function() {
     let source = "const add = (a, b) => a + b;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3599,7 +3599,7 @@ fn test_two_phase_emission_es5_arrow_function() {
         "LoweringPass should generate ES5ArrowFunction transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3617,7 +3617,7 @@ fn test_two_phase_emission_es5_arrow_function() {
 #[test]
 fn test_two_phase_emission_es5_arrow_function_this_capture() {
     let source = "const fn = () => this.x;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3630,7 +3630,7 @@ fn test_two_phase_emission_es5_arrow_function_this_capture() {
         "LoweringPass should generate ES5ArrowFunction transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3650,7 +3650,7 @@ fn test_two_phase_emission_es5_arrow_function_this_capture() {
 #[test]
 fn test_two_phase_emission_es5_nested_arrow_this_capture() {
     let source = "const outer = () => { const inner = () => this.x; };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3658,7 +3658,7 @@ fn test_two_phase_emission_es5_nested_arrow_this_capture() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3673,7 +3673,7 @@ fn test_two_phase_emission_es5_nested_arrow_this_capture() {
 #[test]
 fn test_two_phase_emission_es5_arrow_this_in_object_literal_property() {
     let source = "const fn = () => ({ foo: this.x });";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3681,7 +3681,7 @@ fn test_two_phase_emission_es5_arrow_this_in_object_literal_property() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3701,7 +3701,7 @@ fn test_two_phase_emission_es5_arrow_this_in_object_literal_property() {
 #[test]
 fn test_two_phase_emission_es5_arrow_object_literal_method_no_capture() {
     let source = "const fn = () => ({ method() { return this.x; } });";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3709,7 +3709,7 @@ fn test_two_phase_emission_es5_arrow_object_literal_method_no_capture() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3724,7 +3724,7 @@ fn test_two_phase_emission_es5_arrow_object_literal_method_no_capture() {
 #[test]
 fn test_two_phase_emission_es5_async_arrow_function() {
     let source = "const foo = async () => { await bar(); };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3737,7 +3737,7 @@ fn test_two_phase_emission_es5_async_arrow_function() {
         "LoweringPass should generate ES5ArrowFunction transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3762,7 +3762,7 @@ fn test_two_phase_emission_es5_async_arrow_function() {
 #[test]
 fn test_two_phase_emission_es5_async_arrow_this_capture_await() {
     let source = "const foo = async () => await this.bar;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3770,7 +3770,7 @@ fn test_two_phase_emission_es5_async_arrow_this_capture_await() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3790,7 +3790,7 @@ fn test_two_phase_emission_es5_async_arrow_this_capture_await() {
 #[test]
 fn test_two_phase_emission_es5_arrow_this_in_type_assertion() {
     let source = "const foo = () => (this as any).x;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3798,7 +3798,7 @@ fn test_two_phase_emission_es5_arrow_this_in_type_assertion() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3818,7 +3818,7 @@ fn test_two_phase_emission_es5_arrow_this_in_type_assertion() {
 #[test]
 fn test_two_phase_emission_es5_arrow_this_in_satisfies_expression() {
     let source = "const foo = () => (this satisfies Foo).x;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3826,7 +3826,7 @@ fn test_two_phase_emission_es5_arrow_this_in_satisfies_expression() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3846,7 +3846,7 @@ fn test_two_phase_emission_es5_arrow_this_in_satisfies_expression() {
 #[test]
 fn test_two_phase_emission_es5_arrow_this_in_angle_type_assertion() {
     let source = "const foo = () => (<any>this).x;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3854,7 +3854,7 @@ fn test_two_phase_emission_es5_arrow_this_in_angle_type_assertion() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3874,7 +3874,7 @@ fn test_two_phase_emission_es5_arrow_this_in_angle_type_assertion() {
 #[test]
 fn test_two_phase_emission_es5_arrow_this_in_tagged_template_span() {
     let source = "const foo = () => tag`${this.x}`;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3882,7 +3882,7 @@ fn test_two_phase_emission_es5_arrow_this_in_tagged_template_span() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3902,7 +3902,7 @@ fn test_two_phase_emission_es5_arrow_this_in_tagged_template_span() {
 #[test]
 fn test_two_phase_emission_es5_arrow_this_in_tagged_template_tag() {
     let source = "const foo = () => this.tag`hi`;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -3910,7 +3910,7 @@ fn test_two_phase_emission_es5_arrow_this_in_tagged_template_tag() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -3930,7 +3930,7 @@ fn test_two_phase_emission_es5_arrow_this_in_tagged_template_tag() {
 #[test]
 fn test_two_phase_emission_es5_tagged_template_downlevel() {
     let source = "const msg = tag`hi ${name}!`;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let source_text = parser.get_source_text().to_string();
     let arena = parser.arena;
@@ -3943,7 +3943,7 @@ fn test_two_phase_emission_es5_tagged_template_downlevel() {
         "Expected __makeTemplateObject helper to be set for tagged template"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.set_source_text(&source_text);
     printer.emit(root);
@@ -3969,7 +3969,7 @@ fn test_two_phase_emission_es5_tagged_template_downlevel() {
 #[test]
 fn test_two_phase_emission_es5_template_expression_downlevel() {
     let source = "const msg = `hi ${name}`;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let source_text = parser.get_source_text().to_string();
     let arena = parser.arena;
@@ -3978,7 +3978,7 @@ fn test_two_phase_emission_es5_template_expression_downlevel() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.set_source_text(&source_text);
     printer.emit(root);
@@ -4004,7 +4004,7 @@ fn test_two_phase_emission_es5_template_expression_downlevel() {
 #[test]
 fn test_two_phase_emission_es5_no_substitution_template_downlevel() {
     let source = "const msg = `hello`;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let source_text = parser.get_source_text().to_string();
     let arena = parser.arena;
@@ -4013,7 +4013,7 @@ fn test_two_phase_emission_es5_no_substitution_template_downlevel() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.set_source_text(&source_text);
     printer.emit(root);
@@ -4034,7 +4034,7 @@ fn test_two_phase_emission_es5_no_substitution_template_downlevel() {
 #[test]
 fn test_two_phase_emission_es5_arrow_this_in_non_null() {
     let source = "const foo = () => this!.x;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4042,7 +4042,7 @@ fn test_two_phase_emission_es5_arrow_this_in_non_null() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4062,7 +4062,7 @@ fn test_two_phase_emission_es5_arrow_this_in_non_null() {
 #[test]
 fn test_two_phase_emission_es5_async_function() {
     let source = "async function foo() { return 1; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4077,7 +4077,7 @@ fn test_two_phase_emission_es5_async_function() {
         "LoweringPass should generate ES5AsyncFunction transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4097,7 +4097,7 @@ fn test_two_phase_emission_es5_async_function() {
 #[test]
 fn test_two_phase_emission_es5_async_function_nested_arrow_this_capture() {
     let source = "async function foo() { const bar = () => this.x; await bar(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4105,7 +4105,7 @@ fn test_two_phase_emission_es5_async_function_nested_arrow_this_capture() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4125,7 +4125,7 @@ fn test_two_phase_emission_es5_async_function_nested_arrow_this_capture() {
 #[test]
 fn test_two_phase_emission_es5_async_function_multi_decl_this_capture() {
     let source = "async function foo() { const a = 1, bar = () => this.x; await bar(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4133,7 +4133,7 @@ fn test_two_phase_emission_es5_async_function_multi_decl_this_capture() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4158,7 +4158,7 @@ fn test_two_phase_emission_es5_async_function_multi_decl_this_capture() {
 #[test]
 fn test_two_phase_emission_es5_async_function_let_arrow_this_capture() {
     let source = "async function foo() { let bar = () => this.x; await bar(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4166,7 +4166,7 @@ fn test_two_phase_emission_es5_async_function_let_arrow_this_capture() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4186,7 +4186,7 @@ fn test_two_phase_emission_es5_async_function_let_arrow_this_capture() {
 #[test]
 fn test_two_phase_emission_es5_async_function_deep_nested_arrow_this_capture() {
     let source = "async function foo() { const bar = () => () => this.x; await bar()(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4194,7 +4194,7 @@ fn test_two_phase_emission_es5_async_function_deep_nested_arrow_this_capture() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4215,7 +4215,7 @@ fn test_two_phase_emission_es5_async_function_deep_nested_arrow_this_capture() {
 fn test_two_phase_emission_es5_async_function_nested_arrow_arguments_capture() {
     let source =
         "async function foo(a) { const bar = () => () => this.x + arguments[0]; await bar()(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4223,7 +4223,7 @@ fn test_two_phase_emission_es5_async_function_nested_arrow_arguments_capture() {
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4248,12 +4248,12 @@ fn test_two_phase_emission_es5_async_function_nested_arrow_arguments_capture() {
 #[test]
 fn test_two_phase_emission_amd_module_wrapper() {
     let source = "import { foo } from \"./bar\"; export const x = foo;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::AMD;
+    ctx.options.module = crate::emitter::ModuleKind::AMD;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4263,7 +4263,7 @@ fn test_two_phase_emission_amd_module_wrapper() {
         "LoweringPass should generate ModuleWrapper transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4280,17 +4280,17 @@ fn test_two_phase_emission_amd_module_wrapper() {
 #[test]
 fn test_two_phase_emission_amd_wrapper_reexport_star() {
     let source = "export * from \"./dep\";";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::AMD;
+    ctx.options.module = crate::emitter::ModuleKind::AMD;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4314,12 +4314,12 @@ fn test_two_phase_emission_amd_wrapper_reexport_star() {
 #[test]
 fn test_two_phase_emission_umd_module_wrapper() {
     let source = "export const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::UMD;
+    ctx.options.module = crate::emitter::ModuleKind::UMD;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4329,7 +4329,7 @@ fn test_two_phase_emission_umd_module_wrapper() {
         "LoweringPass should generate ModuleWrapper transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4346,17 +4346,17 @@ fn test_two_phase_emission_umd_module_wrapper() {
 #[test]
 fn test_two_phase_emission_umd_wrapper_reexport_star() {
     let source = "export * from \"./dep\";";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::UMD;
+    ctx.options.module = crate::emitter::ModuleKind::UMD;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4380,12 +4380,12 @@ fn test_two_phase_emission_umd_wrapper_reexport_star() {
 #[test]
 fn test_two_phase_emission_system_module_wrapper() {
     let source = "import { foo } from \"./bar\"; export const x = foo;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::System;
+    ctx.options.module = crate::emitter::ModuleKind::System;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4395,7 +4395,7 @@ fn test_two_phase_emission_system_module_wrapper() {
         "LoweringPass should generate ModuleWrapper transform"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4412,17 +4412,17 @@ fn test_two_phase_emission_system_module_wrapper() {
 #[test]
 fn test_two_phase_emission_system_wrapper_reexport_named() {
     let source = "export { foo } from \"./dep\";";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::System;
+    ctx.options.module = crate::emitter::ModuleKind::System;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4446,12 +4446,12 @@ fn test_two_phase_emission_system_wrapper_reexport_named() {
 #[test]
 fn test_two_phase_emission_commonjs_multi_export_vars() {
     let source = "export const a = 1, b = 2;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4461,7 +4461,7 @@ fn test_two_phase_emission_commonjs_multi_export_vars() {
         "LoweringPass should generate CommonJS export transforms"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4478,12 +4478,12 @@ fn test_two_phase_emission_commonjs_multi_export_vars() {
 #[test]
 fn test_two_phase_emission_commonjs_async_function_export() {
     let source = "export async function foo() { await bar(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4493,7 +4493,7 @@ fn test_two_phase_emission_commonjs_async_function_export() {
         "LoweringPass should generate async/CommonJS transforms"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
     printer.emit(root);
 
@@ -4519,12 +4519,12 @@ fn test_two_phase_emission_commonjs_async_function_export() {
 #[test]
 fn test_lowering_pass_commonjs_default_anonymous_function_directive() {
     let source = "export default function () { return 1; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4557,12 +4557,12 @@ fn test_lowering_pass_commonjs_default_anonymous_function_directive() {
 #[test]
 fn test_lowering_pass_commonjs_default_anonymous_class_directive() {
     let source = "export default class { method() { return 1; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::default();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4594,12 +4594,12 @@ fn test_lowering_pass_commonjs_default_anonymous_class_directive() {
 #[test]
 fn test_lowering_pass_commonjs_default_anonymous_class_directive_es5() {
     let source = "export default class { method() { return 1; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4631,12 +4631,12 @@ fn test_lowering_pass_commonjs_default_anonymous_class_directive_es5() {
 #[test]
 fn test_two_phase_emission_commonjs_default_anonymous_async_function_export() {
     let source = "export default async function () { await bar(); }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4646,9 +4646,9 @@ fn test_two_phase_emission_commonjs_default_anonymous_async_function_export() {
         "LoweringPass should generate ES5 async transforms"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_module_kind(crate::thin_emitter::ModuleKind::CommonJS);
+    printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4672,12 +4672,12 @@ fn test_two_phase_emission_commonjs_default_anonymous_async_function_export() {
 #[test]
 fn test_two_phase_emission_commonjs_default_anonymous_class_export() {
     let source = "export default class { method() { return 1; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4687,9 +4687,9 @@ fn test_two_phase_emission_commonjs_default_anonymous_class_export() {
         "LoweringPass should generate ES5 class transforms"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_module_kind(crate::thin_emitter::ModuleKind::CommonJS);
+    printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4713,12 +4713,12 @@ fn test_two_phase_emission_commonjs_default_anonymous_class_export() {
 #[test]
 fn test_two_phase_emission_commonjs_export_enum() {
     let source = "export enum E { A, B = 2 }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4728,9 +4728,9 @@ fn test_two_phase_emission_commonjs_export_enum() {
         "LoweringPass should generate enum/CommonJS transforms"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_module_kind(crate::thin_emitter::ModuleKind::CommonJS);
+    printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4754,19 +4754,19 @@ fn test_two_phase_emission_commonjs_export_enum() {
 #[test]
 fn test_two_phase_emission_commonjs_export_const_enum_is_erased() {
     let source = "export const enum E { A = 0 }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_module_kind(crate::thin_emitter::ModuleKind::CommonJS);
+    printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4785,12 +4785,12 @@ fn test_two_phase_emission_commonjs_export_const_enum_is_erased() {
 #[test]
 fn test_two_phase_emission_commonjs_export_namespace() {
     let source = "export namespace N { export function foo() { return 1; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -4800,9 +4800,9 @@ fn test_two_phase_emission_commonjs_export_namespace() {
         "LoweringPass should generate namespace/CommonJS transforms"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_module_kind(crate::thin_emitter::ModuleKind::CommonJS);
+    printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4831,7 +4831,7 @@ fn test_two_phase_emission_commonjs_export_namespace() {
 #[test]
 fn test_two_phase_emission_commonjs_auto_detect_exports() {
     let source = "export const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4846,7 +4846,7 @@ fn test_two_phase_emission_commonjs_auto_detect_exports() {
         "LoweringPass should generate CommonJS export transforms via auto-detect"
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
     printer.set_auto_detect_module(true);
     printer.emit(root);
@@ -4861,7 +4861,7 @@ fn test_two_phase_emission_commonjs_auto_detect_exports() {
 #[test]
 fn test_two_phase_emission_commonjs_export_assignment_suppresses_named_exports() {
     let source = "export = foo;\nexport const x = 1;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4871,7 +4871,7 @@ fn test_two_phase_emission_commonjs_export_assignment_suppresses_named_exports()
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
     printer.set_auto_detect_module(true);
     printer.emit(root);
@@ -4890,19 +4890,19 @@ fn test_two_phase_emission_commonjs_export_assignment_suppresses_named_exports()
 #[test]
 fn test_two_phase_emission_commonjs_export_default_arrow() {
     let source = "export default () => this.x;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
     let mut ctx = EmitContext::es5();
-    ctx.options.module = crate::thin_emitter::ModuleKind::CommonJS;
+    ctx.options.module = crate::emitter::ModuleKind::CommonJS;
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_module_kind(crate::thin_emitter::ModuleKind::CommonJS);
+    printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
     let output = printer.get_output();
@@ -4926,7 +4926,7 @@ fn test_two_phase_emission_commonjs_export_default_arrow() {
 #[test]
 fn test_transform_directive_chain_es5_class_commonjs_export() {
     let source = "class Foo {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -4962,7 +4962,7 @@ fn test_transform_directive_chain_es5_class_commonjs_export() {
         ]),
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 
@@ -4987,7 +4987,7 @@ fn test_transform_directive_chain_es5_class_commonjs_export() {
 #[test]
 fn test_transform_directive_es5_class_emits_members_from_ast() {
     let source = "class Foo { method() { return 1; } }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.arena;
 
@@ -5010,7 +5010,7 @@ fn test_transform_directive_es5_class_emits_members_from_ast() {
         },
     );
 
-    let mut printer = ThinPrinter::with_transforms(&arena, transforms);
+    let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(true);
     printer.emit(root);
 

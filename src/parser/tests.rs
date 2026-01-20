@@ -29,4 +29,4 @@ fn test_node_index() {
     assert!(!none.is_some());
 }
 
-// Legacy AST tests removed: the crate is ThinNode-only.
+// Legacy AST tests removed: the crate is Node-only.

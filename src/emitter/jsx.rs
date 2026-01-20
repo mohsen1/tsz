@@ -1,12 +1,12 @@
-use super::ThinPrinter;
-use crate::parser::thin_node::ThinNode;
+use super::Printer;
+use crate::parser::node::Node;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // JSX
     // =========================================================================
 
-    pub(super) fn emit_jsx_element(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_element(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_element(node) else {
             return;
         };
@@ -18,7 +18,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(jsx.closing_element);
     }
 
-    pub(super) fn emit_jsx_self_closing_element(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_self_closing_element(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_opening(node) else {
             return;
         };
@@ -29,7 +29,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(" />");
     }
 
-    pub(super) fn emit_jsx_opening_element(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_opening_element(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_opening(node) else {
             return;
         };
@@ -40,7 +40,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(">");
     }
 
-    pub(super) fn emit_jsx_closing_element(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_closing_element(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_closing(node) else {
             return;
         };
@@ -50,7 +50,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(">");
     }
 
-    pub(super) fn emit_jsx_fragment(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_fragment(&mut self, node: &Node) {
         let Some(jsx) = self.arena.get_jsx_fragment(node) else {
             return;
         };
@@ -62,7 +62,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("</>");
     }
 
-    pub(super) fn emit_jsx_attributes(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_attributes(&mut self, node: &Node) {
         let Some(attrs) = self.arena.get_jsx_attributes(node) else {
             return;
         };
@@ -73,7 +73,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_jsx_attribute(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_attribute(&mut self, node: &Node) {
         let Some(attr) = self.arena.get_jsx_attribute(node) else {
             return;
         };
@@ -85,7 +85,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_jsx_spread_attribute(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_spread_attribute(&mut self, node: &Node) {
         let Some(spread) = self.arena.get_jsx_spread_attribute(node) else {
             return;
         };
@@ -95,7 +95,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("}");
     }
 
-    pub(super) fn emit_jsx_expression(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_expression(&mut self, node: &Node) {
         let Some(expr) = self.arena.get_jsx_expression(node) else {
             return;
         };
@@ -108,7 +108,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("}");
     }
 
-    pub(super) fn emit_jsx_text(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_text(&mut self, node: &Node) {
         let Some(text) = self.arena.get_jsx_text(node) else {
             return;
         };
@@ -116,7 +116,7 @@ impl<'a> ThinPrinter<'a> {
         self.write(&text.text);
     }
 
-    pub(super) fn emit_jsx_namespaced_name(&mut self, node: &ThinNode) {
+    pub(super) fn emit_jsx_namespaced_name(&mut self, node: &Node) {
         let Some(ns) = self.arena.get_jsx_namespaced_name(node) else {
             return;
         };

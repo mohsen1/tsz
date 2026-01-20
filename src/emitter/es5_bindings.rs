@@ -1,11 +1,11 @@
-use super::{ParamTransformPlan, ThinPrinter};
+use super::{ParamTransformPlan, Printer};
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{BindingElementData, BindingPatternData, ForInOfData, ThinNode};
+use crate::parser::node::{BindingElementData, BindingPatternData, ForInOfData, Node};
 use crate::scanner::SyntaxKind;
 
-impl<'a> ThinPrinter<'a> {
-    pub(super) fn emit_variable_declaration_list_es5(&mut self, node: &ThinNode) {
+impl<'a> Printer<'a> {
+    pub(super) fn emit_variable_declaration_list_es5(&mut self, node: &Node) {
         let Some(decl_list) = self.arena.get_variable(node) else {
             return;
         };
@@ -247,7 +247,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    fn emit_es5_destructuring_pattern(&mut self, pattern_node: &ThinNode, temp_name: &str) {
+    fn emit_es5_destructuring_pattern(&mut self, pattern_node: &Node, temp_name: &str) {
         if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
                 return;

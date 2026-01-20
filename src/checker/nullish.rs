@@ -31,7 +31,7 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 
@@ -170,7 +170,7 @@ fn get_non_nullish_type(types: &mut impl TypeDatabase, type_id: SolverTypeId) ->
 /// TypeScript error TS5076: "The left-hand side of a '??' cannot be
 /// a '||' or '&&' expression. Consider wrapping it in parentheses."
 pub fn check_nullish_coalescing_precedence(
-    arena: &ThinNodeArena,
+    arena: &NodeArena,
     left_idx: NodeIndex,
 ) -> Option<PrecedenceError> {
     let Some(left_node) = arena.get(left_idx) else {
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_precedence_check() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         // Test with empty node
         let result = check_nullish_coalescing_precedence(&arena, NodeIndex::NONE);
         assert!(result.is_none());

@@ -213,7 +213,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// **Related Files**:
     /// - `instantiate.rs` - Has substitution logic for type parameters
-    /// - `thin_checker.rs:2900-2918` - Type alias resolution with type params
+    /// - `checker/state.rs:2900-2918` - Type alias resolution with type params
     /// - `lower.rs:856-868` - `lower_type_alias_declaration` with params
     pub fn evaluate(&self, type_id: TypeId) -> TypeId {
         // Fast path for intrinsics

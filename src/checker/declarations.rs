@@ -1,7 +1,7 @@
 //! Declaration Type Checking
 //!
 //! Handles classes, interfaces, functions, and variable declarations.
-//! This module separates declaration checking logic from the monolithic ThinCheckerState.
+//! This module separates declaration checking logic from the monolithic CheckerState.
 
 use super::context::CheckerContext;
 use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -53,7 +53,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check a declaration node.
     ///
     /// This dispatches to specialized handlers based on declaration kind.
-    /// Currently a skeleton - logic will be migrated incrementally from ThinCheckerState.
+    /// Currently a skeleton - logic will be migrated incrementally from CheckerState.
     pub fn check(&mut self, decl_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return;
@@ -115,7 +115,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check a variable declaration.
     pub fn check_variable_declaration(&mut self, _decl_idx: NodeIndex) {
-        // Variable declaration checking is handled by ThinCheckerState for now
+        // Variable declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:
         // - Type annotation vs initializer type compatibility
@@ -124,7 +124,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check a function declaration.
     pub fn check_function_declaration(&mut self, _func_idx: NodeIndex) {
-        // Function declaration checking is handled by ThinCheckerState for now
+        // Function declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:
         // - Parameter types
@@ -172,7 +172,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn check_property_initialization(
         &mut self,
         class_idx: NodeIndex,
-        class_decl: &crate::parser::thin_node::ClassData,
+        class_decl: &crate::parser::node::ClassData,
     ) {
         // Collect properties that need to be checked and create a set of tracked properties
         let mut tracked: HashSet<PropertyKey> = HashSet::new();
@@ -750,7 +750,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check an interface declaration.
     pub fn check_interface_declaration(&mut self, _iface_idx: NodeIndex) {
-        // Interface declaration checking is handled by ThinCheckerState for now
+        // Interface declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:
         // - Heritage clauses
@@ -759,7 +759,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check a type alias declaration.
     pub fn check_type_alias_declaration(&mut self, _alias_idx: NodeIndex) {
-        // Type alias checking is handled by ThinCheckerState for now
+        // Type alias checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:
         // - Type parameters
@@ -768,7 +768,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check an enum declaration.
     pub fn check_enum_declaration(&mut self, _enum_idx: NodeIndex) {
-        // Enum declaration checking is handled by ThinCheckerState for now
+        // Enum declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:
         // - Member types (numeric vs string)
@@ -981,7 +981,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check function implementations for overload sequences.
     pub fn check_function_implementations(&mut self, _nodes: &[NodeIndex]) {
         // Implementation of overload checking
-        // Will be migrated from ThinCheckerState
+        // Will be migrated from CheckerState
     }
 }
 
@@ -990,16 +990,16 @@ mod tests {
     use super::*;
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::solver::TypeInterner;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_declaration_checker_variable() {
         let source = "let x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1032,10 +1032,10 @@ class Foo {
     y: string = "hello";  // Should NOT report (has initializer)
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1093,10 +1093,10 @@ class Foo {
     x!: number;  // Should NOT report (has definite assignment assertion)
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1145,10 +1145,10 @@ class Foo {
     static x: number;  // Should NOT report (static property)
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1197,10 +1197,10 @@ class Foo {
     x: number;  // Should NOT report (strict mode disabled)
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1250,10 +1250,10 @@ class Foo {
     }
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1308,10 +1308,10 @@ class Foo {
     }
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1365,10 +1365,10 @@ class Foo {
     }
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1422,10 +1422,10 @@ class Foo {
     }
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
@@ -1478,10 +1478,10 @@ class Foo {
     }
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();

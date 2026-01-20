@@ -6,10 +6,10 @@ use crate::binder::SymbolId;
 use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::thin_binder::ThinBinderState;
+use crate::binder::BinderState;
 
 /// Find References provider.
 ///
@@ -20,8 +20,8 @@ use crate::thin_binder::ThinBinderState;
 /// 4. Finding all references to that symbol in the AST
 /// 5. Returning their locations
 pub struct FindReferences<'a> {
-    arena: &'a ThinNodeArena,
-    binder: &'a ThinBinderState,
+    arena: &'a NodeArena,
+    binder: &'a BinderState,
     line_map: &'a LineMap,
     file_name: String,
     source_text: &'a str,
@@ -30,8 +30,8 @@ pub struct FindReferences<'a> {
 impl<'a> FindReferences<'a> {
     /// Create a new Find References provider.
     pub fn new(
-        arena: &'a ThinNodeArena,
-        binder: &'a ThinBinderState,
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
         line_map: &'a LineMap,
         file_name: String,
         source_text: &'a str,
@@ -488,19 +488,19 @@ impl<'a> FindReferences<'a> {
 mod references_tests {
     use super::*;
     use crate::lsp::position::LineMap;
-    use crate::thin_binder::ThinBinderState;
-    use crate::thin_parser::ThinParserState;
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_find_references_simple() {
         // const x = 1;
         // x + x;
         let source = "const x = 1;\nx + x;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -526,11 +526,11 @@ mod references_tests {
     #[test]
     fn test_find_references_for_symbol() {
         let source = "const x = 1;\nx + x;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let symbol_id = binder.file_locals.get("x").expect("Expected symbol for x");
@@ -552,11 +552,11 @@ mod references_tests {
     #[test]
     fn test_find_references_not_found() {
         let source = "const x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -578,11 +578,11 @@ mod references_tests {
     #[test]
     fn test_find_references_template_expression() {
         let source = "const name = \"Ada\";\nconst msg = `hi ${name}`;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -608,11 +608,11 @@ mod references_tests {
     #[test]
     fn test_find_references_jsx_expression() {
         let source = "const name = \"Ada\";\nconst el = <div>{name}</div>;";
-        let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -635,11 +635,11 @@ mod references_tests {
     #[test]
     fn test_find_references_await_expression() {
         let source = "const value = 1;\nasync function run() {\n  await value;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -663,11 +663,11 @@ mod references_tests {
     fn test_find_references_tagged_template_expression() {
         let source =
             "const tag = (strings: TemplateStringsArray) => strings[0];\nconst msg = tag`hello`;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -693,11 +693,11 @@ mod references_tests {
     #[test]
     fn test_find_references_as_expression() {
         let source = "const value = 1;\nconst result = value as number;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -723,11 +723,11 @@ mod references_tests {
     #[test]
     fn test_find_references_binding_pattern() {
         let source = "const { foo } = obj;\nfoo;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -750,11 +750,11 @@ mod references_tests {
     #[test]
     fn test_find_references_binding_pattern_initializer() {
         let source = "const value = 1;\nconst { foo = value } = obj;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -780,11 +780,11 @@ mod references_tests {
     #[test]
     fn test_find_references_parameter_binding_pattern() {
         let source = "function demo({ foo }: { foo: number }) {\n  return foo;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -810,11 +810,11 @@ mod references_tests {
     #[test]
     fn test_find_references_parameter_array_binding() {
         let source = "function demo([foo]: number[]) {\n  return foo;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -840,11 +840,11 @@ mod references_tests {
     #[test]
     fn test_find_references_nested_arrow_in_switch_case() {
         let source = "switch (state) {\n  case (() => {\n    const value = 1;\n    return value;\n  })():\n    break;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -867,11 +867,11 @@ mod references_tests {
     #[test]
     fn test_find_references_nested_arrow_in_if_condition() {
         let source = "if ((() => {\n  const value = 1;\n  return value;\n})()) {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -894,11 +894,11 @@ mod references_tests {
     #[test]
     fn test_find_references_export_default_expression() {
         let source = "export default (() => {\n  const value = 1;\n  return value;\n})();";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -921,11 +921,11 @@ mod references_tests {
     #[test]
     fn test_find_references_labeled_statement_local() {
         let source = "label: {\n  const value = 1;\n  value;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -948,11 +948,11 @@ mod references_tests {
     #[test]
     fn test_find_references_with_statement_local() {
         let source = "with (obj) {\n  const value = 1;\n  value;\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -975,11 +975,11 @@ mod references_tests {
     #[test]
     fn test_find_references_var_hoisted_in_nested_block() {
         let source = "function demo() {\n  value;\n  if (cond) {\n    var value = 1;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1002,11 +1002,11 @@ mod references_tests {
     #[test]
     fn test_find_references_decorator_reference() {
         let source = "const deco = () => {};\n@deco\nclass Foo {}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1029,11 +1029,11 @@ mod references_tests {
     #[test]
     fn test_find_references_class_method_local() {
         let source = "class Foo {\n  method() {\n    const value = 1;\n    return value;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1056,11 +1056,11 @@ mod references_tests {
     #[test]
     fn test_find_references_class_self_reference() {
         let source = "class Foo {\n  method() {\n    return Foo;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1083,11 +1083,11 @@ mod references_tests {
     #[test]
     fn test_find_references_class_expression_name() {
         let source = "const Foo = class Bar {\n  method() {\n    return Bar;\n  }\n};";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);
@@ -1110,11 +1110,11 @@ mod references_tests {
     #[test]
     fn test_find_references_class_static_block_local() {
         let source = "class Foo {\n  static {\n    const value = 1;\n    value;\n  }\n}";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(arena, root);
 
         let line_map = LineMap::build(source);

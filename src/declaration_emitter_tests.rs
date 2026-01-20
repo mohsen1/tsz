@@ -1,11 +1,11 @@
 //! Tests for declaration_emitter.rs
 
 use crate::declaration_emitter::*;
-use crate::thin_parser::ThinParserState;
+use crate::parser::ParserState;
 use serde_json::Value;
 
 fn emit_declaration(source: &str) -> String {
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -274,7 +274,7 @@ fn test_named_exports() {
 #[test]
 fn test_declaration_source_map_basic() {
     let source = "export interface Foo { x: number; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -297,7 +297,7 @@ fn test_declaration_source_map_basic() {
 #[test]
 fn test_declaration_source_map_type_alias() {
     let source = "export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -326,7 +326,7 @@ fn test_declaration_source_map_type_alias() {
 #[test]
 fn test_declaration_source_map_function() {
     let source = "export function greet(name: string): string { return 'Hello ' + name; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -359,7 +359,7 @@ fn test_declaration_source_map_class() {
     constructor(value: T) { this.value = value; }
     getValue(): T { return this.value; }
 }"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -395,7 +395,7 @@ fn test_declaration_source_map_class() {
 #[test]
 fn test_declaration_source_map_enum() {
     let source = "export enum Status { Active = 'active', Inactive = 'inactive' }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);
@@ -427,7 +427,7 @@ fn test_declaration_source_map_multiple_declarations() {
 export type Distance = number;
 export function distance(a: Point, b: Point): Distance { return 0; }
 export const origin: Point = { x: 0, y: 0 };"#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut emitter = DeclarationEmitter::new(&parser.arena);

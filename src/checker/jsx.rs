@@ -10,7 +10,7 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::scanner::SyntaxKind;
 
 /// JSX intrinsic element types that map to HTML/DOM elements
@@ -200,7 +200,7 @@ pub const SVG_INTRINSIC_ELEMENTS: &[&str] = &[
 
 /// JSX Checker for type-checking JSX elements
 pub struct JsxChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     /// JSX factory function name (default: React.createElement)
     jsx_factory: String,
     /// JSX fragment factory (default: React.Fragment)
@@ -208,7 +208,7 @@ pub struct JsxChecker<'a> {
 }
 
 impl<'a> JsxChecker<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             jsx_factory: "React.createElement".to_string(),
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_element_type() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let checker = JsxChecker::new(&arena);
 
         assert_eq!(

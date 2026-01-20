@@ -3,7 +3,7 @@
 //! Provides folding range information for code blocks (functions, classes, etc.).
 
 use crate::lsp::position::LineMap;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 
 /// A folding range
@@ -38,14 +38,14 @@ impl FoldingRange {
 
 /// Provider for folding ranges.
 pub struct FoldingRangeProvider<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     line_map: &'a LineMap,
     source_text: &'a str,
 }
 
 impl<'a> FoldingRangeProvider<'a> {
     /// Create a new folding range provider.
-    pub fn new(arena: &'a ThinNodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
+    pub fn new(arena: &'a NodeArena, line_map: &'a LineMap, source_text: &'a str) -> Self {
         Self {
             arena,
             line_map,
@@ -340,7 +340,7 @@ impl<'a> FoldingRangeProvider<'a> {
 #[cfg(test)]
 mod folding_tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_folding_ranges_simple_function() {
@@ -349,7 +349,7 @@ function foo() {
     return 1;
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -377,7 +377,7 @@ function outer() {
     return inner();
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -402,7 +402,7 @@ class MyClass {
     }
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -427,7 +427,7 @@ if (true) {
     console.log("yes");
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -450,7 +450,7 @@ interface Point {
     y: number;
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -470,7 +470,7 @@ enum Color {
     Blue
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -489,7 +489,7 @@ namespace MyNamespace {
     const bar = 1;
 }
 "#;
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -503,7 +503,7 @@ namespace MyNamespace {
     #[test]
     fn test_folding_ranges_no_single_line() {
         let source = "function foo() { return 1; }";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 
@@ -521,7 +521,7 @@ namespace MyNamespace {
     #[test]
     fn test_folding_ranges_empty_source() {
         let source = "";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
 

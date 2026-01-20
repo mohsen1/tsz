@@ -28,7 +28,7 @@
 //!
 //! The result type is always `T | undefined` where T is the non-nullish result type.
 
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
@@ -45,7 +45,7 @@ pub struct OptionalChainInfo {
 }
 
 /// Analyze optional chain information for a node
-pub fn analyze_optional_chain(arena: &ThinNodeArena, idx: NodeIndex) -> OptionalChainInfo {
+pub fn analyze_optional_chain(arena: &NodeArena, idx: NodeIndex) -> OptionalChainInfo {
     let mut is_optional = false;
     let mut current = idx;
     let mut root = idx;
@@ -96,7 +96,7 @@ pub fn analyze_optional_chain(arena: &ThinNodeArena, idx: NodeIndex) -> Optional
 }
 
 /// Checks if a node is an optional chain expression
-pub fn is_optional_chain(arena: &ThinNodeArena, idx: NodeIndex) -> bool {
+pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
     };
@@ -248,11 +248,11 @@ pub fn can_be_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::thin_node::ThinNodeArena;
+    use crate::parser::node::NodeArena;
 
     #[test]
     fn test_optional_chain_info_creation() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         let info = analyze_optional_chain(&arena, NodeIndex::NONE);
         assert!(!info.is_optional);
         assert!(!info.is_immediate_optional);
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn test_is_optional_chain_empty() {
-        let arena = ThinNodeArena::new();
+        let arena = NodeArena::new();
         assert!(!is_optional_chain(&arena, NodeIndex::NONE));
     }
 }

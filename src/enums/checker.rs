@@ -17,7 +17,7 @@ use crate::binder::symbol_flags;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -33,7 +33,7 @@ pub mod diagnostic_codes {
 
 /// Type checker for enum declarations
 pub struct EnumChecker<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     diagnostics: Vec<Diagnostic>,
     /// Evaluated enum values cache
     enum_values: FxHashMap<NodeIndex, FxHashMap<String, EnumValue>>,
@@ -41,7 +41,7 @@ pub struct EnumChecker<'a> {
 
 impl<'a> EnumChecker<'a> {
     /// Create a new enum checker
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         EnumChecker {
             arena,
             diagnostics: Vec::new(),
@@ -352,10 +352,10 @@ impl<'a> EnumChecker<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     fn check_enum(source: &str) -> Vec<Diagnostic> {
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {

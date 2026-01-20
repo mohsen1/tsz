@@ -56,10 +56,10 @@ fn test_emit_reexport_property_alias() {
 fn test_collect_export_names_with_parsed_ast() {
     use crate::parser::syntax_kind_ext;
     use crate::scanner::SyntaxKind;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export class C {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -125,10 +125,10 @@ fn test_collect_export_names_with_parsed_ast() {
 
 #[test]
 fn test_collect_export_names_with_destructuring() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export const { a, b: c } = obj;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -149,10 +149,10 @@ fn test_collect_export_names_with_destructuring() {
 
 #[test]
 fn test_collect_export_names_with_default_export() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export default function () {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -173,10 +173,10 @@ fn test_collect_export_names_with_default_export() {
 
 #[test]
 fn test_collect_export_names_with_default_class_export() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export default class Foo {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -197,10 +197,10 @@ fn test_collect_export_names_with_default_class_export() {
 
 #[test]
 fn test_collect_export_names_with_named_exports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "const foo = 1; export { foo as bar };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -221,10 +221,10 @@ fn test_collect_export_names_with_named_exports() {
 
 #[test]
 fn test_collect_export_names_ignores_type_only_specifiers() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "type Foo = number; const foo = 1; export { foo, type Foo };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -245,10 +245,10 @@ fn test_collect_export_names_ignores_type_only_specifiers() {
 
 #[test]
 fn test_collect_export_names_ignores_type_only_named_exports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "type Foo = number; export type { Foo };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -268,10 +268,10 @@ fn test_collect_export_names_ignores_type_only_named_exports() {
 
 #[test]
 fn test_collect_export_names_with_multiple_named_exports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "const foo = 1; const bar = 2; export { foo, bar as baz };";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -292,10 +292,10 @@ fn test_collect_export_names_with_multiple_named_exports() {
 
 #[test]
 fn test_collect_export_names_with_export_import_equals() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export import Foo = require(\"./bar\");";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -316,10 +316,10 @@ fn test_collect_export_names_with_export_import_equals() {
 
 #[test]
 fn test_collect_export_names_ignores_type_only_declarations() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export type Foo = number; export interface Bar { x: number; }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -339,10 +339,10 @@ fn test_collect_export_names_ignores_type_only_declarations() {
 
 #[test]
 fn test_collect_export_names_ignores_declare_exports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export declare const foo: number; export declare function bar(): void;";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -362,10 +362,10 @@ fn test_collect_export_names_ignores_declare_exports() {
 
 #[test]
 fn test_collect_export_names_ignores_reexports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export * from \"./foo\"; export { bar } from \"./bar\";";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -385,10 +385,10 @@ fn test_collect_export_names_ignores_reexports() {
 
 #[test]
 fn test_collect_export_names_ignores_default_reexport() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export { default } from \"./foo\";";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser
@@ -408,10 +408,10 @@ fn test_collect_export_names_ignores_default_reexport() {
 
 #[test]
 fn test_collect_export_names_ignores_const_enum() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "export const enum Foo { A }";
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let Some(source_file) = parser

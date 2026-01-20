@@ -24,8 +24,8 @@
 //! ```
 
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::{
-    ClassData, FunctionData, TaggedTemplateData, TemplateExprData, ThinNode, ThinNodeArena,
+use crate::parser::node::{
+    ClassData, FunctionData, TaggedTemplateData, TemplateExprData, Node, NodeArena,
 };
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
@@ -75,7 +75,7 @@ const MAX_RECURSION_DEPTH: u32 = 1000;
 
 /// ES5 class emitter - emits ES5 IIFE pattern for classes
 pub struct ClassES5Emitter<'a> {
-    arena: &'a ThinNodeArena,
+    arena: &'a NodeArena,
     output: String,
     indent_level: u32,
     source_text: Option<&'a str>,
@@ -104,7 +104,7 @@ pub struct ClassES5Emitter<'a> {
 }
 
 impl<'a> ClassES5Emitter<'a> {
-    pub fn new(arena: &'a ThinNodeArena) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         ClassES5Emitter {
             arena,
             output: String::with_capacity(4096),
@@ -152,7 +152,7 @@ impl<'a> ClassES5Emitter<'a> {
         self.column = 0;
     }
 
-    fn record_mapping_for_node(&mut self, node: &ThinNode) {
+    fn record_mapping_for_node(&mut self, node: &Node) {
         let Some(text) = self.source_text else {
             return;
         };
@@ -170,7 +170,7 @@ impl<'a> ClassES5Emitter<'a> {
 
     /// Emit trailing comments after a position in the source text
     fn emit_trailing_comments(&mut self, end_pos: u32) {
-        use crate::thin_emitter::get_trailing_comment_ranges;
+        use crate::emitter::get_trailing_comment_ranges;
 
         let Some(text) = self.source_text else {
             return;
@@ -1460,7 +1460,7 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Check if a block was on a single line in the source
-    fn is_single_line_block(&self, block_node: &ThinNode) -> bool {
+    fn is_single_line_block(&self, block_node: &Node) -> bool {
         if let Some(source_text) = self.source_text {
             let start = block_node.pos as usize;
             let end = block_node.end as usize;
@@ -1875,7 +1875,7 @@ impl<'a> ClassES5Emitter<'a> {
 
     fn get_binding_element_property_key(
         &self,
-        elem: &crate::parser::thin_node::BindingElementData,
+        elem: &crate::parser::node::BindingElementData,
     ) -> Option<NodeIndex> {
         let key_idx = if !elem.property_name.is_none() {
             elem.property_name
@@ -2123,7 +2123,7 @@ impl<'a> ClassES5Emitter<'a> {
 
     fn emit_param_object_rest_element(
         &mut self,
-        elem: &crate::parser::thin_node::BindingElementData,
+        elem: &crate::parser::node::BindingElementData,
         rest_props: &[NodeIndex],
         temp_name: &str,
         started: &mut bool,
@@ -2215,7 +2215,7 @@ impl<'a> ClassES5Emitter<'a> {
         }
     }
 
-    fn emit_object_binding_pattern(&mut self, pattern_node: &ThinNode) {
+    fn emit_object_binding_pattern(&mut self, pattern_node: &Node) {
         let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
             return;
         };
@@ -2235,7 +2235,7 @@ impl<'a> ClassES5Emitter<'a> {
         self.write(" }");
     }
 
-    fn emit_array_binding_pattern(&mut self, pattern_node: &ThinNode) {
+    fn emit_array_binding_pattern(&mut self, pattern_node: &Node) {
         let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
             return;
         };
@@ -2637,7 +2637,7 @@ impl<'a> ClassES5Emitter<'a> {
         }
     }
 
-    fn emit_es5_destructuring_pattern(&mut self, pattern_node: &ThinNode, temp_name: &str) {
+    fn emit_es5_destructuring_pattern(&mut self, pattern_node: &Node, temp_name: &str) {
         if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
                 return;
@@ -2670,7 +2670,7 @@ impl<'a> ClassES5Emitter<'a> {
 
     fn emit_es5_object_rest_element(
         &mut self,
-        elem: &crate::parser::thin_node::BindingElementData,
+        elem: &crate::parser::node::BindingElementData,
         rest_props: &[NodeIndex],
         temp_name: &str,
     ) {
@@ -2741,7 +2741,7 @@ impl<'a> ClassES5Emitter<'a> {
 
     fn collect_object_rest_props(
         &self,
-        pattern: &crate::parser::thin_node::BindingPatternData,
+        pattern: &crate::parser::node::BindingPatternData,
     ) -> Vec<NodeIndex> {
         let mut props = Vec::new();
         for &elem_idx in &pattern.elements.nodes {
@@ -3936,7 +3936,7 @@ impl<'a> ClassES5Emitter<'a> {
         }
     }
 
-    fn template_raw_text(&self, node: &ThinNode, cooked_fallback: &str) -> String {
+    fn template_raw_text(&self, node: &Node, cooked_fallback: &str) -> String {
         let Some(text) = self.source_text else {
             return cooked_fallback.to_string();
         };
@@ -4642,7 +4642,7 @@ impl<'a> ClassES5Emitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     #[test]
     fn test_simple_class_to_iife() {
@@ -4652,7 +4652,7 @@ mod tests {
             }
         }"#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         // Find the class declaration
@@ -4690,7 +4690,7 @@ mod tests {
             }
         }"#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {
@@ -4718,7 +4718,7 @@ mod tests {
             }
         }"#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {
@@ -4754,7 +4754,7 @@ mod tests {
             }
         }"#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {
@@ -4803,7 +4803,7 @@ mod tests {
             }
         }"#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {
@@ -4830,7 +4830,7 @@ mod tests {
             }
         }"#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         if let Some(root_node) = parser.arena.get(root) {

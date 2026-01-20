@@ -1,13 +1,13 @@
-use super::ThinPrinter;
-use crate::parser::thin_node::ThinNode;
+use super::Printer;
+use crate::parser::node::Node;
 use crate::transform_context::IdentifierId;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Literals
     // =========================================================================
 
-    pub(super) fn emit_identifier(&mut self, node: &ThinNode) {
+    pub(super) fn emit_identifier(&mut self, node: &Node) {
         if let Some(ident) = self.arena.get_identifier(node) {
             self.write_identifier(&ident.escaped_text);
         }
@@ -19,13 +19,13 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_numeric_literal(&mut self, node: &ThinNode) {
+    pub(super) fn emit_numeric_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             self.write(&lit.text);
         }
     }
 
-    pub(super) fn emit_string_literal(&mut self, node: &ThinNode) {
+    pub(super) fn emit_string_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             let quote = if self.ctx.options.single_quote {
                 '\''

@@ -4,7 +4,7 @@ use super::config::{
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::thin_emitter::{ModuleKind, ScriptTarget};
+use crate::emitter::{ModuleKind, ScriptTarget};
 
 struct TempDir {
     path: PathBuf,

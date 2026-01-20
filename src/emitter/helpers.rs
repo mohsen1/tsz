@@ -1,10 +1,10 @@
-use super::ThinPrinter;
+use super::Printer;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::source_writer::SourcePosition;
-use crate::thin_printer::safe_slice;
+use crate::printer::safe_slice;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
     }

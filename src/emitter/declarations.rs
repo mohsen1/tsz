@@ -1,16 +1,16 @@
-use super::ThinPrinter;
+use super::Printer;
 use crate::parser::syntax_kind_ext;
-use crate::parser::thin_node::ThinNode;
+use crate::parser::node::Node;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::class_es5::ClassES5Emitter;
 
-impl<'a> ThinPrinter<'a> {
+impl<'a> Printer<'a> {
     // =========================================================================
     // Declarations
     // =========================================================================
 
-    pub(super) fn emit_function_declaration(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    pub(super) fn emit_function_declaration(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(func) = self.arena.get_function(node) else {
             return;
         };
@@ -63,7 +63,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit(func.body);
     }
 
-    pub(super) fn emit_variable_declaration_list(&mut self, node: &ThinNode) {
+    pub(super) fn emit_variable_declaration_list(&mut self, node: &Node) {
         // Variable declaration list is stored as VariableData
         let Some(decl_list) = self.arena.get_variable(node) else {
             return;
@@ -111,7 +111,7 @@ impl<'a> ThinPrinter<'a> {
         self.emit_missing_initializer_as_void_0 = prev;
     }
 
-    pub(super) fn emit_variable_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_variable_declaration(&mut self, node: &Node) {
         let Some(decl) = self.arena.get_variable_declaration(node) else {
             return;
         };
@@ -136,7 +136,7 @@ impl<'a> ThinPrinter<'a> {
     // =========================================================================
 
     /// Emit a class declaration.
-    pub(super) fn emit_class_declaration(&mut self, node: &ThinNode, idx: NodeIndex) {
+    pub(super) fn emit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
@@ -177,7 +177,7 @@ impl<'a> ThinPrinter<'a> {
     /// Emit a class using ES6 native class syntax (no transforms).
     /// This is the pure emission logic that can be reused by both the old API
     /// and the new transform system.
-    pub(super) fn emit_class_es6(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    pub(super) fn emit_class_es6(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
@@ -249,7 +249,7 @@ impl<'a> ThinPrinter<'a> {
     // Declarations - Enum, Interface, Type Alias
     // =========================================================================
 
-    pub(super) fn emit_enum_declaration(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    pub(super) fn emit_enum_declaration(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(enum_decl) = self.arena.get_enum(node) else {
             return;
         };
@@ -278,7 +278,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("}");
     }
 
-    pub(super) fn emit_enum_member(&mut self, node: &ThinNode) {
+    pub(super) fn emit_enum_member(&mut self, node: &Node) {
         let Some(member) = self.arena.get_enum_member(node) else {
             return;
         };
@@ -291,7 +291,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_interface_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_interface_declaration(&mut self, node: &Node) {
         let Some(interface) = self.arena.get_interface(node) else {
             return;
         };
@@ -330,7 +330,7 @@ impl<'a> ThinPrinter<'a> {
         self.write("}");
     }
 
-    pub(super) fn emit_type_alias_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_type_alias_declaration(&mut self, node: &Node) {
         let Some(type_alias) = self.arena.get_type_alias(node) else {
             return;
         };
@@ -352,7 +352,7 @@ impl<'a> ThinPrinter<'a> {
         self.write_semicolon();
     }
 
-    pub(super) fn emit_module_declaration(&mut self, node: &ThinNode, _idx: NodeIndex) {
+    pub(super) fn emit_module_declaration(&mut self, node: &Node, _idx: NodeIndex) {
         let Some(module) = self.arena.get_module(node) else {
             return;
         };
@@ -392,7 +392,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_method_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_method_declaration(&mut self, node: &Node) {
         let Some(method) = self.arena.get_method_decl(node) else {
             return;
         };
@@ -431,7 +431,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_property_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_property_declaration(&mut self, node: &Node) {
         let Some(prop) = self.arena.get_property_decl(node) else {
             return;
         };
@@ -471,7 +471,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_constructor_declaration(&mut self, node: &ThinNode) {
+    pub(super) fn emit_constructor_declaration(&mut self, node: &Node) {
         let Some(ctor) = self.arena.get_constructor(node) else {
             return;
         };
@@ -489,7 +489,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_get_accessor(&mut self, node: &ThinNode) {
+    pub(super) fn emit_get_accessor(&mut self, node: &Node) {
         let Some(accessor) = self.arena.get_accessor(node) else {
             return;
         };
@@ -512,7 +512,7 @@ impl<'a> ThinPrinter<'a> {
         }
     }
 
-    pub(super) fn emit_set_accessor(&mut self, node: &ThinNode) {
+    pub(super) fn emit_set_accessor(&mut self, node: &Node) {
         let Some(accessor) = self.arena.get_accessor(node) else {
             return;
         };

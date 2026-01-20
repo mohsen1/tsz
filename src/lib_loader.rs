@@ -6,9 +6,9 @@
 
 use crate::binder::SymbolTable;
 use crate::checker::types::diagnostics::Diagnostic;
-use crate::parser::thin_node::ThinNodeArena;
-use crate::thin_binder::ThinBinderState;
-use crate::thin_parser::ThinParserState;
+use crate::parser::node::NodeArena;
+use crate::binder::BinderState;
+use crate::parser::ParserState;
 use std::sync::Arc;
 
 // =============================================================================
@@ -32,7 +32,7 @@ pub fn load_default_lib_dts() -> Option<Arc<LibFile>> {
     let lib_dts_path = std::path::Path::new("tests/lib/lib.d.ts");
     let source_text = std::fs::read_to_string(lib_dts_path).ok()?;
 
-    let mut lib_parser = ThinParserState::new("lib.d.ts".to_string(), source_text);
+    let mut lib_parser = ParserState::new("lib.d.ts".to_string(), source_text);
     let source_file_idx = lib_parser.parse_source_file();
 
     if !lib_parser.get_diagnostics().is_empty() {
@@ -40,7 +40,7 @@ pub fn load_default_lib_dts() -> Option<Arc<LibFile>> {
         return None;
     }
 
-    let mut lib_binder = ThinBinderState::new();
+    let mut lib_binder = BinderState::new();
     lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
 
     let arena = Arc::new(lib_parser.into_arena());
@@ -59,14 +59,14 @@ pub struct LibFile {
     /// File name (e.g., "lib.d.ts")
     pub file_name: String,
     /// The arena (shared via Arc for cross-file resolution)
-    pub arena: Arc<ThinNodeArena>,
+    pub arena: Arc<NodeArena>,
     /// The binder state with bound symbols
-    pub binder: Arc<ThinBinderState>,
+    pub binder: Arc<BinderState>,
 }
 
 impl LibFile {
     /// Create a new LibFile from a parsed and bound lib file.
-    pub fn new(file_name: String, arena: Arc<ThinNodeArena>, binder: Arc<ThinBinderState>) -> Self {
+    pub fn new(file_name: String, arena: Arc<NodeArena>, binder: Arc<BinderState>) -> Self {
         Self {
             file_name,
             arena,
@@ -255,11 +255,11 @@ mod tests {
         lib_file_locals.set("console".to_string(), console_id);
 
         let mut lib_binder =
-            ThinBinderState::from_bound_state(arena, lib_file_locals, Default::default());
+            BinderState::from_bound_state(arena, lib_file_locals, Default::default());
 
         let lib = Arc::new(LibFile::new(
             "lib.d.ts".to_string(),
-            Arc::new(ThinNodeArena::new()),
+            Arc::new(NodeArena::new()),
             Arc::new(lib_binder),
         ));
 
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_bind_with_lib_symbols() {
-        use crate::thin_parser::ThinParserState;
+        use crate::parser::ParserState;
 
         // Load lib.d.ts
         let lib_file = load_default_lib_dts();
@@ -412,7 +412,7 @@ async function foo() {
 }
 "#;
 
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         assert!(
@@ -422,7 +422,7 @@ async function foo() {
         );
 
         // Bind with lib symbols
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
         binder.merge_lib_symbols(&[lib_file]);
 
@@ -447,7 +447,7 @@ async function foo() {
 
     #[test]
     fn test_get_symbol_resolves_lib_symbols() {
-        use crate::thin_parser::ThinParserState;
+        use crate::parser::ParserState;
 
         // Load lib.d.ts
         let lib_file = load_default_lib_dts();
@@ -459,11 +459,11 @@ async function foo() {
 
         // Parse a source file
         let source = "const x = 1;";
-        let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
         // Bind with lib symbols
-        let mut binder = ThinBinderState::new();
+        let mut binder = BinderState::new();
         binder.bind_source_file(parser.get_arena(), root);
         binder.merge_lib_symbols(&[lib_file]);
 

@@ -1,4 +1,4 @@
-//! Tests for ThinChecker - Type checker using ThinNodeArena and Solver
+//! Tests for Checker - Type checker using NodeArena and Solver
 //!
 //! This module contains comprehensive type checking tests organized into categories:
 //! - Basic type checking (creation, intrinsic types, type interning)
@@ -9,22 +9,22 @@
 //! - Control flow analysis
 //! - Error diagnostics
 
-use crate::parser::thin_node::ThinNodeArena;
+use crate::parser::node::NodeArena;
 use crate::solver::{TypeId, TypeInterner};
-use crate::thin_binder::ThinBinderState;
-use crate::thin_checker::ThinCheckerState;
-use crate::thin_parser::ThinParserState;
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState as CheckerState;
+use crate::parser::ParserState;
 
 // =============================================================================
 // Basic Type Checker Tests
 // =============================================================================
 
 #[test]
-fn test_thin_checker_creation() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_creation() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -37,11 +37,11 @@ fn test_thin_checker_creation() {
 }
 
 #[test]
-fn test_thin_checker_basic_types() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_basic_types() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let _checker = ThinCheckerState::new(
+    let _checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -58,11 +58,11 @@ fn test_thin_checker_basic_types() {
 }
 
 #[test]
-fn test_thin_checker_type_interner() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_type_interner() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -78,11 +78,11 @@ fn test_thin_checker_type_interner() {
 }
 
 #[test]
-fn test_thin_checker_structural_equality() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_structural_equality() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -101,11 +101,11 @@ fn test_thin_checker_structural_equality() {
 }
 
 #[test]
-fn test_thin_checker_union_normalization() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_union_normalization() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -145,7 +145,7 @@ fn test_thin_checker_union_normalization() {
 #[test]
 fn test_await_type_context_suggests_awaited() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 async function foo() {
@@ -153,7 +153,7 @@ async function foo() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -161,11 +161,11 @@ async function foo() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -196,14 +196,14 @@ async function foo() {
 #[test]
 fn test_async_modifier_rejected_for_class_and_enum() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 async class C {}
 async enum E { Value }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     let async_modifier_count = codes
@@ -219,7 +219,7 @@ async enum E { Value }
 
 #[test]
 fn test_excess_property_in_variable_declaration() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
@@ -227,7 +227,7 @@ const ok: Foo = { x: 1 };
 const bad: Foo = { x: 1, y: 2 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -235,11 +235,11 @@ const bad: Foo = { x: 1, y: 2 };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -259,7 +259,7 @@ const bad: Foo = { x: 1, y: 2 };
 
 #[test]
 fn test_excess_property_allows_variable_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
@@ -267,7 +267,7 @@ const obj = { x: 1, y: 2 };
 const ok: Foo = obj;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -275,11 +275,11 @@ const ok: Foo = obj;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -297,14 +297,14 @@ const ok: Foo = obj;
 
 #[test]
 fn test_object_trifecta_assignability_in_checker() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let ok: {} = "hi";
 let bad: object = "hi";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -312,11 +312,11 @@ let bad: object = "hi";
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -336,13 +336,13 @@ let bad: object = "hi";
 
 #[test]
 fn test_shorthand_property_resolves_parameter() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const mk = (e: number) => ({ e });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -350,11 +350,11 @@ const mk = (e: number) => ({ e });
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -374,7 +374,7 @@ const mk = (e: number) => ({ e });
 
 #[test]
 fn test_ambient_module_export_default_resolves_local() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare module "*!text" {
@@ -383,7 +383,7 @@ declare module "*!text" {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -391,11 +391,11 @@ declare module "*!text" {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -415,13 +415,13 @@ declare module "*!text" {
 
 #[test]
 fn test_await_type_reference_does_not_emit_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 var v: await;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -429,11 +429,11 @@ var v: await;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -453,7 +453,7 @@ var v: await;
 
 #[test]
 fn test_property_initializer_contextual_literal_type() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -461,7 +461,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -469,11 +469,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -491,7 +491,7 @@ class C {
 
 #[test]
 fn test_indexed_access_class_property_type() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -502,7 +502,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -510,11 +510,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -532,7 +532,7 @@ class C {
 
 #[test]
 fn test_tuple_array_assignability_in_checker() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Tup = [string, number];
@@ -541,7 +541,7 @@ const arr: (string | number)[] = tup;
 const bad: Tup = arr;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -549,11 +549,11 @@ const bad: Tup = arr;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -573,7 +573,7 @@ const bad: Tup = arr;
 
 #[test]
 fn test_rest_any_bivariance_in_checker() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Logger = (...args: any[]) => void;
@@ -581,7 +581,7 @@ const log: Logger = (id: number) => {};
 const log2: Logger = (id: number, extra: string) => {};
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -589,11 +589,11 @@ const log2: Logger = (id: number, extra: string) => {};
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -610,7 +610,7 @@ const log2: Logger = (id: number, extra: string) => {};
 
 #[test]
 fn test_weak_type_detection_in_checker() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Weak {
@@ -623,7 +623,7 @@ const okAssign: Weak = ok;
 const badAssign: Weak = bad;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -631,11 +631,11 @@ const badAssign: Weak = bad;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -655,7 +655,7 @@ const badAssign: Weak = bad;
 
 #[test]
 fn test_apparent_members_on_primitives() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const s: string = "hi";
@@ -667,7 +667,7 @@ n.toFixed();
 b.valueOf();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -675,11 +675,11 @@ b.valueOf();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -696,14 +696,14 @@ b.valueOf();
 
 #[test]
 fn test_void_return_exception_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type VoidFn = () => void;
 const ok: VoidFn = () => "value";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -711,11 +711,11 @@ const ok: VoidFn = () => "value";
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -732,14 +732,14 @@ const ok: VoidFn = () => "value";
 
 #[test]
 fn test_literal_widening_for_mutable_bindings() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x = true;
 const y = true;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -747,11 +747,11 @@ const y = true;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -776,7 +776,7 @@ const y = true;
 
 #[test]
 fn test_excess_property_in_call_argument() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
@@ -786,14 +786,14 @@ const obj = { x: 1, y: 2 };
 takesFoo(obj);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -814,7 +814,7 @@ takesFoo(obj);
 #[test]
 fn test_array_literal_best_common_type() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const numbers = [1, 2];
@@ -823,7 +823,7 @@ numbers;
 mixed;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -855,11 +855,11 @@ mixed;
         .get_expression_statement(arena.get(expr_stmts[1]).expect("mixed expr node"))
         .expect("mixed expr");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -885,7 +885,7 @@ mixed;
 #[test]
 fn test_index_access_union_key_cross_product() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type A = { kind: "a"; val: 1 } | { kind: "b"; val: 2 };
@@ -894,7 +894,7 @@ declare const key: "kind" | "val";
 obj[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -921,11 +921,11 @@ obj[key];
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -949,7 +949,7 @@ obj[key];
 }
 
 #[test]
-fn test_thin_checker_resolves_function_parameter_from_bound_state() {
+fn test_checker_resolves_function_parameter_from_bound_state() {
     use crate::binder::SymbolTable;
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parallel;
@@ -976,7 +976,7 @@ export function f(node: { body: number }) {
         }
     }
 
-    let binder = ThinBinderState::from_bound_state_with_scopes(
+    let binder = BinderState::from_bound_state_with_scopes(
         program.symbols.clone(),
         file_locals,
         file.node_symbols.clone(),
@@ -985,7 +985,7 @@ export function f(node: { body: number }) {
     );
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &file.arena,
         &binder,
         &types,
@@ -1004,7 +1004,7 @@ export function f(node: { body: number }) {
 
 #[test]
 fn test_excess_property_in_return_statement() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
@@ -1013,14 +1013,14 @@ function makeFoo(): Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1039,11 +1039,11 @@ function makeFoo(): Foo {
 }
 
 #[test]
-fn test_thin_checker_subtype_intrinsics() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_subtype_intrinsics() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -1075,11 +1075,11 @@ fn test_thin_checker_subtype_intrinsics() {
 }
 
 #[test]
-fn test_thin_checker_subtype_literals() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_subtype_literals() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -1104,11 +1104,11 @@ fn test_thin_checker_subtype_literals() {
 }
 
 #[test]
-fn test_thin_checker_subtype_unions() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_subtype_unions() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -1132,11 +1132,11 @@ fn test_thin_checker_subtype_unions() {
 }
 
 #[test]
-fn test_thin_checker_type_identity() {
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+fn test_checker_type_identity() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
-    let checker = ThinCheckerState::new(
+    let checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -1161,17 +1161,17 @@ fn test_thin_checker_type_identity() {
 
 #[test]
 fn test_function_overload_missing_implementation_2391() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"function foo();"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1190,20 +1190,20 @@ fn test_function_overload_missing_implementation_2391() {
 
 #[test]
 fn test_function_overload_with_implementation() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"
 function foo(): void;
 function foo() {}
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1222,20 +1222,20 @@ function foo() {}
 
 #[test]
 fn test_function_overload_wrong_name_2389() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"
 function foo(): void;
 function bar() {}
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1255,14 +1255,14 @@ function bar() {}
 #[test]
 fn test_duplicate_identifier_var_function_2300() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 var foo = 1;
 function foo() {}
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1270,11 +1270,11 @@ function foo() {}
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1299,14 +1299,14 @@ function foo() {}
 #[test]
 fn test_duplicate_identifier_var_let_2300() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 var foo = 1;
 let foo = 2;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1314,11 +1314,11 @@ let foo = 2;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1343,7 +1343,7 @@ let foo = 2;
 #[test]
 fn test_duplicate_identifier_type_alias_2300() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
@@ -1353,7 +1353,7 @@ type Bar = { x: number };
 interface Bar { y: number; }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1361,11 +1361,11 @@ interface Bar { y: number; }
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1391,7 +1391,7 @@ interface Bar { y: number; }
 #[test]
 fn test_duplicate_identifier_enum_member_2300() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 enum Color {
@@ -1403,7 +1403,7 @@ enum Color {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1411,11 +1411,11 @@ enum Color {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1435,14 +1435,14 @@ enum Color {
 #[test]
 fn test_type_alias_with_function_no_duplicate_2300() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { x: number };
 function Foo() {}
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1450,11 +1450,11 @@ function Foo() {}
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1479,7 +1479,7 @@ function Foo() {}
 #[test]
 fn test_class_accessor_pair_no_duplicate_2300() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Rectangle {
@@ -1495,7 +1495,7 @@ class Rectangle {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1503,11 +1503,11 @@ class Rectangle {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1527,7 +1527,7 @@ class Rectangle {
 #[test]
 fn test_class_duplicate_getter_2300() {
     use crate::checker::types::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Rectangle {
@@ -1541,7 +1541,7 @@ class Rectangle {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -1549,11 +1549,11 @@ class Rectangle {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1578,7 +1578,7 @@ class Rectangle {
 #[test]
 fn test_overload_call_reports_no_overload_matches() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function f(x: string): void;
@@ -1587,14 +1587,14 @@ function f(x: any, y?: any) {}
 f(true);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1613,7 +1613,7 @@ f(true);
 
 #[test]
 fn test_overload_call_resolves_basic_signatures() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function fn(x: string): string;
@@ -1623,14 +1623,14 @@ fn("hello");
 fn(42);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1648,7 +1648,7 @@ fn(42);
 
 #[test]
 fn test_overload_call_handles_optional_params() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function opt(a: string): void;
@@ -1658,14 +1658,14 @@ opt("x");
 opt("x", 1);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1683,7 +1683,7 @@ opt("x", 1);
 
 #[test]
 fn test_overload_call_handles_rest_params() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function rest(...args: number[]): void;
@@ -1693,14 +1693,14 @@ rest(1, 2, 3);
 rest("a", "b");
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1718,7 +1718,7 @@ rest("a", "b");
 
 #[test]
 fn test_overload_call_handles_tuple_spread_params() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare function foo1(a: number, b: string, c: boolean, ...d: number[]): void;
@@ -1730,14 +1730,14 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1755,7 +1755,7 @@ function foo2<T extends [number, string]>(t1: T, t2: [boolean], a1: number[]) {
 
 #[test]
 fn test_overload_call_handles_variadic_tuple_param() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare function ft3<T extends unknown[]>(t: [...T]): T;
@@ -1765,14 +1765,14 @@ ft3(["hello", 42]);
 ft4(["hello", 42]);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1790,7 +1790,7 @@ ft4(["hello", 42]);
 
 #[test]
 fn test_overload_call_handles_generic_signatures() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function id<T>(x: T): T;
@@ -1800,14 +1800,14 @@ id("test");
 id(123);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1825,7 +1825,7 @@ id(123);
 
 #[test]
 fn test_overload_call_array_methods() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const arr = [1, 2, 3];
@@ -1834,14 +1834,14 @@ arr.filter(x => x > 1);
 arr.reduce((a, b) => a + b, 0);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1860,7 +1860,7 @@ arr.reduce((a, b) => a + b, 0);
 #[test]
 fn test_class_method_overload_reports_no_overload_matches() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -1873,14 +1873,14 @@ c.foo(true);
 c.foo("ok");
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1904,7 +1904,7 @@ c.foo("ok");
 #[test]
 fn test_new_expression_infers_class_instance_type() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -1916,14 +1916,14 @@ class Foo {
 const f = new Foo();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -1990,7 +1990,7 @@ const f = new Foo();
 #[test]
 fn test_new_expression_infers_parameter_properties() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -1999,14 +1999,14 @@ class Foo {
 const f = new Foo(1, "x", 2);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2057,7 +2057,7 @@ const f = new Foo(1, "x", 2);
 #[test]
 fn test_new_expression_infers_base_class_properties() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base<T> {
@@ -2075,14 +2075,14 @@ class Derived extends Base<string> {
 const d = new Derived();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2125,7 +2125,7 @@ const d = new Derived();
 #[test]
 fn test_new_expression_infers_generic_class_type_params() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Box<T> {
@@ -2137,14 +2137,14 @@ class Box<T> {
 const b = new Box("hi");
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2178,7 +2178,7 @@ const b = new Box("hi");
 
 #[test]
 fn test_class_type_annotation_includes_inherited_properties() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base { name: string; }
@@ -2187,7 +2187,7 @@ let d: Derived;
 d.name;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -2195,11 +2195,11 @@ d.name;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2218,7 +2218,7 @@ d.name;
 
 #[test]
 fn test_generic_class_type_annotation_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Box<T> { value: T; }
@@ -2226,7 +2226,7 @@ let b: Box<string>;
 b.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -2234,11 +2234,11 @@ b.value;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2257,7 +2257,7 @@ b.value;
 
 #[test]
 fn test_interface_extends_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface A { x: number; }
@@ -2265,7 +2265,7 @@ interface B extends A { y: number; }
 function f(obj: B) { return obj.x + obj.y; }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -2273,11 +2273,11 @@ function f(obj: B) { return obj.x + obj.y; }
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2296,7 +2296,7 @@ function f(obj: B) { return obj.x + obj.y; }
 
 #[test]
 fn test_class_implements_interface_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Printable { print(): void; }
@@ -2305,7 +2305,7 @@ let doc: Doc;
 doc.print();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -2313,11 +2313,11 @@ doc.print();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2337,7 +2337,7 @@ doc.print();
 #[test]
 fn test_new_expression_reports_overload_mismatch() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -2348,14 +2348,14 @@ class Foo {
 new Foo(true);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2374,7 +2374,7 @@ new Foo(true);
 
 #[test]
 fn test_new_expression_resolves_constructor_overloads() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -2386,14 +2386,14 @@ new Foo("ok");
 new Foo(42);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2411,7 +2411,7 @@ new Foo(42);
 
 #[test]
 fn test_new_expression_resolves_constructor_overloads_with_rest() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -2423,14 +2423,14 @@ new Foo(1, 2, 3);
 new Foo("a", "b");
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2448,19 +2448,19 @@ new Foo("a", "b");
 
 #[test]
 fn test_parameter_property_in_function_2369() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     // Parameter properties (public/private/protected/readonly on params)
     // are only allowed in constructor implementations
     let source = r#"function F(public x: string) { }"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2479,17 +2479,17 @@ fn test_parameter_property_in_function_2369() {
 
 #[test]
 fn test_parameter_property_in_arrow_2369() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"var v = (public x: string) => { };"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2508,7 +2508,7 @@ fn test_parameter_property_in_arrow_2369() {
 
 #[test]
 fn test_parameter_property_in_constructor_overload_2369() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     // Constructor overload signatures should error on parameter properties
     let source = r#"
 class C {
@@ -2517,14 +2517,14 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2545,7 +2545,7 @@ class C {
 
 #[test]
 fn test_parameter_property_in_constructor_implementation_ok() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     // Constructor implementations are allowed to have parameter properties
     let source = r#"
 class C {
@@ -2553,14 +2553,14 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2579,18 +2579,18 @@ class C {
 
 #[test]
 fn test_class_name_any_error_2414() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that class name 'any' produces error 2414
     let code = "class any {}";
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2609,7 +2609,7 @@ fn test_class_name_any_error_2414() {
 
 #[test]
 fn test_local_variable_scope_resolution() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that local variables inside functions are properly resolved
     // This should NOT produce "Cannot find name 'x'" error
@@ -2619,14 +2619,14 @@ fn test_local_variable_scope_resolution() {
             let y = x + 1;
         }
     "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2646,7 +2646,7 @@ fn test_local_variable_scope_resolution() {
 
 #[test]
 fn test_for_loop_variable_scope() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that for loop variables are properly scoped
     let code = r#"
@@ -2656,14 +2656,14 @@ fn test_for_loop_variable_scope() {
             }
         }
     "#;
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2683,7 +2683,7 @@ fn test_for_loop_variable_scope() {
 
 #[test]
 fn test_object_literal_properties_resolve_locals() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -2693,14 +2693,14 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2719,7 +2719,7 @@ function test() {
 
 #[test]
 fn test_export_default_in_ambient_module_resolves_local() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare module "foo" {
@@ -2728,14 +2728,14 @@ declare module "foo" {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2754,20 +2754,20 @@ declare module "foo" {
 
 #[test]
 fn test_missing_identifier_emits_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x = MissingName;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2786,20 +2786,20 @@ let x = MissingName;
 
 #[test]
 fn test_missing_type_reference_emits_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: MissingType;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2819,7 +2819,7 @@ let x: MissingType;
 #[test]
 fn test_ts2792_import_with_module_augmentation() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 import { value } from "dep";
@@ -2831,7 +2831,7 @@ declare module "dep" {
 value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -2839,11 +2839,11 @@ value;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2862,7 +2862,7 @@ value;
 
 #[test]
 fn test_declared_module_recorded_in_script() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare module "dep" {
@@ -2870,7 +2870,7 @@ declare module "dep" {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -2878,7 +2878,7 @@ declare module "dep" {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     assert!(
@@ -2889,20 +2889,20 @@ declare module "dep" {
 
 #[test]
 fn test_missing_type_reference_in_function_type_emits_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Fn = (value: MissingType) => void;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2921,21 +2921,21 @@ type Fn = (value: MissingType) => void;
 
 #[test]
 fn test_missing_property_access_emits_2339_not_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const obj = { value: 1 };
 obj.missing;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2959,7 +2959,7 @@ obj.missing;
 
 #[test]
 fn test_arguments_in_async_arrow_no_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function f() {
@@ -2973,14 +2973,14 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -2999,7 +2999,7 @@ class C {
 
 #[test]
 fn test_signature_type_params_no_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface BaseConstructor {
@@ -3008,14 +3008,14 @@ interface BaseConstructor {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3034,20 +3034,20 @@ interface BaseConstructor {
 
 #[test]
 fn test_extends_undefined_no_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C extends undefined {}
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3066,21 +3066,21 @@ class C extends undefined {}
 
 #[test]
 fn test_extends_null_no_2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C extends null {}
 class D extends (null) {}
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3099,7 +3099,7 @@ class D extends (null) {}
 
 #[test]
 fn test_decorator_invalid_declarations_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare function dec<T>(target: T): T;
@@ -3120,14 +3120,14 @@ type T = number;
 var x: number;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3147,7 +3147,7 @@ var x: number;
 #[test]
 fn test_abstract_class_in_local_scope_2511() {
     use crate::binder::symbol_flags;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test case from tests/cases/compiler/abstractClassInLocalScopeIsAbstract.ts
     // Abstract class declared inside an IIFE should still error on instantiation
@@ -3160,10 +3160,10 @@ fn test_abstract_class_in_local_scope_2511() {
         })()
     "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     // Debug: Check symbols
@@ -3197,7 +3197,7 @@ fn test_abstract_class_in_local_scope_2511() {
     }
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3240,7 +3240,7 @@ fn test_abstract_class_in_local_scope_2511() {
 #[test]
 fn test_static_member_suggestion_2662() {
     // Error 2662: Cannot find name 'foo'. Did you mean the static member 'C.foo'?
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"
 class C {
     static foo: string;
@@ -3251,14 +3251,14 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3290,7 +3290,7 @@ class C {
 
 #[test]
 fn test_class_static_side_property_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class A {
@@ -3300,7 +3300,7 @@ class B {}
 let ctor: typeof A = B;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -3308,11 +3308,11 @@ let ctor: typeof A = B;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3333,7 +3333,7 @@ let ctor: typeof A = B;
 
 #[test]
 fn test_private_member_nominal_class_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class A {
@@ -3345,7 +3345,7 @@ class B {
 const a: A = new B();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -3353,11 +3353,11 @@ const a: A = new B();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3379,7 +3379,7 @@ const a: A = new B();
 #[test]
 fn test_private_protected_property_access_errors() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -3391,7 +3391,7 @@ f.x;
 f.y;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -3399,11 +3399,11 @@ f.y;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3427,7 +3427,7 @@ f.y;
 
 #[test]
 fn test_private_protected_property_access_ok() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base {
@@ -3442,7 +3442,7 @@ class Baz {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -3450,11 +3450,11 @@ class Baz {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3473,7 +3473,7 @@ class Baz {
 #[test]
 fn test_protected_access_requires_derived_instance() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base {
@@ -3487,7 +3487,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -3495,11 +3495,11 @@ class Derived extends Base {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3523,7 +3523,7 @@ class Derived extends Base {
 #[test]
 fn test_protected_static_access_requires_derived_constructor() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base {
@@ -3537,7 +3537,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -3545,11 +3545,11 @@ class Derived extends Base {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3573,7 +3573,7 @@ class Derived extends Base {
 #[test]
 fn test_abstract_property_in_constructor_2715() {
     // Error 2715: Abstract property 'prop' in class 'AbstractClass' cannot be accessed in the constructor.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class AbstractClass {
@@ -3585,14 +3585,14 @@ abstract class AbstractClass {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3612,17 +3612,17 @@ abstract class AbstractClass {
 #[test]
 fn test_interface_name_cannot_be_reserved_2427() {
     // Error 2427: Interface name cannot be 'string' (or other primitive types)
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"interface string {}"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3648,17 +3648,17 @@ fn test_interface_name_cannot_be_reserved_2427() {
 #[test]
 fn test_const_modifier_on_class_property_1248() {
     // Error 1248: A class member cannot have the 'const' keyword
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"class AtomicNumbers { static const H = 1; }"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3685,20 +3685,20 @@ fn test_const_modifier_on_class_property_1248() {
 fn test_accessor_type_compatibility_2322() {
     // Error 2322: Type 'string' is not assignable to type 'number'
     // When getter returns string but setter expects number
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"class C {
     public set AnnotatedSetter(a: number) { }
     public get AnnotatedSetter() { return ""; }
 }"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3730,7 +3730,7 @@ fn test_accessor_type_compatibility_2322() {
 #[test]
 fn test_accessor_type_compatibility_typeof_structural() {
     // Getter return type should be assignable to setter param type when using typeof.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
     let source = r#"
 var x: { foo: string; }
 class C {
@@ -3739,14 +3739,14 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3767,7 +3767,7 @@ class C {
 #[test]
 fn test_abstract_class_through_type_alias_2511() {
     // Error 2511: Cannot create an instance of an abstract class - through type alias
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class AbstractA { a: string; }
@@ -3776,14 +3776,14 @@ declare const cls2: Abstracts;
 new cls2();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3814,7 +3814,7 @@ new cls2();
 #[test]
 fn test_abstract_class_union_type_2511() {
     // Error 2511: Cannot create an instance of an abstract class - through union type
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class ConcreteA {}
@@ -3827,14 +3827,14 @@ declare const cls1: ConcretesOrAbstracts;
 new cls1();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3865,7 +3865,7 @@ new cls1();
 #[test]
 fn test_property_used_before_initialization_2729() {
     // Error 2729: Property is used before its initialization
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -3879,14 +3879,14 @@ class NoError {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -3911,7 +3911,7 @@ class NoError {
 fn test_property_not_assignable_to_same_in_base_2416() {
     // Error 2416: Property 'num' in type 'WrongTypePropertyImpl' is not assignable
     // to the same property in base type 'WrongTypeProperty'.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class WrongTypeProperty {
@@ -3922,7 +3922,7 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     // Debug: Print parsed classes
@@ -3939,14 +3939,14 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
         }
     }
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     // Debug: print file locals
     println!("File locals count: {}", binder.file_locals.len());
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -3975,7 +3975,7 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
 
 #[test]
 fn test_property_not_assignable_to_generic_base_2416() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class Base<T> {
@@ -3986,14 +3986,14 @@ class Derived extends Base<string> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4014,7 +4014,7 @@ class Derived extends Base<string> {
 fn test_non_abstract_class_missing_implementations_2654() {
     // Error 2654: Non-abstract class 'C' is missing implementations for
     // the following members of 'B': 'prop', 'm'.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class B {
@@ -4026,15 +4026,15 @@ class C extends B {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4078,7 +4078,7 @@ class C extends B {
 #[test]
 fn test_readonly_property_assignment_2540() {
     // Error 2540: Cannot assign to 'ro' because it is a read-only property.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -4088,15 +4088,15 @@ let c = new C();
 c.ro = "error: lhs of assignment can't be readonly";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4126,7 +4126,7 @@ c.ro = "error: lhs of assignment can't be readonly";
 #[test]
 fn test_readonly_element_access_assignment_2540() {
     // Error 2540: Cannot assign to 'name' because it is a read-only property.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Config {
@@ -4136,15 +4136,15 @@ let config: Config = { name: "ok" };
 config["name"] = "error";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4168,22 +4168,22 @@ config["name"] = "error";
 #[test]
 fn test_readonly_array_element_assignment_2540() {
     // Error 2540: Cannot assign to '0' because it is a read-only property.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const xs: readonly number[] = [1, 2];
 xs[0] = 3;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4207,7 +4207,7 @@ xs[0] = 3;
 #[test]
 fn test_readonly_method_signature_assignment_2540() {
     // Error 2540: Cannot assign to 'run' because it is a read-only property.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Service {
@@ -4217,15 +4217,15 @@ let svc: Service = { run() {} };
 svc.run = () => {};
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4249,7 +4249,7 @@ svc.run = () => {};
 #[test]
 fn test_readonly_index_signature_element_access_assignment_2540() {
     // Error 2540: Cannot assign to 'a' because it is a read-only property.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface ReadonlyMap {
@@ -4259,15 +4259,15 @@ let map: ReadonlyMap = { a: 1 };
 map["a"] = 2;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4291,7 +4291,7 @@ map["a"] = 2;
 #[test]
 fn test_readonly_index_signature_variable_access_assignment_2540() {
     // Error 2540: Cannot assign via readonly index signature.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface ReadonlyMap {
@@ -4302,15 +4302,15 @@ let key: string = "a";
 map[key] = 2;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4334,7 +4334,7 @@ map[key] = 2;
 #[test]
 fn test_abstractPropertyNegative_errors() {
     // Test the full abstractPropertyNegative test case to verify expected errors
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface A {
@@ -4358,15 +4358,15 @@ let c = new C();
 c.ro = "error: lhs of assignment can't be readonly";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4463,7 +4463,7 @@ fn test_contextual_typing_for_function_parameters() {
 fn test_contextual_typing_skips_this_parameter() {
     use crate::parser::syntax_kind_ext;
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function takesHandler(fn: (this: { value: number }, x: string) => void) {}
@@ -4472,7 +4472,7 @@ takesHandler(function(this: { value: number }, x) {
 });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -4499,11 +4499,11 @@ takesHandler(function(this: { value: number }, x) {
     let args = call_expr.arguments.as_ref().expect("call arguments");
     let func_idx = *args.nodes.first().expect("function argument");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -4535,7 +4535,7 @@ takesHandler(function(this: { value: number }, x) {
 
 #[test]
 fn test_contextual_typing_for_variable_initializer() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const handler: (x: string) => void = (x) => {
@@ -4543,14 +4543,14 @@ const handler: (x: string) => void = (x) => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4569,7 +4569,7 @@ const handler: (x: string) => void = (x) => {
 
 #[test]
 fn test_contextual_typing_overload_by_arity() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function register(cb: (x: string) => void): void;
@@ -4581,14 +4581,14 @@ register((x) => {
 });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4646,21 +4646,21 @@ fn test_contextual_typing_for_object_properties() {
 
 #[test]
 fn test_contextual_property_type_infers_callback_param() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Handler = { cb: (x: number) => void };
 const h: Handler = { cb: x => x.toUpperCase() };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4679,7 +4679,7 @@ const h: Handler = { cb: x => x.toUpperCase() };
 
 #[test]
 fn test_ts2339_any_property_access_no_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let value: any;
@@ -4687,7 +4687,7 @@ value.foo;
 value.bar();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -4695,11 +4695,11 @@ value.bar();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4718,7 +4718,7 @@ value.bar();
 
 #[test]
 fn test_ts2339_unknown_property_access_after_narrowing() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let value: unknown = {};
@@ -4727,7 +4727,7 @@ const obj: object = value as object;
 obj.foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -4735,11 +4735,11 @@ obj.foo;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4763,7 +4763,7 @@ obj.foo;
 
 #[test]
 fn test_ts2339_catch_binding_unknown() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @strict: true
@@ -4774,7 +4774,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -4782,11 +4782,11 @@ function f() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4810,7 +4810,7 @@ function f() {
 
 #[test]
 fn test_ts2339_union_optional_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type A = { foo?: string };
@@ -4821,7 +4821,7 @@ function read(value: A | B) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -4829,11 +4829,11 @@ function read(value: A | B) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4852,7 +4852,7 @@ function read(value: A | B) {
 
 #[test]
 fn test_ts2339_class_static_inheritance() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base {
@@ -4864,7 +4864,7 @@ class Derived extends Base {}
 Derived.foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -4872,11 +4872,11 @@ Derived.foo;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4895,7 +4895,7 @@ Derived.foo;
 
 #[test]
 fn test_ts2339_class_instance_object_members() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -4907,7 +4907,7 @@ c.toString();
 c.hasOwnProperty("x");
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -4915,11 +4915,11 @@ c.hasOwnProperty("x");
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4938,7 +4938,7 @@ c.hasOwnProperty("x");
 
 #[test]
 fn test_ts2339_this_missing_property_in_class() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -4948,7 +4948,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -4956,11 +4956,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -4979,7 +4979,7 @@ class C {
 
 #[test]
 fn test_ts2339_static_property_access_from_instance() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -4993,7 +4993,7 @@ c.foo;
 c.bar;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -5001,11 +5001,11 @@ c.bar;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5024,7 +5024,7 @@ c.bar;
 
 #[test]
 fn test_ts2339_computed_name_this_missing_static() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -5032,7 +5032,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -5040,11 +5040,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5063,7 +5063,7 @@ class C {
 
 #[test]
 fn test_ts2339_computed_name_this_in_class_expression() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -5075,7 +5075,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -5083,11 +5083,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5107,7 +5107,7 @@ class C {
 
 #[test]
 fn test_ts2339_private_name_missing_on_index_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class A {
@@ -5119,7 +5119,7 @@ class A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -5127,11 +5127,11 @@ class A {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5151,7 +5151,7 @@ class A {
 
 #[test]
 fn test_ts2339_private_name_in_expression_typo() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -5163,7 +5163,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -5171,11 +5171,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5195,7 +5195,7 @@ class Foo {
 
 #[test]
 fn test_ts2339_class_interface_merge() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface C {
@@ -5211,7 +5211,7 @@ c.x;
 c.y;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -5219,11 +5219,11 @@ c.y;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5423,21 +5423,21 @@ fn test_strict_null_checks_null_only() {
 
 #[test]
 fn test_symbol_constructor_call_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test Symbol() with valid arguments
     let source = r#"const s1 = Symbol();
 const s2 = Symbol("name");
 const s3 = Symbol(42);"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5452,19 +5452,19 @@ const s3 = Symbol(42);"#;
 
 #[test]
 fn test_symbol_constructor_too_many_args() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test Symbol() with too many arguments - should error TS2554
     let source = r#"const s = Symbol("name", "extra");"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5485,7 +5485,7 @@ fn test_symbol_constructor_too_many_args() {
 
 #[test]
 fn test_variable_redeclaration_same_type() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that redeclaring a variable with the same type is allowed
     let source = r#"function test() {
@@ -5493,14 +5493,14 @@ fn test_variable_redeclaration_same_type() {
     var x: string;
 }"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5515,7 +5515,7 @@ fn test_variable_redeclaration_same_type() {
 
 #[test]
 fn test_variable_redeclaration_different_type_2403() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that redeclaring a variable with different type causes error TS2403
     // Must be inside a function where local scopes are active
@@ -5524,14 +5524,14 @@ fn test_variable_redeclaration_different_type_2403() {
     var x: number;
 }"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5551,7 +5551,7 @@ fn test_variable_redeclaration_different_type_2403() {
 
 #[test]
 fn test_variable_self_reference_no_2403() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Self-references in a var initializer should not trigger TS2403.
     let source = r#"function test() {
@@ -5561,14 +5561,14 @@ fn test_variable_self_reference_no_2403() {
     };
 }"#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5680,7 +5680,7 @@ fn test_symbol_property_not_found() {
 
 #[test]
 fn test_property_access_from_index_signature_4111() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface StringMap {
@@ -5690,14 +5690,14 @@ const obj: StringMap = {} as any;
 const val = obj.someProperty;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5716,7 +5716,7 @@ const val = obj.someProperty;
 
 #[test]
 fn test_explicit_property_no_error_4111() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface MixedType {
@@ -5727,14 +5727,14 @@ const obj: MixedType = {} as any;
 const val = obj.explicitProp;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5752,7 +5752,7 @@ const val = obj.explicitProp;
 
 #[test]
 fn test_union_with_index_signature_4111() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Mixed = { x: number } | { [key: string]: number };
@@ -5760,14 +5760,14 @@ const obj: Mixed = {} as any;
 const val = obj.x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5786,7 +5786,7 @@ const val = obj.x;
 #[test]
 fn test_checker_lowers_full_source_file() {
     use crate::solver::{SymbolRef, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { x: number; }
@@ -5795,14 +5795,14 @@ type Baz = [string, number];
 type Qux = { [key: string]: Foo };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5884,7 +5884,7 @@ type Qux = { [key: string]: Foo };
 
 #[test]
 fn test_interface_extends_inherits_properties() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base {
@@ -5898,14 +5898,14 @@ const base_value = obj.base;
 const derived_value = obj.derived;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5936,7 +5936,7 @@ const derived_value = obj.derived;
 
 #[test]
 fn test_interface_extends_applies_type_arguments() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Box<T> {
@@ -5949,14 +5949,14 @@ const obj: Derived = { value: "x", count: 1 };
 const value = obj.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -5977,7 +5977,7 @@ const value = obj.value;
 
 #[test]
 fn test_interface_extends_type_alias_applies_type_arguments() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Box<T> = { value: T };
@@ -5988,14 +5988,14 @@ const obj: Derived = { value: "x", count: 1 };
 const value = obj.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6016,7 +6016,7 @@ const value = obj.value;
 
 #[test]
 fn test_interface_extends_class_applies_type_arguments() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Box<T> {
@@ -6029,14 +6029,14 @@ const obj: Derived = { value: "x", count: 1 };
 const value = obj.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6057,7 +6057,7 @@ const value = obj.value;
 
 #[test]
 fn test_interface_extends_readonly_property_mismatch_2430() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base {
@@ -6068,14 +6068,14 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6094,7 +6094,7 @@ interface Derived extends Base {
 
 #[test]
 fn test_interface_extends_optional_property_mismatch_2430() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base {
@@ -6105,14 +6105,14 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6131,7 +6131,7 @@ interface Derived extends Base {
 
 #[test]
 fn test_optional_property_allows_undefined_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo {
@@ -6142,14 +6142,14 @@ const ok2: Foo = { x: 1 };
 const ok3: Foo = { x: undefined };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6166,7 +6166,7 @@ const ok3: Foo = { x: undefined };
 
 #[test]
 fn test_interface_extends_string_literal_property_mismatch_2430() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base {
@@ -6177,14 +6177,14 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6203,7 +6203,7 @@ interface Derived extends Base {
 
 #[test]
 fn test_interface_extends_generic_argument_mismatch_2430() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base<T> {
@@ -6214,14 +6214,14 @@ interface Derived extends Base<string> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6240,7 +6240,7 @@ interface Derived extends Base<string> {
 
 #[test]
 fn test_interface_extends_generic_argument_match() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base<T> {
@@ -6251,14 +6251,14 @@ interface Derived extends Base<string> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6276,7 +6276,7 @@ interface Derived extends Base<string> {
 
 #[test]
 fn test_interface_extends_namespace_qualified_base_2430() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -6289,14 +6289,14 @@ interface Derived extends NS.Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6315,7 +6315,7 @@ interface Derived extends NS.Base {
 
 #[test]
 fn test_interface_extends_generic_method_compatible() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base {
@@ -6326,14 +6326,14 @@ interface Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6352,7 +6352,7 @@ interface Derived extends Base {
 #[test]
 fn test_checker_cross_namespace_type_reference() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -6361,14 +6361,14 @@ namespace Outer {
 type Alias = Outer.Inner;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6404,7 +6404,7 @@ type Alias = Outer.Inner;
 
 #[test]
 fn test_checker_nested_namespace_export_visible() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace A {
@@ -6415,7 +6415,7 @@ namespace A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -6423,11 +6423,11 @@ namespace A {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6445,7 +6445,7 @@ namespace A {
 
 #[test]
 fn test_checker_nested_namespace_non_exported_not_visible() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace A {
@@ -6456,7 +6456,7 @@ namespace A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -6464,11 +6464,11 @@ namespace A {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6488,13 +6488,13 @@ namespace A {
 #[test]
 fn test_class_extends_null_no_ts2304() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C1 extends null {}
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -6502,11 +6502,11 @@ class C1 extends null {}
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6526,13 +6526,13 @@ class C1 extends null {}
 #[test]
 fn test_exports_global_no_ts2304() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 exports.foo = 1;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -6540,11 +6540,11 @@ exports.foo = 1;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6563,7 +6563,7 @@ exports.foo = 1;
 
 #[test]
 fn test_checker_nested_namespace_exported_class_visible() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Models {
@@ -6576,7 +6576,7 @@ namespace Models {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -6584,11 +6584,11 @@ namespace Models {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6607,7 +6607,7 @@ namespace Models {
 #[test]
 fn test_checker_module_augmentation_merges_exports() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -6620,14 +6620,14 @@ type AliasA = Outer.A;
 type AliasB = Outer.B;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6695,21 +6695,21 @@ type AliasB = Outer.B;
 #[test]
 fn test_checker_lower_generic_type_reference_applies_args() {
     use crate::solver::{SymbolRef, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Box<T> = { value: T };
 type Alias = Box<string>;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6759,20 +6759,20 @@ type Alias = Box<string>;
 #[test]
 fn test_checker_lowers_generic_function_type_annotation_uses_type_params() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const f: <T>(value: T) => T = (value) => value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6829,7 +6829,7 @@ const f: <T>(value: T) => T = (value) => value;
 #[test]
 fn test_interface_generic_call_signature_uses_type_params() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Callable {
@@ -6837,14 +6837,14 @@ interface Callable {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6911,7 +6911,7 @@ interface Callable {
 #[test]
 fn test_interface_generic_construct_signature_uses_type_params() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Factory {
@@ -6919,14 +6919,14 @@ interface Factory {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -6993,7 +6993,7 @@ interface Factory {
 #[test]
 fn test_checker_lowers_generic_function_declaration_uses_type_params() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function id<T>(value: T): T {
@@ -7001,14 +7001,14 @@ function id<T>(value: T): T {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7065,7 +7065,7 @@ function id<T>(value: T): T {
 #[test]
 fn test_function_return_type_inferred_from_body() {
     use crate::solver::{TypeId, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function id(x: string) {
@@ -7073,14 +7073,14 @@ function id(x: string) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7109,7 +7109,7 @@ function id(x: string) {
 #[test]
 fn test_arrow_function_return_type_inferred_union() {
     use crate::solver::{TypeId, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const f = (flag: boolean) => {
@@ -7120,14 +7120,14 @@ const f = (flag: boolean) => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7165,7 +7165,7 @@ const f = (flag: boolean) => {
 
 #[test]
 fn test_missing_return_and_implicit_any_diagnostics() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: true
@@ -7197,7 +7197,7 @@ function implicitAny(x) {
 const anon = () => { return null; };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7205,11 +7205,11 @@ const anon = () => { return null; };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7255,7 +7255,7 @@ const anon = () => { return null; };
 
 #[test]
 fn test_implicit_any_return_in_signatures() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: true
@@ -7272,7 +7272,7 @@ declare class C {
 const obj = { baz() { return undefined; } };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7280,11 +7280,11 @@ const obj = { baz() { return undefined; } };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7306,7 +7306,7 @@ const obj = { baz() { return undefined; } };
 
 #[test]
 fn test_ts7010_async_function_no_false_positive() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: true
@@ -7325,7 +7325,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7333,11 +7333,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7363,7 +7363,7 @@ class C {
 
 #[test]
 fn test_ts7010_exactly_any_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: true
@@ -7378,7 +7378,7 @@ function returnsAny() {
 const arrowReturnsAny = () => anyValue;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7386,11 +7386,11 @@ const arrowReturnsAny = () => anyValue;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7418,7 +7418,7 @@ const arrowReturnsAny = () => anyValue;
 
 #[test]
 fn test_ts7010_null_undefined_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: true
@@ -7429,7 +7429,7 @@ function returnsNullOrUndefined(flag: boolean) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7437,11 +7437,11 @@ function returnsNullOrUndefined(flag: boolean) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7463,7 +7463,7 @@ function returnsNullOrUndefined(flag: boolean) {
 
 #[test]
 fn test_ts7010_class_expression_no_false_positive() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: true
@@ -7478,7 +7478,7 @@ function createClass() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7486,11 +7486,11 @@ function createClass() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7520,7 +7520,7 @@ function createClass() {
 
 #[test]
 fn test_ts7010_return_path_analysis() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function allReturn(flag: boolean) {
@@ -7559,7 +7559,7 @@ function loopWithNestedSwitchBreak(flag: boolean) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7567,11 +7567,11 @@ function loopWithNestedSwitchBreak(flag: boolean) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7625,7 +7625,7 @@ function loopWithNestedSwitchBreak(flag: boolean) {
 /// This should NOT fire for functions that only throw since throwing is a valid exit.
 #[test]
 fn test_throw_only_function_no_2355() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Function that only throws should NOT get 2355
@@ -7650,7 +7650,7 @@ function fallsThrough(): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7658,11 +7658,11 @@ function fallsThrough(): number {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7690,7 +7690,7 @@ function fallsThrough(): number {
 /// Test that infinite loops don't trigger TS2355 either
 #[test]
 fn test_infinite_loop_no_2355() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Infinite loop without break should NOT get 2355
@@ -7708,7 +7708,7 @@ function loopWithBreak(): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7716,11 +7716,11 @@ function loopWithBreak(): number {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7743,7 +7743,7 @@ function loopWithBreak(): number {
 
 #[test]
 fn test_async_promise_void_no_2355() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Promise<T> {}
@@ -7764,7 +7764,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7772,11 +7772,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7795,7 +7795,7 @@ class C {
 
 #[test]
 fn test_async_promise_number_requires_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Promise<T> {}
@@ -7803,7 +7803,7 @@ interface Promise<T> {}
 async function f(): Promise<number> { }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7811,11 +7811,11 @@ async function f(): Promise<number> { }
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7834,7 +7834,7 @@ async function f(): Promise<number> { }
 
 #[test]
 fn test_async_generator_no_2355() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface AsyncIterator<T, TReturn = any, TNext = unknown> {}
@@ -7847,7 +7847,7 @@ async function* g3(): AsyncIterable<number> { yield 1; }
 async function* g4(): {} { yield 1; }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7855,11 +7855,11 @@ async function* g4(): {} { yield 1; }
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7880,7 +7880,7 @@ async function* g4(): {} { yield 1; }
 /// This replicates the scenario where Promise is not locally declared but comes from lib.
 #[test]
 fn test_async_alias_return_type_no_2355() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Note: Unlike test_async_promise_void_no_2355, this doesn't declare Promise interface.
     // This matches the conformance test which relies on lib.es2015.promise.
@@ -7892,7 +7892,7 @@ async function f(): PromiseAlias<void> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7900,11 +7900,11 @@ async function f(): PromiseAlias<void> {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7926,7 +7926,7 @@ async function f(): PromiseAlias<void> {
 /// terminate control flow but aren't currently detected.
 #[test]
 fn test_never_returning_call_no_2355() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Helper that returns never
@@ -7955,7 +7955,7 @@ function usesFailInList(): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -7963,11 +7963,11 @@ function usesFailInList(): number {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -7990,7 +7990,7 @@ function usesFailInList(): number {
 /// Test that try/catch blocks that always return or throw don't trigger TS2355.
 #[test]
 fn test_try_catch_no_2355() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function fail(): never {
@@ -8030,7 +8030,7 @@ function tryCatchFallsThrough(): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -8038,11 +8038,11 @@ function tryCatchFallsThrough(): number {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8066,7 +8066,7 @@ function tryCatchFallsThrough(): number {
 
 #[test]
 fn test_no_implicit_any_false_suppresses_diagnostics() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: false
@@ -8075,7 +8075,7 @@ function implicitAnyParam(x) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -8083,11 +8083,11 @@ function implicitAnyParam(x) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8105,7 +8105,7 @@ function implicitAnyParam(x) {
 
 #[test]
 fn test_strict_false_suppresses_implicit_any() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @strict: false
@@ -8114,7 +8114,7 @@ function implicitAnyParam(x) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -8122,11 +8122,11 @@ function implicitAnyParam(x) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8144,7 +8144,7 @@ function implicitAnyParam(x) {
 
 #[test]
 fn test_implicit_any_parameters_in_type_signatures() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitAny: true
@@ -8173,7 +8173,7 @@ interface HandlerProp {
 type PropAlias = { handler: (g) => void; };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -8181,11 +8181,11 @@ type PropAlias = { handler: (g) => void; };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8207,7 +8207,7 @@ type PropAlias = { handler: (g) => void; };
 
 #[test]
 fn test_implicit_any_rest_parameter() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that rest parameters without type annotation trigger TS7006 with 'any[]'
     let source = r#"
@@ -8223,7 +8223,7 @@ function bar(a, ...rest) {
 const arrow = (...items) => items;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -8231,11 +8231,11 @@ const arrow = (...items) => items;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8290,21 +8290,21 @@ const arrow = (...items) => items;
 
 #[test]
 fn test_checker_lowers_element_access_array() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const arr: number[] = [1, 2];
 const value = arr[0];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8326,20 +8326,20 @@ const value = arr[0];
 #[test]
 fn test_array_literal_best_common_type_prefers_supertype_element() {
     use crate::solver::{PropertyInfo, TypeId, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const arr = [{ a: "x" }, { a: "y", b: 1 }];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8374,7 +8374,7 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
 
 #[test]
 fn test_checker_lowers_element_access_tuple_literals() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const tup: [string, number] = ["a", 1];
@@ -8382,14 +8382,14 @@ const first = tup[0];
 const second = tup[1];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8418,21 +8418,21 @@ const second = tup[1];
 
 #[test]
 fn test_checker_array_element_access_unchecked() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const arr: number[] = [];
 const value = arr[0];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8454,21 +8454,21 @@ const value = arr[0];
 #[test]
 fn test_checker_tuple_optional_element_access_includes_undefined() {
     use crate::solver::{TypeId, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const tup: [string?] = ["a"];
 const first = tup[0];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8497,21 +8497,21 @@ const first = tup[0];
 
 #[test]
 fn test_checker_lowers_element_access_string_literal_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const obj = { x: 1, y: "hi" };
 const value = obj["x"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8532,21 +8532,21 @@ const value = obj["x"];
 
 #[test]
 fn test_checker_lowers_element_access_array_length() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const arr = [1, 2];
 const length = arr["length"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8570,21 +8570,21 @@ const length = arr["length"];
 
 #[test]
 fn test_checker_lowers_element_access_numeric_string_index() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const arr: number[] = [1, 2];
 const value = arr["0"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8605,7 +8605,7 @@ const value = arr["0"];
 
 #[test]
 fn test_checker_lowers_element_access_string_index_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface StringMap {
@@ -8615,14 +8615,14 @@ const map: StringMap = {} as any;
 const value = map["foo"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8643,7 +8643,7 @@ const value = map["foo"];
 
 #[test]
 fn test_checker_lowers_element_access_number_index_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface NumberMap {
@@ -8653,14 +8653,14 @@ const map: NumberMap = {} as any;
 const value = map[1];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8681,7 +8681,7 @@ const value = map[1];
 
 #[test]
 fn test_checker_element_access_requires_index_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { x: number; }
@@ -8690,14 +8690,14 @@ let key: string = "x";
 const value = obj[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8716,7 +8716,7 @@ const value = obj[key];
 
 #[test]
 fn test_checker_element_access_union_string_index_requires_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { x: number; }
@@ -8725,14 +8725,14 @@ let key: "x" | string;
 const value = obj[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8751,7 +8751,7 @@ const value = obj[key];
 
 #[test]
 fn test_checker_element_access_union_string_number_index_requires_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { x: number; }
@@ -8760,14 +8760,14 @@ let key: string | number;
 const value = obj[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8787,7 +8787,7 @@ const value = obj[key];
 #[test]
 fn test_checker_lowers_element_access_literal_key_union() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { a: number; b: string; }
@@ -8796,14 +8796,14 @@ let key: "a" | "b";
 const value = obj[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8833,7 +8833,7 @@ const value = obj[key];
 #[test]
 fn test_checker_element_access_union_key_cross_product() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type A = { kind: "a"; val: 1 } | { kind: "b"; val: 2 };
@@ -8842,14 +8842,14 @@ declare const key: "kind" | "val";
 const value = obj[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8884,7 +8884,7 @@ const value = obj[key];
 
 #[test]
 fn test_checker_lowers_element_access_literal_key_type() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { a: number; b: string; }
@@ -8893,14 +8893,14 @@ let key: "a";
 const value = obj[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8922,7 +8922,7 @@ const value = obj[key];
 #[test]
 fn test_checker_lowers_element_access_numeric_literal_union() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const tup: [string, number, boolean] = ["a", 1, true];
@@ -8930,14 +8930,14 @@ let idx: 0 | 2;
 const value = tup[idx];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -8968,7 +8968,7 @@ const value = tup[idx];
 #[test]
 fn test_checker_lowers_element_access_mixed_literal_key_union() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const arr: string[] = ["a"];
@@ -8976,14 +8976,14 @@ let key: "length" | 0;
 const value = arr[key];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9013,7 +9013,7 @@ const value = arr[key];
 
 #[test]
 fn test_checker_element_access_reports_nullable_object() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { a: number };
@@ -9021,14 +9021,14 @@ let obj: Foo | undefined;
 const value = obj["a"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9052,7 +9052,7 @@ const value = obj["a"];
 #[test]
 fn test_checker_element_access_optional_chain_nullable_object() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { a: number };
@@ -9060,14 +9060,14 @@ let obj: Foo | undefined;
 const value = obj?.["a"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9097,7 +9097,7 @@ const value = obj?.["a"];
 #[test]
 fn test_checker_property_access_optional_chain_nullable_object() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { a: number };
@@ -9105,14 +9105,14 @@ let obj: Foo | undefined;
 const value = obj?.a;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9142,7 +9142,7 @@ const value = obj?.a;
 #[test]
 fn test_checker_property_access_union_type() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type U = { a: number } | { a: string };
@@ -9150,14 +9150,14 @@ const obj: U = { a: 1 };
 const value = obj.a;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9187,7 +9187,7 @@ const value = obj.a;
 #[test]
 fn test_checker_namespace_merges_with_class_exports() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {}
@@ -9197,14 +9197,14 @@ namespace Foo {
 type Alias = Foo.Bar;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9241,7 +9241,7 @@ type Alias = Foo.Bar;
 #[test]
 fn test_checker_namespace_merges_with_class_exports_reverse_order() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Foo {
@@ -9251,14 +9251,14 @@ class Foo {}
 type Alias = Foo.Bar;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9294,7 +9294,7 @@ type Alias = Foo.Bar;
 
 #[test]
 fn test_checker_namespace_merges_with_class_value_exports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {}
@@ -9304,14 +9304,14 @@ namespace Foo {
 const direct = Foo.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9334,7 +9334,7 @@ const direct = Foo.value;
 
 #[test]
 fn test_checker_namespace_merges_with_class_value_exports_reverse_order() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Foo {
@@ -9344,14 +9344,14 @@ class Foo {}
 const direct = Foo.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9374,7 +9374,7 @@ const direct = Foo.value;
 
 #[test]
 fn test_checker_namespace_merges_across_decls_value_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -9386,14 +9386,14 @@ namespace Merge {
 const sum = Merge.a + Merge.b;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9414,7 +9414,7 @@ const sum = Merge.a + Merge.b;
 #[test]
 fn test_checker_namespace_merges_across_decls_type_access() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -9427,14 +9427,14 @@ type Alias = Merge.A;
 const value: Merge.B = { y: 1 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9470,7 +9470,7 @@ const value: Merge.B = { y: 1 };
 
 #[test]
 fn test_checker_namespace_merges_with_function_value_exports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function Merge() {}
@@ -9480,14 +9480,14 @@ namespace Merge {
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9510,7 +9510,7 @@ const direct = Merge.extra;
 
 #[test]
 fn test_checker_namespace_merges_with_function_value_exports_reverse_order() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -9520,14 +9520,14 @@ function Merge() {}
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9551,7 +9551,7 @@ const direct = Merge.extra;
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function Merge() {}
@@ -9561,14 +9561,14 @@ namespace Merge {
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9605,7 +9605,7 @@ type Alias = Merge.Extra;
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports_reverse_order() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -9615,14 +9615,14 @@ function Merge() {}
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9658,7 +9658,7 @@ type Alias = Merge.Extra;
 
 #[test]
 fn test_checker_namespace_merges_with_enum_value_exports() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 enum Merge {
@@ -9670,14 +9670,14 @@ namespace Merge {
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9700,7 +9700,7 @@ const direct = Merge.extra;
 
 #[test]
 fn test_checker_namespace_merges_with_enum_value_exports_reverse_order() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -9712,14 +9712,14 @@ enum Merge {
 const direct = Merge.extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9743,7 +9743,7 @@ const direct = Merge.extra;
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 enum Merge {
@@ -9755,14 +9755,14 @@ namespace Merge {
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9799,7 +9799,7 @@ type Alias = Merge.Extra;
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports_reverse_order() {
     use crate::solver::TypeKey;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Merge {
@@ -9811,14 +9811,14 @@ enum Merge {
 type Alias = Merge.Extra;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9854,7 +9854,7 @@ type Alias = Merge.Extra;
 
 #[test]
 fn test_checker_namespace_merges_with_class_element_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {}
@@ -9864,14 +9864,14 @@ namespace Foo {
 const direct = Foo["value"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9895,7 +9895,7 @@ const direct = Foo["value"];
 #[test]
 fn test_checker_interface_typeof_value_reference() {
     use crate::solver::{SymbolRef, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const Foo = 1;
@@ -9908,14 +9908,14 @@ interface Bar {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -9976,7 +9976,7 @@ interface Bar {
 #[test]
 fn test_checker_typeof_namespace_alias_member() {
     use crate::solver::{SymbolRef, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Ns {
@@ -9986,14 +9986,14 @@ import Alias = Ns;
 type T = typeof Alias.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10026,21 +10026,21 @@ type T = typeof Alias.value;
 #[test]
 fn test_checker_typeof_with_type_arguments() {
     use crate::solver::{SymbolRef, TypeKey};
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const Foo = <T>(value: T) => value;
 type Alias = typeof Foo<string>;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10074,21 +10074,21 @@ type Alias = typeof Foo<string>;
 
 #[test]
 fn test_checker_circular_type_aliases() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type A = B;
 type B = A;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10148,7 +10148,7 @@ fn test_index_signature_at_solver_level() {
 
 #[test]
 fn test_ambient_module_relative_path_5061() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // TS5061: Ambient module declaration cannot specify relative module name
     let source = r#"
@@ -10165,14 +10165,14 @@ declare module "." {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10193,7 +10193,7 @@ declare module "." {
 
 #[test]
 fn test_ambient_module_absolute_path_ok() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Absolute module names should be allowed in ambient declarations
     let source = r#"
@@ -10206,14 +10206,14 @@ declare module "@scoped/package" {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10234,7 +10234,7 @@ declare module "@scoped/package" {
 
 #[test]
 fn test_private_identifier_in_ambient_class_2819() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // TS2819: Private identifiers are not allowed in ambient contexts
     let source = r#"
@@ -10249,14 +10249,14 @@ declare class AmbientClass {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10279,7 +10279,7 @@ declare class AmbientClass {
 
 #[test]
 fn test_private_identifier_in_non_ambient_class_ok() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Private identifiers should be allowed in non-ambient classes
     let source = r#"
@@ -10296,14 +10296,14 @@ class RegularClass {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10324,7 +10324,7 @@ class RegularClass {
 
 #[test]
 fn test_private_static_method_access_no_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Private static methods should be accessible within the class
     let source = r#"
@@ -10336,14 +10336,14 @@ class A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10365,7 +10365,7 @@ class A {
 
 #[test]
 fn test_non_private_static_accessor_access_works() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Non-private static accessors should be accessible from class reference
     let source = r#"
@@ -10377,14 +10377,14 @@ class A {
 let x = A.quux;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10406,7 +10406,7 @@ let x = A.quux;
 
 #[test]
 fn test_private_static_accessor_access_no_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Private static accessors should be accessible within the class
     // Simplified test: just a getter without body references
@@ -10421,14 +10421,14 @@ class A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10450,7 +10450,7 @@ class A {
 
 #[test]
 fn test_private_static_generator_method_access_no_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Private static async generator methods should be accessible within the class
     let source = r#"
@@ -10464,7 +10464,7 @@ class A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -10472,11 +10472,11 @@ class A {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10505,7 +10505,7 @@ class A {
 
 #[test]
 fn test_namespace_with_relative_path_ok() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Namespace declarations (without declare) can have any name, including relative-like names
     // This test ensures we only check ambient modules (declare module)
@@ -10515,14 +10515,14 @@ namespace MyNamespace {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10545,7 +10545,7 @@ namespace MyNamespace {
 
 #[test]
 fn test_top_level_variable_redeclaration_different_type_2403() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Top-level variables with different types should trigger error 2403
     let source = r#"
@@ -10553,14 +10553,14 @@ var x: string;
 var x: number;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10579,7 +10579,7 @@ var x: number;
 
 #[test]
 fn test_top_level_variable_redeclaration_same_type_ok() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Top-level variables with same type should be allowed
     let source = r#"
@@ -10587,14 +10587,14 @@ var x: string;
 var x: string;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10615,7 +10615,7 @@ var x: string;
 
 #[test]
 fn test_variable_redeclaration_typeof_ok_no_2403() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test for bi-directional assignability in var redeclaration:
     // `var e = E;` and `var e: typeof E;` should be allowed because
@@ -10627,14 +10627,14 @@ var e = E;
 var e: typeof E;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10655,7 +10655,7 @@ var e: typeof E;
 
 #[test]
 fn test_variable_redeclaration_enum_object_literal_no_2403() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Ensure enum value redeclaration with structural type does not trigger TS2403.
     let source = r#"
@@ -10675,14 +10675,14 @@ var e: {
 var e: typeof E1;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10703,7 +10703,7 @@ var e: typeof E1;
 
 #[test]
 fn test_variable_redeclaration_array_spread_no_2403() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function f1() {
@@ -10713,14 +10713,14 @@ function f1() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10741,7 +10741,7 @@ function f1() {
 
 #[test]
 fn test_variable_redeclaration_inferred_vs_annotated_no_2403() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that inferred type from initializer matches explicit annotation
     // Based on conformance test: ambientDeclarationsExternal.ts pattern
@@ -10750,14 +10750,14 @@ var n = 42;
 var n: number;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10778,7 +10778,7 @@ var n: number;
 
 #[test]
 fn test_namespace_member_not_found() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace foo {
@@ -10787,14 +10787,14 @@ namespace foo {
 var p: foo.NotExist;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10816,7 +10816,7 @@ var p: foo.NotExist;
 
 #[test]
 fn test_namespace_value_member_missing_errors() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -10827,14 +10827,14 @@ const bad = NS.missing;
 const badAlias = Alias.missing;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10854,7 +10854,7 @@ const badAlias = Alias.missing;
 
 #[test]
 fn test_import_alias_type_resolution() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -10866,14 +10866,14 @@ var x: Alias;
 var y: NS.Exported;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10895,7 +10895,7 @@ var y: NS.Exported;
 
 #[test]
 fn test_import_alias_non_exported_member() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -10906,14 +10906,14 @@ import Alias = NS.NotExported;
 var x: Alias;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10936,21 +10936,21 @@ var x: Alias;
 
 #[test]
 fn test_import_type_value_usage_errors() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 import type { Foo } from "./types";
 Foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -10970,7 +10970,7 @@ Foo;
 
 #[test]
 fn test_numeric_enum_open_and_nominal_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 enum A { X, Y }
@@ -10980,14 +10980,14 @@ let n: number = a;
 let b: B = a;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11007,21 +11007,21 @@ let b: B = a;
 
 #[test]
 fn test_string_enum_rejects_string_literal() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 enum S { A = "a", B = "b" }
 let s: S = "a";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11040,7 +11040,7 @@ let s: S = "a";
 
 #[test]
 fn test_nested_namespace_member_resolution() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -11053,14 +11053,14 @@ let bad: Outer.Inner.Box<number> = { value: "oops" };
 let missing: Outer.Inner.Missing;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11085,7 +11085,7 @@ let missing: Outer.Inner.Missing;
 
 #[test]
 fn test_import_alias_namespace_member_resolution() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11097,14 +11097,14 @@ let bad: Alias.Box<number> = { value: "oops" };
 let missing: Alias.Missing;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11129,7 +11129,7 @@ let missing: Alias.Missing;
 
 #[test]
 fn test_namespace_type_only_member_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11139,14 +11139,14 @@ let ok: NS.Foo;
 const bad = NS.Foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11165,7 +11165,7 @@ const bad = NS.Foo;
 
 #[test]
 fn test_namespace_type_only_member_element_access_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11174,14 +11174,14 @@ namespace NS {
 const bad = NS["Foo"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11200,7 +11200,7 @@ const bad = NS["Foo"];
 
 #[test]
 fn test_namespace_type_only_nested_member_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -11212,14 +11212,14 @@ let ok: Outer.Inner.Foo;
 const bad = Outer.Inner.Foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11244,7 +11244,7 @@ const bad = Outer.Inner.Foo;
 
 #[test]
 fn test_namespace_type_only_alias_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11254,14 +11254,14 @@ import Alias = NS.Foo;
 const bad = Alias;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11280,7 +11280,7 @@ const bad = Alias;
 
 #[test]
 fn test_namespace_type_only_member_via_alias_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11291,14 +11291,14 @@ let ok: Alias.Foo;
 const bad = Alias.Foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11323,7 +11323,7 @@ const bad = Alias.Foo;
 
 #[test]
 fn test_namespace_type_only_nested_member_via_alias_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -11336,14 +11336,14 @@ let ok: Alias.Inner.Foo;
 const bad = Alias.Inner.Foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11368,7 +11368,7 @@ const bad = Alias.Inner.Foo;
 
 #[test]
 fn test_interface_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { value: number; }
@@ -11376,14 +11376,14 @@ let ok: Foo;
 const bad = Foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11402,7 +11402,7 @@ const bad = Foo;
 
 #[test]
 fn test_type_alias_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { value: number };
@@ -11410,14 +11410,14 @@ let ok: Foo;
 const bad = Foo;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11436,7 +11436,7 @@ const bad = Foo;
 
 #[test]
 fn test_type_query_interface_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo { value: number; }
@@ -11444,14 +11444,14 @@ type T = typeof Foo;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11470,7 +11470,7 @@ let useIt: T;
 
 #[test]
 fn test_type_query_type_alias_value_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Foo = { value: number };
@@ -11478,14 +11478,14 @@ type T = typeof Foo;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11504,21 +11504,21 @@ let useIt: T;
 
 #[test]
 fn test_type_query_unknown_name_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type T = typeof Missing;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11537,21 +11537,21 @@ let useIt: T;
 
 #[test]
 fn test_type_query_unknown_qualified_name_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type T = typeof Missing.Member;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11570,7 +11570,7 @@ let useIt: T;
 
 #[test]
 fn test_type_query_missing_namespace_member_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Ns {
@@ -11580,14 +11580,14 @@ type T = typeof Ns.Missing;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11606,7 +11606,7 @@ let useIt: T;
 
 #[test]
 fn test_value_symbol_used_as_type_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const value = 1;
@@ -11614,14 +11614,14 @@ type T = value;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11640,7 +11640,7 @@ let useIt: T;
 
 #[test]
 fn test_function_symbol_used_as_type_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function foo() { return 1; }
@@ -11648,14 +11648,14 @@ type T = foo;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11674,7 +11674,7 @@ let useIt: T;
 
 #[test]
 fn test_namespace_symbol_used_as_type_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11684,14 +11684,14 @@ type T = NS;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11710,7 +11710,7 @@ let useIt: T;
 
 #[test]
 fn test_namespace_alias_used_as_type_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11721,14 +11721,14 @@ type T = Alias;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11747,7 +11747,7 @@ let useIt: T;
 
 #[test]
 fn test_namespace_value_member_used_as_type_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11757,14 +11757,14 @@ type T = NS.value;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11783,7 +11783,7 @@ let useIt: T;
 
 #[test]
 fn test_namespace_value_member_via_alias_used_as_type_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -11794,14 +11794,14 @@ type T = Alias.value;
 let useIt: T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11820,7 +11820,7 @@ let useIt: T;
 
 #[test]
 fn test_namespace_value_member_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -11835,14 +11835,14 @@ const topValue = Outer.top;
 const viaAlias = Alias.value;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11879,7 +11879,7 @@ const viaAlias = Alias.value;
 
 #[test]
 fn test_namespace_value_member_element_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Ns {
@@ -11890,14 +11890,14 @@ const direct = Ns["value"];
 const viaAlias = Alias["value"];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11928,7 +11928,7 @@ const viaAlias = Alias["value"];
 
 #[test]
 fn test_namespace_value_member_alias_missing_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -11941,14 +11941,14 @@ const ok = Alias.value;
 const bad = Alias.missing;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -11973,7 +11973,7 @@ const bad = Alias.missing;
 
 #[test]
 fn test_nested_namespace_value_member_missing_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -11985,14 +11985,14 @@ const okValue = Outer.Inner.ok;
 const badValue = Outer.Inner.missing;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -12020,7 +12020,7 @@ const badValue = Outer.Inner.missing;
 
 #[test]
 fn test_namespace_value_member_not_exported_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace NS {
@@ -12031,14 +12031,14 @@ const ok = NS.ok;
 const bad = NS.hidden;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -12064,7 +12064,7 @@ const bad = NS.hidden;
 #[test]
 #[ignore] // TODO: Fix stack overflow in deep recursion - needs iterative implementation
 fn test_deep_binary_expression_type_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     const COUNT: usize = 50000;
     let mut source = String::with_capacity(COUNT * 4);
@@ -12076,14 +12076,14 @@ fn test_deep_binary_expression_type_check() {
     }
     source.push(';');
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source);
+    let mut parser = ParserState::new("test.ts".to_string(), source);
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -12098,7 +12098,7 @@ fn test_deep_binary_expression_type_check() {
 #[test]
 fn test_scoped_identifier_resolution_uses_binder_scopes() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x = 1;
@@ -12109,7 +12109,7 @@ let x = 1;
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12160,11 +12160,11 @@ x;
         .get_expression_statement(arena.get(outer_expr_idx).expect("outer expr node"))
         .expect("outer expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12183,7 +12183,7 @@ x;
 #[test]
 fn test_flow_narrowing_applies_in_if_branch() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12192,7 +12192,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12231,11 +12231,11 @@ if (typeof x === "string") {
         .get_expression_statement(expr_stmt_node)
         .expect("expression statement data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12250,7 +12250,7 @@ if (typeof x === "string") {
 
 #[test]
 fn test_flow_narrowing_not_applied_in_closure() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12262,14 +12262,14 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -12289,7 +12289,7 @@ if (typeof x === "string") {
 #[test]
 fn test_flow_narrowing_applies_in_while() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number = Math.random() > 0.5 ? "hello" : 42;
@@ -12298,7 +12298,7 @@ while (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12336,11 +12336,11 @@ while (typeof x === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("inner expr node"))
         .expect("inner expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12356,7 +12356,7 @@ while (typeof x === "string") {
 #[test]
 fn test_flow_narrowing_applies_in_for() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12365,7 +12365,7 @@ for (; typeof x === "string"; ) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12403,11 +12403,11 @@ for (; typeof x === "string"; ) {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("inner expr node"))
         .expect("inner expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12423,7 +12423,7 @@ for (; typeof x === "string"; ) {
 #[test]
 fn test_flow_narrowing_not_applied_in_for_of_body() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12432,7 +12432,7 @@ for (const value of [x]) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12470,11 +12470,11 @@ for (const value of [x]) {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("inner expr node"))
         .expect("inner expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12494,7 +12494,7 @@ for (const value of [x]) {
 #[test]
 fn test_flow_narrowing_not_applied_in_for_in_body() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12503,7 +12503,7 @@ for (const key in { a: x }) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12541,11 +12541,11 @@ for (const key in { a: x }) {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("inner expr node"))
         .expect("inner expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12564,7 +12564,7 @@ for (const key in { a: x }) {
 
 #[test]
 fn test_flow_narrowing_not_applied_in_do_while_body() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12573,14 +12573,14 @@ do {
 } while (typeof x === "string");
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -12600,7 +12600,7 @@ do {
 #[test]
 fn test_flow_narrowing_not_applied_after_while_exit() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12610,7 +12610,7 @@ while (typeof x === "string") {
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12633,11 +12633,11 @@ x;
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12657,7 +12657,7 @@ x;
 #[test]
 fn test_flow_narrowing_not_applied_after_for_exit() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12667,7 +12667,7 @@ for (; typeof x === "string"; ) {
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12690,11 +12690,11 @@ x;
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12714,7 +12714,7 @@ x;
 #[test]
 fn test_flow_narrowing_not_applied_after_do_while_exit() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number;
@@ -12724,7 +12724,7 @@ do {
 x;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12747,11 +12747,11 @@ x;
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12771,7 +12771,7 @@ x;
 #[test]
 fn test_flow_narrowing_applies_for_namespace_alias_member() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Ns {
@@ -12783,7 +12783,7 @@ if (typeof Alias.value === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12821,11 +12821,11 @@ if (typeof Alias.value === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12841,7 +12841,7 @@ if (typeof Alias.value === "string") {
 #[test]
 fn test_flow_narrowing_applies_for_namespace_element_access() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Ns {
@@ -12852,7 +12852,7 @@ if (typeof Ns["value"] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -12890,11 +12890,11 @@ if (typeof Ns["value"] === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -12909,7 +12909,7 @@ if (typeof Ns["value"] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_namespace_member_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Ns {
@@ -12922,14 +12922,14 @@ if (typeof Alias.value === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -12948,7 +12948,7 @@ if (typeof Alias.value === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_property_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -12959,14 +12959,14 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -12986,7 +12986,7 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_element_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -12997,14 +12997,14 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13024,7 +13024,7 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_across_element_to_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13033,14 +13033,14 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13059,7 +13059,7 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_across_property_to_element_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13068,14 +13068,14 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13094,7 +13094,7 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_cross_property_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13105,14 +13105,14 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13132,7 +13132,7 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_cross_element_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13143,14 +13143,14 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13171,7 +13171,7 @@ if (typeof obj.prop === "string") {
 #[test]
 fn test_flow_narrowing_not_applied_for_computed_element_access() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { [key: string]: string | number } = { prop: "ok" };
@@ -13181,7 +13181,7 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13219,11 +13219,11 @@ if (typeof obj[key] === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13247,7 +13247,7 @@ if (typeof obj[key] === "string") {
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_literal_key() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13257,7 +13257,7 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13295,11 +13295,11 @@ if (typeof obj[key] === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13319,7 +13319,7 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_computed_element_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13331,14 +13331,14 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13359,7 +13359,7 @@ if (typeof obj[key] === "string") {
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_numeric_literal_key() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let arr: (string | number)[] = ["ok", 1];
@@ -13369,7 +13369,7 @@ if (typeof arr[idx] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13407,11 +13407,11 @@ if (typeof arr[idx] === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13431,7 +13431,7 @@ if (typeof arr[idx] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_computed_numeric_element_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let arr: (string | number)[] = ["ok", 1];
@@ -13443,14 +13443,14 @@ if (typeof arr[idx] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13471,7 +13471,7 @@ if (typeof arr[idx] === "string") {
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_const_literal_key() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13481,7 +13481,7 @@ if (typeof obj[key] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13519,11 +13519,11 @@ if (typeof obj[key] === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13544,7 +13544,7 @@ if (typeof obj[key] === "string") {
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_const_numeric_key() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let arr: (string | number)[] = ["ok", 1];
@@ -13554,7 +13554,7 @@ if (typeof arr[idx] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13592,11 +13592,11 @@ if (typeof arr[idx] === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13617,7 +13617,7 @@ if (typeof arr[idx] === "string") {
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_literal_discriminant() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type U = { kind: "a"; value: string } | { kind: "b"; value: number };
@@ -13628,7 +13628,7 @@ if (obj[key] === "a") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13666,11 +13666,11 @@ if (obj[key] === "a") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13691,7 +13691,7 @@ if (obj[key] === "a") {
 #[test]
 fn test_flow_narrowing_applies_for_literal_element_access() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13700,7 +13700,7 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13738,11 +13738,11 @@ if (typeof obj["prop"] === "string") {
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
         .expect("expression data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13762,7 +13762,7 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_property_base_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13773,14 +13773,14 @@ if (typeof obj.prop === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13800,7 +13800,7 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_cleared_by_element_base_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13811,14 +13811,14 @@ if (typeof obj["prop"] === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -13839,13 +13839,13 @@ if (typeof obj["prop"] === "string") {
 #[test]
 fn test_parameter_identifier_type_from_symbol_cache() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function f(x: number) { return x; }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
@@ -13873,11 +13873,11 @@ function f(x: number) { return x; }
         .get_return_statement(return_node)
         .expect("return data");
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -13938,7 +13938,7 @@ const reducer = createReducer(0, {
         }
     }
 
-    let binder = ThinBinderState::from_bound_state_with_scopes(
+    let binder = BinderState::from_bound_state_with_scopes(
         program.symbols.clone(),
         file_locals,
         file.node_symbols.clone(),
@@ -13947,7 +13947,7 @@ const reducer = createReducer(0, {
     );
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         &file.arena,
         &binder,
         &types,
@@ -14013,7 +14013,7 @@ const reducer = createReducer(0, {
             }
         }
 
-        let binder = ThinBinderState::from_bound_state_with_scopes(
+        let binder = BinderState::from_bound_state_with_scopes(
             program.symbols.clone(),
             file_locals,
             file.node_symbols.clone(),
@@ -14021,7 +14021,7 @@ const reducer = createReducer(0, {
             file.node_scope_ids.clone(),
         );
 
-        let mut checker = ThinCheckerState::new(
+        let mut checker = CheckerState::new(
             &file.arena,
             &binder,
             &types,
@@ -14044,7 +14044,7 @@ const reducer = createReducer(0, {
 /// Note: Full instantiation of generic mapped types is tested in solver/evaluate_tests.rs.
 #[test]
 fn test_key_remapping_syntax_parsing() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that key remapping syntax parses and binds correctly
     let source = r#"
@@ -14075,7 +14075,7 @@ declare const o: MyOmit<Person, "email">;
 declare const p: MyPick<Person, "name">;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14083,11 +14083,11 @@ declare const p: MyPick<Person, "name">;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14109,7 +14109,7 @@ declare const p: MyPick<Person, "name">;
 /// that construct objects, similar to the void return exception for functions (#6).
 #[test]
 fn test_constructor_void_exception() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Constructor type returning void
@@ -14133,7 +14133,7 @@ type DefaultCtor = new () => void;
 const ctor2: DefaultCtor = AnotherClass;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14141,11 +14141,11 @@ const ctor2: DefaultCtor = AnotherClass;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14169,7 +14169,7 @@ const ctor2: DefaultCtor = AnotherClass;
 /// and checks that the thin checker properly handles conditional type declarations.
 #[test]
 fn test_distributivity_conditional_type_declarations() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that conditional type declarations parse and bind correctly
     let source = r#"
@@ -14181,7 +14181,7 @@ declare const x: Distributive<string>;
 declare const y: NonDistributive<string>;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14189,11 +14189,11 @@ declare const y: NonDistributive<string>;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14215,7 +14215,7 @@ declare const y: NonDistributive<string>;
 /// Note: Conditional type evaluation during type alias assignment is tested in solver/evaluate_tests.rs.
 #[test]
 fn test_conditional_type_concrete_extends() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that conditional types parse and bind correctly with concrete extends checks
     let source = r#"
@@ -14230,7 +14230,7 @@ declare const n: NumberCheck;
 declare const t: TupleCheck;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14238,11 +14238,11 @@ declare const t: TupleCheck;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14264,7 +14264,7 @@ declare const t: TupleCheck;
 /// The is_distributive flag detection is verified in solver/lower_tests.rs.
 #[test]
 fn test_tuple_wrapped_conditional_pattern() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test the [T] extends [U] pattern used to disable distributivity
     let source = r#"
@@ -14287,7 +14287,7 @@ declare const e: ExtractElement<string[]>;
 declare const end: ExtractElementNonDist<string[]>;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14295,11 +14295,11 @@ declare const end: ExtractElementNonDist<string[]>;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14325,7 +14325,7 @@ declare const end: ExtractElementNonDist<string[]>;
 /// Pattern: `R extends Reducer<infer S, any> ? S : never`
 #[test]
 fn test_redux_pattern_extract_state_with_infer() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Reducer<S, A> = (state: S | undefined, action: A) => S;
@@ -14341,7 +14341,7 @@ declare const s: ExtractedState;
 const n: number = s;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14349,11 +14349,11 @@ const n: number = s;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14381,7 +14381,7 @@ const n: number = s;
 /// Pattern: `{ [K in keyof R]: ExtractState<R[K]> }`
 #[test]
 fn test_redux_pattern_state_from_reducers_mapped() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Reducer<S, A> = (state: S | undefined, action: A) => S;
@@ -14404,7 +14404,7 @@ const c: number = state.count;
 const m: string = state.message;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14412,11 +14412,11 @@ const m: string = state.message;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14443,7 +14443,7 @@ const m: string = state.message;
 /// Pattern: `{ [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }`
 #[test]
 fn test_redux_pattern_deep_partial() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type DeepPartial<T> = {
@@ -14463,7 +14463,7 @@ const patch: PartialState = { message: "ok" };
 const partial: PartialState = { nested: { value: 42 } };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14471,11 +14471,11 @@ const partial: PartialState = { nested: { value: 42 } };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14502,7 +14502,7 @@ const partial: PartialState = { nested: { value: 42 } };
 /// Pattern: `function createStore<R>(r: R): Store<StateFromReducer<R>>`
 #[test]
 fn test_redux_pattern_generic_function_with_conditional_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Reducer<S> = (state: S | undefined) => S;
@@ -14524,7 +14524,7 @@ const state = store.getState();
 const n: number = state;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14532,11 +14532,11 @@ const n: number = state;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14563,7 +14563,7 @@ const n: number = state;
 /// Pattern: `ActionFromReducers<R> = { [K in keyof R]: ExtractAction<R[K]> }[keyof R]`
 #[test]
 fn test_redux_pattern_indexed_access_on_mapped_union() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type AnyAction = { type: string };
@@ -14584,7 +14584,7 @@ type AllActions = ActionFromReducers<Reducers>;
 declare const action: AllActions;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14592,11 +14592,11 @@ declare const action: AllActions;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14623,7 +14623,7 @@ declare const action: AllActions;
 /// Pattern: `type ReducersMapObject<S, A> = { [K in keyof S]: Reducer<S[K], A> }`
 #[test]
 fn test_redux_pattern_reducers_map_object() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type AnyAction = { type: string; payload?: any };
@@ -14651,7 +14651,7 @@ const reducers: RootReducers = {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14659,11 +14659,11 @@ const reducers: RootReducers = {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14699,7 +14699,7 @@ const reducers: RootReducers = {
 /// proper instantiation and resolution of type parameter bounds.
 #[test]
 fn test_base_constraint_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // T extends string, so T can be assigned to string
@@ -14727,7 +14727,7 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14735,11 +14735,11 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14768,7 +14768,7 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
 /// the constraint itself cannot be assigned back to T.
 #[test]
 fn test_generic_constraint_rejection() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Error case: string is not assignable to T (T could be "hello" or other literal)
@@ -14782,7 +14782,7 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14790,11 +14790,11 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14827,7 +14827,7 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
 /// first check identity (T == U), then check Constraint(T) <: U.
 #[test]
 fn test_generic_param_identity() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Same type parameter is assignable to itself
@@ -14854,7 +14854,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14862,11 +14862,11 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14899,7 +14899,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 /// from the constraint during access.
 #[test]
 fn test_cross_scope_generic_constraints() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Simulate cross-file scenario with type aliases
@@ -14931,7 +14931,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -14939,11 +14939,11 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -14978,7 +14978,7 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 /// - `Sup.write <: Sub.write` (Contravariant)
 #[test]
 fn test_split_accessors_basic() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Box {
@@ -14999,7 +14999,7 @@ box.value = "hello"; // OK: setter accepts string
 box.value = 42; // OK: setter accepts number
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15007,11 +15007,11 @@ box.value = 42; // OK: setter accepts number
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15037,7 +15037,7 @@ box.value = 42; // OK: setter accepts number
 /// TS Unsoundness #26: Split Accessors - read type mismatch should error
 #[test]
 fn test_split_accessors_read_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Box {
@@ -15051,7 +15051,7 @@ const box = new Box();
 const n: number = box.value; // ERROR: string not assignable to number
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15059,11 +15059,11 @@ const n: number = box.value; // ERROR: string not assignable to number
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15095,7 +15095,7 @@ const n: number = box.value; // ERROR: string not assignable to number
 /// get an error, but currently the setter parameter type is not checked.
 #[test]
 fn test_split_accessors_write_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Box {
@@ -15109,7 +15109,7 @@ const box = new Box();
 box.value = true; // Should ERROR: boolean not assignable to string
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15117,11 +15117,11 @@ box.value = true; // Should ERROR: boolean not assignable to string
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15160,7 +15160,7 @@ box.value = true; // Should ERROR: boolean not assignable to string
 /// - You can define types that accept abstract constructors: `abstract new () => any`
 #[test]
 fn test_abstract_class_instantiation_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class Animal {
@@ -15175,7 +15175,7 @@ const dog = new Dog(); // OK: Dog is concrete
 const animal = new Animal(); // ERROR: Cannot create instance of abstract class
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15183,11 +15183,11 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15221,7 +15221,7 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
 /// has issues with type resolution. Currently expects 4 errors.
 #[test]
 fn test_abstract_constructor_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class Animal {
@@ -15252,7 +15252,7 @@ function createAnimal(Ctor: typeof Animal): Animal {
 const animal = createAnimal(Animal); // Passing abstract class as value should be OK
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15260,11 +15260,11 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15298,7 +15298,7 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
 /// This matches TypeScript's behavior.
 #[test]
 fn test_abstract_to_concrete_constructor_not_assignable() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class A {}
@@ -15317,7 +15317,7 @@ var BB: typeof B = A;
 var CC: typeof C = B;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15325,11 +15325,11 @@ var CC: typeof C = B;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15370,7 +15370,7 @@ var CC: typeof C = B;
 /// has issues with class type comparison. Currently expects 3 errors.
 #[test]
 fn test_concrete_extends_abstract() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class Shape {
@@ -15406,7 +15406,7 @@ const shape2: Shape = new Square(4); // Should be OK
 const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15414,11 +15414,11 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15459,7 +15459,7 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
 /// Function type requires lib.d.ts which isn't available in tests.
 #[test]
 fn test_global_function_type_callable_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Define a minimal Function-like interface for testing
@@ -15484,7 +15484,7 @@ const c2: AnyCallable = func; // OK
 const c3: AnyCallable = named; // OK
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15492,11 +15492,11 @@ const c3: AnyCallable = named; // OK
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15525,7 +15525,7 @@ const c3: AnyCallable = named; // OK
 /// because we don't know its actual signature.
 #[test]
 fn test_function_not_assignable_to_specific() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Untyped callable (simulating Function)
@@ -15541,7 +15541,7 @@ declare const untyped: AnyCallable;
 const specific: SpecificFn = untyped; // This is actually allowed in TS due to any
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15549,11 +15549,11 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15585,7 +15585,7 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
 /// - Object types without call signatures are NOT callable
 #[test]
 fn test_function_type_hierarchy() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Various function types in the hierarchy
@@ -15614,7 +15614,7 @@ declare const obj: NotCallable;
 // const bad: AnyCallable = obj; // This would be an error
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15622,11 +15622,11 @@ declare const obj: NotCallable;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15656,7 +15656,7 @@ declare const obj: NotCallable;
 /// or creates a union if none exists.
 #[test]
 fn test_best_common_type_array_literal() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Mixed array literal becomes union type
@@ -15678,7 +15678,7 @@ const strings = ["a", "b", "c"];
 const s: string = strings[0]; // OK
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15686,11 +15686,11 @@ const s: string = strings[0]; // OK
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15722,7 +15722,7 @@ const s: string = strings[0]; // OK
 /// has issues. Currently expects 1 error.
 #[test]
 fn test_best_common_type_class_hierarchy() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Animal {
@@ -15750,7 +15750,7 @@ const pet = pets[0];
 const name = pet.name; // OK: both Dog and Cat have name
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15758,11 +15758,11 @@ const name = pet.name; // OK: both Dog and Cat have name
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15798,7 +15798,7 @@ const name = pet.name; // OK: both Dog and Cat have name
 /// unless the array is const or has a specific annotation.
 #[test]
 fn test_best_common_type_literal_widening() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Literal types widen in mutable arrays
@@ -15817,7 +15817,7 @@ const bools = [true, false]; // boolean[]
 const b: boolean = bools[0]; // OK
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15825,11 +15825,11 @@ const b: boolean = bools[0]; // OK
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15858,7 +15858,7 @@ const b: boolean = bools[0]; // OK
 /// Multiple interface declarations combine their members.
 #[test]
 fn test_interface_merging_basic() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // First interface declaration
@@ -15888,7 +15888,7 @@ const d: number = box.depth;
 const l: string = box.label;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15896,11 +15896,11 @@ const l: string = box.label;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15928,7 +15928,7 @@ const l: string = box.label;
 /// When interfaces merge, methods with the same name become overloads.
 #[test]
 fn test_interface_merging_method_overloads() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Calculator {
@@ -15948,7 +15948,7 @@ const strResult: string = calc.add("a", "b");
 const product: number = calc.multiply(3, 4);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -15956,11 +15956,11 @@ const product: number = calc.multiply(3, 4);
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -15989,7 +15989,7 @@ const product: number = calc.multiply(3, 4);
 /// other declarations of the same name.
 #[test]
 fn test_interface_extend_and_merge() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Named {
@@ -16017,7 +16017,7 @@ const a: number = person.age;
 const e: string = person.email;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16025,11 +16025,11 @@ const e: string = person.email;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16060,7 +16060,7 @@ const e: string = person.email;
 /// is not yet implemented. Currently expects 2 errors.
 #[test]
 fn test_namespace_interface_merging() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r##"
 interface Color {
@@ -16084,7 +16084,7 @@ const red: Color = Color.RED;
 const fromString: Color = Color.fromHex("#FF0000");
 "##;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16092,11 +16092,11 @@ const fromString: Color = Color.fromHex("#FF0000");
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16132,7 +16132,7 @@ const fromString: Color = Color.fromHex("#FF0000");
 /// Classes can merge with namespaces to add static properties/methods.
 #[test]
 fn test_class_namespace_merging() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Album {
@@ -16160,7 +16160,7 @@ const track: Album.Track = { name: "Song 1", duration: 180 };
 const created: Album = Album.create("New Album");
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16168,11 +16168,11 @@ const created: Album = Album.create("New Album");
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16203,7 +16203,7 @@ const created: Album = Album.create("New Album");
 /// yet implemented. Currently expects 4 errors.
 #[test]
 fn test_enum_namespace_merging() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 enum Direction {
@@ -16226,7 +16226,7 @@ const dir: Direction = Direction.Up;
 const vertical: boolean = Direction.isVertical(Direction.Up);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16234,11 +16234,11 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16279,7 +16279,7 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
 /// is implemented, change to expect 0 errors.
 #[test]
 fn test_method_bivariance_wider_argument() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Animal is wider than Dog
     // A method handler(dog: Dog) should be assignable to handler(animal: Animal)
@@ -16302,7 +16302,7 @@ declare const dogHandler: HandlerWithDog;
 const animalHandler: HandlerWithAnimal = dogHandler;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16310,11 +16310,11 @@ const animalHandler: HandlerWithAnimal = dogHandler;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16357,7 +16357,7 @@ const animalHandler: HandlerWithAnimal = dogHandler;
 /// Once interface inheritance is properly handled, expect 0 errors.
 #[test]
 fn test_method_bivariance_narrower_argument() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Animal { name: string }
@@ -16377,7 +16377,7 @@ declare const animalHandler: HandlerWithAnimal;
 const dogHandler: HandlerWithDog = animalHandler;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16385,11 +16385,11 @@ const dogHandler: HandlerWithDog = animalHandler;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16431,7 +16431,7 @@ const dogHandler: HandlerWithDog = animalHandler;
 /// properly handled, expect 0 errors.
 #[test]
 fn test_function_property_contravariance() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Animal { name: string }
@@ -16450,7 +16450,7 @@ declare const animalHandler: HandlerWithAnimalProp;
 const dogHandler: HandlerWithDogProp = animalHandler;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16458,11 +16458,11 @@ const dogHandler: HandlerWithDogProp = animalHandler;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16498,7 +16498,7 @@ const dogHandler: HandlerWithDogProp = animalHandler;
 /// covariant direction (narrower param -> wider param).
 #[test]
 fn test_function_property_rejects_covariant() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Animal { name: string }
@@ -16518,7 +16518,7 @@ declare const dogHandler: HandlerWithDogProp;
 const animalHandler: HandlerWithAnimalProp = dogHandler;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16526,11 +16526,11 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16567,7 +16567,7 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
 /// to a function that expects an Event handler. Once implemented, expect 0 errors.
 #[test]
 fn test_method_bivariance_event_handler_pattern() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Event { type: string }
@@ -16587,7 +16587,7 @@ declare const elem: Element;
 elem.addEventListener(handleMouse);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16595,11 +16595,11 @@ elem.addEventListener(handleMouse);
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16640,7 +16640,7 @@ elem.addEventListener(handleMouse);
 /// bivariance is implemented, change to expect 0 errors.
 #[test]
 fn test_callback_method_parameter_bivariance() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Animal { name: string }
@@ -16662,7 +16662,7 @@ declare const dogs: Dog[];
 processor.process(dogs, handleDog);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16670,11 +16670,11 @@ processor.process(dogs, handleDog);
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16711,7 +16711,7 @@ processor.process(dogs, handleDog);
 /// escape hatch in TypeScript.
 #[test]
 fn test_any_type_assignable_to_specific() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare const anyVal: any;
@@ -16725,7 +16725,7 @@ const fn: (x: string) => number = anyVal;
 const arr: number[] = anyVal;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16733,11 +16733,11 @@ const arr: number[] = anyVal;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16767,7 +16767,7 @@ const arr: number[] = anyVal;
 /// that allows bypassing type checking.
 #[test]
 fn test_specific_types_assignable_to_any() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare let anyTarget: any;
@@ -16788,7 +16788,7 @@ anyTarget = fn;
 anyTarget = arr;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16796,11 +16796,11 @@ anyTarget = arr;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16830,7 +16830,7 @@ anyTarget = arr;
 /// can accept any as an argument.
 #[test]
 fn test_any_type_in_function_calls() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare const anyVal: any;
@@ -16845,7 +16845,7 @@ expectNumber(anyVal);
 expectObject(anyVal);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16853,11 +16853,11 @@ expectObject(anyVal);
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16886,7 +16886,7 @@ expectObject(anyVal);
 /// Operations on any produce any, maintaining the escape hatch.
 #[test]
 fn test_any_type_propagation() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare const anyVal: any;
@@ -16903,7 +16903,7 @@ const num: number = elemAccess;
 const obj: { x: number } = call;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16911,11 +16911,11 @@ const obj: { x: number } = call;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -16946,7 +16946,7 @@ const obj: { x: number } = call;
 /// because never has no values.
 #[test]
 fn test_any_type_never_relationship() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare const neverVal: never;
@@ -16962,7 +16962,7 @@ function returnNever(): never {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -16970,11 +16970,11 @@ function returnNever(): never {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17005,7 +17005,7 @@ function returnNever(): never {
 /// This prevents typos and catches unintended extra properties.
 #[test]
 fn test_freshness_object_literal_excess_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Config {
@@ -17021,7 +17021,7 @@ const config: Config = {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17029,11 +17029,11 @@ const config: Config = {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17070,7 +17070,7 @@ const config: Config = {
 /// This is the "stale" object behavior - width subtyping is allowed.
 #[test]
 fn test_freshness_variable_no_excess_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Config {
@@ -17089,7 +17089,7 @@ const obj = {
 const config: Config = obj;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17097,11 +17097,11 @@ const config: Config = obj;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17130,7 +17130,7 @@ const config: Config = obj;
 /// Fresh object literals passed as function arguments are checked for excess properties.
 #[test]
 fn test_freshness_function_argument_checked() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Options {
@@ -17143,7 +17143,7 @@ function configure(opts: Options): void {}
 configure({ timeout: 5000, retries: 3 });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17151,11 +17151,11 @@ configure({ timeout: 5000, retries: 3 });
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17191,7 +17191,7 @@ configure({ timeout: 5000, retries: 3 });
 /// Fresh object literals in return statements are checked for excess properties.
 #[test]
 fn test_freshness_return_statement_checked() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Result {
@@ -17203,7 +17203,7 @@ function getResult(): Result {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17211,11 +17211,11 @@ function getResult(): Result {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17248,14 +17248,14 @@ function getResult(): Result {
 
 #[test]
 fn test_union_optional_object_literal_excess_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type U = { a?: number } | { b?: number };
 const u: U = { a: 1, c: 2 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17263,11 +17263,11 @@ const u: U = { a: 1, c: 2 };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17312,14 +17312,14 @@ const u: U = { a: 1, c: 2 };
 
 #[test]
 fn test_union_optional_object_literal_no_common_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type U = { a?: number } | { b?: number };
 const u: U = { c: 1 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17327,11 +17327,11 @@ const u: U = { c: 1 };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17376,7 +17376,7 @@ const u: U = { c: 1 };
 
 #[test]
 fn test_union_optional_call_argument_excess_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type U = { a?: number } | { b?: number };
@@ -17384,7 +17384,7 @@ function f(value: U) {}
 f({ c: 1 });
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17392,11 +17392,11 @@ f({ c: 1 });
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17441,7 +17441,7 @@ f({ c: 1 });
 
 #[test]
 fn test_union_optional_variable_assignment_no_common_properties() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type U = { a?: number } | { b?: number };
@@ -17449,7 +17449,7 @@ const obj = { c: 1 };
 const u: U = obj;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17457,11 +17457,11 @@ const u: U = obj;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17487,7 +17487,7 @@ const u: U = obj;
 /// Once spread is implemented, change to expect 0 errors.
 #[test]
 fn test_freshness_spread_behavior() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Config {
@@ -17501,7 +17501,7 @@ const base = { host: "localhost", port: 8080 };
 const config: Config = { ...base };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17509,11 +17509,11 @@ const config: Config = { ...base };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17554,7 +17554,7 @@ const config: Config = { ...base };
 /// Once class inheritance works, change to expect 0 errors.
 #[test]
 fn test_covariant_this_basic_subtyping() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Animal {
@@ -17579,7 +17579,7 @@ class Dog extends Animal {
 const animal: Animal = new Dog();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17587,11 +17587,11 @@ const animal: Animal = new Dog();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17622,7 +17622,7 @@ const animal: Animal = new Dog();
 /// This is a common and useful pattern in TypeScript.
 #[test]
 fn test_covariant_this_fluent_api() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Builder {
@@ -17656,7 +17656,7 @@ const result = new AdvancedBuilder()
     .reset();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17664,11 +17664,11 @@ const result = new AdvancedBuilder()
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17698,7 +17698,7 @@ const result = new AdvancedBuilder()
 /// Interfaces can also use `this` type for fluent patterns.
 #[test]
 fn test_covariant_this_interface_pattern() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Cloneable {
@@ -17723,7 +17723,7 @@ const p1 = new Point(1, 2);
 const p2 = p1.clone();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17731,11 +17731,11 @@ const p2 = p1.clone();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17769,7 +17769,7 @@ const p2 = p1.clone();
 /// a base class reference with an incompatible derived class.
 #[test]
 fn test_covariant_this_unsound_call() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Box {
@@ -17799,7 +17799,7 @@ const plainBox = new Box();
 const b: Box = new NumberBox();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17807,11 +17807,11 @@ const b: Box = new NumberBox();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17843,7 +17843,7 @@ const b: Box = new NumberBox();
 /// are only assignable to their own types.
 #[test]
 fn test_strict_null_checks_on() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // With strictNullChecks on (default), null/undefined are not assignable to other types
@@ -17863,7 +17863,7 @@ const maybeStr: string | null = null;
 const maybeNum: number | undefined = undefined;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17871,11 +17871,11 @@ const maybeNum: number | undefined = undefined;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17904,14 +17904,14 @@ const maybeNum: number | undefined = undefined;
 /// With strictNullChecks ON, assigning null to string should error.
 #[test]
 fn test_strict_null_checks_rejects_null() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Assigning null to string should error
 const str: string = null;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17919,11 +17919,11 @@ const str: string = null;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17948,14 +17948,14 @@ const str: string = null;
 /// With strictNullChecks ON, assigning undefined to number should error.
 #[test]
 fn test_strict_null_checks_rejects_undefined() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Assigning undefined to number should error
 const num: number = undefined;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -17963,11 +17963,11 @@ const num: number = undefined;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -17992,7 +17992,7 @@ const num: number = undefined;
 /// Union types can explicitly include null/undefined.
 #[test]
 fn test_null_undefined_union_types() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Union types that include null/undefined work fine
@@ -18004,7 +18004,7 @@ const str: string | null = "hello";
 const num: number | undefined = 42;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18012,11 +18012,11 @@ const num: number | undefined = 42;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18047,7 +18047,7 @@ const num: number | undefined = 42;
 /// TS cannot track that `obj.kind === "a"` implies `obj.val` is `number`.
 #[test]
 fn test_correlated_unions_basic_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type A = { kind: 'a'; val: number };
@@ -18060,7 +18060,7 @@ function test(obj: AB) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18068,11 +18068,11 @@ function test(obj: AB) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18101,7 +18101,7 @@ function test(obj: AB) {
 /// When discriminant is checked, the specific variant is narrowed.
 #[test]
 fn test_correlated_unions_discriminant_narrowing() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type A = { kind: 'a'; val: number };
@@ -18119,7 +18119,7 @@ function test(obj: AB) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18127,11 +18127,11 @@ function test(obj: AB) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18160,7 +18160,7 @@ function test(obj: AB) {
 /// IndexAccess(Union(ObjA, ObjB), Key) produces Union(ObjA[Key], ObjB[Key]).
 #[test]
 fn test_correlated_unions_index_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Data = {
@@ -18174,7 +18174,7 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18182,11 +18182,11 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18215,7 +18215,7 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
 /// Accessing a property common to all union members works.
 #[test]
 fn test_correlated_unions_common_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Circle = { kind: 'circle'; radius: number };
@@ -18228,7 +18228,7 @@ function getKind(shape: Shape): string {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18236,11 +18236,11 @@ function getKind(shape: Shape): string {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18270,7 +18270,7 @@ function getKind(shape: Shape): string {
 /// because the callback might run after the variable has changed.
 #[test]
 fn test_cfa_invalidation_mutable_in_closure() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let x: string | number = "hello";
@@ -18287,7 +18287,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18295,11 +18295,11 @@ if (typeof x === "string") {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18323,7 +18323,7 @@ if (typeof x === "string") {
 /// because the variable cannot be reassigned.
 #[test]
 fn test_cfa_const_maintains_narrowing() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const x: string | number = "hello";
@@ -18340,7 +18340,7 @@ if (typeof x === "string") {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18348,11 +18348,11 @@ if (typeof x === "string") {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18377,7 +18377,7 @@ if (typeof x === "string") {
 /// Arrow functions also invalidate narrowing for captured mutable variables.
 #[test]
 fn test_cfa_invalidation_arrow_function() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let value: string | null = "test";
@@ -18394,7 +18394,7 @@ if (value !== null) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18402,11 +18402,11 @@ if (value !== null) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18429,7 +18429,7 @@ if (value !== null) {
 /// Callback passed to another function also invalidates narrowing.
 #[test]
 fn test_cfa_invalidation_callback_parameter() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare function doLater(fn: () => void): void;
@@ -18448,7 +18448,7 @@ if (data !== undefined) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18456,11 +18456,11 @@ if (data !== undefined) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18488,7 +18488,7 @@ if (data !== undefined) {
 /// JSX type checking is not yet implemented.
 #[test]
 fn test_jsx_intrinsic_element_lowercase_lookup() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Use .tsx extension for JSX
     let source = r#"
@@ -18504,7 +18504,7 @@ const elem = <div className="test" />;
 const elem2 = <span id="foo" />;
 "#;
 
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     // Check if parsing JSX is supported
@@ -18517,11 +18517,11 @@ const elem2 = <span id="foo" />;
         return;
     }
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18552,7 +18552,7 @@ const elem2 = <span id="foo" />;
 /// JSX type checking is not yet implemented.
 #[test]
 fn test_jsx_component_uppercase_resolution() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare namespace JSX {
@@ -18569,7 +18569,7 @@ function MyButton(props: { label: string }): JSX.Element {
 const btn = <MyButton label="Click me" />;
 "#;
 
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if !parser.get_diagnostics().is_empty() {
@@ -18580,11 +18580,11 @@ const btn = <MyButton label="Click me" />;
         return;
     }
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18613,7 +18613,7 @@ const btn = <MyButton label="Click me" />;
 /// JSX type checking is not yet implemented.
 #[test]
 fn test_jsx_intrinsic_element_not_found_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare namespace JSX {
@@ -18626,18 +18626,18 @@ declare namespace JSX {
 const elem = <unknowntag />;
 "#;
 
-    let mut parser = ThinParserState::new("test.tsx".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     if !parser.get_diagnostics().is_empty() {
         return;
     }
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18664,7 +18664,7 @@ const elem = <unknowntag />;
 /// Test that namespace interface members can be used as type annotations
 #[test]
 fn test_namespace_type_member_interface_annotation() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Models {
@@ -18685,7 +18685,7 @@ function getUser(): Models.User {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18693,11 +18693,11 @@ function getUser(): Models.User {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18716,7 +18716,7 @@ function getUser(): Models.User {
 /// Test that namespace type alias members can be used as type annotations
 #[test]
 fn test_namespace_type_member_type_alias_annotation() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Types {
@@ -18730,7 +18730,7 @@ const name: Types.Name = "Bob";
 const pair: Types.Pair<number> = [1, 2];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18738,11 +18738,11 @@ const pair: Types.Pair<number> = [1, 2];
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18761,7 +18761,7 @@ const pair: Types.Pair<number> = [1, 2];
 /// Test that nested namespace type members can be used as type annotations
 #[test]
 fn test_namespace_type_member_nested_annotation() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Outer {
@@ -18779,7 +18779,7 @@ const config: Outer.Inner.Config = { enabled: true };
 const value: Outer.Inner.Deep.Value = "test";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18787,11 +18787,11 @@ const value: Outer.Inner.Deep.Value = "test";
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18810,7 +18810,7 @@ const value: Outer.Inner.Deep.Value = "test";
 /// Test that namespace generic type members work correctly
 #[test]
 fn test_namespace_type_member_generic_usage() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Collections {
@@ -18828,7 +18828,7 @@ const numContainer: Collections.Container<number> = { value: 42 };
 const optString: Collections.Optional<string> = null;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18836,11 +18836,11 @@ const optString: Collections.Optional<string> = null;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18859,7 +18859,7 @@ const optString: Collections.Optional<string> = null;
 /// Test that namespace type members work in function signatures
 #[test]
 fn test_namespace_type_member_function_signature() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace API {
@@ -18880,7 +18880,7 @@ function handleRequest(req: API.Request): API.Response {
 const makeRequest: (req: API.Request) => API.Response = handleRequest;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18888,11 +18888,11 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18911,7 +18911,7 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
 #[test]
 fn test_use_before_assignment_basic_flow() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function foo() {
@@ -18938,7 +18938,7 @@ function qux() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18946,11 +18946,11 @@ function qux() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -18975,7 +18975,7 @@ function qux() {
 #[test]
 fn test_use_before_assignment_try_catch() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function foo() {
@@ -18988,7 +18988,7 @@ function foo() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -18996,11 +18996,11 @@ function foo() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19025,7 +19025,7 @@ function foo() {
 #[test]
 fn test_use_before_assignment_for_of_initializer() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function foo(items: number[]) {
@@ -19036,7 +19036,7 @@ function foo(items: number[]) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19044,11 +19044,11 @@ function foo(items: number[]) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19077,7 +19077,7 @@ function foo(items: number[]) {
 /// Test that required properties without initialization emit TS2564
 #[test]
 fn test_ts2564_required_property_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19085,7 +19085,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19093,11 +19093,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19126,7 +19126,7 @@ class Foo {
 /// Test that properties with `undefined` in their type skip TS2564
 #[test]
 fn test_ts2564_union_with_undefined_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19134,7 +19134,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19142,11 +19142,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19166,7 +19166,7 @@ class Foo {
 /// Test that optional properties skip TS2564 check
 #[test]
 fn test_ts2564_optional_property_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19175,7 +19175,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19183,11 +19183,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19208,7 +19208,7 @@ class Foo {
 /// Test that definite assignment assertion (!) skips TS2564 check
 #[test]
 fn test_ts2564_definite_assignment_assertion_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19217,7 +19217,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19225,11 +19225,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19250,7 +19250,7 @@ class Foo {
 /// Test that properties with initializers skip TS2564 check
 #[test]
 fn test_ts2564_property_with_initializer_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19259,7 +19259,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19267,11 +19267,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19292,7 +19292,7 @@ class Foo {
 /// Test that static properties skip TS2564 check (static fields have different semantics)
 #[test]
 fn test_ts2564_static_property_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19301,7 +19301,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19309,11 +19309,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19334,7 +19334,7 @@ class Foo {
 /// Test that properties assigned directly in constructor skip TS2564 check
 #[test]
 fn test_ts2564_simple_constructor_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19347,7 +19347,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19355,11 +19355,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19384,7 +19384,7 @@ class Foo {
 /// Test that switch statements without default case emit TS2564
 #[test]
 fn test_ts2564_switch_without_default_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19403,7 +19403,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19411,11 +19411,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19445,7 +19445,7 @@ class Foo {
 /// Test that switch statements with default case pass TS2564 check
 #[test]
 fn test_ts2564_switch_with_default_passes() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19463,7 +19463,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19471,11 +19471,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19499,7 +19499,7 @@ class Foo {
 /// Test that destructuring assignments to this.* are tracked
 #[test]
 fn test_ts2564_destructuring_assignment_passes() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19511,7 +19511,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19519,11 +19519,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19547,7 +19547,7 @@ class Foo {
 /// Test that array destructuring assignments to this.* are tracked
 #[test]
 fn test_ts2564_array_destructuring_assignment_passes() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19559,7 +19559,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19567,11 +19567,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19595,7 +19595,7 @@ class Foo {
 /// Test that properties assigned only in loop body emit TS2564
 #[test]
 fn test_ts2564_loop_assignment_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19608,7 +19608,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19616,11 +19616,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19649,7 +19649,7 @@ class Foo {
 /// Test that properties assigned in do-while loop pass (executes at least once)
 #[test]
 fn test_ts2564_do_while_assignment_passes() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19662,7 +19662,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19670,11 +19670,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19698,7 +19698,7 @@ class Foo {
 /// Test that while loop with false condition doesn't count as definite assignment
 #[test]
 fn test_ts2564_while_loop_false_condition_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -19711,7 +19711,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19719,11 +19719,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19752,7 +19752,7 @@ class Foo {
 /// Test that computed properties with identifier keys emit TS2564
 #[test]
 fn test_ts2564_computed_property_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const key1 = "computedKey";
@@ -19761,7 +19761,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19769,11 +19769,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19802,7 +19802,7 @@ class Foo {
 /// Test that computed properties initialized in constructor pass TS2564 check
 #[test]
 fn test_ts2564_computed_property_initialized_passes() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const key2 = "initInConstructor";
@@ -19814,7 +19814,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19822,11 +19822,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19849,7 +19849,7 @@ class Foo {
 
 #[test]
 fn test_recursive_mapped_type_stack_guard() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Circular<T> = { [P in keyof T]: Circular<T> };
@@ -19858,7 +19858,7 @@ declare let foo: Circular<Obj>;
 foo.a;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19866,11 +19866,11 @@ foo.a;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19882,7 +19882,7 @@ foo.a;
 
 #[test]
 fn test_recursive_mapped_type_list_widget_guard() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type NonOptionalKeys<T> = { [P in keyof T]: undefined extends T[P] ? never : P }[keyof T];
@@ -19902,7 +19902,7 @@ declare let x: ListChild;
 x.type;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -19910,11 +19910,11 @@ x.type;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19926,7 +19926,7 @@ x.type;
 
 #[test]
 fn test_abstract_constructor_type_parses() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that abstract constructor types parse correctly (no TS1005/TS1109 errors)
     let source = r#"
@@ -19937,7 +19937,7 @@ function Mixin<TBaseClass extends abstract new (...args: any) => any>(baseClass:
 type AbstractConstructor<T> = abstract new (...args: any[]) => T;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     // Check for parser errors (TS1005 = ';' expected, TS1109 = Expression expected)
@@ -19952,11 +19952,11 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
         parse_errors
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -19969,11 +19969,11 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
 #[test]
 fn test_unterminated_template_expression_reports_missing_name() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = "var v = `foo ${ a ";
 
-    let mut parser = ThinParserState::new("TemplateExpression1.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("TemplateExpression1.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let parse_codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
@@ -19983,11 +19983,11 @@ fn test_unterminated_template_expression_reports_missing_name() {
         parse_codes
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20007,7 +20007,7 @@ fn test_unterminated_template_expression_reports_missing_name() {
 #[test]
 fn test_global_augmentation_binds_to_file_scope() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -20017,7 +20017,7 @@ declare global {
 augmented;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20025,11 +20025,11 @@ augmented;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20049,7 +20049,7 @@ augmented;
 #[test]
 fn test_namespace_merging_resolves_prior_exports() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Utils { export const x = 1; }
@@ -20057,7 +20057,7 @@ namespace Utils { export const y = x; }
 const z = Utils.y;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20065,11 +20065,11 @@ const z = Utils.y;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20089,7 +20089,7 @@ const z = Utils.y;
 #[test]
 fn test_module_augmentation_merges_exports() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare module "pkg" {
@@ -20100,7 +20100,7 @@ declare module "pkg" {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20108,11 +20108,11 @@ declare module "pkg" {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20132,7 +20132,7 @@ declare module "pkg" {
 #[test]
 fn test_circular_type_alias_ts2456() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Direct circular reference - should emit TS2456
@@ -20144,7 +20144,7 @@ type Recurse = {
 declare let x: Recurse;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20152,11 +20152,11 @@ declare let x: Recurse;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20182,7 +20182,7 @@ declare let x: Recurse;
 fn test_builtin_types_no_ts2304_errors() {
     // Regression test: Global types like Promise, Array, Map should not cause
     // TS2304 "Cannot find name" errors when lib.d.ts is not loaded.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Type references with type arguments
@@ -20229,7 +20229,7 @@ interface MyError extends Error {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20237,11 +20237,11 @@ interface MyError extends Error {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20271,7 +20271,7 @@ interface MyError extends Error {
 #[test]
 fn test_builtin_types_in_type_literal_no_ts2304() {
     // Ensure builtin generics used inside type literals don't emit TS2304 when lib is absent.
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Box<T> = { value: T };
@@ -20285,7 +20285,7 @@ type Foo = {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20293,11 +20293,11 @@ type Foo = {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20325,7 +20325,7 @@ type Foo = {
 
 #[test]
 fn test_switch_case_param_reference_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: number }) {
@@ -20340,7 +20340,7 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20348,11 +20348,11 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20371,7 +20371,7 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
 
 #[test]
 fn test_type_predicate_param_type_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Wat {
@@ -20380,7 +20380,7 @@ class Wat {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20388,11 +20388,11 @@ class Wat {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20411,7 +20411,7 @@ class Wat {
 
 #[test]
 fn test_type_predicate_return_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare function isString(value: unknown): value is string;
@@ -20420,7 +20420,7 @@ declare function assertDefined<T>(value: T): asserts value;
 const assertFn: (value: unknown) => asserts value = value => {};
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20428,11 +20428,11 @@ const assertFn: (value: unknown) => asserts value = value => {};
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20451,7 +20451,7 @@ const assertFn: (value: unknown) => asserts value = value => {};
 
 #[test]
 fn test_type_predicate_this_return_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Foo {
@@ -20465,7 +20465,7 @@ const obj = {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20473,11 +20473,11 @@ const obj = {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20496,13 +20496,13 @@ const obj = {
 
 #[test]
 fn test_exports_reference_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 exports.foo = 1;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20510,11 +20510,11 @@ exports.foo = 1;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20533,7 +20533,7 @@ exports.foo = 1;
 
 #[test]
 fn test_mapped_type_param_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Types = "boolean" | "string";
@@ -20542,14 +20542,14 @@ type Properties<T extends { [key: string]: Types }> = {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20568,7 +20568,7 @@ type Properties<T extends { [key: string]: Types }> = {
 
 #[test]
 fn test_accessor_modifier_declaration_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface I1 {
@@ -20580,14 +20580,14 @@ accessor var V1: any;
 accessor export default V1;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20607,7 +20607,7 @@ accessor export default V1;
 #[test]
 fn test_namespace_sibling_export_resolves() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace Utils {
@@ -20619,7 +20619,7 @@ namespace Utils {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20627,11 +20627,11 @@ namespace Utils {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20651,7 +20651,7 @@ namespace Utils {
 #[test]
 fn test_namespace_type_literal_resolves_members() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace A {
@@ -20663,7 +20663,7 @@ namespace A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20671,11 +20671,11 @@ namespace A {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20695,7 +20695,7 @@ namespace A {
 #[test]
 fn test_namespace_type_query_resolves_alias() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 namespace A {
@@ -20709,7 +20709,7 @@ namespace C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20717,11 +20717,11 @@ namespace C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20741,7 +20741,7 @@ namespace C {
 #[test]
 fn test_declare_global_merges_into_global_scope() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -20754,7 +20754,7 @@ declare global {
 const x = globalValue;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20762,11 +20762,11 @@ const x = globalValue;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20786,7 +20786,7 @@ const x = globalValue;
 #[test]
 fn test_ambient_module_declaration_resolves_import() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare module "foo" {
@@ -20797,7 +20797,7 @@ import { Options } from "foo";
 const opts: Options = { value: 1 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20805,11 +20805,11 @@ const opts: Options = { value: 1 };
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20829,7 +20829,7 @@ const opts: Options = { value: 1 };
 #[test]
 fn test_extends_expression_with_type_args_instantiates_base() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base<T, U> {
@@ -20864,7 +20864,7 @@ class D3 extends getBase() <string, number> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20872,11 +20872,11 @@ class D3 extends getBase() <string, number> {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20896,7 +20896,7 @@ class D3 extends getBase() <string, number> {
 #[test]
 fn test_contextual_array_literal_uses_element_type() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base { foo: string = ""; }
@@ -20909,7 +20909,7 @@ declare const d2: Derived2;
 const r: Base[] = [d1, d2];
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20917,11 +20917,11 @@ const r: Base[] = [d1, d2];
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20941,7 +20941,7 @@ const r: Base[] = [d1, d2];
 #[test]
 fn test_indexed_access_resolves_class_property_type() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C {
@@ -20953,7 +20953,7 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -20961,11 +20961,11 @@ class C {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -20985,7 +20985,7 @@ class C {
 #[test]
 fn test_static_private_fields_ignored_in_constructor_assignability() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class A {
@@ -20996,7 +20996,7 @@ class A {
 const willErrorSomeDay: typeof A = class {};
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21004,11 +21004,11 @@ const willErrorSomeDay: typeof A = class {};
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21028,7 +21028,7 @@ const willErrorSomeDay: typeof A = class {};
 #[test]
 fn test_assignment_expression_condition_narrows_discriminant() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type D = { done: true, value: 1 } | { done: false, value: 2 };
@@ -21039,7 +21039,7 @@ if ((o = fn()).done) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21047,11 +21047,11 @@ if ((o = fn()).done) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21071,7 +21071,7 @@ if ((o = fn()).done) {
 #[test]
 fn test_destructuring_assignment_default_order_narrows() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let a: 0 | 1 = 0;
@@ -21080,7 +21080,7 @@ let b: 0 | 1 | 9;
 const bb: 0 = b;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21088,11 +21088,11 @@ const bb: 0 = b;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21112,7 +21112,7 @@ const bb: 0 = b;
 #[test]
 fn test_in_operator_const_name_narrows_union() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const a = "a";
@@ -21124,7 +21124,7 @@ if (a in c) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21132,11 +21132,11 @@ if (a in c) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21156,7 +21156,7 @@ if (a in c) {
 #[test]
 fn test_instanceof_type_param_narrows_to_intersection() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class C { prop: string = ""; }
@@ -21168,7 +21168,7 @@ function f<T>(x: T) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21176,11 +21176,11 @@ function f<T>(x: T) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21200,7 +21200,7 @@ function f<T>(x: T) {
 #[test]
 fn test_optional_chain_discriminant_narrows_union() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare const o: { x: 1, y: string } | { x: 2, y: number } | undefined;
@@ -21209,7 +21209,7 @@ if (o?.x === 1) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21217,11 +21217,11 @@ if (o?.x === 1) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21244,7 +21244,7 @@ if (o?.x === 1) {
 
 #[test]
 fn test_class_inheritance_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that accessing inherited instance properties doesn't produce TS2339
     let source = r#"
@@ -21256,7 +21256,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21264,11 +21264,11 @@ class Derived extends Base {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21287,7 +21287,7 @@ class Derived extends Base {
 
 #[test]
 fn test_mixin_inheritance_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Mixin {
@@ -21314,7 +21314,7 @@ d.baseMethod();
 d.mixinMethod();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21322,11 +21322,11 @@ d.mixinMethod();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21345,7 +21345,7 @@ d.mixinMethod();
 
 #[test]
 fn test_mixin_return_type_preserves_base_properties() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type Constructor<T> = new (...args: any[]) => T;
@@ -21389,7 +21389,7 @@ class Thing3 extends Thing2 {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21397,11 +21397,11 @@ class Thing3 extends Thing2 {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21420,7 +21420,7 @@ class Thing3 extends Thing2 {
 
 #[test]
 fn test_class_extends_class_like_constructor_properties() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base<T, U> {
@@ -21462,7 +21462,7 @@ class D3 extends getBase() <string, number> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21470,11 +21470,11 @@ class D3 extends getBase() <string, number> {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21493,7 +21493,7 @@ class D3 extends getBase() <string, number> {
 
 #[test]
 fn test_interface_extension_property_access_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that accessing properties from extended interface doesn't produce TS2339
     let source = r#"
@@ -21504,7 +21504,7 @@ function f(obj: B) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21512,11 +21512,11 @@ function f(obj: B) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21535,7 +21535,7 @@ function f(obj: B) {
 
 #[test]
 fn test_multi_level_inheritance_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that multi-level class inheritance properly resolves properties
     let source = r#"
@@ -21550,7 +21550,7 @@ class C extends B {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21558,11 +21558,11 @@ class C extends B {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21581,7 +21581,7 @@ class C extends B {
 
 #[test]
 fn test_implements_clause_resolution_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that accessing interface properties via typed parameter works
     // Note: 'implements' itself doesn't contribute to 'this' type lookup,
@@ -21592,7 +21592,7 @@ class C implements I { x: number = 0; }
 function f(i: I) { return i.x; }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21600,11 +21600,11 @@ function f(i: I) { return i.x; }
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21623,7 +21623,7 @@ function f(i: I) { return i.x; }
 
 #[test]
 fn test_multi_level_interface_extension_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that multi-level interface extension properly resolves properties
     let source = r#"
@@ -21635,7 +21635,7 @@ function f(obj: C) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21643,11 +21643,11 @@ function f(obj: C) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21666,7 +21666,7 @@ function f(obj: C) {
 
 #[test]
 fn test_inherited_method_call_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that calling inherited methods doesn't produce TS2339
     let source = r#"
@@ -21678,7 +21678,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21686,11 +21686,11 @@ class Derived extends Base {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21709,7 +21709,7 @@ class Derived extends Base {
 
 #[test]
 fn test_intersection_type_typeof_declare_classes_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that property access works on intersection types of declare class constructors
     // Regression test for: typeof M1 & typeof C1 should resolve properties from both sides
@@ -21733,7 +21733,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21741,11 +21741,11 @@ function f() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21764,7 +21764,7 @@ function f() {
 
 #[test]
 fn test_intersection_type_three_way_constructor_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that three-way intersection types work correctly
     let source = r#"
@@ -21793,7 +21793,7 @@ function f() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21801,11 +21801,11 @@ function f() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21824,7 +21824,7 @@ function f() {
 
 #[test]
 fn test_class_extends_intersection_type_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that classes extending intersection types can access properties from both sides
     let source = r#"
@@ -21849,7 +21849,7 @@ class C2 extends Mixed1 {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21857,11 +21857,11 @@ class C2 extends Mixed1 {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21880,7 +21880,7 @@ class C2 extends Mixed1 {
 
 #[test]
 fn test_abstract_mixin_intersection_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Tests that abstract mixin patterns with intersection types resolve properties
     let source = r#"
@@ -21907,7 +21907,7 @@ wasConcrete.baseMethod();
 wasConcrete.mixinMethod();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21915,11 +21915,11 @@ wasConcrete.mixinMethod();
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21938,7 +21938,7 @@ wasConcrete.mixinMethod();
 
 #[test]
 fn test_intersection_type_lowercase() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Base {
@@ -21961,7 +21961,7 @@ class Derived extends getBase() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -21969,11 +21969,11 @@ class Derived extends getBase() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -21992,7 +21992,7 @@ class Derived extends getBase() {
 
 #[test]
 fn test_incomplete_property_access_no_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -22002,7 +22002,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().iter().any(|d| d.code == 1003),
@@ -22010,11 +22010,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22033,7 +22033,7 @@ class Foo {
 
 #[test]
 fn test_interface_extends_class_no_recursion_crash() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for crash: interface extending a class with private fields
     // should not cause infinite recursion during type checking
@@ -22051,14 +22051,14 @@ function func(x: I) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22079,7 +22079,7 @@ function func(x: I) {
 
 #[test]
 fn test_no_implicit_returns_ts7030_function() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitReturns: true
@@ -22091,7 +22091,7 @@ function maybeReturn(x: boolean) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22099,11 +22099,11 @@ function maybeReturn(x: boolean) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22134,7 +22134,7 @@ function maybeReturn(x: boolean) {
 
 #[test]
 fn test_no_implicit_returns_disabled() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitReturns: false
@@ -22146,7 +22146,7 @@ function maybeReturn(x: boolean) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22154,11 +22154,11 @@ function maybeReturn(x: boolean) {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22183,7 +22183,7 @@ function maybeReturn(x: boolean) {
 
 #[test]
 fn test_no_implicit_returns_ts7030_method() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitReturns: true
@@ -22197,7 +22197,7 @@ class Example {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22205,11 +22205,11 @@ class Example {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22240,7 +22240,7 @@ class Example {
 
 #[test]
 fn test_no_implicit_returns_ts7030_getter() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // @noImplicitReturns: true
@@ -22255,7 +22255,7 @@ class Example {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22263,11 +22263,11 @@ class Example {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22299,7 +22299,7 @@ class Example {
 #[test]
 fn test_ts2695_comma_operator_side_effects() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let a = 1;
@@ -22310,7 +22310,7 @@ function aFn() {}
 aFn(), b;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22318,11 +22318,11 @@ aFn(), b;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22357,7 +22357,7 @@ aFn(), b;
 #[test]
 fn test_ts2695_comma_operator_edge_cases() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 declare function eval(input: string): any;
@@ -22379,7 +22379,7 @@ void a, b;
 (0, obj["method"])();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22387,11 +22387,11 @@ void a, b;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22436,7 +22436,7 @@ void a, b;
 
 #[test]
 fn test_variadic_tuple_rest_param_no_ts2769() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for TS2769 false positives with variadic tuple rest parameters
     // https://github.com/microsoft/TypeScript/issues/...
@@ -22454,15 +22454,15 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
         }
     "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22487,7 +22487,7 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
 
 #[test]
 fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
         declare function ft3<T extends unknown[]>(t: [...T]): T;
@@ -22512,15 +22512,15 @@ fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
         }
     "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22545,7 +22545,7 @@ fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
 
 #[test]
 fn test_recursive_mapped_types_no_crash() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for recursive mapped type stack overflow
     // Tests that simple recursive mapped types don't cause infinite loops or crashes
@@ -22571,14 +22571,14 @@ type tup = [number, number];
 declare var x: Circular<tup>;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22599,7 +22599,7 @@ declare var x: Circular<tup>;
 
 #[test]
 fn test_recursive_mapped_property_access_no_crash() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for recursive mapped type property access
     let code = r#"
@@ -22613,14 +22613,14 @@ declare var product: Transform<Product>;
 product.users;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22638,7 +22638,7 @@ product.users;
 }
 #[test]
 fn test_object_destructuring_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { x: number, y: string } = { x: 10, y: "hello" };
@@ -22647,7 +22647,7 @@ let obj: { x: number, y: string } = { x: 10, y: "hello" };
 let { x, y }: { x: string, y: string } = obj;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22655,11 +22655,11 @@ let { x, y }: { x: string, y: string } = obj;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22700,7 +22700,7 @@ let { x, y }: { x: string, y: string } = obj;
 
 #[test]
 fn test_array_destructuring_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let arr: [number, string] = [10, "hello"];
@@ -22709,7 +22709,7 @@ let arr: [number, string] = [10, "hello"];
 let [a, b]: [number, number] = arr;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22717,11 +22717,11 @@ let [a, b]: [number, number] = arr;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22762,7 +22762,7 @@ let [a, b]: [number, number] = arr;
 
 #[test]
 fn test_destructuring_with_default_values_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { x?: number } = {};
@@ -22772,7 +22772,7 @@ let obj: { x?: number } = {};
 let { x = 42 }: { x: string } = obj;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22780,11 +22780,11 @@ let { x = 42 }: { x: string } = obj;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22825,7 +22825,7 @@ let { x = 42 }: { x: string } = obj;
 
 #[test]
 fn test_nested_destructuring_assignability() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 let obj: { a: { b: number } } = { a: { b: 10 } };
@@ -22834,7 +22834,7 @@ let obj: { a: { b: number } } = { a: { b: 10 } };
 let { a: { b } }: { a: { b: string } } = obj;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22842,11 +22842,11 @@ let { a: { b } }: { a: { b: string } } = obj;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22887,7 +22887,7 @@ let { a: { b } }: { a: { b: string } } = obj;
 
 #[test]
 fn test_destructuring_binding_element_default_value_mismatch() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // The default value 42 (number) should trigger TS2322: Type 'number' is not assignable to type 'string'
@@ -22895,7 +22895,7 @@ let obj: { x?: string } = {};
 let { x = 42 }: { x: string } = obj;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22903,11 +22903,11 @@ let { x = 42 }: { x: string } = obj;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -22948,7 +22948,7 @@ let { x = 42 }: { x: string } = obj;
 
 #[test]
 fn test_binding_element_default_value_isolated_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // The initializer {} is valid for { x?: number } (x is optional)
@@ -22957,7 +22957,7 @@ fn test_binding_element_default_value_isolated_check() {
 let { x = "hello" }: { x?: number } = {};
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -22965,11 +22965,11 @@ let { x = "hello" }: { x?: number } = {};
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23011,7 +23011,7 @@ let { x = "hello" }: { x?: number } = {};
 
 #[test]
 fn test_recursive_mapped_type_no_crash_and_ts2456() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // TS2456: Type alias 'DirectCircular' circularly references itself
@@ -23059,7 +23059,7 @@ type tpl = [string, [string, [string]]];
 type t1 = DeepMap<tpl, number>;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -23067,11 +23067,11 @@ type t1 = DeepMap<tpl, number>;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23126,7 +23126,7 @@ type t1 = DeepMap<tpl, number>;
 
 #[test]
 fn test_type_parameter_in_function_body_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function identity<T>(x: T): T {
@@ -23135,7 +23135,7 @@ function identity<T>(x: T): T {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -23143,11 +23143,11 @@ function identity<T>(x: T): T {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23171,7 +23171,7 @@ function identity<T>(x: T): T {
 
 #[test]
 fn test_static_private_field_access_no_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for static private field access
     // Previously failed with TS2339 because static private members were excluded from constructor type
@@ -23187,14 +23187,14 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23226,7 +23226,7 @@ class C {
 
 #[test]
 fn test_static_private_accessor_access_no_ts2339() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for static private accessor access
     let source = r#"
@@ -23244,14 +23244,14 @@ class A {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23283,7 +23283,7 @@ class A {
 
 #[test]
 fn test_type_parameter_in_type_query() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 // Type parameters should be resolved in typeof type queries
@@ -23300,7 +23300,7 @@ function extract<T>(x: Extract<T, typeof identity>): T {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     assert!(
@@ -23309,11 +23309,11 @@ function extract<T>(x: Extract<T, typeof identity>): T {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23341,7 +23341,7 @@ function extract<T>(x: Extract<T, typeof identity>): T {
 
 #[test]
 fn test_constrained_type_parameter_in_types_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
@@ -23349,14 +23349,14 @@ function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23383,7 +23383,7 @@ function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
 
 #[test]
 fn test_self_referential_type_constraint_no_ts2304() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Box<T> {
@@ -23399,14 +23399,14 @@ function g1<T extends Box<T> | undefined>(x: T) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23433,7 +23433,7 @@ function g1<T extends Box<T> | undefined>(x: T) {
 
 #[test]
 fn test_generic_control_flow_narrowing() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function f1<T extends string | undefined>(x: T): string {
@@ -23444,15 +23444,15 @@ function f1<T extends string | undefined>(x: T): string {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -23501,14 +23501,14 @@ class A2 {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23537,7 +23537,7 @@ class A2 {
 
 #[test]
 fn test_class_constructor_without_new_emits_ts2348() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for TS2348: calling class constructor without 'new'
     // When a class constructor is called without 'new', should emit TS2348
@@ -23560,15 +23560,15 @@ class MyClass {
 var instance = MyClass();
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -23623,7 +23623,7 @@ var instance = MyClass();
 
 #[test]
 fn test_generic_control_flow_narrowing_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function f1<T extends string | undefined>(y: { a: T }): string {
@@ -23634,15 +23634,15 @@ function f1<T extends string | undefined>(y: { a: T }): string {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -23681,7 +23681,7 @@ function f1<T extends string | undefined>(y: { a: T }): string {
 
 #[test]
 fn test_ts2339_optional_chaining_no_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Optional chaining (?.) should NOT emit TS2339 when property might not exist
     let source = r#"
@@ -23694,15 +23694,15 @@ function test(obj: A | B | null) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -23734,7 +23734,7 @@ function test(obj: A | B | null) {
 
 #[test]
 fn test_ts2339_union_all_members_need_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // For union types, property must exist on ALL non-nullable members
     let source = r#"
@@ -23752,15 +23752,15 @@ function test2(obj: A | B) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -23791,7 +23791,7 @@ function test2(obj: A | B) {
 
 #[test]
 fn test_ts2339_private_accessor_in_closure() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that private accessors are accessible from closures in the class
     let source = r#"
@@ -23813,15 +23813,15 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -23853,7 +23853,7 @@ class C {
 
 #[test]
 fn test_ts2339_static_private_accessor_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that static private accessors are accessible through the class name
     let source = r#"
@@ -23875,15 +23875,15 @@ class C {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -23915,7 +23915,7 @@ class C {
 
 #[test]
 fn test_ts2339_union_shared_property_no_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Property that exists on ALL union members should NOT produce TS2339
     let source = r#"
@@ -23928,15 +23928,15 @@ function test(obj: A | B) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -23968,7 +23968,7 @@ function test(obj: A | B) {
 
 #[test]
 fn test_ts2339_index_signature_allows_any_property() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // String/number index signatures should allow any property access
     let source = r#"
@@ -23995,15 +23995,15 @@ function test2(obj: NumberIndexed) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -24035,7 +24035,7 @@ function test2(obj: NumberIndexed) {
 
 #[test]
 fn test_ts2339_no_index_signature_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Without index signature, accessing non-existent property should produce TS2339
     let source = r#"
@@ -24049,15 +24049,15 @@ function test(obj: NoIndex) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -24089,7 +24089,7 @@ function test(obj: NoIndex) {
 
 #[test]
 fn test_ts2339_nullable_union_with_optional_chaining() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test union with null/undefined using optional chaining
     let source = r#"
@@ -24105,15 +24105,15 @@ function test(obj: A | null) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -24145,7 +24145,7 @@ function test(obj: A | null) {
 
 #[test]
 fn test_ts2339_intersection_property_access() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test property access on intersection types
     let source = r#"
@@ -24166,15 +24166,15 @@ function test2(obj: A & { c: boolean }) {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let arena = parser.get_arena();
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -24206,7 +24206,7 @@ function test2(obj: A & { c: boolean }) {
 
 #[test]
 fn test_overload_arg_count_exceeds_all_only_ts2554_not_ts2769() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Regression test for overload calls where argument count exceeds ALL signatures
     // When all overloads fail due to argument count mismatch, should emit TS2554 only, not TS2769
@@ -24219,15 +24219,15 @@ declare function mixed(x: number, y: number): void;
 mixed(42, 99, 100);
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), code.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24277,7 +24277,7 @@ mixed(42, 99, 100);
 
 #[test]
 fn test_ts2366_arrow_function_missing_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test error 2366 for arrow functions with explicit return type
     let source = r#"
@@ -24307,15 +24307,15 @@ const noAnnotation = () => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24337,7 +24337,7 @@ const noAnnotation = () => {
 
 #[test]
 fn test_ts2366_function_expression_missing_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test error 2366 for function expressions with explicit return type
     let source = r#"
@@ -24362,15 +24362,15 @@ const noAnnotation = function() {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24392,7 +24392,7 @@ const noAnnotation = function() {
 
 #[test]
 fn test_ts2366_nested_arrow_functions() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test error 2366 for nested arrow functions
     let source = r#"
@@ -24406,15 +24406,15 @@ function outer(): (x: number) => string {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24436,7 +24436,7 @@ function outer(): (x: number) => string {
 
 #[test]
 fn test_ts2366_arrow_function_switch_statement() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test error 2366 for arrow functions with switch statements
     let source = r#"
@@ -24461,15 +24461,15 @@ const switchWithDefault = (value: number): string => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24491,7 +24491,7 @@ const switchWithDefault = (value: number): string => {
 
 #[test]
 fn test_ts2366_arrow_function_try_catch() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test error 2366 for arrow functions with try/catch
     let source = r#"
@@ -24520,15 +24520,15 @@ const tryFinallyFallthrough = (): number => {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24550,7 +24550,7 @@ const tryFinallyFallthrough = (): number => {
 
 #[test]
 fn test_ts7027_unreachable_code_after_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test TS7027 for unreachable code after return
     let source = r#"
@@ -24573,15 +24573,15 @@ function test3(): string {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24603,7 +24603,7 @@ function test3(): string {
 
 #[test]
 fn test_ts7027_unreachable_code_after_throw() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test TS7027 for unreachable code after throw
     let source = r#"
@@ -24618,15 +24618,15 @@ function test2(): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24648,7 +24648,7 @@ function test2(): number {
 
 #[test]
 fn test_ts7027_unreachable_after_never_expression() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test TS7027 for unreachable code after never-type expressions
     let source = r#"
@@ -24665,15 +24665,15 @@ function test2(): void {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24695,7 +24695,7 @@ function test2(): void {
 
 #[test]
 fn test_ts2366_conditional_returns_all_paths() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that functions with conditional returns that cover all paths don't error
     let source = r#"
@@ -24729,15 +24729,15 @@ function test3(x: number): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24759,7 +24759,7 @@ function test3(x: number): number {
 
 #[test]
 fn test_ts2366_early_return() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that early returns are handled correctly
     let source = r#"
@@ -24781,15 +24781,15 @@ function test2(x: number): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24811,7 +24811,7 @@ function test2(x: number): number {
 
 #[test]
 fn test_ts2366_throw_as_exit() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that throw statements are treated as exits
     let source = r#"
@@ -24837,15 +24837,15 @@ function test3(x: number): number {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24867,7 +24867,7 @@ function test3(x: number): number {
 
 #[test]
 fn test_function_overload_no_ts2366() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test that function overloads (signatures without bodies) don't trigger TS2366
     let source = r#"
@@ -24886,15 +24886,15 @@ class MyClass {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(parser.get_diagnostics().is_empty());
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24917,7 +24917,7 @@ class MyClass {
 /// Test TS2705: Async function must return Promise
 #[test]
 fn test_async_function_returns_promise() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 interface Promise<T> {}
@@ -24940,7 +24940,7 @@ async function corge(): Promise<void> { console.log("test"); }
 const arrowPromise = async (): Promise<string> => "test";
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -24948,11 +24948,11 @@ const arrowPromise = async (): Promise<string> => "test";
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -24975,7 +24975,7 @@ const arrowPromise = async (): Promise<string> => "test";
 #[test]
 fn test_duplicate_class_members() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Simplified test - just duplicate properties
     let source = r#"
@@ -24985,7 +24985,7 @@ class DuplicateProperties {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -24993,11 +24993,11 @@ class DuplicateProperties {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25022,7 +25022,7 @@ class DuplicateProperties {
 #[test]
 fn test_duplicate_object_literal_properties() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test duplicate properties in object literal
     let source = r#"
@@ -25032,7 +25032,7 @@ const obj = {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25040,11 +25040,11 @@ const obj = {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25067,7 +25067,7 @@ const obj = {
 #[test]
 fn test_duplicate_object_literal_mixed_properties() {
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test duplicate properties with different syntax (shorthand, method)
     let source = r#"
@@ -25086,7 +25086,7 @@ const obj2 = {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25094,11 +25094,11 @@ const obj2 = {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25121,7 +25121,7 @@ const obj2 = {
 #[test]
 fn test_global_augmentation_tracks_interface_declarations() {
     // Test that interface declarations inside `declare global` are tracked as augmentations
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -25136,7 +25136,7 @@ declare global {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25144,7 +25144,7 @@ declare global {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     // Verify that the binder tracked the global augmentations
@@ -25179,7 +25179,7 @@ declare global {
 fn test_global_augmentation_interface_no_ts2304() {
     // Test that augmented interfaces inside `declare global` don't cause TS2304 errors
     use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 export {};
@@ -25195,7 +25195,7 @@ const win: Window = {} as Window;
 const prop = win.myCustomProperty;
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25203,11 +25203,11 @@ const prop = win.myCustomProperty;
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25231,7 +25231,7 @@ const prop = win.myCustomProperty;
 /// Test that class expressions emit TS2564 for uninitialized properties
 #[test]
 fn test_ts2564_class_expression_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const MyClass = class {
@@ -25239,7 +25239,7 @@ const MyClass = class {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25247,11 +25247,11 @@ const MyClass = class {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25274,7 +25274,7 @@ const MyClass = class {
 /// Test that class expressions with constructor assignments skip TS2564
 #[test]
 fn test_ts2564_class_expression_constructor_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const MyClass = class {
@@ -25286,7 +25286,7 @@ const MyClass = class {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25294,11 +25294,11 @@ const MyClass = class {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25321,7 +25321,7 @@ const MyClass = class {
 /// Test that named class expressions emit TS2564 for uninitialized properties
 #[test]
 fn test_ts2564_named_class_expression_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 const MyClass = class NamedClass {
@@ -25329,7 +25329,7 @@ const MyClass = class NamedClass {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25337,11 +25337,11 @@ const MyClass = class NamedClass {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25364,7 +25364,7 @@ const MyClass = class NamedClass {
 /// Test that class expressions extending a base class emit TS2564
 #[test]
 fn test_ts2564_class_expression_derived_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base {
@@ -25376,7 +25376,7 @@ const Derived = class extends Base {
 };
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25384,11 +25384,11 @@ const Derived = class extends Base {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25411,7 +25411,7 @@ const Derived = class extends Base {
 /// Test that abstract classes skip TS2564 check entirely
 #[test]
 fn test_ts2564_abstract_class_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 abstract class AbstractBase {
@@ -25420,7 +25420,7 @@ abstract class AbstractBase {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25428,11 +25428,11 @@ abstract class AbstractBase {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25453,7 +25453,7 @@ abstract class AbstractBase {
 /// Test TS2454 - Variable used before assignment (basic case)
 #[test]
 fn test_ts2454_variable_used_before_assignment() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -25462,7 +25462,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25470,11 +25470,11 @@ function test() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25494,7 +25494,7 @@ function test() {
 /// Test TS2454 - Variable used in conditional (only one path assigns)
 #[test]
 fn test_ts2454_conditional_assignment_one_path() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -25506,7 +25506,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25514,11 +25514,11 @@ function test() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25538,7 +25538,7 @@ function test() {
 /// Test TS2454 - All paths assign (should NOT report error)
 #[test]
 fn test_ts2454_all_paths_assign() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -25552,7 +25552,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25560,11 +25560,11 @@ function test() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25584,7 +25584,7 @@ function test() {
 /// Test TS2454 - Variable with initializer (should NOT report error)
 #[test]
 fn test_ts2454_variable_with_initializer() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 function test() {
@@ -25593,7 +25593,7 @@ function test() {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25601,11 +25601,11 @@ function test() {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25629,7 +25629,7 @@ function test() {
 /// Test that protected properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_protected_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -25641,7 +25641,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25649,11 +25649,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25681,7 +25681,7 @@ class Foo {
 /// Test that protected properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_protected_property_initialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -25693,7 +25693,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25701,11 +25701,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25728,7 +25728,7 @@ class Foo {
 /// Test that generic class properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_generic_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Container<T> {
@@ -25740,7 +25740,7 @@ class Container<T> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25748,11 +25748,11 @@ class Container<T> {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25780,7 +25780,7 @@ class Container<T> {
 /// Test that generic class properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_generic_property_initialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Container<T> {
@@ -25792,7 +25792,7 @@ class Container<T> {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25800,11 +25800,11 @@ class Container<T> {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25827,7 +25827,7 @@ class Container<T> {
 /// Test that derived class without constructor still emits TS2564 for its properties
 #[test]
 fn test_ts2564_derived_class_no_constructor() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base {
@@ -25841,7 +25841,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25849,11 +25849,11 @@ class Derived extends Base {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25881,7 +25881,7 @@ class Derived extends Base {
 /// Test that derived class with constructor that initializes properties skips TS2564
 #[test]
 fn test_ts2564_derived_class_with_constructor() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Base {
@@ -25900,7 +25900,7 @@ class Derived extends Base {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25908,11 +25908,11 @@ class Derived extends Base {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25935,7 +25935,7 @@ class Derived extends Base {
 /// Test that constructor overloads with property initialization work correctly
 #[test]
 fn test_ts2564_constructor_overloads() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -25949,7 +25949,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -25957,11 +25957,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -25984,7 +25984,7 @@ class Foo {
 /// Test that readonly properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_readonly_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -25996,7 +25996,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26004,11 +26004,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26036,7 +26036,7 @@ class Foo {
 /// Test that readonly properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_readonly_property_initialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26048,7 +26048,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26056,11 +26056,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26083,7 +26083,7 @@ class Foo {
 /// Test that properties with union types emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_union_type_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26095,7 +26095,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26103,11 +26103,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26135,7 +26135,7 @@ class Foo {
 /// Test that properties with intersection types emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_intersection_type_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 type A = { x: number };
@@ -26150,7 +26150,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26158,11 +26158,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26190,7 +26190,7 @@ class Foo {
 /// Test that properties initialized in static blocks satisfy TS2564
 #[test]
 fn test_ts2564_static_block_initialization() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26202,7 +26202,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26210,11 +26210,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26237,7 +26237,7 @@ class Foo {
 /// Test that static properties without initialization emit TS2564
 #[test]
 fn test_ts2564_static_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26245,7 +26245,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26253,11 +26253,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26277,7 +26277,7 @@ class Foo {
 /// Test that private properties emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_private_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26289,7 +26289,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26297,11 +26297,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26329,7 +26329,7 @@ class Foo {
 /// Test that private properties initialized in constructor skip TS2564
 #[test]
 fn test_ts2564_private_property_initialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26341,7 +26341,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26349,11 +26349,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26376,7 +26376,7 @@ class Foo {
 /// Test that properties with null type emit TS2564 when uninitialized
 #[test]
 fn test_ts2564_null_type_property_uninitialized() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26388,7 +26388,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26396,11 +26396,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26428,7 +26428,7 @@ class Foo {
 /// Test that properties with any type skip TS2564
 #[test]
 fn test_ts2564_any_type_property_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26440,7 +26440,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26448,11 +26448,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26475,7 +26475,7 @@ class Foo {
 /// Test that properties with unknown type skip TS2564
 #[test]
 fn test_ts2564_unknown_type_property_skips_check() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26487,7 +26487,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26495,11 +26495,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26522,7 +26522,7 @@ class Foo {
 /// Test that properties assigned in try block emit TS2564 (might not execute)
 #[test]
 fn test_ts2564_try_block_assignment_emits_error() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26538,7 +26538,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26546,11 +26546,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26578,7 +26578,7 @@ class Foo {
 /// Test that properties assigned in try/catch all paths pass
 #[test]
 fn test_ts2564_try_catch_all_paths_pass() {
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     let source = r#"
 class Foo {
@@ -26594,7 +26594,7 @@ class Foo {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26602,11 +26602,11 @@ class Foo {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26631,7 +26631,7 @@ class Foo {
 #[test]
 fn test_global_symbol_resolution_from_lib_dts() {
     use crate::lib_loader;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Load lib.d.ts
     let lib_file = lib_loader::load_default_lib_dts();
@@ -26689,7 +26689,7 @@ function booleanInstance(bool: Boolean): boolean {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     assert!(
         parser.get_diagnostics().is_empty(),
@@ -26697,14 +26697,14 @@ function booleanInstance(bool: Boolean): boolean {
         parser.get_diagnostics()
     );
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
     // Merge lib symbols into the binder (clone to retain ownership)
     binder.merge_lib_symbols(&[lib_file.clone()]);
 
     let types = TypeInterner::new();
-    let mut checker = ThinCheckerState::new(
+    let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
@@ -26759,12 +26759,12 @@ fn test_tier_2_type_checker_accuracy_fixes() {
     // Test that the basic infrastructure is in place for Tier 2 fixes
     // This validates that all key components are implemented correctly
 
-    let arena = ThinNodeArena::new();
-    let binder = ThinBinderState::new();
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
     let types = TypeInterner::new();
 
     // Test 1: Verify no_implicit_this flag exists in CheckerContext
-    let checker = ThinCheckerState::new(
+    let checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -26819,7 +26819,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
 #[test]
 fn test_is_in_namespace_context_ast_traversal() {
     use crate::parser::syntax_kind_ext;
-    use crate::thin_parser::ThinParserState;
+    use crate::parser::ParserState;
 
     // Test 1: Function inside a namespace should be detected
     let source_with_namespace = r#"
@@ -26830,15 +26830,15 @@ namespace MyNamespace {
 }
 "#;
 
-    let mut parser = ThinParserState::new("test.ts".to_string(), source_with_namespace.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), source_with_namespace.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
 
-    let mut binder = ThinBinderState::new();
+    let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
     let types = TypeInterner::new();
-    let checker = ThinCheckerState::new(
+    let checker = CheckerState::new(
         arena,
         &binder,
         &types,
@@ -26895,15 +26895,15 @@ function topLevelFunc() {
 "#;
 
     let mut parser2 =
-        ThinParserState::new("test2.ts".to_string(), source_without_namespace.to_string());
+        ParserState::new("test2.ts".to_string(), source_without_namespace.to_string());
     let root2 = parser2.parse_source_file();
     let arena2 = parser2.get_arena();
 
-    let mut binder2 = ThinBinderState::new();
+    let mut binder2 = BinderState::new();
     binder2.bind_source_file(arena2, root2);
 
     let types2 = TypeInterner::new();
-    let checker2 = ThinCheckerState::new(
+    let checker2 = CheckerState::new(
         arena2,
         &binder2,
         &types2,
@@ -26940,15 +26940,15 @@ module MyModule {
 }
 "#;
 
-    let mut parser3 = ThinParserState::new("test3.ts".to_string(), source_with_module.to_string());
+    let mut parser3 = ParserState::new("test3.ts".to_string(), source_with_module.to_string());
     let root3 = parser3.parse_source_file();
     let arena3 = parser3.get_arena();
 
-    let mut binder3 = ThinBinderState::new();
+    let mut binder3 = BinderState::new();
     binder3.bind_source_file(arena3, root3);
 
     let types3 = TypeInterner::new();
-    let checker3 = ThinCheckerState::new(
+    let checker3 = CheckerState::new(
         arena3,
         &binder3,
         &types3,
