@@ -1616,7 +1616,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // Property exists, check type compatibility
                     let source_type = self.optional_property_type(sp);
                     let target_type = self.optional_property_type(t_prop);
-                    let allow_bivariant = sp.is_method || t_prop.is_method;
+                    let allow_bivariant = (sp.is_method || t_prop.is_method) && !self.strict_function_types;
                     if !self
                         .check_subtype_with_method_variance(
                             source_type,
@@ -1771,7 +1771,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
-                let allow_bivariant = sp.is_method || t_prop.is_method;
+                // In strict mode, methods are contravariant, not bivariant
+                let allow_bivariant = (sp.is_method || t_prop.is_method) && !self.strict_function_types;
                 if !self
                     .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
                     .is_true()
@@ -1870,7 +1871,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         for prop in source {
             let prop_type = self.optional_property_type(prop);
-            let allow_bivariant = prop.is_method;
+            let allow_bivariant = prop.is_method && !self.strict_function_types;
 
             if let Some(number_idx) = number_index {
                 let is_numeric = self.is_numeric_property_name(prop.name);
@@ -2014,7 +2015,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check parameter compatibility with method bivariance support.
-    /// Methods are bivariant even when strict_function_types is enabled.
+    /// Methods are bivariant only when strict_function_types is disabled or disable_method_bivariance is set.
     fn are_parameters_compatible_impl(
         &mut self,
         source_type: TypeId,
@@ -2029,10 +2030,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Because Cat <: Animal (target <: source)
         let is_contravariant = self.check_subtype(target_type, source_type).is_true();
 
-        // Methods are bivariant regardless of strict_function_types setting
-        // UNLESS disable_method_bivariance is set
-        // This matches TypeScript's behavior for method parameters
-        let method_should_be_bivariant = is_method && !self.disable_method_bivariance;
+        // In strict mode, methods are contravariant (not bivariant)
+        // Methods are only bivariant when strict_function_types is disabled
+        // The disable_method_bivariance flag can be used to manually override this behavior
+        // This matches TypeScript's strictFunctionTypes behavior
+        let method_should_be_bivariant = is_method && !self.strict_function_types;
         let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
 
         if !use_bivariance {
@@ -2220,13 +2222,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_type: Option<TypeId>,
         target_type: Option<TypeId>,
     ) -> bool {
-        if source_type.is_none() && target_type.is_none() {
+        // Treat VOID this as compatible with no this parameter
+        // void this means the function doesn't use this
+        let source_is_void = source_type == Some(TypeId::VOID);
+        let target_is_void = target_type == Some(TypeId::VOID);
+        let source_is_none = source_type.is_none();
+        let target_is_none = target_type.is_none();
+
+        // void this and no this are compatible in both directions
+        if (source_is_void || source_is_none) && (target_is_void || target_is_none) {
             return true;
         }
-        // Use Unknown instead of Any for stricter type checking
-        // When this parameter type is not specified, we should not allow any value
-        let source_type = source_type.unwrap_or(TypeId::UNKNOWN);
-        let target_type = target_type.unwrap_or(TypeId::UNKNOWN);
+
+        // Normalize: treat void as unknown for subtype checking with non-void/non-none types
+        let source_type = if source_is_void || source_is_none {
+            TypeId::UNKNOWN
+        } else {
+            source_type.unwrap()
+        };
+        let target_type = if target_is_void || target_is_none {
+            TypeId::UNKNOWN
+        } else {
+            target_type.unwrap()
+        };
 
         // this parameters follow the same variance rules as regular parameters:
         // - Strict mode: Contravariant (target <: source)
@@ -2386,17 +2404,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let source_required = self.required_param_count(&source.params);
         let target_required = self.required_param_count(&target.params);
-        let extra_required_ok = target_has_rest
-            && source_required > target_required
-            && self.extra_required_accepts_undefined(
-                &source.params,
-                target_required,
-                source_required,
-            );
+
+        // When target has a rest parameter, we allow source to have more required parameters
+        // as long as those parameters are compatible with the rest element type (checked below)
         if !self.allow_bivariant_param_count
             && !rest_is_top
             && source_required > target_required
-            && (!target_has_rest || !extra_required_ok)
+            && !target_has_rest
         {
             return SubtypeResult::False;
         }
@@ -3344,7 +3358,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // Check property type compatibility
                     let source_type = self.optional_property_type(sp);
                     let target_type = self.optional_property_type(t_prop);
-                    let allow_bivariant = sp.is_method || t_prop.is_method;
+                    let allow_bivariant = (sp.is_method || t_prop.is_method) && !self.strict_function_types;
                     if !self
                         .check_subtype_with_method_variance(
                             source_type,
@@ -3647,7 +3661,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         for prop in source {
             let prop_type = self.optional_property_type(prop);
-            let allow_bivariant = prop.is_method;
+            let allow_bivariant = prop.is_method && !self.strict_function_types;
 
             if let Some(number_idx) = number_index {
                 let is_numeric = self.is_numeric_property_name(prop.name);
