@@ -825,8 +825,8 @@ impl<'a> ThinCheckerState<'a> {
                     self.check_class_expression(idx, &class);
                     self.get_class_constructor_type(idx, &class)
                 } else {
-                    // Return UNKNOWN instead of ANY when class expression cannot be resolved
-                    TypeId::UNKNOWN
+                    // Return ANY to prevent cascading TS2571 errors
+                    TypeId::ANY
                 }
             }
 
@@ -893,7 +893,8 @@ impl<'a> ThinCheckerState<'a> {
                     self.promise_like_return_type_argument(expr_type)
                         .unwrap_or(expr_type)
                 } else {
-                    TypeId::UNKNOWN
+                    // Return ANY to prevent cascading TS2571 errors
+                    TypeId::ANY
                 }
             }
 
@@ -902,8 +903,8 @@ impl<'a> ThinCheckerState<'a> {
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
                     self.get_type_of_node(paren.expression)
                 } else {
-                    // Return UNKNOWN instead of ANY when parenthesized expression cannot be resolved
-                    TypeId::UNKNOWN
+                    // Return ANY to prevent cascading TS2571 errors
+                    TypeId::ANY
                 }
             }
 
@@ -6992,7 +6993,9 @@ impl<'a> ThinCheckerState<'a> {
                     }
                 }
             }
-            return (TypeId::UNKNOWN, Vec::new());
+            // Variable without type annotation or initializer gets implicit 'any'
+            // This prevents cascading TS2571 errors
+            return (TypeId::ANY, Vec::new());
         }
 
         // Alias - resolve the aliased type (import x = ns.member or ES6 imports)
@@ -7075,13 +7078,18 @@ impl<'a> ThinCheckerState<'a> {
                         return (result, Vec::new());
                     }
                 }
-                // Module not found in exports - fall through to UNKNOWN
+                // Module not found in exports - return ANY to prevent cascading TS2571 errors
+                // TSC emits TS2307 for missing module but allows property access on the result
+                return (TypeId::ANY, Vec::new());
             }
 
-            return (TypeId::UNKNOWN, Vec::new());
+            // Unresolved alias - return ANY to prevent cascading TS2571 errors
+            return (TypeId::ANY, Vec::new());
         }
 
-        (TypeId::UNKNOWN, Vec::new())
+        // Fallback: return ANY for unresolved symbols to prevent cascading errors
+        // The actual "cannot find" error should already be emitted elsewhere
+        (TypeId::ANY, Vec::new())
     }
 
     fn is_const_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
