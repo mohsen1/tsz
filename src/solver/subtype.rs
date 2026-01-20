@@ -424,6 +424,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
 
+            // Literal string to template literal - check if literal matches pattern
+            (TypeKey::Literal(LiteralValue::String(s_lit)), TypeKey::TemplateLiteral(t_spans)) => {
+                self.check_literal_matches_template_literal(*s_lit, *t_spans)
+            }
+
             // Union source: all members must be subtypes of target
             (TypeKey::Union(members), _) => {
                 let members = self.interner.type_list(*members);
@@ -1298,6 +1303,125 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             SubtypeResult::True
         } else {
             SubtypeResult::False
+        }
+    }
+
+    /// Check if a literal string matches a template literal pattern
+    fn check_literal_matches_template_literal(
+        &self,
+        literal: Atom,
+        template_spans: TemplateLiteralId,
+    ) -> SubtypeResult {
+        use crate::interner::Atom;
+
+        // Get the literal string value
+        let literal_str = self.interner.resolve_atom(literal);
+
+        // Get the template literal spans
+        let spans = self.interner.template_list(template_spans);
+
+        // Reconstruct the expected pattern and check if literal matches
+        let mut current_pos = 0;
+
+        for (span_idx, span) in spans.iter().enumerate() {
+            match span {
+                TemplateSpan::Text(text) => {
+                    let text_str = self.interner.resolve_atom(*text);
+                    // Check if the literal starts with this text at current position
+                    if !literal_str[current_pos..].starts_with(text_str.as_str()) {
+                        return SubtypeResult::False;
+                    }
+                    current_pos += text_str.len();
+                }
+                TemplateSpan::Type(type_id) => {
+                    // For a type hole, we need to check if the remaining string
+                    // matches the expected type
+                    let is_last_span = span_idx == spans.len() - 1;
+                    match self.interner.lookup(*type_id) {
+                        Some(TypeKey::Intrinsic(IntrinsicKind::String)) => {
+                            // string type matches any remaining characters
+                            // If this is the last span, we can immediately succeed
+                            if is_last_span {
+                                return SubtypeResult::True;
+                            }
+                            // Otherwise, continue to next span without advancing position
+                            // (the string matched the empty string at this position)
+                        }
+                        Some(TypeKey::Literal(LiteralValue::String(pattern))) => {
+                            let pattern_str = self.interner.resolve_atom(pattern);
+                            // The literal must contain this pattern at the current position
+                            if !literal_str[current_pos..].starts_with(pattern_str.as_str()) {
+                                return SubtypeResult::False;
+                            }
+                            current_pos += pattern_str.len();
+                        }
+                        Some(TypeKey::Union(members)) => {
+                            // For unions of literals, check if any of them match
+                            let members = self.interner.type_list(members);
+                            let mut matched = false;
+                            for &member in members.iter() {
+                                if let Some(TypeKey::Literal(LiteralValue::String(pattern))) =
+                                    self.interner.lookup(member)
+                                {
+                                    let pattern_str = self.interner.resolve_atom(pattern);
+                                    if literal_str[current_pos..].starts_with(pattern_str.as_str())
+                                    {
+                                        current_pos += pattern_str.len();
+                                        matched = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if !matched {
+                                return SubtypeResult::False;
+                            }
+                        }
+                        // For other types, we need to check the subtype relationship
+                        // This is complex - for now, we'll just check that the remaining
+                        // part is compatible with the type
+                        _ => {
+                            // For general types, we need to verify the remaining string
+                            // matches the type. This requires parsing the remaining part
+                            // as a literal and checking subtype.
+                            // For simplicity, we'll conservatively accept if the type
+                            // is string-compatible
+                            match self.apparent_primitive_kind_for_type(*type_id) {
+                                Some(IntrinsicKind::String) => {
+                                    // If this is the last span and it's string-compatible, succeed
+                                    if is_last_span {
+                                        return SubtypeResult::True;
+                                    }
+                                    // Otherwise continue processing
+                                }
+                                _ => return SubtypeResult::False,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // After processing all spans, check if we've consumed the entire literal
+        if current_pos == literal_str.len() {
+            SubtypeResult::True
+        } else {
+            SubtypeResult::False
+        }
+    }
+
+    /// Get the apparent primitive kind for a type (helper for template literal checking)
+    fn apparent_primitive_kind_for_type(&self, type_id: TypeId) -> Option<IntrinsicKind> {
+        let key = self.interner.lookup(type_id);
+        match key {
+            Some(TypeKey::Intrinsic(kind)) => Some(kind),
+            Some(TypeKey::Literal(literal)) => match literal {
+                LiteralValue::String(_) => Some(IntrinsicKind::String),
+                LiteralValue::Number(_) => Some(IntrinsicKind::Number),
+                LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
+                LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
+            },
+            Some(TypeKey::TemplateLiteral(_)) => Some(IntrinsicKind::String),
+            _ => None,
         }
     }
 
