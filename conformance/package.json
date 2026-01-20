@@ -7,10 +7,10 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "test": "npm run build && node dist/runner.js",
-    "test:100": "npm run build && node dist/runner.js --max=100",
-    "test:500": "npm run build && node dist/runner.js --max=500",
-    "test:verbose": "npm run build && node dist/runner.js --max=100 --verbose"
+    "test": "echo '⚠️  Use ./run-conformance.sh instead (runs in Docker for safety)' && exit 1",
+    "test:docker": "cd .. && ./conformance/run-conformance.sh --max=100",
+    "test:docker:500": "cd .. && ./conformance/run-conformance.sh --max=500",
+    "test:docker:all": "cd .. && ./conformance/run-conformance.sh --all"
   },
   "dependencies": {
     "typescript": "^5.9.3"
