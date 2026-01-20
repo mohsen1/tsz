@@ -9,10 +9,41 @@
     "owner": "mohsen1",
     "name": "tsz"
   },
-  "phase": "analyzing",
+  "phase": "em_assignment",
   "workBranch": "cco/57-improve-typescript-conformance-test-pass-rate-to-5",
   "baseBranch": "main",
-  "ems": [],
+  "ems": [
+    {
+      "id": 1,
+      "task": "Implement missing error diagnostics to reduce top missing errors: TS2318 (global type not found), TS2583 (ES2015+ lib support), TS2304 (cannot find name), TS2307 (module resolution), and TS7006 (implicit any type). Focus on type checker and binder integration.",
+      "focusArea": "Error Diagnostics - Missing Errors",
+      "branch": "cco/issue-57-em-1",
+      "status": "pending",
+      "workers": [],
+      "reviewsAddressed": 0,
+      "startedAt": "2026-01-20T05:50:26.802Z"
+    },
+    {
+      "id": 2,
+      "task": "Eliminate top extra errors: fix remaining TS2300 (duplicate identifier) edge cases, resolve TS1005 parser expectations, fix TS2339 property existence checks, handle TS1202 ESM import assignments, and resolve TS2454 variable usage analysis.",
+      "focusArea": "Error Diagnostics - Extra Errors & Parser",
+      "branch": "cco/issue-57-em-2",
+      "status": "pending",
+      "workers": [],
+      "reviewsAddressed": 0,
+      "startedAt": "2026-01-20T05:50:26.802Z"
+    },
+    {
+      "id": 3,
+      "task": "Rewrite flow analyzer from recursive to iterative worklist algorithm to prevent stack overflow on deeply nested control flow. Also address transform pipeline architecture by separating AST manipulation from string emission.",
+      "focusArea": "Flow Analysis & Architecture",
+      "branch": "cco/issue-57-em-3",
+      "status": "pending",
+      "workers": [],
+      "reviewsAddressed": 0,
+      "startedAt": "2026-01-20T05:50:26.802Z"
+    }
+  ],
   "config": {
     "maxEms": 3,
     "maxWorkersPerEm": 3,
@@ -20,5 +51,6 @@
     "prLabel": "cco"
   },
   "createdAt": "2026-01-20T05:50:00.445Z",
-  "updatedAt": "2026-01-20T05:50:01.271Z"
+  "updatedAt": "2026-01-20T05:50:26.802Z",
+  "analysisSummary": "Improve TypeScript conformance test pass rate from 30% to 50%+ by implementing missing error diagnostics (TS2318, TS2583, TS2304, TS2307, TS7006), eliminating extra errors, and fixing the flow analyzer stack overflow issue through iterative worklist algorithm."
 }
