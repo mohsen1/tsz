@@ -1061,6 +1061,7 @@ fn create_binder_from_bound_file(
         program.module_exports.clone(),
         program.reexports.clone(),
         program.symbol_arenas.clone(),
+        FxHashSet::default(), // shorthand_ambient_modules - TODO: populate from program
     );
 
     binder.declared_modules = program.declared_modules.clone();

@@ -102,6 +102,10 @@ pub struct ThinBinderState {
     /// Example: ("./a.ts", "*", "./b.ts") means a.ts re-exports everything from b.ts
     /// Example: ("./a.ts", "foo", "./b.ts") means a.ts re-exports "foo" from b.ts
     pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+
+    /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
+    /// Imports from these modules should resolve to `any` type
+    pub shorthand_ambient_modules: FxHashSet<String>,
 }
 
 /// Validation result describing issues found in the symbol table
@@ -163,6 +167,7 @@ impl ThinBinderState {
             lib_binders: Vec::new(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
+            shorthand_ambient_modules: FxHashSet::default(),
         }
     }
 
@@ -194,6 +199,7 @@ impl ThinBinderState {
         self.lib_binders.clear();
         self.module_exports.clear();
         self.reexports.clear();
+        self.shorthand_ambient_modules.clear();
     }
 
     /// Set the current file name for debugging purposes.
@@ -248,6 +254,7 @@ impl ThinBinderState {
             lib_binders: Vec::new(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
+            shorthand_ambient_modules: FxHashSet::default(),
         }
     }
 
@@ -269,6 +276,7 @@ impl ThinBinderState {
             FxHashMap::default(),
             FxHashMap::default(),
             FxHashMap::default(),
+            FxHashSet::default(),
         )
     }
 
@@ -287,6 +295,7 @@ impl ThinBinderState {
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
         symbol_arenas: FxHashMap<SymbolId, Arc<ThinNodeArena>>,
+        shorthand_ambient_modules: FxHashSet<String>,
     ) -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
@@ -319,6 +328,7 @@ impl ThinBinderState {
             lib_binders: Vec::new(),
             module_exports,
             reexports,
+            shorthand_ambient_modules,
         }
     }
 
