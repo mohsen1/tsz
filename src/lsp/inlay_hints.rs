@@ -8,9 +8,9 @@
 //! - Generic parameter hints where inferred
 
 use crate::lsp::position::{LineMap, Position, Range};
+use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::{NodeAccess, ThinNodeArena};
-use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::thin_binder::ThinBinderState;
 use serde::{Deserialize, Serialize};
@@ -64,11 +64,7 @@ impl InlayHint {
 
     /// Create a type hint.
     pub fn type_hint(position: Position, type_name: String) -> Self {
-        InlayHint::new(
-            position,
-            format!(": {}", type_name),
-            InlayHintKind::Type,
-        )
+        InlayHint::new(position, format!(": {}", type_name), InlayHintKind::Type)
     }
 
     /// Convert to LSP range (for compatibility with other LSP features).
@@ -179,7 +175,11 @@ impl<'a> InlayHintsProvider<'a> {
         let decl_idx = if !symbol.value_declaration.is_none() {
             symbol.value_declaration
         } else {
-            symbol.declarations.first().copied().unwrap_or(NodeIndex::NONE)
+            symbol
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
         };
 
         if decl_idx.is_none() {

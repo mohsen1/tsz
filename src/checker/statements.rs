@@ -171,8 +171,13 @@ mod tests {
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
-        let mut ctx =
-            CheckerContext::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
 
         // Get the block statement
         if let Some(root_node) = parser.get_arena().get(root) {

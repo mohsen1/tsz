@@ -38,7 +38,11 @@ fn test_simple_variable_declaration() {
 
     // Should parse without syntax errors
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -52,7 +56,11 @@ fn test_function_declaration() {
 
     // Should have no parse errors
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -69,7 +77,11 @@ fn test_interface_declaration() {
 
     // Should have no parse errors
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -88,7 +100,11 @@ fn test_class_declaration() {
 
     // Should have no parse errors
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -105,7 +121,11 @@ fn test_generic_function() {
 
     // Should parse generics correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -118,7 +138,11 @@ fn test_arrow_function() {
 
     // Should parse arrow functions correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -136,7 +160,11 @@ fn test_async_await() {
 
     // Should parse async/await correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for async/await, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for async/await, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -151,7 +179,11 @@ fn test_module_import_export() {
 
     // Should parse exports correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for exports, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for exports, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -164,7 +196,11 @@ fn test_type_alias() {
 
     // Should parse type aliases correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for type alias, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for type alias, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -182,7 +218,11 @@ fn test_enum_declaration() {
 
     // Should parse enums correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for enum, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for enum, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -199,7 +239,11 @@ fn test_decorator_syntax() {
 
     // Should parse decorators correctly (even if not fully supported)
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for decorator, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for decorator, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -231,7 +275,11 @@ fn test_optional_chaining() {
 
     // Should parse optional chaining correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for optional chaining, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for optional chaining, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -244,7 +292,11 @@ fn test_nullish_coalescing() {
 
     // Should parse nullish coalescing correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for nullish coalescing, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for nullish coalescing, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -257,7 +309,11 @@ fn test_template_literal_types() {
 
     // Should parse template literal types correctly
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for template literal types, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for template literal types, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -271,7 +327,11 @@ fn test_binding_creates_symbols() {
 
     // Should parse without errors
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 
     // Binder should have created symbols
     assert!(!binder.symbols.is_empty(), "Expected symbols to be created");
@@ -315,7 +375,11 @@ fn test_complex_generic_constraints() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -331,7 +395,11 @@ fn test_conditional_types() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for conditional types, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for conditional types, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -353,7 +421,11 @@ fn test_mapped_types() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for mapped types, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for mapped types, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -377,7 +449,11 @@ fn test_discriminated_unions() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for discriminated unions, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for discriminated unions, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -392,7 +468,11 @@ fn test_template_literal_types_advanced() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for template literal types, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for template literal types, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -412,7 +492,11 @@ fn test_class_with_decorators() {
     let parser = parse(source);
     // Decorators should parse without errors
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for decorators, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for decorators, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -432,7 +516,11 @@ fn test_private_class_fields() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for private fields, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for private fields, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -468,7 +556,11 @@ fn test_satisfies_operator() {
     "##;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for satisfies, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for satisfies, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -488,7 +580,11 @@ fn test_assertion_functions() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for assertion functions, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for assertion functions, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -514,7 +610,11 @@ fn test_recursive_types() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for recursive types, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for recursive types, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -539,7 +639,11 @@ fn test_namespace_and_module() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for namespace, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for namespace, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -560,7 +664,11 @@ fn test_index_signatures() {
     "#;
     let parser = parse(source);
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors for index signatures, got: {:?}", diags);
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors for index signatures, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -580,8 +688,15 @@ fn test_binding_with_destructuring() {
     let (parser, binder) = parse_and_bind(source);
 
     let diags = parser.get_diagnostics();
-    assert!(diags.is_empty(), "Expected no parse errors, got: {:?}", diags);
-    assert!(!binder.symbols.is_empty(), "Expected symbols from destructuring");
+    assert!(
+        diags.is_empty(),
+        "Expected no parse errors, got: {:?}",
+        diags
+    );
+    assert!(
+        !binder.symbols.is_empty(),
+        "Expected symbols from destructuring"
+    );
 }
 
 #[test]

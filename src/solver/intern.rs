@@ -22,12 +22,15 @@
 
 use crate::interner::{Atom, ShardedInterner};
 use crate::solver::types::*;
-use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 
 const SHARD_BITS: u32 = 6;
 const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
@@ -151,7 +154,10 @@ where
     }
 
     fn empty(&self) -> Arc<[T]> {
-        self.items.get(&0).map(|e| e.value().clone()).unwrap_or_else(|| Arc::from(Vec::new()))
+        self.items
+            .get(&0)
+            .map(|e| e.value().clone())
+            .unwrap_or_else(|| Arc::from(Vec::new()))
     }
 }
 
@@ -267,27 +273,31 @@ impl TypeInterner {
     }
 
     pub fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
-        self.type_lists.get(id.0).unwrap_or_else(|| self.type_lists.empty())
+        self.type_lists
+            .get(id.0)
+            .unwrap_or_else(|| self.type_lists.empty())
     }
 
     pub fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
-        self.tuple_lists.get(id.0).unwrap_or_else(|| self.tuple_lists.empty())
+        self.tuple_lists
+            .get(id.0)
+            .unwrap_or_else(|| self.tuple_lists.empty())
     }
 
     pub fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
-        self.template_lists.get(id.0).unwrap_or_else(|| self.template_lists.empty())
+        self.template_lists
+            .get(id.0)
+            .unwrap_or_else(|| self.template_lists.empty())
     }
 
     pub fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
-        self.object_shapes
-            .get(id.0)
-            .unwrap_or_else(|| {
-                Arc::new(ObjectShape {
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                })
+        self.object_shapes.get(id.0).unwrap_or_else(|| {
+            Arc::new(ObjectShape {
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
             })
+        })
     }
 
     pub fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
@@ -297,12 +307,10 @@ impl TypeInterner {
         }
 
         match self.object_property_map(shape_id, &shape) {
-            Some(map) => {
-                match map.get(&name) {
-                    Some(&idx) => PropertyLookup::Found(idx),
-                    None => PropertyLookup::NotFound,
-                }
-            }
+            Some(map) => match map.get(&name) {
+                Some(&idx) => PropertyLookup::Found(idx),
+                None => PropertyLookup::NotFound,
+            },
             None => PropertyLookup::Uncached,
         }
     }
@@ -343,76 +351,66 @@ impl TypeInterner {
     }
 
     pub fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
-        self.function_shapes
-            .get(id.0)
-            .unwrap_or_else(|| {
-                Arc::new(FunctionShape {
-                    type_params: Vec::new(),
-                    params: Vec::new(),
-                    this_type: None,
-                    return_type: TypeId::ERROR,
-                    type_predicate: None,
-                    is_constructor: false,
-                    is_method: false,
-                })
+        self.function_shapes.get(id.0).unwrap_or_else(|| {
+            Arc::new(FunctionShape {
+                type_params: Vec::new(),
+                params: Vec::new(),
+                this_type: None,
+                return_type: TypeId::ERROR,
+                type_predicate: None,
+                is_constructor: false,
+                is_method: false,
             })
+        })
     }
 
     pub fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
-        self.callable_shapes
-            .get(id.0)
-            .unwrap_or_else(|| {
-                Arc::new(CallableShape {
-                    call_signatures: Vec::new(),
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    ..Default::default()
-                })
+        self.callable_shapes.get(id.0).unwrap_or_else(|| {
+            Arc::new(CallableShape {
+                call_signatures: Vec::new(),
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                ..Default::default()
             })
+        })
     }
 
     pub fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
-        self.conditional_types
-            .get(id.0)
-            .unwrap_or_else(|| {
-                Arc::new(ConditionalType {
-                    check_type: TypeId::ERROR,
-                    extends_type: TypeId::ERROR,
-                    true_type: TypeId::ERROR,
-                    false_type: TypeId::ERROR,
-                    is_distributive: false,
-                })
+        self.conditional_types.get(id.0).unwrap_or_else(|| {
+            Arc::new(ConditionalType {
+                check_type: TypeId::ERROR,
+                extends_type: TypeId::ERROR,
+                true_type: TypeId::ERROR,
+                false_type: TypeId::ERROR,
+                is_distributive: false,
             })
+        })
     }
 
     pub fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
-        self.mapped_types
-            .get(id.0)
-            .unwrap_or_else(|| {
-                Arc::new(MappedType {
-                    type_param: TypeParamInfo {
-                        name: self.intern_string("_"),
-                        constraint: None,
-                        default: None,
-                    },
-                    constraint: TypeId::ERROR,
-                    name_type: None,
-                    template: TypeId::ERROR,
-                    readonly_modifier: None,
-                    optional_modifier: None,
-                })
+        self.mapped_types.get(id.0).unwrap_or_else(|| {
+            Arc::new(MappedType {
+                type_param: TypeParamInfo {
+                    name: self.intern_string("_"),
+                    constraint: None,
+                    default: None,
+                },
+                constraint: TypeId::ERROR,
+                name_type: None,
+                template: TypeId::ERROR,
+                readonly_modifier: None,
+                optional_modifier: None,
             })
+        })
     }
 
     pub fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
-        self.applications
-            .get(id.0)
-            .unwrap_or_else(|| {
-                Arc::new(TypeApplication {
-                    base: TypeId::ERROR,
-                    args: Vec::new(),
-                })
+        self.applications.get(id.0).unwrap_or_else(|| {
+            Arc::new(TypeApplication {
+                base: TypeId::ERROR,
+                args: Vec::new(),
             })
+        })
     }
 
     /// Intern a type key and return its TypeId.
@@ -472,7 +470,10 @@ impl TypeInterner {
         let local_index = raw_val >> SHARD_BITS;
 
         let shard = self.shards.get(shard_idx)?;
-        shard.index_to_key.get(&(local_index as u32)).map(|r| r.value().as_ref().clone())
+        shard
+            .index_to_key
+            .get(&(local_index as u32))
+            .map(|r| r.value().as_ref().clone())
     }
 
     fn intern_type_list(&self, members: Vec<TypeId>) -> TypeListId {
@@ -487,7 +488,7 @@ impl TypeInterner {
         TemplateLiteralId(self.template_lists.intern(&spans))
     }
 
-    fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
+    pub fn intern_object_shape(&self, shape: ObjectShape) -> ObjectShapeId {
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 
@@ -815,7 +816,8 @@ impl TypeInterner {
                         existing.type_id = self.intersection2(existing.type_id, prop.type_id);
                     }
                     if existing.write_type != prop.write_type {
-                        existing.write_type = self.intersection2(existing.write_type, prop.write_type);
+                        existing.write_type =
+                            self.intersection2(existing.write_type, prop.write_type);
                     }
                     // Merge flags: required wins over optional, readonly is cumulative
                     // For optional: only optional if ALL are optional (required wins)
@@ -829,11 +831,13 @@ impl TypeInterner {
 
             // Merge index signatures
             match (&obj.string_index, &merged_string_index) {
-                (Some(idx), None) => merged_string_index = Some(IndexSignature {
-                    key_type: idx.key_type,
-                    value_type: idx.value_type,
-                    readonly: idx.readonly,
-                }),
+                (Some(idx), None) => {
+                    merged_string_index = Some(IndexSignature {
+                        key_type: idx.key_type,
+                        value_type: idx.value_type,
+                        readonly: idx.readonly,
+                    })
+                }
                 (Some(idx), Some(existing)) => {
                     merged_string_index = Some(IndexSignature {
                         key_type: existing.key_type,
@@ -845,11 +849,13 @@ impl TypeInterner {
             }
 
             match (&obj.number_index, &merged_number_index) {
-                (Some(idx), None) => merged_number_index = Some(IndexSignature {
-                    key_type: idx.key_type,
-                    value_type: idx.value_type,
-                    readonly: idx.readonly,
-                }),
+                (Some(idx), None) => {
+                    merged_number_index = Some(IndexSignature {
+                        key_type: idx.key_type,
+                        value_type: idx.value_type,
+                        readonly: idx.readonly,
+                    })
+                }
                 (Some(idx), Some(existing)) => {
                     merged_number_index = Some(IndexSignature {
                         key_type: existing.key_type,

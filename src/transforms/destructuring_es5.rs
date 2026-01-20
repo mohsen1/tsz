@@ -40,9 +40,9 @@
 //! var _a = obj, a = _a.a, others = __rest(_a, ["a"]);
 //! ```
 
+use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNodeArena;
-use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
 
@@ -223,10 +223,8 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         {
                             // Nested pattern - create temp and recurse
                             let nested_temp = self.next_temp_var();
-                            let access = IRNode::elem(
-                                IRNode::id(source),
-                                IRNode::number(index.to_string()),
-                            );
+                            let access =
+                                IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
                             result.push(IRNode::var_decl(&nested_temp, Some(access)));
                             self.emit_destructuring_pattern(
                                 &nested_temp,
@@ -299,10 +297,8 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         // Rest: ...others -> others = __rest(source, ["a", "b", ...])
                         let name = self.get_identifier_text(binding_elem.name);
                         if !name.is_empty() {
-                            let excluded_array: Vec<IRNode> = rest_excluded
-                                .iter()
-                                .map(|s| IRNode::string(s))
-                                .collect();
+                            let excluded_array: Vec<IRNode> =
+                                rest_excluded.iter().map(|s| IRNode::string(s)).collect();
                             let rest_call = IRNode::call(
                                 IRNode::id("__rest"),
                                 vec![IRNode::id(source), IRNode::ArrayLiteral(excluded_array)],
@@ -419,8 +415,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 || element_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 let nested_temp = self.next_temp_var();
-                let access =
-                    IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
+                let access = IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
                 result.push(IRNode::assign(IRNode::id(&nested_temp), access));
                 self.emit_destructuring_assignments(&nested_temp, element_idx, result);
                 continue;
@@ -428,8 +423,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
             // Simple element
             if let Some(target) = self.transform_expression(element_idx) {
-                let access =
-                    IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
+                let access = IRNode::elem(IRNode::id(source), IRNode::number(index.to_string()));
                 result.push(IRNode::assign(target, access));
             }
         }
@@ -498,10 +492,8 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
                     if let Some(spread) = self.arena.get_unary_expr_ex(element_node) {
                         if let Some(target) = self.transform_expression(spread.expression) {
-                            let excluded_array: Vec<IRNode> = rest_excluded
-                                .iter()
-                                .map(|s| IRNode::string(s))
-                                .collect();
+                            let excluded_array: Vec<IRNode> =
+                                rest_excluded.iter().map(|s| IRNode::string(s)).collect();
                             let rest_call = IRNode::call(
                                 IRNode::id("__rest"),
                                 vec![IRNode::id(source), IRNode::ArrayLiteral(excluded_array)],
@@ -670,8 +662,7 @@ mod tests {
         };
 
         let mut transformer = ES5DestructuringTransformer::new(&parser.arena);
-        let nodes =
-            transformer.transform_destructuring_declaration(decl.name, decl.initializer);
+        let nodes = transformer.transform_destructuring_declaration(decl.name, decl.initializer);
 
         // Print the IR nodes
         let mut output = String::new();

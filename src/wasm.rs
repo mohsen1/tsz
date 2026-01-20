@@ -38,14 +38,13 @@
 //! console.log(result);
 //! ```
 
-use wasm_bindgen::prelude::*;
 use crate::parallel::{
-    parse_files_parallel, parse_and_bind_parallel, compile_files,
-    check_functions_parallel, MergedProgram, ParseResult, BindResult,
-    ParallelStats, BindStats, CheckStats, CheckResult,
+    BindResult, BindStats, CheckResult, CheckStats, MergedProgram, ParallelStats, ParseResult,
+    check_functions_parallel, compile_files, parse_and_bind_parallel, parse_files_parallel,
 };
 use crate::solver::TypeInterner;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
 
 /// WASM-compatible type interner for parallel type checking.
 ///
@@ -324,7 +323,11 @@ mod tests {
         // Should start empty (no user-defined types, only intrinsics)
         assert!(interner.is_empty());
         let initial_count = interner.len();
-        assert_eq!(initial_count, TypeId::FIRST_USER as usize, "TypeInterner should have intrinsics");
+        assert_eq!(
+            initial_count,
+            TypeId::FIRST_USER as usize,
+            "TypeInterner should have intrinsics"
+        );
 
         // Intern a string
         let atom1 = interner.intern_string("hello");

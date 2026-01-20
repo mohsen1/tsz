@@ -14,9 +14,9 @@
 //! - Decorator function signatures
 //! - Decorator return types
 
+use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNodeArena;
-use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 
 /// Decorator target types
@@ -33,14 +33,9 @@ pub enum DecoratorTarget {
 #[derive(Debug, Clone)]
 pub enum DecoratorError {
     /// Decorator applied to invalid target
-    InvalidTarget {
-        target: String,
-        pos: u32,
-    },
+    InvalidTarget { target: String, pos: u32 },
     /// Decorator expression is not callable
-    NotCallable {
-        pos: u32,
-    },
+    NotCallable { pos: u32 },
     /// Decorator factory returned wrong type
     InvalidReturnType {
         expected: String,
@@ -48,14 +43,9 @@ pub enum DecoratorError {
         pos: u32,
     },
     /// Decorator not allowed in this context
-    NotAllowedHere {
-        reason: String,
-        pos: u32,
-    },
+    NotAllowedHere { reason: String, pos: u32 },
     /// Experimental decorators not enabled
-    ExperimentalDecoratorsRequired {
-        pos: u32,
-    },
+    ExperimentalDecoratorsRequired { pos: u32 },
 }
 
 /// Decorator checker for validating decorator usage
@@ -87,14 +77,16 @@ impl<'a> DecoratorChecker<'a> {
     }
 
     /// Check if a decorator is valid in its context
-    pub fn check_decorator(&self, decorator_idx: NodeIndex, parent_idx: NodeIndex) -> Vec<DecoratorError> {
+    pub fn check_decorator(
+        &self,
+        decorator_idx: NodeIndex,
+        parent_idx: NodeIndex,
+    ) -> Vec<DecoratorError> {
         let mut errors = Vec::new();
 
         if !self.experimental_decorators {
             if let Some(node) = self.arena.get(decorator_idx) {
-                errors.push(DecoratorError::ExperimentalDecoratorsRequired {
-                    pos: node.pos,
-                });
+                errors.push(DecoratorError::ExperimentalDecoratorsRequired { pos: node.pos });
             }
             return errors;
         }
@@ -128,20 +120,12 @@ impl<'a> DecoratorChecker<'a> {
             {
                 Some(DecoratorTarget::Class)
             }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                Some(DecoratorTarget::Method)
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR
-                || k == syntax_kind_ext::SET_ACCESSOR =>
-            {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => Some(DecoratorTarget::Method),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 Some(DecoratorTarget::Accessor)
             }
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                Some(DecoratorTarget::Property)
-            }
-            k if k == syntax_kind_ext::PARAMETER => {
-                Some(DecoratorTarget::Parameter)
-            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => Some(DecoratorTarget::Property),
+            k if k == syntax_kind_ext::PARAMETER => Some(DecoratorTarget::Parameter),
             _ => None,
         }
     }
@@ -244,18 +228,18 @@ impl<'a> DecoratorChecker<'a> {
 
         // Get modifiers based on member type
         let modifiers = match member_node.kind {
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.arena.get_method_decl(member_node)
-                    .and_then(|m| m.modifiers.as_ref())
-            }
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                self.arena.get_property_decl(member_node)
-                    .and_then(|p| p.modifiers.as_ref())
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                self.arena.get_accessor(member_node)
-                    .and_then(|a| a.modifiers.as_ref())
-            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .and_then(|m| m.modifiers.as_ref()),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .and_then(|p| p.modifiers.as_ref()),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .and_then(|a| a.modifiers.as_ref()),
             _ => None,
         };
 

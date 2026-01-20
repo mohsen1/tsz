@@ -13,8 +13,29 @@
 //! - TypeScript-specific extensions (.ts, .tsx, .d.ts)
 
 use crate::cli::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
+use crate::diagnostics::{Diagnostic, DiagnosticBag};
+use crate::span::Span;
 use rustc_hash::FxHashMap;
 use std::path::{Path, PathBuf};
+
+/// TS2307: Cannot find module
+///
+/// This error code is emitted when a module specifier cannot be resolved.
+/// Example: `import { foo } from './missing-module'`
+///
+/// Usage example:
+/// ```ignore
+/// let mut resolver = ModuleResolver::new(&options);
+/// let mut diagnostics = DiagnosticBag::new();
+///
+/// match resolver.resolve("./missing-module", containing_file, specifier_span) {
+///     Ok(module) => { /* use module */ }
+///     Err(failure) => {
+///         resolver.emit_resolution_error(&mut diagnostics, &failure);
+///     }
+/// }
+/// ```
+pub const CANNOT_FIND_MODULE: u32 = 2307;
 
 /// Result of module resolution
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,7 +124,14 @@ impl ModuleExtension {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolutionFailure {
     /// Module specifier not found
-    NotFound(String),
+    NotFound {
+        /// Module specifier that was not found
+        specifier: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
     /// Invalid module specifier
     InvalidSpecifier(String),
     /// Package.json not found or invalid
@@ -112,6 +140,53 @@ pub enum ResolutionFailure {
     CircularResolution(String),
     /// Path mapping did not resolve to a file
     PathMappingFailed(String),
+}
+
+impl ResolutionFailure {
+    /// Convert a resolution failure to a diagnostic
+    pub fn span_to_diagnostic(&self) -> Diagnostic {
+        match self {
+            ResolutionFailure::NotFound {
+                specifier,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!("Cannot find module '{}'", specifier),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::InvalidSpecifier(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Invalid module specifier: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::PackageJsonError(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Package.json error: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::CircularResolution(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Circular resolution: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
+            ResolutionFailure::PathMappingFailed(msg) => Diagnostic::error(
+                "",
+                Span::dummy(),
+                format!("Path mapping failed: {}", msg),
+                CANNOT_FIND_MODULE,
+            ),
+        }
+    }
+
+    /// Check if this is a NotFound error (for TS2307 emission)
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, ResolutionFailure::NotFound { .. })
+    }
 }
 
 /// Module resolver that implements TypeScript's resolution algorithms
@@ -171,11 +246,13 @@ impl ModuleResolver {
         &mut self,
         specifier: &str,
         containing_file: &Path,
+        specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let containing_dir = containing_file
             .parent()
             .unwrap_or(Path::new("."))
             .to_path_buf();
+        let containing_file_str = containing_file.display().to_string();
 
         // Check cache first
         let cache_key = (containing_dir.clone(), specifier.to_string());
@@ -183,7 +260,12 @@ impl ModuleResolver {
             return cached.clone();
         }
 
-        let result = self.resolve_uncached(specifier, &containing_dir);
+        let result = self.resolve_uncached(
+            specifier,
+            &containing_dir,
+            &containing_file_str,
+            specifier_span,
+        );
 
         // Cache the result
         self.resolution_cache.insert(cache_key, result.clone());
@@ -196,6 +278,8 @@ impl ModuleResolver {
         &self,
         specifier: &str,
         containing_dir: &Path,
+        containing_file: &str,
+        specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Step 1: Try path mappings first (if configured)
         if !self.path_mappings.is_empty() {
@@ -206,24 +290,25 @@ impl ModuleResolver {
 
         // Step 2: Handle relative imports
         if specifier.starts_with("./") || specifier.starts_with("../") {
-            return self.resolve_relative(specifier, containing_dir);
+            return self.resolve_relative(
+                specifier,
+                containing_dir,
+                containing_file,
+                specifier_span,
+            );
         }
 
         // Step 3: Handle absolute imports (rare but valid)
         if specifier.starts_with('/') {
-            return self.resolve_absolute(specifier);
+            return self.resolve_absolute(specifier, containing_file, specifier_span);
         }
 
         // Step 4: Handle bare specifiers (npm packages)
-        self.resolve_bare_specifier(specifier, containing_dir)
+        self.resolve_bare_specifier(specifier, containing_dir, containing_file, specifier_span)
     }
 
     /// Try resolving through path mappings
-    fn try_path_mappings(
-        &self,
-        specifier: &str,
-        containing_dir: &Path,
-    ) -> Option<ResolvedModule> {
+    fn try_path_mappings(&self, specifier: &str, containing_dir: &Path) -> Option<ResolvedModule> {
         // Sort path mappings by specificity (most specific first)
         let mut sorted_mappings: Vec<_> = self.path_mappings.iter().collect();
         sorted_mappings.sort_by(|a, b| b.specificity().cmp(&a.specificity()));
@@ -263,6 +348,8 @@ impl ModuleResolver {
         &self,
         specifier: &str,
         containing_dir: &Path,
+        containing_file: &str,
+        specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let candidate = containing_dir.join(specifier);
 
@@ -276,15 +363,20 @@ impl ModuleResolver {
             });
         }
 
-        Err(ResolutionFailure::NotFound(format!(
-            "Cannot find module '{}' from '{}'",
-            specifier,
-            containing_dir.display()
-        )))
+        Err(ResolutionFailure::NotFound {
+            specifier: specifier.to_string(),
+            containing_file: containing_file.to_string(),
+            span: specifier_span,
+        })
     }
 
     /// Resolve an absolute import
-    fn resolve_absolute(&self, specifier: &str) -> Result<ResolvedModule, ResolutionFailure> {
+    fn resolve_absolute(
+        &self,
+        specifier: &str,
+        containing_file: &str,
+        specifier_span: Span,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
         let path = PathBuf::from(specifier);
 
         if let Some(resolved) = self.try_file_or_directory(&path) {
@@ -297,10 +389,11 @@ impl ModuleResolver {
             });
         }
 
-        Err(ResolutionFailure::NotFound(format!(
-            "Cannot find module '{}'",
-            specifier
-        )))
+        Err(ResolutionFailure::NotFound {
+            specifier: specifier.to_string(),
+            containing_file: containing_file.to_string(),
+            span: specifier_span,
+        })
     }
 
     /// Resolve a bare specifier (npm package)
@@ -308,6 +401,8 @@ impl ModuleResolver {
         &self,
         specifier: &str,
         containing_dir: &Path,
+        containing_file: &str,
+        specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Parse package name and subpath
         let (package_name, subpath) = parse_package_specifier(specifier);
@@ -321,7 +416,13 @@ impl ModuleResolver {
                 let package_dir = node_modules.join(&package_name);
 
                 if package_dir.is_dir() {
-                    return self.resolve_package(&package_dir, subpath.as_deref(), specifier);
+                    return self.resolve_package(
+                        &package_dir,
+                        subpath.as_deref(),
+                        specifier,
+                        containing_file,
+                        specifier_span,
+                    );
                 }
             }
 
@@ -334,18 +435,26 @@ impl ModuleResolver {
 
         // Try type roots (for @types packages)
         for type_root in &self.type_roots {
-            let types_package = type_root.join(format!("@types/{}", package_name.replace('/', "__")));
+            let types_package =
+                type_root.join(format!("@types/{}", package_name.replace('/', "__")));
             if types_package.is_dir() {
-                if let Ok(resolved) = self.resolve_package(&types_package, subpath.as_deref(), specifier) {
+                if let Ok(resolved) = self.resolve_package(
+                    &types_package,
+                    subpath.as_deref(),
+                    specifier,
+                    containing_file,
+                    specifier_span,
+                ) {
                     return Ok(resolved);
                 }
             }
         }
 
-        Err(ResolutionFailure::NotFound(format!(
-            "Cannot find module '{}' in node_modules",
-            specifier
-        )))
+        Err(ResolutionFailure::NotFound {
+            specifier: specifier.to_string(),
+            containing_file: containing_file.to_string(),
+            span: specifier_span,
+        })
     }
 
     /// Resolve within a package directory
@@ -354,6 +463,8 @@ impl ModuleResolver {
         package_dir: &Path,
         subpath: Option<&str>,
         original_specifier: &str,
+        containing_file: &str,
+        specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Read package.json
         let package_json_path = package_dir.join("package.json");
@@ -368,10 +479,14 @@ impl ModuleResolver {
             // Try exports field first (Node16+)
             if matches!(
                 self.resolution_kind,
-                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext | ModuleResolutionKind::Bundler
+                ModuleResolutionKind::Node16
+                    | ModuleResolutionKind::NodeNext
+                    | ModuleResolutionKind::Bundler
             ) {
                 if let Some(exports) = &package_json.exports {
-                    if let Some(resolved) = self.resolve_package_exports(package_dir, exports, subpath) {
+                    if let Some(resolved) =
+                        self.resolve_package_exports(package_dir, exports, subpath)
+                    {
                         return Ok(ResolvedModule {
                             resolved_path: resolved.clone(),
                             is_external: true,
@@ -395,10 +510,11 @@ impl ModuleResolver {
                 });
             }
 
-            return Err(ResolutionFailure::NotFound(format!(
-                "Cannot find '{}' in package",
-                subpath
-            )));
+            return Err(ResolutionFailure::NotFound {
+                specifier: original_specifier.to_string(),
+                containing_file: containing_file.to_string(),
+                span: specifier_span,
+            });
         }
 
         // No subpath - resolve package entry point
@@ -406,7 +522,9 @@ impl ModuleResolver {
         // Try exports "." field first (Node16+)
         if matches!(
             self.resolution_kind,
-            ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext | ModuleResolutionKind::Bundler
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
         ) {
             if let Some(exports) = &package_json.exports {
                 if let Some(resolved) = self.resolve_package_exports(package_dir, exports, ".") {
@@ -521,7 +639,9 @@ impl ModuleResolver {
 
                 for condition in condition_order {
                     if let Some(value) = conditions.get(condition) {
-                        if let Some(resolved) = self.resolve_package_exports(package_dir, value, subpath) {
+                        if let Some(resolved) =
+                            self.resolve_package_exports(package_dir, value, subpath)
+                        {
                             return Some(resolved);
                         }
                     }
@@ -533,11 +653,7 @@ impl ModuleResolver {
     }
 
     /// Resolve a single export value
-    fn resolve_export_value(
-        &self,
-        package_dir: &Path,
-        value: &PackageExports,
-    ) -> Option<PathBuf> {
+    fn resolve_export_value(&self, package_dir: &Path, value: &PackageExports) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
                 let resolved = package_dir.join(s);
@@ -547,9 +663,11 @@ impl ModuleResolver {
                     None
                 }
             }
-            PackageExports::Conditional(conditions) => {
-                self.resolve_package_exports(package_dir, &PackageExports::Conditional(conditions.clone()), ".")
-            }
+            PackageExports::Conditional(conditions) => self.resolve_package_exports(
+                package_dir,
+                &PackageExports::Conditional(conditions.clone()),
+                ".",
+            ),
             PackageExports::Map(_) => None,
         }
     }
@@ -625,6 +743,18 @@ impl ModuleResolver {
     /// Get the current resolution kind
     pub fn resolution_kind(&self) -> ModuleResolutionKind {
         self.resolution_kind
+    }
+
+    /// Emit TS2307 error for a resolution failure into a diagnostic bag
+    pub fn emit_resolution_error(
+        &self,
+        diagnostics: &mut DiagnosticBag,
+        failure: &ResolutionFailure,
+    ) {
+        if failure.is_not_found() {
+            let diagnostic = failure.span_to_diagnostic();
+            diagnostics.add(diagnostic);
+        }
     }
 }
 
@@ -789,5 +919,40 @@ mod tests {
     fn test_module_resolver_creation() {
         let resolver = ModuleResolver::node_resolver();
         assert_eq!(resolver.resolution_kind(), ModuleResolutionKind::Node);
+    }
+
+    #[test]
+    fn test_ts2307_error_code_constant() {
+        assert_eq!(CANNOT_FIND_MODULE, 2307);
+    }
+
+    #[test]
+    fn test_resolution_failure_not_found_diagnostic() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "./missing-module".to_string(),
+            containing_file: "/path/to/file.ts".to_string(),
+            span: Span::new(10, 30),
+        };
+
+        let diagnostic = failure.span_to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert!(diagnostic.message.contains("Cannot find module"));
+        assert!(diagnostic.message.contains("./missing-module"));
+        assert_eq!(diagnostic.file_name, "/path/to/file.ts");
+        assert_eq!(diagnostic.span.start, 10);
+        assert_eq!(diagnostic.span.end, 30);
+    }
+
+    #[test]
+    fn test_resolution_failure_is_not_found() {
+        let not_found = ResolutionFailure::NotFound {
+            specifier: "test".to_string(),
+            containing_file: "test.ts".to_string(),
+            span: Span::dummy(),
+        };
+        assert!(not_found.is_not_found());
+
+        let other = ResolutionFailure::InvalidSpecifier("test".to_string());
+        assert!(!other.is_not_found());
     }
 }

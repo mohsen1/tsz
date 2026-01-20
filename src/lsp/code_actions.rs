@@ -188,9 +188,10 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // Source Actions (file-level)
-        let request_organize = context.only.as_ref().is_none_or(|kinds| {
-            kinds.contains(&CodeActionKind::SourceOrganizeImports)
-        });
+        let request_organize = context
+            .only
+            .as_ref()
+            .is_none_or(|kinds| kinds.contains(&CodeActionKind::SourceOrganizeImports));
         if request_organize {
             if let Some(action) = self.organize_imports(root) {
                 actions.push(action);
@@ -343,7 +344,10 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Get the range for removing a declaration, including handling for multi-line declarations.
-    fn declaration_removal_range(&self, node: &crate::parser::thin_node::ThinNode) -> (Range, String) {
+    fn declaration_removal_range(
+        &self,
+        node: &crate::parser::thin_node::ThinNode,
+    ) -> (Range, String) {
         let mut end = node.end;
 
         // Include trailing whitespace and newlines
@@ -565,9 +569,9 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     fn is_import_declaration(&self, node_idx: NodeIndex) -> bool {
-        self.arena.get(node_idx).is_some_and(|node| {
-            node.kind == syntax_kind_ext::IMPORT_DECLARATION
-        })
+        self.arena
+            .get(node_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_DECLARATION)
     }
 
     fn sort_imports_range(

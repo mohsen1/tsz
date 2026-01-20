@@ -1455,8 +1455,13 @@ fn test_thin_pipeline_integration() {
     // Step 3: Check (type inference)
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let checker =
-        ThinCheckerState::new(&parser.arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let checker = ThinCheckerState::new(
+        &parser.arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     // Basic check - the checker exists and can be created
     let _ = &checker.ctx.types; // Access types arena to verify it exists
 

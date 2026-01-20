@@ -64,7 +64,11 @@ fn test_ir_binary_expr() {
     let bin = IRNode::binary(left, "+", right);
 
     match bin {
-        IRNode::BinaryExpr { left, operator, right } => {
+        IRNode::BinaryExpr {
+            left,
+            operator,
+            right,
+        } => {
             assert!(matches!(*left, IRNode::Identifier(name) if name == "a"));
             assert_eq!(operator, "+");
             assert!(matches!(*right, IRNode::NumericLiteral(n) if n == "1"));
@@ -118,13 +122,20 @@ fn test_ir_return_stmt() {
 #[test]
 fn test_ir_function_expr() {
     let params = vec![IRParam::new("x"), IRParam::new("y")];
-    let body = vec![
-        IRNode::ret(Some(IRNode::binary(IRNode::id("x"), "+", IRNode::id("y")))),
-    ];
+    let body = vec![IRNode::ret(Some(IRNode::binary(
+        IRNode::id("x"),
+        "+",
+        IRNode::id("y"),
+    )))];
     let func = IRNode::func_expr(Some("add".to_string()), params, body);
 
     match func {
-        IRNode::FunctionExpr { name, parameters, body, .. } => {
+        IRNode::FunctionExpr {
+            name,
+            parameters,
+            body,
+            ..
+        } => {
             assert_eq!(name, Some("add".to_string()));
             assert_eq!(parameters.len(), 2);
             assert_eq!(body.len(), 1);
@@ -140,7 +151,11 @@ fn test_ir_function_decl() {
     let func = IRNode::func_decl("identity", params, body);
 
     match func {
-        IRNode::FunctionDecl { name, parameters, body } => {
+        IRNode::FunctionDecl {
+            name,
+            parameters,
+            body,
+        } => {
             assert_eq!(name, "identity");
             assert_eq!(parameters.len(), 1);
             assert_eq!(body.len(), 1);
@@ -219,7 +234,12 @@ fn test_ir_es5_class_iife() {
     };
 
     match class_iife {
-        IRNode::ES5ClassIIFE { name, base_class, body, .. } => {
+        IRNode::ES5ClassIIFE {
+            name,
+            base_class,
+            body,
+            ..
+        } => {
             assert_eq!(name, "Point");
             assert!(base_class.is_none());
             assert_eq!(body.len(), 2);
@@ -236,13 +256,11 @@ fn test_ir_generator_body() {
         cases: vec![
             IRGeneratorCase {
                 label: 0,
-                statements: vec![
-                    IRNode::ret(Some(IRNode::GeneratorOp {
-                        opcode: 4,
-                        value: Some(Box::new(IRNode::call(IRNode::id("fetch"), vec![]))),
-                        comment: Some("yield".to_string()),
-                    })),
-                ],
+                statements: vec![IRNode::ret(Some(IRNode::GeneratorOp {
+                    opcode: 4,
+                    value: Some(Box::new(IRNode::call(IRNode::id("fetch"), vec![]))),
+                    comment: Some("yield".to_string()),
+                }))],
             },
             IRGeneratorCase {
                 label: 1,

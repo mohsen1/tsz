@@ -220,7 +220,8 @@ impl<'a> ThinPrinter<'a> {
                 for comment in comments {
                     self.write_space();
                     // Use safe slicing to avoid panics
-                    let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+                    let comment_text =
+                        safe_slice::slice(text, comment.pos as usize, comment.end as usize);
                     if !comment_text.is_empty() {
                         self.write(comment_text);
                     }

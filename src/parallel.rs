@@ -441,15 +441,13 @@ fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
     use crate::binder::symbol_flags;
 
     // Interface can merge with interface
-    if (existing_flags & symbol_flags::INTERFACE) != 0
-        && (new_flags & symbol_flags::INTERFACE) != 0
+    if (existing_flags & symbol_flags::INTERFACE) != 0 && (new_flags & symbol_flags::INTERFACE) != 0
     {
         return true;
     }
 
     // Class can merge with interface
-    if ((existing_flags & symbol_flags::CLASS) != 0
-        && (new_flags & symbol_flags::INTERFACE) != 0)
+    if ((existing_flags & symbol_flags::CLASS) != 0 && (new_flags & symbol_flags::INTERFACE) != 0)
         || ((existing_flags & symbol_flags::INTERFACE) != 0
             && (new_flags & symbol_flags::CLASS) != 0)
     {
@@ -463,15 +461,12 @@ fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
 
     // Namespace can merge with class, function, or enum
     if (existing_flags & symbol_flags::MODULE) != 0 {
-        if (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
-            != 0
-        {
+        if (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM)) != 0 {
             return true;
         }
     }
     if (new_flags & symbol_flags::MODULE) != 0 {
-        if (existing_flags
-            & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
+        if (existing_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
             != 0
         {
             return true;

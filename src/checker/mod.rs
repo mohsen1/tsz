@@ -35,7 +35,7 @@ mod control_flow_tests;
 
 // Re-export key types
 pub use arena::TypeArena;
-pub use context::{CheckerContext, EnclosingClassInfo, TypeCache};
+pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
 pub use control_flow::{FlowAnalyzer, FlowGraph as ControlFlowGraph};
 pub use declarations::DeclarationChecker;
 pub use expr::ExpressionChecker;

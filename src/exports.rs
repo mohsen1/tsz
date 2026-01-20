@@ -337,10 +337,7 @@ pub enum ExportResolution {
         original_name: String,
     },
     /// Export might come from a namespace re-export
-    PossibleNamespaceReExport {
-        sources: Vec<String>,
-        name: String,
-    },
+    PossibleNamespaceReExport { sources: Vec<String>, name: String },
     /// Export not found
     NotFound,
 }
@@ -539,9 +536,11 @@ mod tests {
         // Direct export
         tracker.add_declaration(ExportDeclaration {
             node: NodeIndex::NONE,
-            bindings: vec![ExportedBindingBuilder::new("foo")
-                .kind(ExportKind::Named)
-                .build()],
+            bindings: vec![
+                ExportedBindingBuilder::new("foo")
+                    .kind(ExportKind::Named)
+                    .build(),
+            ],
             is_type_only: false,
             from_module: None,
             start: 0,
@@ -551,10 +550,12 @@ mod tests {
         // Re-export
         tracker.add_declaration(ExportDeclaration {
             node: NodeIndex::NONE,
-            bindings: vec![ExportedBindingBuilder::new("bar")
-                .kind(ExportKind::ReExport)
-                .source_module("./other")
-                .build()],
+            bindings: vec![
+                ExportedBindingBuilder::new("bar")
+                    .kind(ExportKind::ReExport)
+                    .source_module("./other")
+                    .build(),
+            ],
             is_type_only: false,
             from_module: Some("./other".to_string()),
             start: 0,

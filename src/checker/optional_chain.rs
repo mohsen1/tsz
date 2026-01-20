@@ -29,7 +29,7 @@
 //! The result type is always `T | undefined` where T is the non-nullish result type.
 
 use crate::parser::thin_node::ThinNodeArena;
-use crate::parser::{syntax_kind_ext, NodeIndex};
+use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 
@@ -184,9 +184,9 @@ pub fn get_non_nullish_type(types: &mut impl TypeDatabase, type_id: SolverTypeId
     };
 
     match key {
-        TypeKey::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-            SolverTypeId::NEVER
-        }
+        TypeKey::Intrinsic(
+            IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void,
+        ) => SolverTypeId::NEVER,
         TypeKey::Union(members) => {
             let members = types.type_list(members);
             let non_nullish: Vec<SolverTypeId> = members
