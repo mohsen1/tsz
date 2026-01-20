@@ -1,18 +1,13 @@
 /**
- * Worker thread for parallel test execution
+ * Single test executor - runs in isolated child process
+ * 
+ * This file is spawned as a child process for each test.
+ * If it hangs, the parent can kill it without affecting other tests.
  */
 
-import { parentPort, workerData } from 'worker_threads';
 import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
-
-interface TestJob {
-  filePath: string;
-  libSource: string;
-  testsBasePath: string;
-  timeout?: number;  // Per-test timeout in ms (default: 5000)
-}
 
 interface TestFile {
   name: string;
@@ -28,44 +23,12 @@ interface ParsedTestCase {
   testName: string;
 }
 
-interface DiagnosticInfo {
-  code: number;
-  message: string;
-  category: string;
-  file?: string;
-  start?: number;
-  length?: number;
-}
-
-interface TestResult {
-  diagnostics: DiagnosticInfo[];
-  crashed: boolean;
-  error?: string;
-}
-
-interface WorkerResult {
-  filePath: string;
-  relPath: string;
-  category: string;
+interface TestOutput {
   tscCodes: number[];
   wasmCodes: number[];
   crashed: boolean;
   error?: string;
-  skipped: boolean;
-  timedOut?: boolean;
-}
-
-// Initialize WASM module once per worker
-let wasmModule: unknown = null;
-
-async function initWasm(wasmPkgPath: string): Promise<void> {
-  if (wasmModule) return;
-  const wasmPath = path.join(wasmPkgPath, 'wasm.js');
-  const module = await import(wasmPath);
-  if (typeof module.default === 'function') {
-    await module.default();
-  }
-  wasmModule = module;
+  category: string;
 }
 
 function parseTestDirectives(code: string, filePath: string): ParsedTestCase {
@@ -156,7 +119,7 @@ function toCompilerOptions(testOptions: Record<string, unknown>): ts.CompilerOpt
   return options;
 }
 
-function runTsc(testCase: ParsedTestCase, libSource: string): TestResult {
+function runTsc(testCase: ParsedTestCase, libSource: string): number[] {
   const compilerOptions = toCompilerOptions(testCase.options);
   const sourceFiles = new Map<string, ts.SourceFile>();
   const fileNames: string[] = [];
@@ -167,7 +130,7 @@ function runTsc(testCase: ParsedTestCase, libSource: string): TestResult {
     fileNames.push(file.name);
   }
 
-  if (!testCase.options.nolib) {
+  if (!testCase.options.nolib && libSource) {
     const libSf = ts.createSourceFile('lib.d.ts', libSource, ts.ScriptTarget.ES2020, true);
     sourceFiles.set('lib.d.ts', libSf);
   }
@@ -195,19 +158,18 @@ function runTsc(testCase: ParsedTestCase, libSource: string): TestResult {
     }
   }
 
-  return {
-    diagnostics: allDiagnostics.map(d => ({
-      code: d.code,
-      message: ts.flattenDiagnosticMessageText(d.messageText, '\n'),
-      category: ts.DiagnosticCategory[d.category],
-    })),
-    crashed: false,
-  };
+  return allDiagnostics.map(d => d.code);
 }
 
-function runWasm(testCase: ParsedTestCase, libSource: string): TestResult {
+async function runWasm(testCase: ParsedTestCase, libSource: string, wasmPkgPath: string): Promise<{ codes: number[]; crashed: boolean; error?: string }> {
   try {
-    const wasm = wasmModule as {
+    const wasmPath = path.join(wasmPkgPath, 'wasm.js');
+    const module = await import(wasmPath);
+    if (typeof module.default === 'function') {
+      await module.default();
+    }
+
+    const wasm = module as {
       ThinParser: new (name: string, code: string) => {
         addLibFile(name: string, content: string): void;
         setCompilerOptions?(options: string): void;
@@ -224,99 +186,69 @@ function runWasm(testCase: ParsedTestCase, libSource: string): TestResult {
 
     if (testCase.isMultiFile || testCase.files.length > 1) {
       const program = new wasm.WasmProgram();
-      if (!testCase.options.nolib) program.addFile('lib.d.ts', libSource);
+      if (!testCase.options.nolib && libSource) program.addFile('lib.d.ts', libSource);
       for (const file of testCase.files) program.addFile(file.name, file.content);
       const codes = program.getAllDiagnosticCodes();
-      return {
-        diagnostics: Array.from(codes).map(code => ({ code, message: '', category: 'Error' })),
-        crashed: false,
-      };
+      return { codes: Array.from(codes), crashed: false };
     } else {
       const file = testCase.files[0];
       const parser = new wasm.ThinParser(file.name, file.content);
-      if (!testCase.options.nolib) parser.addLibFile('lib.d.ts', libSource);
+      if (!testCase.options.nolib && libSource) parser.addLibFile('lib.d.ts', libSource);
       if (parser.setCompilerOptions) parser.setCompilerOptions(JSON.stringify(testCase.options));
       parser.parseSourceFile();
       const parseDiags = JSON.parse(parser.getDiagnosticsJson());
       const checkResult = JSON.parse(parser.checkSourceFile());
-      const diagnostics = [
-        ...parseDiags.map((d: { code: number; message: string }) => ({ code: d.code, message: d.message, category: 'Error' })),
-        ...(checkResult.diagnostics || []).map((d: { code: number }) => ({ code: d.code, message: '', category: 'Error' })),
+      const codes = [
+        ...parseDiags.map((d: { code: number }) => d.code),
+        ...(checkResult.diagnostics || []).map((d: { code: number }) => d.code),
       ];
       parser.free();
-      return { diagnostics, crashed: false };
+      return { codes, crashed: false };
     }
   } catch (error) {
-    return { diagnostics: [], crashed: true, error: error instanceof Error ? error.message : String(error) };
+    return { codes: [], crashed: true, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-async function processJob(job: TestJob): Promise<WorkerResult> {
-  const { filePath, libSource, testsBasePath } = job;
-  const relPath = filePath.replace(testsBasePath + path.sep, '');
+async function main() {
+  const args = process.argv.slice(2);
+  const filePath = args[0];
+  const wasmPkgPath = args[1];
+  const libPath = args[2];
+
+  if (!filePath || !wasmPkgPath) {
+    console.error(JSON.stringify({ error: 'Missing arguments' }));
+    process.exit(1);
+  }
 
   try {
     const code = fs.readFileSync(filePath, 'utf8');
+    const libSource = libPath && fs.existsSync(libPath) ? fs.readFileSync(libPath, 'utf8') : '';
     const testCase = parseTestDirectives(code, filePath);
-    const tscResult = runTsc(testCase, libSource);
-    const wasmResult = runWasm(testCase, libSource);
 
-    return {
-      filePath,
-      relPath,
-      category: testCase.category,
-      tscCodes: tscResult.diagnostics.map(d => d.code),
-      wasmCodes: wasmResult.diagnostics.map(d => d.code),
+    const tscCodes = runTsc(testCase, libSource);
+    const wasmResult = await runWasm(testCase, libSource, wasmPkgPath);
+
+    const output: TestOutput = {
+      tscCodes,
+      wasmCodes: wasmResult.codes,
       crashed: wasmResult.crashed,
       error: wasmResult.error,
-      skipped: false,
+      category: testCase.category,
     };
+
+    console.log(JSON.stringify(output));
+    process.exit(0);
   } catch (error) {
-    return {
-      filePath,
-      relPath,
-      category: 'unknown',
+    console.log(JSON.stringify({
       tscCodes: [],
       wasmCodes: [],
-      crashed: false,
-      skipped: true,
+      crashed: true,
       error: error instanceof Error ? error.message : String(error),
-    };
+      category: 'unknown',
+    }));
+    process.exit(1);
   }
 }
 
-// Timeout wrapper
-function withTimeout<T>(promise: Promise<T>, ms: number, timeoutResult: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(timeoutResult), ms))
-  ]);
-}
-
-// Worker main
-(async () => {
-  const { wasmPkgPath } = workerData as { wasmPkgPath: string };
-  await initWasm(wasmPkgPath);
-
-  parentPort!.on('message', async (job: TestJob) => {
-    const timeout = job.timeout || 5000; // 5 second default per test
-    const relPath = job.filePath.replace(job.testsBasePath + path.sep, '');
-    
-    const timeoutResult: WorkerResult = {
-      filePath: job.filePath,
-      relPath,
-      category: 'unknown',
-      tscCodes: [],
-      wasmCodes: [],
-      crashed: false,
-      skipped: false,
-      timedOut: true,
-      error: `Test timed out after ${timeout}ms`,
-    };
-
-    const result = await withTimeout(processJob(job), timeout, timeoutResult);
-    parentPort!.postMessage(result);
-  });
-
-  parentPort!.postMessage({ ready: true });
-})();
+main();

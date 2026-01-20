@@ -2,7 +2,8 @@
 /**
  * Parallel Conformance Test Runner
  *
- * Runs TypeScript conformance tests using worker threads for high parallelism.
+ * Runs each test in a separate child process with timeout.
+ * This ensures hanging tests can be killed without affecting others.
  */
 interface RunnerConfig {
     wasmPkgPath: string;

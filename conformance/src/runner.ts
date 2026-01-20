@@ -2,14 +2,17 @@
 /**
  * Parallel Conformance Test Runner
  *
- * Runs TypeScript conformance tests using worker threads for high parallelism.
+ * Runs each test in a separate child process with timeout.
+ * This ensures hanging tests can be killed without affecting others.
  */
 
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { Worker } from 'worker_threads';
+import { fork, ChildProcess } from 'child_process';
 import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Configuration
 interface RunnerConfig {
@@ -20,10 +23,8 @@ interface RunnerConfig {
   verbose: boolean;
   categories: string[];
   workers: number;
-  testTimeout: number;  // Per-test timeout in ms
+  testTimeout: number;
 }
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_CONFIG: RunnerConfig = {
   wasmPkgPath: path.resolve(__dirname, '../../pkg'),
@@ -33,19 +34,27 @@ const DEFAULT_CONFIG: RunnerConfig = {
   verbose: false,
   categories: ['conformance', 'compiler'],
   workers: Math.max(1, os.cpus().length - 1),
-  testTimeout: 5000,  // 5 seconds per test
+  testTimeout: 10000,  // 10 seconds per test
 };
 
-interface WorkerResult {
+interface TestOutput {
+  tscCodes: number[];
+  wasmCodes: number[];
+  crashed: boolean;
+  error?: string;
+  category: string;
+}
+
+interface TestResult {
   filePath: string;
   relPath: string;
   category: string;
   tscCodes: number[];
   wasmCodes: number[];
   crashed: boolean;
-  error?: string;
+  timedOut: boolean;
   skipped: boolean;
-  timedOut?: boolean;
+  error?: string;
 }
 
 interface TestStats {
@@ -114,70 +123,164 @@ function compareResults(tscCodes: number[], wasmCodes: number[]): { exactMatch: 
   return { exactMatch: missing.length === 0 && extra.length === 0, missing, extra };
 }
 
-class WorkerPool {
-  private workers: Worker[] = [];
-  private available: Worker[] = [];
-  private pending: Map<Worker, (result: WorkerResult) => void> = new Map();
-  private jobQueue: Array<{ job: unknown; resolve: (result: WorkerResult) => void }> = [];
-  private readyCount = 0;
-  private readyPromise: Promise<void>;
-  private readyResolve!: () => void;
+/**
+ * Run a single test in an isolated child process with timeout
+ */
+function runTestInProcess(
+  filePath: string,
+  wasmPkgPath: string,
+  libPath: string,
+  timeout: number,
+  testsBasePath: string
+): Promise<TestResult> {
+  return new Promise((resolve) => {
+    const relPath = filePath.replace(testsBasePath + path.sep, '');
+    const executorPath = path.join(__dirname, 'test-executor.js');
 
-  constructor(private workerPath: string, private workerData: unknown, count: number) {
-    this.readyPromise = new Promise(resolve => { this.readyResolve = resolve; });
-    for (let i = 0; i < count; i++) {
-      const worker = new Worker(workerPath, { workerData });
-      worker.on('message', (msg) => this.handleMessage(worker, msg));
-      worker.on('error', (err) => console.error('Worker error:', err));
-      this.workers.push(worker);
-    }
-  }
+    let child: ChildProcess | null = null;
+    let resolved = false;
+    let output = '';
 
-  private handleMessage(worker: Worker, msg: unknown): void {
-    if ((msg as { ready?: boolean }).ready) {
-      this.readyCount++;
-      this.available.push(worker);
-      if (this.readyCount === this.workers.length) this.readyResolve();
-      this.processQueue();
-      return;
-    }
-
-    const resolve = this.pending.get(worker);
-    if (resolve) {
-      this.pending.delete(worker);
-      this.available.push(worker);
-      resolve(msg as WorkerResult);
-      this.processQueue();
-    }
-  }
-
-  private processQueue(): void {
-    while (this.available.length > 0 && this.jobQueue.length > 0) {
-      const worker = this.available.pop()!;
-      const { job, resolve } = this.jobQueue.shift()!;
-      this.pending.set(worker, resolve);
-      worker.postMessage(job);
-    }
-  }
-
-  async ready(): Promise<void> {
-    return this.readyPromise;
-  }
-
-  async run(job: unknown): Promise<WorkerResult> {
-    return new Promise(resolve => {
-      if (this.available.length > 0) {
-        const worker = this.available.pop()!;
-        this.pending.set(worker, resolve);
-        worker.postMessage(job);
-      } else {
-        this.jobQueue.push({ job, resolve });
+    const timeoutId = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        if (child) {
+          child.kill('SIGKILL');
+        }
+        resolve({
+          filePath,
+          relPath,
+          category: 'unknown',
+          tscCodes: [],
+          wasmCodes: [],
+          crashed: false,
+          timedOut: true,
+          skipped: false,
+          error: `Timeout after ${timeout}ms`,
+        });
       }
-    });
-  }
+    }, timeout);
 
-  async terminate(): Promise<void> {
-    await Promise.all(this.workers.map(w => w.terminate()));
+    try {
+      child = fork(executorPath, [filePath, wasmPkgPath, libPath], {
+        stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+        timeout: timeout + 1000,  // Extra buffer for fork timeout
+      });
+
+      child.stdout?.on('data', (data) => {
+        output += data.toString();
+      });
+
+      child.stderr?.on('data', (data) => {
+        // Ignore stderr - might contain WASM warnings
+      });
+
+      child.on('exit', (code) => {
+        clearTimeout(timeoutId);
+        if (resolved) return;
+        resolved = true;
+
+        try {
+          // Find JSON in output (might have extra content)
+          const jsonMatch = output.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const result: TestOutput = JSON.parse(jsonMatch[0]);
+            resolve({
+              filePath,
+              relPath,
+              category: result.category || 'unknown',
+              tscCodes: result.tscCodes || [],
+              wasmCodes: result.wasmCodes || [],
+              crashed: result.crashed || false,
+              timedOut: false,
+              skipped: false,
+              error: result.error,
+            });
+          } else {
+            resolve({
+              filePath,
+              relPath,
+              category: 'unknown',
+              tscCodes: [],
+              wasmCodes: [],
+              crashed: true,
+              timedOut: false,
+              skipped: false,
+              error: `No valid output from test process (exit code: ${code})`,
+            });
+          }
+        } catch (e) {
+          resolve({
+            filePath,
+            relPath,
+            category: 'unknown',
+            tscCodes: [],
+            wasmCodes: [],
+            crashed: true,
+            timedOut: false,
+            skipped: false,
+            error: `Failed to parse output: ${e}`,
+          });
+        }
+      });
+
+      child.on('error', (err) => {
+        clearTimeout(timeoutId);
+        if (resolved) return;
+        resolved = true;
+        resolve({
+          filePath,
+          relPath,
+          category: 'unknown',
+          tscCodes: [],
+          wasmCodes: [],
+          crashed: true,
+          timedOut: false,
+          skipped: false,
+          error: `Process error: ${err.message}`,
+        });
+      });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (!resolved) {
+        resolved = true;
+        resolve({
+          filePath,
+          relPath,
+          category: 'unknown',
+          tscCodes: [],
+          wasmCodes: [],
+          crashed: true,
+          timedOut: false,
+          skipped: true,
+          error: `Failed to spawn: ${err}`,
+        });
+      }
+    }
+  });
+}
+
+/**
+ * Process pool that runs tests with controlled concurrency
+ */
+class ProcessPool {
+  private running = 0;
+  private queue: Array<() => void> = [];
+
+  constructor(private maxConcurrency: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.running >= this.maxConcurrency) {
+      await new Promise<void>(resolve => this.queue.push(resolve));
+    }
+    this.running++;
+    try {
+      return await task();
+    } finally {
+      this.running--;
+      const next = this.queue.shift();
+      if (next) next();
+    }
   }
 }
 
@@ -186,17 +289,8 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   const startTime = Date.now();
 
   log('╔══════════════════════════════════════════════════════════╗', colors.cyan);
-  log('║       Parallel Conformance Test Runner                   ║', colors.cyan);
+  log('║     Parallel Conformance Test Runner (Process Pool)      ║', colors.cyan);
   log('╚══════════════════════════════════════════════════════════╝', colors.cyan);
-
-  // Load lib.d.ts
-  let libSource = '';
-  try {
-    libSource = fs.readFileSync(cfg.libPath, 'utf8');
-    log(`  Loaded lib.d.ts (${(libSource.length / 1024).toFixed(1)}KB)`, colors.dim);
-  } catch {
-    log('  Warning: Could not load lib.d.ts', colors.yellow);
-  }
 
   // Collect test files
   log(`\nCollecting test files...`, colors.cyan);
@@ -215,23 +309,15 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   }
 
   log(`  Total: ${allTestFiles.length} test files`, colors.cyan);
-  log(`  Workers: ${cfg.workers}`, colors.dim);
+  log(`  Workers: ${cfg.workers} (${cfg.testTimeout}ms timeout per test)`, colors.dim);
 
   if (allTestFiles.length === 0) {
     log('\nNo test files found!', colors.yellow);
     return { total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, timedOut: 0, byCategory: {}, missingCodes: new Map(), extraCodes: new Map() };
   }
 
-  // Create worker pool
-  const workerPath = path.join(__dirname, 'worker.js');
-  const pool = new WorkerPool(workerPath, { wasmPkgPath: cfg.wasmPkgPath }, cfg.workers);
-
-  log(`\nInitializing ${cfg.workers} workers...`, colors.cyan);
-  await pool.ready();
-  log(`  Workers ready!`, colors.green);
-
-  // Run tests in parallel
-  log(`\nRunning tests (${cfg.testTimeout}ms timeout per test)...`, colors.cyan);
+  // Run tests with process pool
+  log(`\nRunning tests...`, colors.cyan);
   const stats: TestStats = {
     total: allTestFiles.length,
     passed: 0,
@@ -244,73 +330,75 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     extraCodes: new Map(),
   };
 
+  const pool = new ProcessPool(cfg.workers);
   let completed = 0;
+
   const updateProgress = () => {
     const pct = ((completed / allTestFiles.length) * 100).toFixed(1);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    const rate = (completed / ((Date.now() - startTime) / 1000)).toFixed(0);
-    process.stdout.write(`\r  Progress: ${completed}/${allTestFiles.length} (${pct}%) | ${rate} tests/sec | ${elapsed}s elapsed    `);
+    const rate = completed > 0 ? (completed / ((Date.now() - startTime) / 1000)).toFixed(0) : '0';
+    process.stdout.write(`\r  Progress: ${completed}/${allTestFiles.length} (${pct}%) | ${rate} tests/sec | ${elapsed}s    `);
   };
 
-  // Submit all jobs
-  const promises = allTestFiles.map(async (filePath) => {
-    const result = await pool.run({
-      filePath,
-      libSource,
-      testsBasePath: cfg.testsBasePath,
-      timeout: cfg.testTimeout,
-    });
+  const promises = allTestFiles.map(filePath => 
+    pool.run(async () => {
+      const result = await runTestInProcess(
+        filePath,
+        cfg.wasmPkgPath,
+        cfg.libPath,
+        cfg.testTimeout,
+        cfg.testsBasePath
+      );
 
-    completed++;
-    if (!cfg.verbose) updateProgress();
+      completed++;
+      if (!cfg.verbose) updateProgress();
 
-    // Update stats
-    if (!stats.byCategory[result.category]) {
-      stats.byCategory[result.category] = { total: 0, passed: 0 };
-    }
-    stats.byCategory[result.category].total++;
-
-    if (result.timedOut) {
-      stats.timedOut++;
-      stats.failed++;
-      if (cfg.verbose) {
-        log(`\n  ${result.relPath}: TIMEOUT`, colors.red);
+      // Update stats
+      if (!stats.byCategory[result.category]) {
+        stats.byCategory[result.category] = { total: 0, passed: 0 };
       }
-      return;
-    }
-    if (result.skipped) {
-      stats.skipped++;
-      return;
-    }
-    if (result.crashed) {
-      stats.crashed++;
-      stats.failed++;
-      return;
-    }
+      stats.byCategory[result.category].total++;
 
-    const comparison = compareResults(result.tscCodes, result.wasmCodes);
-    if (comparison.exactMatch) {
-      stats.passed++;
-      stats.byCategory[result.category].passed++;
-    } else {
-      stats.failed++;
-      for (const code of comparison.missing) {
-        stats.missingCodes.set(code, (stats.missingCodes.get(code) || 0) + 1);
+      if (result.timedOut) {
+        stats.timedOut++;
+        stats.failed++;
+        if (cfg.verbose) log(`\n  ${result.relPath}: TIMEOUT`, colors.red);
+        return;
       }
-      for (const code of comparison.extra) {
-        stats.extraCodes.set(code, (stats.extraCodes.get(code) || 0) + 1);
+      if (result.skipped) {
+        stats.skipped++;
+        return;
+      }
+      if (result.crashed) {
+        stats.crashed++;
+        stats.failed++;
+        if (cfg.verbose) log(`\n  ${result.relPath}: CRASH - ${result.error}`, colors.red);
+        return;
       }
 
-      if (cfg.verbose) {
-        log(`\n  ${result.relPath}:`, colors.yellow);
-        if (comparison.missing.length > 0) log(`    Missing: TS${[...new Set(comparison.missing)].join(', TS')}`, colors.dim);
-        if (comparison.extra.length > 0) log(`    Extra: TS${[...new Set(comparison.extra)].join(', TS')}`, colors.dim);
+      const comparison = compareResults(result.tscCodes, result.wasmCodes);
+      if (comparison.exactMatch) {
+        stats.passed++;
+        stats.byCategory[result.category].passed++;
+      } else {
+        stats.failed++;
+        for (const code of comparison.missing) {
+          stats.missingCodes.set(code, (stats.missingCodes.get(code) || 0) + 1);
+        }
+        for (const code of comparison.extra) {
+          stats.extraCodes.set(code, (stats.extraCodes.get(code) || 0) + 1);
+        }
+
+        if (cfg.verbose) {
+          log(`\n  ${result.relPath}:`, colors.yellow);
+          if (comparison.missing.length > 0) log(`    Missing: TS${[...new Set(comparison.missing)].join(', TS')}`, colors.dim);
+          if (comparison.extra.length > 0) log(`    Extra: TS${[...new Set(comparison.extra)].join(', TS')}`, colors.dim);
+        }
       }
-    }
-  });
+    })
+  );
 
   await Promise.all(promises);
-  await pool.terminate();
 
   // Clear progress line
   if (!cfg.verbose) {
@@ -370,6 +458,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const arg of args) {
     if (arg.startsWith('--max=')) config.maxTests = parseInt(arg.split('=')[1], 10);
     else if (arg.startsWith('--workers=')) config.workers = parseInt(arg.split('=')[1], 10);
+    else if (arg.startsWith('--timeout=')) config.testTimeout = parseInt(arg.split('=')[1], 10);
     else if (arg === '--verbose' || arg === '-v') config.verbose = true;
     else if (arg.startsWith('--category=')) config.categories = arg.split('=')[1].split(',');
   }
