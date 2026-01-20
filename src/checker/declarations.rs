@@ -785,6 +785,25 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         };
 
         if let Some(module) = self.ctx.arena.get_module(node) {
+            // TS2435: Ambient modules cannot be nested in other modules or namespaces
+            // Check if this is an ambient external module (declare module "string")
+            // inside another namespace/module
+            if let Some(name_node) = self.ctx.arena.get(module.name) {
+                if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                    // This is an ambient external module with a string name
+                    // Check if it's nested inside a namespace
+                    if self.is_inside_namespace(module_idx) {
+                        self.ctx.error(
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                            "Ambient modules cannot be nested in other modules or namespaces.".to_string(),
+                            diagnostic_codes::AMBIENT_MODULES_CANNOT_BE_NESTED,
+                        );
+                        return; // Don't emit other errors for nested ambient modules
+                    }
+                }
+            }
+
             // TS5061: Check for relative module names in ambient declarations
             // declare module "./foo" { } -> Error
             if self
@@ -869,6 +888,41 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check if a module name is relative (starts with ./ or ../)
     fn is_relative_module_name(&self, name: &str) -> bool {
         name.starts_with("./") || name.starts_with("../") || name == "." || name == ".."
+    }
+
+    /// Check if a node is inside a namespace/module declaration.
+    /// This is used for TS2435 (ambient modules cannot be nested).
+    fn is_inside_namespace(&self, node_idx: NodeIndex) -> bool {
+        // Walk up the parent chain to see if we're inside a namespace
+        let mut current = node_idx;
+        
+        // Skip the first iteration (the node itself)
+        if let Some(ext) = self.ctx.arena.get_extended(current) {
+            current = ext.parent;
+        } else {
+            return false;
+        }
+        
+        while !current.is_none() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            
+            // If we find a namespace/module declaration in the parent chain,
+            // the ambient module is nested
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                return true;
+            }
+            
+            // Move to the next parent
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        
+        false
     }
 
     /// Check a module body (block or nested module).
