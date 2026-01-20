@@ -9,7 +9,7 @@
     "owner": "mohsen1",
     "name": "tsz"
   },
-  "phase": "worker_execution",
+  "phase": "em_assignment",
   "workBranch": "cco/72-fix-unit-tests",
   "baseBranch": "main",
   "ems": [
@@ -19,105 +19,18 @@
       "focusArea": "Solver Evaluate",
       "branch": "cco/issue-72-em-1",
       "status": "pr_created",
-      "workers": [
-        {
-          "id": 1,
-          "task": "Fix conditional type inference with constraints and distributive behavior - Focus on array element inference, extract state pattern, nested object properties with constraints, and distributive conditional type resolution logic in src/solver/evaluate.rs (evaluate_conditional function ~lines 4651+)",
-          "files": [
-            "src/solver/evaluate.rs"
-          ],
-          "branch": "cco/issue-72-em-1-w-1",
-          "status": "merged",
-          "reviewsAddressed": 0,
-          "startedAt": "2026-01-20T14:32:26.295Z",
-          "prNumber": 74,
-          "prUrl": "https://github.com/mohsen1/tsz/pull/74",
-          "completedAt": "2026-01-20T14:47:38.694Z"
-        },
-        {
-          "id": 2,
-          "task": "Fix object call signature inference and object property access - Focus on distributive vs non-distributive union input handling, callable union branches, optional/rest parameters, and object property constraint resolution in src/solver/evaluate.rs (evaluate_conditional and evaluate_index_access functions)",
-          "files": [
-            "src/solver/evaluate.rs"
-          ],
-          "branch": "cco/issue-72-em-1-w-2",
-          "status": "pr_created",
-          "reviewsAddressed": 0,
-          "startedAt": "2026-01-20T14:47:40.596Z",
-          "prNumber": 75,
-          "prUrl": "https://github.com/mohsen1/tsz/pull/75",
-          "completedAt": "2026-01-20T15:02:42.725Z"
-        },
-        {
-          "id": 3,
-          "task": "Fix keyof operations on intersections, distribution over intersections with primitives, distributive with any input, mapped type key remapping, module augmentation namespace merge, return type type predicate, and template literal extends pattern in src/solver/evaluate.rs (evaluate_keyof, evaluate_mapped, evaluate_type functions)",
-          "files": [
-            "src/solver/evaluate.rs"
-          ],
-          "branch": "cco/issue-72-em-1-w-3",
-          "status": "merged",
-          "reviewsAddressed": 0,
-          "startedAt": "2026-01-20T15:02:44.612Z",
-          "prNumber": 76,
-          "prUrl": "https://github.com/mohsen1/tsz/pull/76",
-          "completedAt": "2026-01-20T15:23:55.031Z"
-        }
-      ],
+      "workers": [],
       "reviewsAddressed": 0,
       "startedAt": "2026-01-20T14:29:20.732Z",
-      "prNumber": 77,
-      "prUrl": "https://github.com/mohsen1/tsz/pull/77"
+      "error": "No workers merged - all had conflicts"
     },
     {
       "id": 2,
       "task": "Fix solver subtype tests (26 failures) - optional parameter handling, rest parameters, function type variance, tuple/intersection compatibility, template literal patterns, and mutable property invariance. Focus on subtype relationship checking.",
       "focusArea": "Solver Subtype",
       "branch": "cco/issue-72-em-2",
-      "status": "workers_running",
-      "workers": [
-        {
-          "id": 1,
-          "task": "Fix optional parameter handling in function subtype checking - implement variance rules for optional parameters (covariant optionality), mixed required/optional parameter handling, multiple optional parameters, required-to-optional parameter relationships, and constructor optional parameter compatibility.",
-          "files": [
-            "crates/tzlin/solver/subtype/src/function_parameters.rs",
-            "crates/tzlin/solver/subtype/src/optional.rs",
-            "crates/tzlin/solver/subtype/tests/optional_parameters.rs"
-          ],
-          "branch": "cco/issue-72-em-2-w-1",
-          "status": "in_progress",
-          "reviewsAddressed": 0,
-          "startedAt": "2026-01-20T15:34:24.048Z"
-        },
-        {
-          "id": 2,
-          "task": "Fix rest parameters and function type variance - implement rest parameter compatibility (fixed params to rest), contravariant parameter position checking for generics, and this parameter handling including void this types.",
-          "files": [
-            "crates/tzlin/solver/subtype/src/rest_parameters.rs",
-            "crates/tzlin/solver/subtype/src/this_parameter.rs",
-            "crates/tzlin/solver/subtype/src/variance.rs",
-            "crates/tzlin/solver/subtype/tests/rest_parameters.rs"
-          ],
-          "branch": "cco/issue-72-em-2-w-2",
-          "status": "pending",
-          "reviewsAddressed": 0
-        },
-        {
-          "id": 3,
-          "task": "Fix tuple/intersection compatibility, template literal patterns, and mutable property invariance - implement tuple intersection handling, intersection-union distribution rules, template literal pattern matching (empty parts, prefix, suffix, multiple parts, unions), and invariant ref cell pattern for mutable properties with different types.",
-          "files": [
-            "crates/tzlin/solver/subtype/src/tuple.rs",
-            "crates/tzlin/solver/subtype/src/intersection.rs",
-            "crates/tzlin/solver/subtype/src/template_literal.rs",
-            "crates/tzlin/solver/subtype/src/mutability.rs",
-            "crates/tzlin/solver/subtype/tests/tuple_intersection.rs",
-            "crates/tzlin/solver/subtype/tests/template_literals.rs",
-            "crates/tzlin/solver/subtype/tests/mutability.rs"
-          ],
-          "branch": "cco/issue-72-em-2-w-3",
-          "status": "pending",
-          "reviewsAddressed": 0
-        }
-      ],
+      "status": "pending",
+      "workers": [],
       "reviewsAddressed": 0,
       "startedAt": "2026-01-20T14:29:20.732Z"
     },
@@ -179,6 +92,6 @@
     "prLabel": "cco"
   },
   "createdAt": "2026-01-20T14:26:48.737Z",
-  "updatedAt": "2026-01-20T15:34:26.230Z",
+  "updatedAt": "2026-01-20T15:34:28.319Z",
   "analysisSummary": "Fix 106 failing unit tests across the solver, binder, and checker components. The solver has the majority of failures (101 tests) related to conditional type inference, distributive types, subtype relationships, and generic handling. The binder has 3 failures related to const enum priority flags and file locals tracking. The checker has 2 failures and 1 timeout related to abstract constructors and variable redeclaration."
 }
