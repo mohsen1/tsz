@@ -23,9 +23,11 @@ pub mod decorators;
 pub mod expr;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
+pub mod import_checker;
 pub mod jsx;
 pub mod nullish;
 pub mod optional_chain;
+pub mod property_checker;
 pub mod reachability_analyzer;
 pub mod statements;
 pub mod types;
@@ -44,6 +46,8 @@ pub use flow_analyzer::{
     merge_assignment_states,
 };
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
+pub use import_checker::ImportChecker;
+pub use property_checker::{PropertyAccessInfo, PropertyAccessResult, PropertyChecker};
 pub use reachability_analyzer::ReachabilityAnalyzer;
 pub use statements::StatementChecker;
 pub use types::{

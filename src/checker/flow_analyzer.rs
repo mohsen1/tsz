@@ -9,7 +9,14 @@
 //! - **DefinitelyAssigned**: Variable has definitely been assigned
 //!
 //! This is used to implement TypeScript's definite assignment checking for
-//! block-scoped variables (let/const) and detect use-before-definite-assignment errors.
+//! block-scoped variables (let/const) and detect use-before-definite-assignment errors (TS2454).
+//!
+//! The analyzer properly handles:
+//! - Loop back-edges and loop variable scoping
+//! - Conditional assignments (if/else branches)
+//! - Try/catch/finally blocks
+//! - Break/continue statements
+//! - Nested control flow
 
 use crate::binder::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
 use crate::parser::thin_node::ThinNodeArena;
@@ -327,6 +334,88 @@ impl<'a> DefiniteAssignmentAnalyzer<'a> {
         }
 
         state
+    }
+
+    /// Check if a variable use should emit TS2454 error.
+    ///
+    /// This is a helper for the main checker to determine if a variable
+    /// is being used before it's definitely assigned.
+    ///
+    /// # Arguments
+    /// * `var_id` - The variable declaration node ID
+    /// * `use_node` - The node where the variable is being used
+    /// * `flow_id` - The flow node ID at the point of use
+    ///
+    /// # Returns
+    /// * `true` if the variable is definitely assigned (no error)
+    /// * `false` if the variable is not definitely assigned (should emit TS2454)
+    pub fn check_variable_use(
+        &self,
+        var_id: NodeIndex,
+        use_node: NodeIndex,
+        flow_id: FlowNodeId,
+    ) -> bool {
+        // Check if this is a tracked variable
+        if !self.tracked_vars.contains(&var_id.0) {
+            // Not tracked, assume it's assigned
+            return true;
+        }
+
+        // Get the assignment state at this flow node
+        if let Some(state_map) = self.node_states.get(&flow_id) {
+            let state = state_map.get(var_id);
+
+            match state {
+                AssignmentState::DefinitelyAssigned => true,
+                AssignmentState::MaybeAssigned => {
+                    // Variable may be assigned - check if use is in a valid position
+                    // For now, treat MaybeAssigned as not definitely assigned
+                    // to be conservative and emit TS2454
+                    false
+                }
+                AssignmentState::Unassigned => false,
+            }
+        } else {
+            // No flow information available - assume not assigned
+            false
+        }
+    }
+
+    /// Get a detailed explanation of why a variable is not definitely assigned.
+    ///
+    /// This is useful for error messages to help users understand why TS2454 is being emitted.
+    ///
+    /// # Arguments
+    /// * `var_id` - The variable declaration node ID
+    /// * `use_node` - The node where the variable is being used
+    /// * `flow_id` - The flow node ID at the point of use
+    ///
+    /// # Returns
+    /// A string describing the control flow paths that lead to the variable being unassigned
+    pub fn explain_unassigned(
+        &self,
+        var_id: NodeIndex,
+        _use_node: NodeIndex,
+        flow_id: FlowNodeId,
+    ) -> String {
+        if let Some(state_map) = self.node_states.get(&flow_id) {
+            let state = state_map.get(var_id);
+
+            match state {
+                AssignmentState::Unassigned => {
+                    "Variable has never been assigned".to_string()
+                }
+                AssignmentState::MaybeAssigned => {
+                    "Variable is not definitely assigned on all control flow paths".to_string()
+                }
+                AssignmentState::DefinitelyAssigned => {
+                    // This shouldn't be called for definitely assigned variables
+                    "Variable is definitely assigned".to_string()
+                }
+            }
+        } else {
+            "Unable to determine assignment state".to_string()
+        }
     }
 
     /// Get the assignment target of a node (if it's an assignment to a tracked variable).
