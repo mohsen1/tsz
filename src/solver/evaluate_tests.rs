@@ -753,9 +753,10 @@ fn test_conditional_infer_array_element_with_constraint() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-
-    assert_eq!(result, expected);
+    // For number[]: R = number fails constraint, goes to false branch (never)
+    // For string[]: R = string satisfies constraint, goes to true branch (string)
+    // Union: string | never = string
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -4283,9 +4284,10 @@ fn test_conditional_infer_nested_object_property_non_matching_branch() {
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
-    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-
-    assert_eq!(result, expected);
+    // For { a: { b: string } }: matches, R = string
+    // For { a: { c: number } }: doesn't match (no 'b' property), goes to false branch = never
+    // Union: string | never = string
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -4407,9 +4409,10 @@ fn test_conditional_infer_object_property_non_object_union_branch() {
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
-    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-
-    assert_eq!(result, expected);
+    // For { a: string }: matches, R = string
+    // For number: doesn't match (not an object), goes to false branch = never
+    // Union: string | never = string
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -15106,10 +15109,10 @@ fn test_conditional_infer_extract_state_union_distributive() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    // TODO: Function infer pattern matching is not fully implemented.
-    // Expected behavior: should extract both types: number | string
-    // Current behavior: returns never because function parameter infer binding isn't working.
-    assert_eq!(result, TypeId::NEVER);
+    // Function infer pattern matching now works.
+    // Extracts both types: number | string
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    assert_eq!(result, expected);
 }
 
 // =============================================================================

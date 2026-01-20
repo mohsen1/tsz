@@ -696,11 +696,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    inferred = self.filter_inferred_by_constraint_or_undefined(
-                        inferred,
-                        constraint,
-                        &mut checker,
-                    );
+                    let is_union = matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
+                    if is_union && !cond.is_distributive {
+                        // For unions in non-distributive conditionals, use filter that adds undefined
+                        inferred = self.filter_inferred_by_constraint_or_undefined(
+                            inferred,
+                            constraint,
+                            &mut checker,
+                        );
+                    } else {
+                        // For single values or distributive conditionals, fail if constraint doesn't match
+                        if !checker.is_subtype_of(inferred, constraint) {
+                            return self.evaluate(cond.false_type);
+                        }
+                    }
                     subst.insert(info.name, inferred);
                 }
 
@@ -939,6 +948,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
+                    let is_union = matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
                     if prop_optional {
                         let Some(filtered) =
                             self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
@@ -948,12 +958,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             return self.evaluate(false_inst);
                         };
                         inferred = filtered;
-                    } else {
+                    } else if is_union || cond.is_distributive {
+                        // For unions or distributive conditionals, use filter that adds undefined
                         inferred = self.filter_inferred_by_constraint_or_undefined(
                             inferred,
                             constraint,
                             &mut checker,
                         );
+                    } else {
+                        // For non-distributive single values, fail if constraint doesn't match
+                        if !checker.is_subtype_of(inferred, constraint) {
+                            return self.evaluate(cond.false_type);
+                        }
                     }
                     subst.insert(info.name, inferred);
                 }
@@ -1058,11 +1074,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    inferred = self.filter_inferred_by_constraint_or_undefined(
-                        inferred,
-                        constraint,
-                        &mut checker,
-                    );
+                    let is_union = matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
+                    if is_union || cond.is_distributive {
+                        // For unions or distributive conditionals, use filter that adds undefined
+                        inferred = self.filter_inferred_by_constraint_or_undefined(
+                            inferred,
+                            constraint,
+                            &mut checker,
+                        );
+                    } else {
+                        // For non-distributive single values, fail if constraint doesn't match
+                        if !checker.is_subtype_of(inferred, constraint) {
+                            return self.evaluate(cond.false_type);
+                        }
+                    }
                     subst.insert(info.name, inferred);
                 }
 
@@ -3001,6 +3026,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             {
                 return false;
             }
+            // For optional params, add undefined to the source type for pattern matching.
+            // This allows inferring T | undefined from optional params.
             let source_param_type = if source_param.optional {
                 self.interner
                     .union2(source_param.type_id, TypeId::UNDEFINED)
@@ -3490,22 +3517,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     };
                 }
                 if pattern_sig.this_type.is_none() && has_param_infer && !has_return_infer {
-                    let mut match_params = |source_type: TypeId,
-                                            source_params: &[ParamInfo],
+                    let mut match_params = |source_params: &[ParamInfo],
                                             bindings: &mut FxHashMap<Atom, TypeId>|
                      -> bool {
                         let mut local_visited = FxHashSet::default();
-                        if !self.match_signature_params(
+                        // Match params and infer types. Skip subtype check since pattern matching
+                        // success implies compatibility. The subtype check can fail for optional
+                        // params due to contravariance issues with undefined.
+                        self.match_signature_params(
                             source_params,
                             &pattern_sig.params,
                             bindings,
                             &mut local_visited,
                             checker,
-                        ) {
-                            return false;
-                        }
-                        let substituted = self.substitute_infer(pattern, bindings);
-                        checker.is_subtype_of(source_type, substituted)
+                        )
                     };
 
                     return match self.interner.lookup(source) {
@@ -3518,11 +3543,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 return false;
                             }
                             let source_sig = &source_shape.call_signatures[0];
-                            match_params(source, &source_sig.params, bindings)
+                            match_params(&source_sig.params, bindings)
                         }
                         Some(TypeKey::Function(source_fn_id)) => {
                             let source_fn = self.interner.function_shape(source_fn_id);
-                            match_params(source, &source_fn.params, bindings)
+                            match_params(&source_fn.params, bindings)
                         }
                         Some(TypeKey::Union(members)) => {
                             let members = self.interner.type_list(members);
@@ -3541,7 +3566,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         }
                                         let source_sig = &source_shape.call_signatures[0];
                                         if !match_params(
-                                            member,
                                             &source_sig.params,
                                             &mut member_bindings,
                                         ) {
@@ -3551,7 +3575,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     Some(TypeKey::Function(source_fn_id)) => {
                                         let source_fn = self.interner.function_shape(source_fn_id);
                                         if !match_params(
-                                            member,
                                             &source_fn.params,
                                             &mut member_bindings,
                                         ) {
@@ -4676,6 +4699,132 @@ impl<'a> InferSubstitutor<'a> {
                         type_predicate: shape.type_predicate.clone(),
                         is_constructor: shape.is_constructor,
                         is_method: shape.is_method,
+                    })
+                } else {
+                    type_id
+                }
+            }
+            TypeKey::Callable(shape_id) => {
+                let shape = self.interner.callable_shape(shape_id);
+                let mut changed = false;
+                
+                let call_signatures: Vec<CallSignature> = shape.call_signatures.iter().map(|sig| {
+                    let mut new_params = Vec::with_capacity(sig.params.len());
+                    for param in sig.params.iter() {
+                        let param_type = self.substitute(param.type_id);
+                        if param_type != param.type_id {
+                            changed = true;
+                        }
+                        new_params.push(ParamInfo {
+                            name: param.name,
+                            type_id: param_type,
+                            optional: param.optional,
+                            rest: param.rest,
+                        });
+                    }
+                    let return_type = self.substitute(sig.return_type);
+                    if return_type != sig.return_type {
+                        changed = true;
+                    }
+                    let this_type = sig.this_type.map(|t| {
+                        let substituted = self.substitute(t);
+                        if substituted != t {
+                            changed = true;
+                        }
+                        substituted
+                    });
+                    CallSignature {
+                        params: new_params,
+                        this_type,
+                        return_type,
+                        type_params: sig.type_params.clone(),
+                        type_predicate: sig.type_predicate.clone(),
+                    }
+                }).collect();
+                
+                let construct_signatures: Vec<CallSignature> = shape.construct_signatures.iter().map(|sig| {
+                    let mut new_params = Vec::with_capacity(sig.params.len());
+                    for param in sig.params.iter() {
+                        let param_type = self.substitute(param.type_id);
+                        if param_type != param.type_id {
+                            changed = true;
+                        }
+                        new_params.push(ParamInfo {
+                            name: param.name,
+                            type_id: param_type,
+                            optional: param.optional,
+                            rest: param.rest,
+                        });
+                    }
+                    let return_type = self.substitute(sig.return_type);
+                    if return_type != sig.return_type {
+                        changed = true;
+                    }
+                    let this_type = sig.this_type.map(|t| {
+                        let substituted = self.substitute(t);
+                        if substituted != t {
+                            changed = true;
+                        }
+                        substituted
+                    });
+                    CallSignature {
+                        params: new_params,
+                        this_type,
+                        return_type,
+                        type_params: sig.type_params.clone(),
+                        type_predicate: sig.type_predicate.clone(),
+                    }
+                }).collect();
+                
+                let properties: Vec<PropertyInfo> = shape.properties.iter().map(|prop| {
+                    let prop_type = self.substitute(prop.type_id);
+                    let write_type = self.substitute(prop.write_type);
+                    if prop_type != prop.type_id || write_type != prop.write_type {
+                        changed = true;
+                    }
+                    PropertyInfo {
+                        name: prop.name,
+                        type_id: prop_type,
+                        write_type,
+                        optional: prop.optional,
+                        readonly: prop.readonly,
+                        is_method: prop.is_method,
+                    }
+                }).collect();
+                
+                let string_index = shape.string_index.as_ref().map(|idx| {
+                    let key_type = self.substitute(idx.key_type);
+                    let value_type = self.substitute(idx.value_type);
+                    if key_type != idx.key_type || value_type != idx.value_type {
+                        changed = true;
+                    }
+                    IndexSignature {
+                        key_type,
+                        value_type,
+                        readonly: idx.readonly,
+                    }
+                });
+                
+                let number_index = shape.number_index.as_ref().map(|idx| {
+                    let key_type = self.substitute(idx.key_type);
+                    let value_type = self.substitute(idx.value_type);
+                    if key_type != idx.key_type || value_type != idx.value_type {
+                        changed = true;
+                    }
+                    IndexSignature {
+                        key_type,
+                        value_type,
+                        readonly: idx.readonly,
+                    }
+                });
+                
+                if changed {
+                    self.interner.callable(CallableShape {
+                        call_signatures,
+                        construct_signatures,
+                        properties,
+                        string_index,
+                        number_index,
                     })
                 } else {
                     type_id
