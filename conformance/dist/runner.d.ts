@@ -28,6 +28,8 @@ interface TestStats {
     sameErrorCount: number;
     missingErrors: number;
     extraErrors: number;
+    baselineMatches: number;
+    baselineTotal: number;
     byCategory: Record<string, CategoryStats>;
     byErrorCode: Record<number, ErrorCodeStats>;
 }

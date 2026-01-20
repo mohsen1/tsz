@@ -14,6 +14,7 @@ import * as ts from 'typescript';
 import * as path from 'path';
 import * as fs from 'fs';
 import { compareDiagnostics, DiagnosticComparison, TestResult, formatComparison } from './compare.js';
+import { loadBaseline, compareWithBaseline, BaselineComparison, formatBaselineComparison } from './baseline.js';
 
 // Configuration
 interface RunnerConfig {
@@ -63,6 +64,8 @@ interface TestStats {
   sameErrorCount: number;
   missingErrors: number;
   extraErrors: number;
+  baselineMatches: number;     // Tests matching TypeScript baseline
+  baselineTotal: number;       // Tests with baseline files
   byCategory: Record<string, CategoryStats>;
   byErrorCode: Record<number, ErrorCodeStats>;
 }
@@ -224,6 +227,54 @@ function toCompilerOptions(testOptions: Record<string, unknown>): ts.CompilerOpt
     options.target = targetMap[target] || ts.ScriptTarget.ES2020;
   }
 
+  // Map module option
+  if (testOptions.module) {
+    const moduleMap: Record<string, ts.ModuleKind> = {
+      'commonjs': ts.ModuleKind.CommonJS,
+      'amd': ts.ModuleKind.AMD,
+      'umd': ts.ModuleKind.UMD,
+      'system': ts.ModuleKind.System,
+      'es6': ts.ModuleKind.ES2015,
+      'es2015': ts.ModuleKind.ES2015,
+      'es2020': ts.ModuleKind.ES2020,
+      'es2022': ts.ModuleKind.ES2022,
+      'esnext': ts.ModuleKind.ESNext,
+      'node16': ts.ModuleKind.Node16,
+      'nodenext': ts.ModuleKind.NodeNext,
+      'preserve': ts.ModuleKind.Preserve,
+      'none': ts.ModuleKind.None,
+    };
+    const mod = String(testOptions.module).toLowerCase();
+    options.module = moduleMap[mod] || ts.ModuleKind.ESNext;
+  }
+
+  // Map moduleResolution option
+  if (testOptions.moduleresolution) {
+    const resolutionMap: Record<string, ts.ModuleResolutionKind> = {
+      'classic': ts.ModuleResolutionKind.Classic,
+      'node': ts.ModuleResolutionKind.NodeJs,
+      'node10': ts.ModuleResolutionKind.Node10,
+      'node16': ts.ModuleResolutionKind.Node16,
+      'nodenext': ts.ModuleResolutionKind.NodeNext,
+      'bundler': ts.ModuleResolutionKind.Bundler,
+    };
+    const res = String(testOptions.moduleresolution).toLowerCase();
+    options.moduleResolution = resolutionMap[res] || ts.ModuleResolutionKind.NodeJs;
+  }
+
+  // Map jsx option
+  if (testOptions.jsx) {
+    const jsxMap: Record<string, ts.JsxEmit> = {
+      'preserve': ts.JsxEmit.Preserve,
+      'react': ts.JsxEmit.React,
+      'react-native': ts.JsxEmit.ReactNative,
+      'react-jsx': ts.JsxEmit.ReactJSX,
+      'react-jsxdev': ts.JsxEmit.ReactJSXDev,
+    };
+    const jsx = String(testOptions.jsx).toLowerCase();
+    options.jsx = jsxMap[jsx] || ts.JsxEmit.React;
+  }
+
   // Boolean options
   const booleanOptions: Array<[string, keyof ts.CompilerOptions]> = [
     ['noimplicitany', 'noImplicitAny'],
@@ -238,13 +289,25 @@ function toCompilerOptions(testOptions: Record<string, unknown>): ts.CompilerOpt
     ['declaration', 'declaration'],
     ['declarationmap', 'declarationMap'],
     ['sourcemap', 'sourceMap'],
-    ['jsx', 'jsx'],
+    ['nolib', 'noLib'],
+    ['skiplibcheck', 'skipLibCheck'],
+    ['checkjs', 'checkJs'],
+    ['allowjs', 'allowJs'],
+    ['experimentaldecorators', 'experimentalDecorators'],
+    ['emitdecoratormetadata', 'emitDecoratorMetadata'],
+    ['usedefineforclassproperty', 'useDefineForClassFields'],
   ];
 
   for (const [testKey, compilerKey] of booleanOptions) {
     if (testOptions[testKey] !== undefined) {
       (options as Record<string, unknown>)[compilerKey] = testOptions[testKey];
     }
+  }
+
+  // Handle lib option (array of library names)
+  if (testOptions.lib) {
+    const libStr = String(testOptions.lib);
+    options.lib = libStr.split(',').map(s => s.trim());
   }
 
   return options;
@@ -472,6 +535,8 @@ function createStats(): TestStats {
     sameErrorCount: 0,
     missingErrors: 0,
     extraErrors: 0,
+    baselineMatches: 0,
+    baselineTotal: 0,
     byCategory: {},
     byErrorCode: {},
   };
@@ -550,9 +615,13 @@ function printReport(stats: TestStats, verbose: boolean): void {
 
   const passRate = stats.total > 0 ? ((stats.passed / stats.total) * 100).toFixed(1) : '0.0';
   const exactMatchRate = stats.total > 0 ? ((stats.exactMatch / stats.total) * 100).toFixed(1) : '0.0';
+  const baselineRate = stats.baselineTotal > 0 
+    ? ((stats.baselineMatches / stats.baselineTotal) * 100).toFixed(1) 
+    : '0.0';
 
   log(`\nOverall Pass Rate: ${passRate}%`, stats.passed === stats.total ? colors.green : colors.yellow);
   log(`Exact Match Rate:  ${exactMatchRate}%`, colors.cyan);
+  log(`Baseline Match:    ${baselineRate}% (${stats.baselineMatches}/${stats.baselineTotal})`, colors.cyan);
 
   log('\nSummary:', colors.bold);
   log(`  Total:        ${stats.total}`);
@@ -561,7 +630,7 @@ function printReport(stats: TestStats, verbose: boolean): void {
   log(`  Crashed:      ${stats.crashed}`, stats.crashed > 0 ? colors.red : colors.dim);
   log(`  Skipped:      ${stats.skipped}`, colors.dim);
 
-  log('\nDiagnostic Accuracy:', colors.bold);
+  log('\nDiagnostic Accuracy (vs TSC):', colors.bold);
   log(`  Exact Match:  ${stats.exactMatch}`);
   log(`  Same Count:   ${stats.sameErrorCount}`);
   log(`  Missing:      ${stats.missingErrors}`, stats.missingErrors > 0 ? colors.yellow : colors.dim);
@@ -635,14 +704,17 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     return createStats();
   }
 
-  // Collect test files
+  // Collect test files - distribute evenly across categories
   log(`\nCollecting test files...`, colors.cyan);
   const allTestFiles: string[] = [];
+  const testsPerCategory = Math.ceil(cfg.maxTests / cfg.categories.length);
 
   for (const category of cfg.categories) {
     const categoryDir = path.join(cfg.testsBasePath, category);
     if (fs.existsSync(categoryDir)) {
-      const files = collectTestFiles(categoryDir, cfg.maxTests - allTestFiles.length);
+      const remaining = cfg.maxTests - allTestFiles.length;
+      const limit = Math.min(testsPerCategory, remaining);
+      const files = collectTestFiles(categoryDir, limit);
       allTestFiles.push(...files);
       log(`  ${category}: ${files.length} files`, colors.dim);
     }
@@ -658,7 +730,7 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
   // Run tests
   log(`\nRunning tests...`, colors.cyan);
   const stats = createStats();
-  const failedTests: Array<{ file: string; comparison: DiagnosticComparison }> = [];
+  const failedTests: Array<{ file: string; comparison: DiagnosticComparison; baseline?: BaselineComparison }> = [];
   const crashedTests: Array<{ file: string; error: string }> = [];
 
   for (let i = 0; i < allTestFiles.length; i++) {
@@ -681,17 +753,35 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 
       const comparison = compareDiagnostics(tscResult, wasmResult);
 
+      // Load and compare with TypeScript baseline
+      const baseline = loadBaseline(filePath, cfg.testsBasePath);
+      const wasmCodes = wasmResult.diagnostics.map(d => d.code);
+      const baselineComparison = compareWithBaseline(wasmCodes, baseline);
+      
+      // Track baseline statistics
+      if (baseline.exists) {
+        stats.baselineTotal++;
+        if (baselineComparison.exactMatch) {
+          stats.baselineMatches++;
+        }
+      } else if (wasmCodes.length === 0) {
+        // No baseline and no errors = match
+        stats.baselineTotal++;
+        stats.baselineMatches++;
+      }
+
       updateStats(stats, testCase.category, comparison, wasmResult.crashed, relPath);
 
       if (wasmResult.crashed) {
         crashedTests.push({ file: relPath, error: wasmResult.error || 'Unknown error' });
       } else if (!comparison.exactMatch) {
-        failedTests.push({ file: relPath, comparison });
+        failedTests.push({ file: relPath, comparison, baseline: baselineComparison });
       }
 
       if (cfg.verbose && !comparison.exactMatch) {
         log(`\n  ${relPath}:`, colors.yellow);
-        log(`    ${formatComparison(comparison)}`, colors.dim);
+        log(`    TSC: ${formatComparison(comparison)}`, colors.dim);
+        log(`    Baseline: ${formatBaselineComparison(baselineComparison)}`, colors.dim);
       }
 
     } catch (error) {
