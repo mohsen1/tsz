@@ -6,6 +6,56 @@ This document outlines the plan to consolidate and improve the testing infrastru
 
 ---
 
+## ⚠️ IMPORTANT: Run Tests in Docker
+
+**Tests MUST run inside Docker containers.** Running conformance tests directly on the host machine is dangerous and can:
+
+- **Infinite loops**: Some malformed test inputs can cause the parser/checker to loop forever
+- **Out of memory (OOM)**: Deep recursion or large type expansions can exhaust system memory
+- **System instability**: Runaway processes can freeze or crash the host machine
+
+### Safe Testing Commands
+
+```bash
+# ✅ SAFE: Run tests in Docker (recommended)
+./scripts/test.sh
+
+# ✅ SAFE: Run conformance tests in Docker
+./scripts/test.sh --conformance
+
+# ⚠️ DANGEROUS: Direct execution (only for debugging single files)
+cd conformance && npm run test:100  # Can hang or OOM
+```
+
+### Docker Configuration
+
+The Docker container enforces resource limits:
+
+```dockerfile
+# Memory limit prevents OOM from killing host
+--memory=4g
+
+# CPU limit prevents infinite loops from freezing host  
+--cpus=2
+
+# Timeout kills runaway processes
+timeout 30s node dist/runner.js
+```
+
+### When Direct Execution is Acceptable
+
+Only run tests directly on the host when:
+1. Debugging a **single specific test file** with `scripts/run-single-test.mjs`
+2. You have verified the test doesn't cause infinite loops
+3. You're monitoring memory usage
+
+```bash
+# Safe for single file debugging:
+node scripts/run-single-test.mjs TypeScript/tests/cases/conformance/types/spread/spreadSomething.ts
+```
+
+---
+
 ## Part 1: Understanding TypeScript Test Directives
 
 ### Directive Format
