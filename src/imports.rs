@@ -421,9 +421,11 @@ mod tests {
         tracker.add_declaration(ImportDeclaration {
             module_specifier: "lodash".to_string(),
             node: NodeIndex::NONE,
-            bindings: vec![ImportedBindingBuilder::new("map", "lodash")
-                .kind(ImportKind::Named)
-                .build()],
+            bindings: vec![
+                ImportedBindingBuilder::new("map", "lodash")
+                    .kind(ImportKind::Named)
+                    .build(),
+            ],
             is_type_only: false,
             is_side_effect_only: false,
             start: 0,
@@ -434,9 +436,11 @@ mod tests {
         tracker.add_declaration(ImportDeclaration {
             module_specifier: "react".to_string(),
             node: NodeIndex::NONE,
-            bindings: vec![ImportedBindingBuilder::new("React", "react")
-                .kind(ImportKind::Default)
-                .build()],
+            bindings: vec![
+                ImportedBindingBuilder::new("React", "react")
+                    .kind(ImportKind::Default)
+                    .build(),
+            ],
             is_type_only: false,
             is_side_effect_only: false,
             start: 0,

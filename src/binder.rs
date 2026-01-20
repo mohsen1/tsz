@@ -582,4 +582,3 @@ impl ScopeContext {
         )
     }
 }
-

@@ -1,7 +1,7 @@
 use super::FlowAnalyzer;
+use crate::checker::flow_graph_builder::FlowGraphBuilder;
 use crate::parser::NodeIndex;
 use crate::parser::thin_node::ThinNodeArena;
-use crate::checker::flow_graph_builder::FlowGraphBuilder;
 use crate::solver::{PropertyInfo, TypeId, TypeInterner};
 use crate::thin_binder::ThinBinderState;
 use crate::thin_checker::ThinCheckerState;
@@ -438,7 +438,13 @@ if (isString(x)) {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -482,7 +488,13 @@ if (guard(x)) {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -567,7 +579,13 @@ if (assertString(x)) {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -607,7 +625,13 @@ x;
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -685,7 +709,13 @@ x;
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -734,7 +764,13 @@ class Foo {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1173,7 +1209,13 @@ if (isStringArray(x)) {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1229,7 +1271,13 @@ const callback = () => {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1239,21 +1287,37 @@ const callback = () => {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Get the variable statement at index 2 (const callback = ...)
-    let var_stmt_idx = *source_file.statements.nodes.get(2).expect("variable statement");
+    let var_stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(2)
+        .expect("variable statement");
     let var_stmt_node = arena.get(var_stmt_idx).expect("var stmt node");
     let var_stmt_data = arena.get_variable(var_stmt_node).expect("var stmt data");
 
     // Get the declaration list
-    let decl_list_idx = *var_stmt_data.declarations.nodes.first().expect("declaration list");
+    let decl_list_idx = *var_stmt_data
+        .declarations
+        .nodes
+        .first()
+        .expect("declaration list");
     let decl_list_node = arena.get(decl_list_idx).expect("decl list node");
     let decl_list_data = arena.get_variable(decl_list_node).expect("decl list data");
 
     // Get the first declaration and its initializer (the arrow function)
-    let decl_idx = *decl_list_data.declarations.nodes.first().expect("declaration");
+    let decl_idx = *decl_list_data
+        .declarations
+        .nodes
+        .first()
+        .expect("declaration");
     let decl_node = arena.get(decl_idx).expect("decl node");
-    let decl = arena.get_variable_declaration(decl_node).expect("decl data");
+    let decl = arena
+        .get_variable_declaration(decl_node)
+        .expect("decl data");
     let arrow_func_node = arena.get(decl.initializer).expect("arrow func node");
-    let arrow_func = arena.get_function(arrow_func_node).expect("arrow func data");
+    let arrow_func = arena
+        .get_function(arrow_func_node)
+        .expect("arrow func data");
 
     // Get the body block
     let body_node = arena.get(arrow_func.body).expect("body node");
@@ -1267,10 +1331,14 @@ const callback = () => {
 
     // The variable inside the closure should be narrowed to "assigned"
     let flow_in_closure = binder.get_node_flow(ident_in_closure);
-    assert!(flow_in_closure.is_some(), "Flow should be recorded for variable inside closure");
+    assert!(
+        flow_in_closure.is_some(),
+        "Flow should be recorded for variable inside closure"
+    );
 
     // Verify the type narrowing works correctly
-    let narrowed_in_closure = analyzer.get_flow_type(ident_in_closure, union, flow_in_closure.unwrap());
+    let narrowed_in_closure =
+        analyzer.get_flow_type(ident_in_closure, union, flow_in_closure.unwrap());
     assert_eq!(narrowed_in_closure, types.literal_string("assigned"));
 }
 
@@ -1332,7 +1400,13 @@ arr.forEach((item) => {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1341,47 +1415,81 @@ arr.forEach((item) => {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Get the forEach expression statement (index 3)
-    let foreach_stmt_idx = *source_file.statements.nodes.get(3).expect("forEach statement");
+    let foreach_stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(3)
+        .expect("forEach statement");
     let foreach_stmt_node = arena.get(foreach_stmt_idx).expect("forEach stmt node");
-    let foreach_stmt_data = arena.get_expression_statement(foreach_stmt_node).expect("forEach stmt data");
+    let foreach_stmt_data = arena
+        .get_expression_statement(foreach_stmt_node)
+        .expect("forEach stmt data");
 
     // Get the call expression from the expression statement
-    let foreach_call_node = arena.get(foreach_stmt_data.expression).expect("forEach call node");
-    let foreach_call = arena.get_call_expr(foreach_call_node).expect("forEach call data");
+    let foreach_call_node = arena
+        .get(foreach_stmt_data.expression)
+        .expect("forEach call node");
+    let foreach_call = arena
+        .get_call_expr(foreach_call_node)
+        .expect("forEach call data");
 
     // Get the arrow function argument
     let args = foreach_call.arguments.as_ref().expect("arguments");
     let arrow_func_idx = *args.nodes.first().expect("arrow function");
     let arrow_func_node = arena.get(arrow_func_idx).expect("arrow func node");
-    let arrow_func = arena.get_function(arrow_func_node).expect("arrow func data");
+    let arrow_func = arena
+        .get_function(arrow_func_node)
+        .expect("arrow func data");
 
     // Get the body block
     let body_node = arena.get(arrow_func.body).expect("body node");
     let body_block = arena.get_block(body_node).expect("body block");
 
     // Get the variable reference x inside the closure (in the initializer of y)
-    let y_var_stmt_idx = *body_block.statements.nodes.first().expect("y variable statement");
+    let y_var_stmt_idx = *body_block
+        .statements
+        .nodes
+        .first()
+        .expect("y variable statement");
     let y_var_stmt_node = arena.get(y_var_stmt_idx).expect("y var stmt node");
-    let y_var_stmt_data = arena.get_variable(y_var_stmt_node).expect("y var stmt data");
+    let y_var_stmt_data = arena
+        .get_variable(y_var_stmt_node)
+        .expect("y var stmt data");
 
     // Get the declaration list
-    let y_decl_list_idx = *y_var_stmt_data.declarations.nodes.first().expect("y declaration list");
+    let y_decl_list_idx = *y_var_stmt_data
+        .declarations
+        .nodes
+        .first()
+        .expect("y declaration list");
     let y_decl_list_node = arena.get(y_decl_list_idx).expect("y decl list node");
-    let y_decl_list_data = arena.get_variable(y_decl_list_node).expect("y decl list data");
+    let y_decl_list_data = arena
+        .get_variable(y_decl_list_node)
+        .expect("y decl list data");
 
     // Get the declaration
-    let y_decl_idx = *y_decl_list_data.declarations.nodes.first().expect("y declaration");
+    let y_decl_idx = *y_decl_list_data
+        .declarations
+        .nodes
+        .first()
+        .expect("y declaration");
     let y_decl_node = arena.get(y_decl_idx).expect("y decl node");
-    let y_decl = arena.get_variable_declaration(y_decl_node).expect("y decl data");
+    let y_decl = arena
+        .get_variable_declaration(y_decl_node)
+        .expect("y decl data");
     let x_ref_in_closure = y_decl.initializer;
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     // The variable x inside the forEach callback should be narrowed to string
     let flow_in_callback = binder.get_node_flow(x_ref_in_closure);
-    assert!(flow_in_callback.is_some(), "Flow should be recorded for variable inside forEach callback");
+    assert!(
+        flow_in_callback.is_some(),
+        "Flow should be recorded for variable inside forEach callback"
+    );
 
-    let narrowed_in_callback = analyzer.get_flow_type(x_ref_in_closure, union, flow_in_callback.unwrap());
+    let narrowed_in_callback =
+        analyzer.get_flow_type(x_ref_in_closure, union, flow_in_callback.unwrap());
     assert_eq!(narrowed_in_callback, types.literal_string("hello"));
 }
 
@@ -1406,7 +1514,13 @@ const mapped = arr.map((item) => {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1415,19 +1529,33 @@ const mapped = arr.map((item) => {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Get the variable statement at index 3 (const mapped = ...)
-    let var_stmt_idx = *source_file.statements.nodes.get(3).expect("variable statement");
+    let var_stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(3)
+        .expect("variable statement");
     let var_stmt_node = arena.get(var_stmt_idx).expect("var stmt node");
     let var_stmt_data = arena.get_variable(var_stmt_node).expect("var stmt data");
 
     // Get the declaration list
-    let decl_list_idx = *var_stmt_data.declarations.nodes.first().expect("declaration list");
+    let decl_list_idx = *var_stmt_data
+        .declarations
+        .nodes
+        .first()
+        .expect("declaration list");
     let decl_list_node = arena.get(decl_list_idx).expect("decl list node");
     let decl_list_data = arena.get_variable(decl_list_node).expect("decl list data");
 
     // Get the first declaration and its initializer (the map call)
-    let decl_idx = *decl_list_data.declarations.nodes.first().expect("declaration");
+    let decl_idx = *decl_list_data
+        .declarations
+        .nodes
+        .first()
+        .expect("declaration");
     let decl_node = arena.get(decl_idx).expect("decl node");
-    let decl = arena.get_variable_declaration(decl_node).expect("decl data");
+    let decl = arena
+        .get_variable_declaration(decl_node)
+        .expect("decl data");
     let map_call_idx = decl.initializer;
     let map_call_node = arena.get(map_call_idx).expect("map call node");
     let map_call = arena.get_call_expr(map_call_node).expect("map call data");
@@ -1436,32 +1564,46 @@ const mapped = arr.map((item) => {
     let args = map_call.arguments.as_ref().expect("arguments");
     let arrow_func_idx = *args.nodes.first().expect("arrow function");
     let arrow_func_node = arena.get(arrow_func_idx).expect("arrow func node");
-    let arrow_func = arena.get_function(arrow_func_node).expect("arrow func data");
+    let arrow_func = arena
+        .get_function(arrow_func_node)
+        .expect("arrow func data");
 
     // Get the body block
     let body_node = arena.get(arrow_func.body).expect("body node");
     let body_block = arena.get_block(body_node).expect("body block");
 
     // Get the return statement
-    let return_stmt = *body_block.statements.nodes.first().expect("return statement");
+    let return_stmt = *body_block
+        .statements
+        .nodes
+        .first()
+        .expect("return statement");
     let return_node = arena.get(return_stmt).expect("return node");
-    let return_data = arena.get_return_statement(return_node).expect("return data");
+    let return_data = arena
+        .get_return_statement(return_node)
+        .expect("return data");
 
     // Get the property access expression x.length
     let prop_access = return_data.expression;
 
     // Get the identifier x from the property access
     let prop_access_node = arena.get(prop_access).expect("prop access node");
-    let access_expr = arena.get_access_expr(prop_access_node).expect("access expr data");
+    let access_expr = arena
+        .get_access_expr(prop_access_node)
+        .expect("access expr data");
     let x_identifier = access_expr.expression;
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     // The variable x should be narrowed to string in the map callback
     let flow_in_callback = binder.get_node_flow(prop_access);
-    assert!(flow_in_callback.is_some(), "Flow should be recorded for expression inside map callback");
+    assert!(
+        flow_in_callback.is_some(),
+        "Flow should be recorded for expression inside map callback"
+    );
 
-    let narrowed_in_callback = analyzer.get_flow_type(x_identifier, union, flow_in_callback.unwrap());
+    let narrowed_in_callback =
+        analyzer.get_flow_type(x_identifier, union, flow_in_callback.unwrap());
     assert_eq!(narrowed_in_callback, types.literal_string("world"));
 }
 
@@ -1490,7 +1632,13 @@ const outer = () => {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1499,58 +1647,123 @@ const outer = () => {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Get the outer arrow function (inside a VariableStatement -> VariableDeclarationList -> VariableDeclaration)
-    let outer_var_stmt_idx = *source_file.statements.nodes.get(2).expect("outer variable statement");
+    let outer_var_stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(2)
+        .expect("outer variable statement");
     let outer_var_stmt_node = arena.get(outer_var_stmt_idx).expect("outer var stmt node");
-    let outer_var_stmt = arena.get_variable(outer_var_stmt_node).expect("outer var stmt data");
-    let outer_decl_list_idx = *outer_var_stmt.declarations.nodes.first().expect("outer declaration list");
-    let outer_decl_list_node = arena.get(outer_decl_list_idx).expect("outer decl list node");
-    let outer_decl_list = arena.get_variable(outer_decl_list_node).expect("outer decl list data");
-    let outer_decl_idx = *outer_decl_list.declarations.nodes.first().expect("outer declaration");
+    let outer_var_stmt = arena
+        .get_variable(outer_var_stmt_node)
+        .expect("outer var stmt data");
+    let outer_decl_list_idx = *outer_var_stmt
+        .declarations
+        .nodes
+        .first()
+        .expect("outer declaration list");
+    let outer_decl_list_node = arena
+        .get(outer_decl_list_idx)
+        .expect("outer decl list node");
+    let outer_decl_list = arena
+        .get_variable(outer_decl_list_node)
+        .expect("outer decl list data");
+    let outer_decl_idx = *outer_decl_list
+        .declarations
+        .nodes
+        .first()
+        .expect("outer declaration");
     let outer_decl_node = arena.get(outer_decl_idx).expect("outer decl node");
-    let outer_decl = arena.get_variable_declaration(outer_decl_node).expect("outer decl data");
+    let outer_decl = arena
+        .get_variable_declaration(outer_decl_node)
+        .expect("outer decl data");
     let outer_arrow_idx = outer_decl.initializer;
     let outer_arrow_node = arena.get(outer_arrow_idx).expect("outer arrow node");
-    let outer_func = arena.get_function(outer_arrow_node).expect("outer func data");
+    let outer_func = arena
+        .get_function(outer_arrow_node)
+        .expect("outer func data");
 
     // Get the outer body block
     let outer_body_node = arena.get(outer_func.body).expect("outer body node");
     let outer_body = arena.get_block(outer_body_node).expect("outer body");
 
     // Get the inner arrow function declaration (inside a VariableStatement -> VariableDeclarationList -> VariableDeclaration)
-    let inner_var_stmt_idx = *outer_body.statements.nodes.first().expect("inner variable statement");
+    let inner_var_stmt_idx = *outer_body
+        .statements
+        .nodes
+        .first()
+        .expect("inner variable statement");
     let inner_var_stmt_node = arena.get(inner_var_stmt_idx).expect("inner var stmt node");
-    let inner_var_stmt = arena.get_variable(inner_var_stmt_node).expect("inner var stmt data");
-    let inner_decl_list_idx = *inner_var_stmt.declarations.nodes.first().expect("inner declaration list");
-    let inner_decl_list_node = arena.get(inner_decl_list_idx).expect("inner decl list node");
-    let inner_decl_list = arena.get_variable(inner_decl_list_node).expect("inner decl list data");
-    let inner_decl_idx = *inner_decl_list.declarations.nodes.first().expect("inner declaration");
+    let inner_var_stmt = arena
+        .get_variable(inner_var_stmt_node)
+        .expect("inner var stmt data");
+    let inner_decl_list_idx = *inner_var_stmt
+        .declarations
+        .nodes
+        .first()
+        .expect("inner declaration list");
+    let inner_decl_list_node = arena
+        .get(inner_decl_list_idx)
+        .expect("inner decl list node");
+    let inner_decl_list = arena
+        .get_variable(inner_decl_list_node)
+        .expect("inner decl list data");
+    let inner_decl_idx = *inner_decl_list
+        .declarations
+        .nodes
+        .first()
+        .expect("inner declaration");
     let inner_decl_node = arena.get(inner_decl_idx).expect("inner decl node");
-    let inner_decl = arena.get_variable_declaration(inner_decl_node).expect("inner decl data");
+    let inner_decl = arena
+        .get_variable_declaration(inner_decl_node)
+        .expect("inner decl data");
     let inner_arrow_idx = inner_decl.initializer;
     let inner_arrow_node = arena.get(inner_arrow_idx).expect("inner arrow node");
-    let inner_func = arena.get_function(inner_arrow_node).expect("inner func data");
+    let inner_func = arena
+        .get_function(inner_arrow_node)
+        .expect("inner func data");
 
     // Get the inner body block
     let inner_body_node = arena.get(inner_func.body).expect("inner body node");
     let inner_body = arena.get_block(inner_body_node).expect("inner body");
 
     // Get the y declaration statement (inside a VariableStatement -> VariableDeclarationList -> VariableDeclaration)
-    let y_var_stmt_idx = *inner_body.statements.nodes.first().expect("y variable statement");
+    let y_var_stmt_idx = *inner_body
+        .statements
+        .nodes
+        .first()
+        .expect("y variable statement");
     let y_var_stmt_node = arena.get(y_var_stmt_idx).expect("y var stmt node");
-    let y_var_stmt = arena.get_variable(y_var_stmt_node).expect("y var stmt data");
-    let y_decl_list_idx = *y_var_stmt.declarations.nodes.first().expect("y declaration list");
+    let y_var_stmt = arena
+        .get_variable(y_var_stmt_node)
+        .expect("y var stmt data");
+    let y_decl_list_idx = *y_var_stmt
+        .declarations
+        .nodes
+        .first()
+        .expect("y declaration list");
     let y_decl_list_node = arena.get(y_decl_list_idx).expect("y decl list node");
-    let y_decl_list = arena.get_variable(y_decl_list_node).expect("y decl list data");
-    let y_decl_idx = *y_decl_list.declarations.nodes.first().expect("y declaration");
+    let y_decl_list = arena
+        .get_variable(y_decl_list_node)
+        .expect("y decl list data");
+    let y_decl_idx = *y_decl_list
+        .declarations
+        .nodes
+        .first()
+        .expect("y declaration");
     let y_decl_node = arena.get(y_decl_idx).expect("y decl node");
-    let y_decl = arena.get_variable_declaration(y_decl_node).expect("y decl data");
+    let y_decl = arena
+        .get_variable_declaration(y_decl_node)
+        .expect("y decl data");
     let x_ref_in_inner = y_decl.initializer;
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     // The variable x inside the nested closure should be narrowed to string
     let flow_in_nested = binder.get_node_flow(x_ref_in_inner);
-    assert!(flow_in_nested.is_some(), "Flow should be recorded for variable inside nested closure");
+    assert!(
+        flow_in_nested.is_some(),
+        "Flow should be recorded for variable inside nested closure"
+    );
 
     let narrowed_in_nested = analyzer.get_flow_type(x_ref_in_inner, union, flow_in_nested.unwrap());
     assert_eq!(narrowed_in_nested, types.literal_string("nested"));
@@ -1579,7 +1792,13 @@ setTimeout(() => {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1588,27 +1807,47 @@ setTimeout(() => {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Get the setTimeout call statement (index 2)
-    let settimeout_stmt_idx = *source_file.statements.nodes.get(2).expect("setTimeout call");
-    let settimeout_stmt_node = arena.get(settimeout_stmt_idx).expect("setTimeout statement node");
-    let settimeout_stmt = arena.get_expression_statement(settimeout_stmt_node).expect("setTimeout expr statement");
+    let settimeout_stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(2)
+        .expect("setTimeout call");
+    let settimeout_stmt_node = arena
+        .get(settimeout_stmt_idx)
+        .expect("setTimeout statement node");
+    let settimeout_stmt = arena
+        .get_expression_statement(settimeout_stmt_node)
+        .expect("setTimeout expr statement");
     let settimeout_call_idx = settimeout_stmt.expression;
-    let settimeout_call_node = arena.get(settimeout_call_idx).expect("setTimeout call node");
-    let settimeout_call = arena.get_call_expr(settimeout_call_node).expect("setTimeout call data");
+    let settimeout_call_node = arena
+        .get(settimeout_call_idx)
+        .expect("setTimeout call node");
+    let settimeout_call = arena
+        .get_call_expr(settimeout_call_node)
+        .expect("setTimeout call data");
 
     // Get the arrow function argument
     let args = settimeout_call.arguments.as_ref().expect("arguments");
     let arrow_func_idx = *args.nodes.first().expect("arrow function");
     let arrow_func_node = arena.get(arrow_func_idx).expect("arrow func node");
-    let arrow_func = arena.get_function(arrow_func_node).expect("arrow func data");
+    let arrow_func = arena
+        .get_function(arrow_func_node)
+        .expect("arrow func data");
 
     // Get the body block
     let body_node = arena.get(arrow_func.body).expect("body node");
     let body_block = arena.get_block(body_node).expect("body block");
 
     // Get the console.log call expression statement
-    let log_stmt = *body_block.statements.nodes.first().expect("console.log statement");
+    let log_stmt = *body_block
+        .statements
+        .nodes
+        .first()
+        .expect("console.log statement");
     let log_stmt_node = arena.get(log_stmt).expect("log statement node");
-    let log_expr_stmt = arena.get_expression_statement(log_stmt_node).expect("log expr statement");
+    let log_expr_stmt = arena
+        .get_expression_statement(log_stmt_node)
+        .expect("log expr statement");
     let log_call_node = arena.get(log_expr_stmt.expression).expect("log call node");
     let log_call = arena.get_call_expr(log_call_node).expect("log call data");
 
@@ -1620,7 +1859,10 @@ setTimeout(() => {
 
     // The variable x inside the setTimeout callback should be narrowed to string
     let flow_in_callback = binder.get_node_flow(x_ref);
-    assert!(flow_in_callback.is_some(), "Flow should be recorded for variable inside setTimeout callback");
+    assert!(
+        flow_in_callback.is_some(),
+        "Flow should be recorded for variable inside setTimeout callback"
+    );
 
     let narrowed_in_callback = analyzer.get_flow_type(x_ref, union, flow_in_callback.unwrap());
     assert_eq!(narrowed_in_callback, types.literal_string("timeout"));
@@ -1651,7 +1893,13 @@ const callback2 = () => {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1660,55 +1908,99 @@ const callback2 = () => {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Get the first arrow function statement
-    let callback1_var_idx = *source_file.statements.nodes.get(2).expect("callback1 var stmt");
+    let callback1_var_idx = *source_file
+        .statements
+        .nodes
+        .get(2)
+        .expect("callback1 var stmt");
     let callback1_var_node = arena.get(callback1_var_idx).expect("callback1 var node");
-    let callback1_var = arena.get_variable(callback1_var_node).expect("callback1 var data");
+    let callback1_var = arena
+        .get_variable(callback1_var_node)
+        .expect("callback1 var data");
     let callback1_decl_list_idx = *callback1_var.declarations.nodes.first().expect("decl list");
     let callback1_decl_list_node = arena.get(callback1_decl_list_idx).expect("decl list node");
-    let callback1_decl_list = arena.get_variable(callback1_decl_list_node).expect("decl list data");
-    let callback1_decl_idx = *callback1_decl_list.declarations.nodes.first().expect("callback1 decl");
+    let callback1_decl_list = arena
+        .get_variable(callback1_decl_list_node)
+        .expect("decl list data");
+    let callback1_decl_idx = *callback1_decl_list
+        .declarations
+        .nodes
+        .first()
+        .expect("callback1 decl");
     let callback1_decl_node = arena.get(callback1_decl_idx).expect("callback1 decl node");
-    let callback1_decl = arena.get_variable_declaration(callback1_decl_node).expect("callback1 decl data");
+    let callback1_decl = arena
+        .get_variable_declaration(callback1_decl_node)
+        .expect("callback1 decl data");
     let callback1_func_idx = callback1_decl.initializer;
     let callback1_func_node = arena.get(callback1_func_idx).expect("callback1 func node");
-    let callback1_func = arena.get_function(callback1_func_node).expect("callback1 func data");
+    let callback1_func = arena
+        .get_function(callback1_func_node)
+        .expect("callback1 func data");
     let body1_node = arena.get(callback1_func.body).expect("body1 node");
     let body1 = arena.get_block(body1_node).expect("body1");
     let a_decl_stmt_idx = *body1.statements.nodes.first().expect("a declaration");
     let a_decl_stmt_node = arena.get(a_decl_stmt_idx).expect("a decl statement node");
-    let a_decl_var = arena.get_variable(a_decl_stmt_node).expect("a decl var data");
+    let a_decl_var = arena
+        .get_variable(a_decl_stmt_node)
+        .expect("a decl var data");
     let a_decl_list_idx = *a_decl_var.declarations.nodes.first().expect("a decl list");
     let a_decl_list_node = arena.get(a_decl_list_idx).expect("a decl list node");
-    let a_decl_list = arena.get_variable(a_decl_list_node).expect("a decl list data");
+    let a_decl_list = arena
+        .get_variable(a_decl_list_node)
+        .expect("a decl list data");
     let a_decl_idx = *a_decl_list.declarations.nodes.first().expect("a decl");
     let a_decl_node = arena.get(a_decl_idx).expect("a decl node");
-    let a_decl = arena.get_variable_declaration(a_decl_node).expect("a decl data");
+    let a_decl = arena
+        .get_variable_declaration(a_decl_node)
+        .expect("a decl data");
     let x_ref1 = a_decl.initializer;
 
     // Get the second arrow function statement
-    let callback2_var_idx = *source_file.statements.nodes.get(4).expect("callback2 var stmt");
+    let callback2_var_idx = *source_file
+        .statements
+        .nodes
+        .get(4)
+        .expect("callback2 var stmt");
     let callback2_var_node = arena.get(callback2_var_idx).expect("callback2 var node");
-    let callback2_var = arena.get_variable(callback2_var_node).expect("callback2 var data");
+    let callback2_var = arena
+        .get_variable(callback2_var_node)
+        .expect("callback2 var data");
     let callback2_decl_list_idx = *callback2_var.declarations.nodes.first().expect("decl list");
     let callback2_decl_list_node = arena.get(callback2_decl_list_idx).expect("decl list node");
-    let callback2_decl_list = arena.get_variable(callback2_decl_list_node).expect("decl list data");
-    let callback2_decl_idx = *callback2_decl_list.declarations.nodes.first().expect("callback2 decl");
+    let callback2_decl_list = arena
+        .get_variable(callback2_decl_list_node)
+        .expect("decl list data");
+    let callback2_decl_idx = *callback2_decl_list
+        .declarations
+        .nodes
+        .first()
+        .expect("callback2 decl");
     let callback2_decl_node = arena.get(callback2_decl_idx).expect("callback2 decl node");
-    let callback2_decl = arena.get_variable_declaration(callback2_decl_node).expect("callback2 decl data");
+    let callback2_decl = arena
+        .get_variable_declaration(callback2_decl_node)
+        .expect("callback2 decl data");
     let callback2_func_idx = callback2_decl.initializer;
     let callback2_func_node = arena.get(callback2_func_idx).expect("callback2 func node");
-    let callback2_func = arena.get_function(callback2_func_node).expect("callback2 func data");
+    let callback2_func = arena
+        .get_function(callback2_func_node)
+        .expect("callback2 func data");
     let body2_node = arena.get(callback2_func.body).expect("body2 node");
     let body2 = arena.get_block(body2_node).expect("body2");
     let b_decl_stmt_idx = *body2.statements.nodes.first().expect("b declaration");
     let b_decl_stmt_node = arena.get(b_decl_stmt_idx).expect("b decl statement node");
-    let b_decl_var = arena.get_variable(b_decl_stmt_node).expect("b decl var data");
+    let b_decl_var = arena
+        .get_variable(b_decl_stmt_node)
+        .expect("b decl var data");
     let b_decl_list_idx = *b_decl_var.declarations.nodes.first().expect("b decl list");
     let b_decl_list_node = arena.get(b_decl_list_idx).expect("b decl list node");
-    let b_decl_list = arena.get_variable(b_decl_list_node).expect("b decl list data");
+    let b_decl_list = arena
+        .get_variable(b_decl_list_node)
+        .expect("b decl list data");
     let b_decl_idx = *b_decl_list.declarations.nodes.first().expect("b decl");
     let b_decl_node = arena.get(b_decl_idx).expect("b decl node");
-    let b_decl = arena.get_variable_declaration(b_decl_node).expect("b decl data");
+    let b_decl = arena
+        .get_variable_declaration(b_decl_node)
+        .expect("b decl data");
     let x_ref2 = b_decl.initializer;
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -1745,7 +2037,13 @@ if (typeof x === "string") {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1766,15 +2064,31 @@ if (typeof x === "string") {
     let arrow_var_stmt = *block.statements.nodes.first().expect("arrow var statement");
     let arrow_var_node = arena.get(arrow_var_stmt).expect("arrow var node");
     let arrow_var = arena.get_variable(arrow_var_node).expect("arrow var data");
-    let arrow_decl_list_idx = *arrow_var.declarations.nodes.first().expect("arrow decl list");
-    let arrow_decl_list_node = arena.get(arrow_decl_list_idx).expect("arrow decl list node");
-    let arrow_decl_list = arena.get_variable(arrow_decl_list_node).expect("arrow decl list data");
-    let arrow_decl_idx = *arrow_decl_list.declarations.nodes.first().expect("arrow decl");
+    let arrow_decl_list_idx = *arrow_var
+        .declarations
+        .nodes
+        .first()
+        .expect("arrow decl list");
+    let arrow_decl_list_node = arena
+        .get(arrow_decl_list_idx)
+        .expect("arrow decl list node");
+    let arrow_decl_list = arena
+        .get_variable(arrow_decl_list_node)
+        .expect("arrow decl list data");
+    let arrow_decl_idx = *arrow_decl_list
+        .declarations
+        .nodes
+        .first()
+        .expect("arrow decl");
     let arrow_decl_node = arena.get(arrow_decl_idx).expect("arrow decl node");
-    let arrow_decl = arena.get_variable_declaration(arrow_decl_node).expect("arrow decl data");
+    let arrow_decl = arena
+        .get_variable_declaration(arrow_decl_node)
+        .expect("arrow decl data");
     let arrow_func_idx = arrow_decl.initializer;
     let arrow_func_node = arena.get(arrow_func_idx).expect("arrow func node");
-    let arrow_func = arena.get_function(arrow_func_node).expect("arrow func data");
+    let arrow_func = arena
+        .get_function(arrow_func_node)
+        .expect("arrow func data");
 
     // Get the body block
     let body_node = arena.get(arrow_func.body).expect("body node");
@@ -1783,27 +2097,38 @@ if (typeof x === "string") {
     // Get the y declaration
     let y_decl_stmt_idx = *body_block.statements.nodes.first().expect("y declaration");
     let y_decl_stmt_node = arena.get(y_decl_stmt_idx).expect("y decl statement node");
-    let y_decl_var = arena.get_variable(y_decl_stmt_node).expect("y decl var data");
+    let y_decl_var = arena
+        .get_variable(y_decl_stmt_node)
+        .expect("y decl var data");
     let y_decl_list_idx = *y_decl_var.declarations.nodes.first().expect("y decl list");
     let y_decl_list_node = arena.get(y_decl_list_idx).expect("y decl list node");
-    let y_decl_list = arena.get_variable(y_decl_list_node).expect("y decl list data");
+    let y_decl_list = arena
+        .get_variable(y_decl_list_node)
+        .expect("y decl list data");
     let y_decl_idx = *y_decl_list.declarations.nodes.first().expect("y decl");
     let y_decl_node = arena.get(y_decl_idx).expect("y decl node");
-    let y_decl = arena.get_variable_declaration(y_decl_node).expect("y decl data");
+    let y_decl = arena
+        .get_variable_declaration(y_decl_node)
+        .expect("y decl data");
 
     // Get the property access expression x.length
     let prop_access = y_decl.initializer;
 
     // Get the identifier x from the property access
     let prop_access_node = arena.get(prop_access).expect("prop access node");
-    let access_expr = arena.get_access_expr(prop_access_node).expect("access expr data");
+    let access_expr = arena
+        .get_access_expr(prop_access_node)
+        .expect("access expr data");
     let x_identifier = access_expr.expression;
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     // Inside the if branch and inside the closure, x should be narrowed to string
     let flow = binder.get_node_flow(prop_access);
-    assert!(flow.is_some(), "Flow should be recorded for expression inside closure in if branch");
+    assert!(
+        flow.is_some(),
+        "Flow should be recorded for expression inside closure in if branch"
+    );
 
     let narrowed = analyzer.get_flow_type(x_identifier, union, flow.unwrap());
     assert_eq!(narrowed, TypeId::STRING);
@@ -1837,7 +2162,10 @@ const result = add(1, 2);
 
             // Verify that we can query flow for arrow function
             let arrow_func_idx = *sf.statements.nodes.get(1).expect("arrow function");
-            assert!(graph.has_flow_at_node(arrow_func_idx), "Flow should be recorded for arrow function");
+            assert!(
+                graph.has_flow_at_node(arrow_func_idx),
+                "Flow should be recorded for arrow function"
+            );
         }
     }
 }
@@ -1863,7 +2191,13 @@ const filtered = arr.filter((item) => {
     let arena = parser.get_arena();
     let types = TypeInterner::new();
     let compiler_options = crate::checker::context::CheckerOptions::default();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), compiler_options);
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        compiler_options,
+    );
     checker.check_source_file(root);
 
     let analyzer = FlowAnalyzer::with_node_types(arena, &binder, &types, &checker.ctx.node_types);
@@ -1872,44 +2206,70 @@ const filtered = arr.filter((item) => {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Get the variable statement at index 3 (const filtered = ...)
-    let var_stmt_idx = *source_file.statements.nodes.get(3).expect("variable statement");
+    let var_stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(3)
+        .expect("variable statement");
     let var_stmt_node = arena.get(var_stmt_idx).expect("var stmt node");
     let var_stmt_data = arena.get_variable(var_stmt_node).expect("var stmt data");
 
     // Get the declaration list
-    let decl_list_idx = *var_stmt_data.declarations.nodes.first().expect("declaration list");
+    let decl_list_idx = *var_stmt_data
+        .declarations
+        .nodes
+        .first()
+        .expect("declaration list");
     let decl_list_node = arena.get(decl_list_idx).expect("decl list node");
     let decl_list_data = arena.get_variable(decl_list_node).expect("decl list data");
 
     // Get the first declaration and its initializer (the filter call)
-    let decl_idx = *decl_list_data.declarations.nodes.first().expect("declaration");
+    let decl_idx = *decl_list_data
+        .declarations
+        .nodes
+        .first()
+        .expect("declaration");
     let decl_node = arena.get(decl_idx).expect("decl node");
-    let decl = arena.get_variable_declaration(decl_node).expect("decl data");
+    let decl = arena
+        .get_variable_declaration(decl_node)
+        .expect("decl data");
     let filter_call_node = arena.get(decl.initializer).expect("filter call node");
-    let filter_call = arena.get_call_expr(filter_call_node).expect("filter call data");
+    let filter_call = arena
+        .get_call_expr(filter_call_node)
+        .expect("filter call data");
 
     // Get the arrow function argument
     let args = filter_call.arguments.as_ref().expect("arguments");
     let arrow_func_idx = *args.nodes.first().expect("arrow function");
     let arrow_func_node = arena.get(arrow_func_idx).expect("arrow func node");
-    let arrow_func = arena.get_function(arrow_func_node).expect("arrow func data");
+    let arrow_func = arena
+        .get_function(arrow_func_node)
+        .expect("arrow func data");
 
     // Get the body block
     let body_node = arena.get(arrow_func.body).expect("body node");
     let body_block = arena.get_block(body_node).expect("body block");
 
     // Get the return statement
-    let return_stmt = *body_block.statements.nodes.first().expect("return statement");
+    let return_stmt = *body_block
+        .statements
+        .nodes
+        .first()
+        .expect("return statement");
     let return_node = arena.get(return_stmt).expect("return node");
-    let return_data = arena.get_return_statement(return_node).expect("return data");
+    let return_data = arena
+        .get_return_statement(return_node)
+        .expect("return data");
 
     // Get the typeof x expression (binary expression: typeof x === "string")
     let typeof_bin_expr = return_data.expression;
 
     // Get the typeof expression node (left side of binary)
     let typeof_bin_node = arena.get(typeof_bin_expr).expect("bin expr node");
-    let typeof_bin = arena.get_binary_expr(typeof_bin_node).expect("bin expr data");
-    let typeof_expr = typeof_bin.left;  // This is the typeof x expression
+    let typeof_bin = arena
+        .get_binary_expr(typeof_bin_node)
+        .expect("bin expr data");
+    let typeof_expr = typeof_bin.left; // This is the typeof x expression
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
@@ -1920,9 +2280,13 @@ const filtered = arr.filter((item) => {
 
     // The variable x inside the filter callback should be narrowed to string
     let flow_in_callback = binder.get_node_flow(typeof_bin_expr);
-    assert!(flow_in_callback.is_some(), "Flow should be recorded for expression inside filter callback");
+    assert!(
+        flow_in_callback.is_some(),
+        "Flow should be recorded for expression inside filter callback"
+    );
 
-    let narrowed_in_callback = analyzer.get_flow_type(x_identifier, union, flow_in_callback.unwrap());
+    let narrowed_in_callback =
+        analyzer.get_flow_type(x_identifier, union, flow_in_callback.unwrap());
     assert_eq!(narrowed_in_callback, types.literal_string("filter"));
 }
 
@@ -1956,7 +2320,10 @@ x;
     // The if statement should have flow recorded
     let if_stmt_idx = *source_file.statements.nodes.get(1).expect("if statement");
     let flow_at_if = binder.get_node_flow(if_stmt_idx);
-    assert!(flow_at_if.is_some(), "Flow should be recorded at if statement");
+    assert!(
+        flow_at_if.is_some(),
+        "Flow should be recorded at if statement"
+    );
 }
 
 /// Test that switch statement cases are all captured.
@@ -1990,9 +2357,16 @@ result;
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // The switch statement should have flow recorded
-    let switch_stmt_idx = *source_file.statements.nodes.get(2).expect("switch statement");
+    let switch_stmt_idx = *source_file
+        .statements
+        .nodes
+        .get(2)
+        .expect("switch statement");
     let flow_at_switch = binder.get_node_flow(switch_stmt_idx);
-    assert!(flow_at_switch.is_some(), "Flow should be recorded at switch statement");
+    assert!(
+        flow_at_switch.is_some(),
+        "Flow should be recorded at switch statement"
+    );
 }
 
 /// Test that try-catch-finally paths are captured.
@@ -2023,7 +2397,10 @@ x;
     // The try statement should have flow recorded
     let try_stmt_idx = *source_file.statements.nodes.get(1).expect("try statement");
     let flow_at_try = binder.get_node_flow(try_stmt_idx);
-    assert!(flow_at_try.is_some(), "Flow should be recorded at try statement");
+    assert!(
+        flow_at_try.is_some(),
+        "Flow should be recorded at try statement"
+    );
 }
 
 /// Test that loop control flow with break/continue is captured.
@@ -2094,9 +2471,16 @@ x;
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Verify final expression has flow
-    let final_expr_idx = *source_file.statements.nodes.get(2).expect("final expression");
+    let final_expr_idx = *source_file
+        .statements
+        .nodes
+        .get(2)
+        .expect("final expression");
     let flow_at_final = binder.get_node_flow(final_expr_idx);
-    assert!(flow_at_final.is_some(), "Flow should be recorded at final expression after nested structures");
+    assert!(
+        flow_at_final.is_some(),
+        "Flow should be recorded at final expression after nested structures"
+    );
 }
 
 /// Test that class constructor flow is tracked.
@@ -2129,17 +2513,20 @@ class Foo {
     // Class should have flow recorded
     let class_idx = *source_file.statements.nodes.get(0).expect("class");
     let flow_at_class = binder.get_node_flow(class_idx);
-    assert!(flow_at_class.is_some(), "Flow should be recorded at class declaration");
+    assert!(
+        flow_at_class.is_some(),
+        "Flow should be recorded at class declaration"
+    );
 }
 
 /// Test that TS2454 is emitted when a variable is used before being assigned.
 /// This verifies the definite assignment checking is working.
 #[test]
 fn test_ts2454_variable_used_before_assigned() {
+    use crate::interner::Atom;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_checker::ThinCheckerState;
     use crate::thin_parser::ThinParserState;
-    use crate::interner::Atom;
 
     let source = r#"
 function test() {
@@ -2156,12 +2543,21 @@ function test() {
     binder.bind_source_file(arena, root);
 
     let types = crate::solver::TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // Should have TS2454 error
     let has_ts2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
-    assert!(has_ts2454, "Should have TS2454 error for variable used before assignment");
+    assert!(
+        has_ts2454,
+        "Should have TS2454 error for variable used before assignment"
+    );
 }
 
 /// Test that TS2454 is NOT emitted when a variable has an initializer.
@@ -2186,10 +2582,19 @@ function test() {
     binder.bind_source_file(arena, root);
 
     let types = crate::solver::TypeInterner::new();
-    let mut checker = ThinCheckerState::new(arena, &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+    let mut checker = ThinCheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
     checker.check_source_file(root);
 
     // Should NOT have TS2454 error
     let has_ts2454 = checker.ctx.diagnostics.iter().any(|d| d.code == 2454);
-    assert!(!has_ts2454, "Should NOT have TS2454 error when variable has initializer");
+    assert!(
+        !has_ts2454,
+        "Should NOT have TS2454 error when variable has initializer"
+    );
 }

@@ -180,7 +180,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // At least one member is not callable
                     // This means the union as a whole is not callable
                     // (we can't call a union without knowing which branch is active)
-                    return CallResult::NotCallable { type_id: union_type };
+                    return CallResult::NotCallable {
+                        type_id: union_type,
+                    };
                 }
                 other => {
                     // Track failures for potential overload reporting
@@ -200,12 +202,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else if !failures.is_empty() {
             // At least one member failed with a non-NotCallable error
             // Return the first failure (similar to how overloads are handled)
-            failures.into_iter().next().unwrap_or_else(|| {
-                CallResult::NotCallable { type_id: union_type }
-            })
+            failures
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| CallResult::NotCallable {
+                    type_id: union_type,
+                })
         } else {
             // Should not reach here, but handle gracefully
-            CallResult::NotCallable { type_id: union_type }
+            CallResult::NotCallable {
+                type_id: union_type,
+            }
         }
     }
 

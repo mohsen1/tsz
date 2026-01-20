@@ -173,7 +173,10 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Returns
     /// Reference to the built flow graph
-    pub fn build_function_body(&mut self, body: &crate::parser::thin_node::BlockData) -> &FlowGraph {
+    pub fn build_function_body(
+        &mut self,
+        body: &crate::parser::thin_node::BlockData,
+    ) -> &FlowGraph {
         // Reset the builder state for a new function
         self.graph = FlowGraph::new();
         self.current_flow = self.graph.nodes.alloc(flow_flags::START);
@@ -1270,7 +1273,8 @@ impl<'a> FlowGraphBuilder<'a> {
                     }
                 }
             }
-            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
                     self.handle_expression_for_assignments(access.expression);
                     if !access.name_or_argument.is_none() {
@@ -1282,27 +1286,27 @@ impl<'a> FlowGraphBuilder<'a> {
         }
     }
 
-fn is_assignment_operator_token(operator_token: u16) -> bool {
-    matches!(
-        operator_token,
-        x if x == SyntaxKind::EqualsToken as u16
-            || x == SyntaxKind::PlusEqualsToken as u16
-            || x == SyntaxKind::MinusEqualsToken as u16
-            || x == SyntaxKind::AsteriskEqualsToken as u16
-            || x == SyntaxKind::SlashEqualsToken as u16
-            || x == SyntaxKind::PercentEqualsToken as u16
-            || x == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-            || x == SyntaxKind::LessThanLessThanEqualsToken as u16
-            || x == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-            || x == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-            || x == SyntaxKind::AmpersandEqualsToken as u16
-            || x == SyntaxKind::CaretEqualsToken as u16
-            || x == SyntaxKind::BarEqualsToken as u16
-            || x == SyntaxKind::BarBarEqualsToken as u16
-            || x == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-            || x == SyntaxKind::QuestionQuestionEqualsToken as u16
-    )
-}
+    fn is_assignment_operator_token(operator_token: u16) -> bool {
+        matches!(
+            operator_token,
+            x if x == SyntaxKind::EqualsToken as u16
+                || x == SyntaxKind::PlusEqualsToken as u16
+                || x == SyntaxKind::MinusEqualsToken as u16
+                || x == SyntaxKind::AsteriskEqualsToken as u16
+                || x == SyntaxKind::SlashEqualsToken as u16
+                || x == SyntaxKind::PercentEqualsToken as u16
+                || x == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                || x == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || x == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || x == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                || x == SyntaxKind::AmpersandEqualsToken as u16
+                || x == SyntaxKind::CaretEqualsToken as u16
+                || x == SyntaxKind::BarEqualsToken as u16
+                || x == SyntaxKind::BarBarEqualsToken as u16
+                || x == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                || x == SyntaxKind::QuestionQuestionEqualsToken as u16
+        )
+    }
 
     /// Handle an await expression by creating an AWAIT_POINT flow node.
     fn handle_await_expression(&mut self, await_node: NodeIndex) {
@@ -1370,9 +1374,13 @@ fn is_assignment_operator_token(operator_token: u16) -> bool {
                                     continue;
                                 }
                                 if let Some(expr_with_type) = self.arena.get(type_idx) {
-                                    if let Some(data) = self.arena.get_expr_type_args(expr_with_type) {
+                                    if let Some(data) =
+                                        self.arena.get_expr_type_args(expr_with_type)
+                                    {
                                         // The extends expression is evaluated at class definition time
-                                        self.handle_expression_for_suspension_points(data.expression);
+                                        self.handle_expression_for_suspension_points(
+                                            data.expression,
+                                        );
                                     }
                                 }
                             }
@@ -1407,14 +1415,18 @@ fn is_assignment_operator_token(operator_token: u16) -> bool {
                         // Computed property name executes
                         if let Some(name_node) = self.arena.get(prop_name) {
                             if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                                if let Some(computed) = self.arena.get_computed_property(name_node) {
-                                    self.handle_expression_for_suspension_points(computed.expression);
+                                if let Some(computed) = self.arena.get_computed_property(name_node)
+                                {
+                                    self.handle_expression_for_suspension_points(
+                                        computed.expression,
+                                    );
                                 }
                             }
                         }
 
                         // Static initializer executes
-                        if self.has_static_modifier(&prop_modifiers) && !prop_initializer.is_none() {
+                        if self.has_static_modifier(&prop_modifiers) && !prop_initializer.is_none()
+                        {
                             self.handle_expression_for_suspension_points(prop_initializer);
                             // Track assignment for static fields
                             let flow = self.create_flow_node(
@@ -1438,8 +1450,11 @@ fn is_assignment_operator_token(operator_token: u16) -> bool {
                         let method_name = method.name;
                         if let Some(name_node) = self.arena.get(method_name) {
                             if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                                if let Some(computed) = self.arena.get_computed_property(name_node) {
-                                    self.handle_expression_for_suspension_points(computed.expression);
+                                if let Some(computed) = self.arena.get_computed_property(name_node)
+                                {
+                                    self.handle_expression_for_suspension_points(
+                                        computed.expression,
+                                    );
                                 }
                             }
                         }
@@ -1451,8 +1466,11 @@ fn is_assignment_operator_token(operator_token: u16) -> bool {
                         let accessor_name = accessor.name;
                         if let Some(name_node) = self.arena.get(accessor_name) {
                             if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                                if let Some(computed) = self.arena.get_computed_property(name_node) {
-                                    self.handle_expression_for_suspension_points(computed.expression);
+                                if let Some(computed) = self.arena.get_computed_property(name_node)
+                                {
+                                    self.handle_expression_for_suspension_points(
+                                        computed.expression,
+                                    );
                                 }
                             }
                         }
@@ -1807,7 +1825,11 @@ console.log(x);
                     .count();
 
                 // We should have 2 yield points (yield 1 and yield 2)
-                assert!(yield_count >= 2, "Expected at least 2 yield points, got {}", yield_count);
+                assert!(
+                    yield_count >= 2,
+                    "Expected at least 2 yield points, got {}",
+                    yield_count
+                );
             }
         }
     }
@@ -1928,8 +1950,16 @@ console.log(x);
                     .filter(|n| (n.flags & flow_flags::AWAIT_POINT) != 0)
                     .count();
 
-                assert!(yield_count >= 2, "Expected at least 2 yield points, got {}", yield_count);
-                assert!(await_count >= 2, "Expected at least 2 await points, got {}", await_count);
+                assert!(
+                    yield_count >= 2,
+                    "Expected at least 2 yield points, got {}",
+                    yield_count
+                );
+                assert!(
+                    await_count >= 2,
+                    "Expected at least 2 await points, got {}",
+                    await_count
+                );
             }
         }
     }
@@ -1966,7 +1996,11 @@ console.log(x);
                     .filter(|n| (n.flags & flow_flags::ASSIGNMENT) != 0)
                     .count();
 
-                assert!(assignment_count >= 2, "Expected at least 2 assignment nodes for variable tracking, got {}", assignment_count);
+                assert!(
+                    assignment_count >= 2,
+                    "Expected at least 2 assignment nodes for variable tracking, got {}",
+                    assignment_count
+                );
             }
         }
     }
@@ -2036,7 +2070,11 @@ console.log(x);
                     .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
                     .count();
 
-                assert!(yield_count >= 2, "Expected at least 2 yield points in conditional branches, got {}", yield_count);
+                assert!(
+                    yield_count >= 2,
+                    "Expected at least 2 yield points in conditional branches, got {}",
+                    yield_count
+                );
             }
         }
     }
@@ -2072,7 +2110,11 @@ yield 3;
                     .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
                     .count();
 
-                assert!(yield_count >= 3, "Expected at least 3 yield points, got {}", yield_count);
+                assert!(
+                    yield_count >= 3,
+                    "Expected at least 3 yield points, got {}",
+                    yield_count
+                );
             }
         }
     }
@@ -2138,7 +2180,11 @@ console.log(x);
                     .count();
 
                 // Should have assignment for static property initializer
-                assert!(assignment_count >= 1, "Expected at least 1 assignment node for static property, got {}", assignment_count);
+                assert!(
+                    assignment_count >= 1,
+                    "Expected at least 1 assignment node for static property, got {}",
+                    assignment_count
+                );
             }
         }
     }

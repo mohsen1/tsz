@@ -112,7 +112,11 @@ impl<'a> IRPrinter<'a> {
             IRNode::Super => self.write("super"),
 
             // Expressions
-            IRNode::BinaryExpr { left, operator, right } => {
+            IRNode::BinaryExpr {
+                left,
+                operator,
+                right,
+            } => {
                 self.emit_node(left);
                 self.write(" ");
                 self.write(operator);
@@ -151,7 +155,11 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(index);
                 self.write("]");
             }
-            IRNode::ConditionalExpr { condition, when_true, when_false } => {
+            IRNode::ConditionalExpr {
+                condition,
+                when_true,
+                when_false,
+            } => {
                 self.emit_node(condition);
                 self.write(" ? ");
                 self.emit_node(when_true);
@@ -187,7 +195,12 @@ impl<'a> IRPrinter<'a> {
                     self.write(" }");
                 }
             }
-            IRNode::FunctionExpr { name, parameters, body, is_expression_body } => {
+            IRNode::FunctionExpr {
+                name,
+                parameters,
+                body,
+                is_expression_body,
+            } => {
                 self.write("function ");
                 if let Some(n) = name {
                     self.write(n);
@@ -254,7 +267,11 @@ impl<'a> IRPrinter<'a> {
                 }
                 self.write(";");
             }
-            IRNode::IfStatement { condition, then_branch, else_branch } => {
+            IRNode::IfStatement {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.write("if (");
                 self.emit_node(condition);
                 self.write(") ");
@@ -283,7 +300,12 @@ impl<'a> IRPrinter<'a> {
                 self.write_indent();
                 self.write("}");
             }
-            IRNode::ForStatement { initializer, condition, incrementor, body } => {
+            IRNode::ForStatement {
+                initializer,
+                condition,
+                incrementor,
+                body,
+            } => {
                 self.write("for (");
                 if let Some(init) = initializer {
                     self.emit_node(init);
@@ -312,7 +334,11 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(condition);
                 self.write(");");
             }
-            IRNode::TryStatement { try_block, catch_clause, finally_block } => {
+            IRNode::TryStatement {
+                try_block,
+                catch_clause,
+                finally_block,
+            } => {
                 self.write("try ");
                 self.emit_node(try_block);
                 if let Some(catch) = catch_clause {
@@ -358,7 +384,11 @@ impl<'a> IRPrinter<'a> {
             }
 
             // Declarations
-            IRNode::FunctionDecl { name, parameters, body } => {
+            IRNode::FunctionDecl {
+                name,
+                parameters,
+                body,
+            } => {
                 self.write("function ");
                 self.write(name);
                 self.write("(");
@@ -368,7 +398,13 @@ impl<'a> IRPrinter<'a> {
             }
 
             // ES5 Class Transform Specific
-            IRNode::ES5ClassIIFE { name, base_class, body, weakmap_decls, weakmap_inits } => {
+            IRNode::ES5ClassIIFE {
+                name,
+                base_class,
+                body,
+                weakmap_decls,
+                weakmap_inits,
+            } => {
                 // Emit WeakMap declarations if any
                 if !weakmap_decls.is_empty() {
                     self.write("var ");
@@ -414,7 +450,11 @@ impl<'a> IRPrinter<'a> {
                 self.write(class_name);
                 self.write(", _super);");
             }
-            IRNode::PrototypeMethod { class_name, method_name, function } => {
+            IRNode::PrototypeMethod {
+                class_name,
+                method_name,
+                function,
+            } => {
                 self.write(class_name);
                 self.write(".prototype");
                 self.emit_method_name(method_name);
@@ -422,14 +462,22 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(function);
                 self.write(";");
             }
-            IRNode::StaticMethod { class_name, method_name, function } => {
+            IRNode::StaticMethod {
+                class_name,
+                method_name,
+                function,
+            } => {
                 self.write(class_name);
                 self.emit_method_name(method_name);
                 self.write(" = ");
                 self.emit_node(function);
                 self.write(";");
             }
-            IRNode::DefineProperty { target, property_name, descriptor } => {
+            IRNode::DefineProperty {
+                target,
+                property_name,
+                descriptor,
+            } => {
                 self.write("Object.defineProperty(");
                 self.emit_node(target);
                 self.write(", \"");
@@ -454,12 +502,20 @@ impl<'a> IRPrinter<'a> {
                 }
                 self.write_indent();
                 self.write("enumerable: ");
-                self.write(if descriptor.enumerable { "true" } else { "false" });
+                self.write(if descriptor.enumerable {
+                    "true"
+                } else {
+                    "false"
+                });
                 self.write(",");
                 self.write_line();
                 self.write_indent();
                 self.write("configurable: ");
-                self.write(if descriptor.configurable { "true" } else { "false" });
+                self.write(if descriptor.configurable {
+                    "true"
+                } else {
+                    "false"
+                });
                 self.write_line();
 
                 self.decrease_indent();
@@ -468,7 +524,10 @@ impl<'a> IRPrinter<'a> {
             }
 
             // Async Transform Specific
-            IRNode::AwaiterCall { this_arg, generator_body } => {
+            IRNode::AwaiterCall {
+                this_arg,
+                generator_body,
+            } => {
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
                 self.write(", void 0, void 0, function () {");
@@ -541,7 +600,11 @@ impl<'a> IRPrinter<'a> {
                     self.write("});");
                 }
             }
-            IRNode::GeneratorOp { opcode, value, comment } => {
+            IRNode::GeneratorOp {
+                opcode,
+                value,
+                comment,
+            } => {
                 self.write("[");
                 self.write(&opcode.to_string());
                 if let Some(cmt) = comment {
@@ -563,14 +626,21 @@ impl<'a> IRPrinter<'a> {
             }
 
             // Private Field Helpers
-            IRNode::PrivateFieldGet { receiver, weakmap_name } => {
+            IRNode::PrivateFieldGet {
+                receiver,
+                weakmap_name,
+            } => {
                 self.write("__classPrivateFieldGet(");
                 self.emit_node(receiver);
                 self.write(", ");
                 self.write(weakmap_name);
                 self.write(", \"f\")");
             }
-            IRNode::PrivateFieldSet { receiver, weakmap_name, value } => {
+            IRNode::PrivateFieldSet {
+                receiver,
+                weakmap_name,
+                value,
+            } => {
                 self.write("__classPrivateFieldSet(");
                 self.emit_node(receiver);
                 self.write(", ");
@@ -579,7 +649,11 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(value);
                 self.write(", \"f\")");
             }
-            IRNode::WeakMapSet { weakmap_name, key, value } => {
+            IRNode::WeakMapSet {
+                weakmap_name,
+                key,
+                value,
+            } => {
                 self.write(weakmap_name);
                 self.write(".set(");
                 self.emit_node(key);
@@ -795,9 +869,18 @@ mod tests {
     #[test]
     fn test_emit_literals() {
         assert_eq!(IRPrinter::emit_to_string(&IRNode::number("42")), "42");
-        assert_eq!(IRPrinter::emit_to_string(&IRNode::string("hello")), "\"hello\"");
-        assert_eq!(IRPrinter::emit_to_string(&IRNode::BooleanLiteral(true)), "true");
-        assert_eq!(IRPrinter::emit_to_string(&IRNode::BooleanLiteral(false)), "false");
+        assert_eq!(
+            IRPrinter::emit_to_string(&IRNode::string("hello")),
+            "\"hello\""
+        );
+        assert_eq!(
+            IRPrinter::emit_to_string(&IRNode::BooleanLiteral(true)),
+            "true"
+        );
+        assert_eq!(
+            IRPrinter::emit_to_string(&IRNode::BooleanLiteral(false)),
+            "false"
+        );
         assert_eq!(IRPrinter::emit_to_string(&IRNode::NullLiteral), "null");
         assert_eq!(IRPrinter::emit_to_string(&IRNode::Undefined), "void 0");
     }
@@ -877,11 +960,7 @@ mod tests {
 
     #[test]
     fn test_emit_function_expr() {
-        let func = IRNode::func_expr(
-            None,
-            vec![],
-            vec![IRNode::ret(Some(IRNode::number("42")))],
-        );
+        let func = IRNode::func_expr(None, vec![], vec![IRNode::ret(Some(IRNode::number("42")))]);
         let output = IRPrinter::emit_to_string(&func);
         assert!(output.contains("function ()"));
         assert!(output.contains("return 42;"));
@@ -896,12 +975,10 @@ mod tests {
                 IRNode::func_decl(
                     "Point",
                     vec![IRParam::new("x")],
-                    vec![
-                        IRNode::expr_stmt(IRNode::assign(
-                            IRNode::prop(IRNode::this(), "x"),
-                            IRNode::id("x"),
-                        )),
-                    ],
+                    vec![IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(IRNode::this(), "x"),
+                        IRNode::id("x"),
+                    ))],
                 ),
                 IRNode::ret(Some(IRNode::id("Point"))),
             ],
@@ -922,7 +999,9 @@ mod tests {
             name: "Child".to_string(),
             base_class: Some(Box::new(IRNode::id("Parent"))),
             body: vec![
-                IRNode::ExtendsHelper { class_name: "Child".to_string() },
+                IRNode::ExtendsHelper {
+                    class_name: "Child".to_string(),
+                },
                 IRNode::func_decl("Child", vec![], vec![]),
                 IRNode::ret(Some(IRNode::id("Child"))),
             ],

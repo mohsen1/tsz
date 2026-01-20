@@ -243,10 +243,7 @@ impl<'a> ES5SpreadTransformer<'a> {
                 // Spread at start - wrap in Array.prototype.slice.call or use directly
                 IRNode::call(
                     IRNode::prop(
-                        IRNode::prop(
-                            IRNode::prop(IRNode::id("Array"), "prototype"),
-                            "slice",
-                        ),
+                        IRNode::prop(IRNode::prop(IRNode::id("Array"), "prototype"), "slice"),
                         "call",
                     ),
                     vec![expr],
@@ -401,10 +398,7 @@ impl<'a> ES5SpreadTransformer<'a> {
         // new (Ctor.bind.apply(Ctor, [void 0].concat(args)))()
         Some(IRNode::NewExpr {
             callee: Box::new(IRNode::Parenthesized(Box::new(IRNode::call(
-                IRNode::prop(
-                    IRNode::prop(constructor.clone(), "bind"),
-                    "apply",
-                ),
+                IRNode::prop(IRNode::prop(constructor.clone(), "bind"), "apply"),
                 vec![
                     constructor,
                     IRNode::call(

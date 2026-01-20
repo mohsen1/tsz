@@ -3625,7 +3625,7 @@ export function isNonNull<T>(value: T | null | undefined): value is T {
 
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors {:?}",   
+        "Should compile without errors {:?}",
         result.diagnostics
     );
     assert!(

@@ -20,9 +20,9 @@
 //! }
 //! ```
 
+use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNodeArena;
-use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;
 
@@ -352,17 +352,13 @@ impl<'a> EnumEvaluator<'a> {
                     k if k == SyntaxKind::AmpersandToken as u16 => l & r,
                     k if k == SyntaxKind::BarToken as u16 => l | r,
                     k if k == SyntaxKind::CaretToken as u16 => l ^ r,
-                    k if k == SyntaxKind::AsteriskAsteriskToken as u16 => {
-                        l.wrapping_pow(*r as u32)
-                    }
+                    k if k == SyntaxKind::AsteriskAsteriskToken as u16 => l.wrapping_pow(*r as u32),
                     _ => return EnumValue::Computed,
                 };
                 EnumValue::Number(result)
             }
             // String concatenation
-            (EnumValue::String(l), EnumValue::String(r))
-                if op == SyntaxKind::PlusToken as u16 =>
-            {
+            (EnumValue::String(l), EnumValue::String(r)) if op == SyntaxKind::PlusToken as u16 => {
                 EnumValue::String(format!("{}{}", l, r))
             }
             _ => EnumValue::Computed,

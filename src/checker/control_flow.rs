@@ -28,8 +28,9 @@ use crate::solver::{
     TypePredicateTarget,
 };
 use crate::thin_binder::ThinBinderState;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::collections::VecDeque;
 
 // =============================================================================
 // FlowGraph
@@ -196,69 +197,353 @@ impl<'a> FlowAnalyzer<'a> {
         self.check_definite_assignment(reference, flow_node, &mut visited, &mut cache)
     }
 
-    /// Recursive flow graph traversal with cycle detection.
+    /// Iterative flow graph traversal using a worklist algorithm.
+    ///
+    /// This replaces the recursive implementation to prevent stack overflow
+    /// on deeply nested control flow structures. Uses a VecDeque worklist with
+    /// cycle detection to process flow nodes iteratively.
     fn check_flow(
         &self,
         reference: NodeIndex,
-        type_id: TypeId,
+        initial_type: TypeId,
         flow_id: FlowNodeId,
-        visited: &mut Vec<FlowNodeId>,
+        _visited: &mut Vec<FlowNodeId>,
     ) -> TypeId {
-        // Cycle detection
-        if visited.contains(&flow_id) {
-            return type_id;
-        }
-        visited.push(flow_id);
+        // Work item: (flow_id, type_at_this_point)
+        let mut worklist: VecDeque<(FlowNodeId, TypeId)> = VecDeque::new();
+        let mut in_worklist: FxHashSet<FlowNodeId> = FxHashSet::default();
+        let mut visited: FxHashSet<FlowNodeId> = FxHashSet::default();
 
-        let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
-            return type_id;
+        // Result cache: flow_id -> narrowed_type
+        let mut results: FxHashMap<FlowNodeId, TypeId> = FxHashMap::default();
+
+        // Initialize worklist with the entry point
+        worklist.push_back((flow_id, initial_type));
+        in_worklist.insert(flow_id);
+
+        // Process worklist until empty
+        while let Some((current_flow, current_type)) = worklist.pop_front() {
+            in_worklist.remove(&current_flow);
+
+            // Skip if we've already finalized this node
+            if visited.contains(&current_flow) {
+                continue;
+            }
+
+            let Some(flow) = self.binder.flow_nodes.get(current_flow) else {
+                // Flow node doesn't exist - use the type we have
+                results.insert(current_flow, current_type);
+                visited.insert(current_flow);
+                continue;
+            };
+
+            // Process this flow node based on its flags
+            let result_type = if flow.has_any_flags(flow_flags::BRANCH_LABEL) {
+                // Branch label - union types from all antecedents
+                if flow.antecedent.is_empty() {
+                    current_type
+                } else {
+                    // Add all antecedents to worklist
+                    for &ant in &flow.antecedent {
+                        if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                            worklist.push_back((ant, current_type));
+                            in_worklist.insert(ant);
+                        }
+                    }
+                    current_type // Will be updated when antecedents are processed
+                }
+            } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
+                // Loop label - union types from entry and back-edges
+                if flow.antecedent.is_empty() {
+                    current_type
+                } else {
+                    // Add all antecedents to worklist
+                    for &ant in &flow.antecedent {
+                        if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                            worklist.push_back((ant, current_type));
+                            in_worklist.insert(ant);
+                        }
+                    }
+                    current_type // Will be updated when antecedents are processed
+                }
+            } else if flow.has_any_flags(flow_flags::CONDITION) {
+                // Condition node - apply narrowing
+                let pre_type = if let Some(&ant) = flow.antecedent.first() {
+                    // Get the result from antecedent if available, otherwise use current_type
+                    *results.get(&ant).unwrap_or(&current_type)
+                } else {
+                    current_type
+                };
+
+                let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
+                self.narrow_type_by_condition(pre_type, flow.node, reference, is_true_branch)
+            } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
+                // Switch clause - apply switch-specific narrowing
+                self.handle_switch_clause_iterative(
+                    reference,
+                    current_type,
+                    flow,
+                    &results,
+                    &mut worklist,
+                    &mut in_worklist,
+                    visited.clone(),
+                )
+            } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                // Assignment - check if it targets our reference
+                let targets_reference =
+                    self.assignment_targets_reference_node(flow.node, reference);
+
+                if targets_reference {
+                    if self.is_direct_assignment_to_reference(flow.node, reference) {
+                        if let Some(assigned_type) = self.get_assigned_type(flow.node, reference) {
+                            assigned_type
+                        } else {
+                            current_type
+                        }
+                    } else {
+                        current_type
+                    }
+                } else if self.assignment_affects_reference_node(flow.node, reference) {
+                    current_type
+                } else if let Some(&ant) = flow.antecedent.first() {
+                    // Continue to antecedent
+                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                        worklist.push_back((ant, current_type));
+                        in_worklist.insert(ant);
+                    }
+                    *results.get(&ant).unwrap_or(&current_type)
+                } else {
+                    current_type
+                }
+            } else if flow.has_any_flags(flow_flags::ARRAY_MUTATION) {
+                // Array mutation
+                let node = match self.arena.get(flow.node) {
+                    Some(n) => n,
+                    None => {
+                        results.insert(current_flow, current_type);
+                        visited.insert(current_flow);
+                        continue;
+                    }
+                };
+                let call = match self.arena.get_call_expr(node) {
+                    Some(c) => c,
+                    None => {
+                        results.insert(current_flow, current_type);
+                        visited.insert(current_flow);
+                        continue;
+                    }
+                };
+
+                if self.array_mutation_affects_reference(call, reference) {
+                    current_type
+                } else if let Some(&ant) = flow.antecedent.first() {
+                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                        worklist.push_back((ant, current_type));
+                        in_worklist.insert(ant);
+                    }
+                    *results.get(&ant).unwrap_or(&current_type)
+                } else {
+                    current_type
+                }
+            } else if flow.has_any_flags(flow_flags::CALL) {
+                // Call expression - check for type predicates
+                self.handle_call_iterative(
+                    reference,
+                    current_type,
+                    flow,
+                    &results,
+                    &mut worklist,
+                    &mut in_worklist,
+                    &visited,
+                )
+            } else if flow.has_any_flags(flow_flags::START) {
+                // Start node - continue to antecedent if any
+                if let Some(&ant) = flow.antecedent.first() {
+                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                        worklist.push_back((ant, current_type));
+                        in_worklist.insert(ant);
+                    }
+                }
+                current_type
+            } else {
+                // Default: continue to antecedent
+                if let Some(&ant) = flow.antecedent.first() {
+                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                        worklist.push_back((ant, current_type));
+                        in_worklist.insert(ant);
+                    }
+                    *results.get(&ant).unwrap_or(&current_type)
+                } else {
+                    current_type
+                }
+            };
+
+            // Store the result
+            let changed = if let Some(&existing) = results.get(&current_flow) {
+                existing != result_type
+            } else {
+                true
+            };
+
+            results.insert(current_flow, result_type);
+
+            // Only mark as visited if we won't need to revisit
+            // For BRANCH_LABEL and LOOP_LABEL, we may need multiple passes
+            if !flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL) {
+                visited.insert(current_flow);
+            }
+
+            // If this is a branch/loop point and we've now processed all antecedents,
+            // we can finalize the result by unioning
+            if flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL) {
+                // Check if all antecedents have been processed
+                let all_processed = flow
+                    .antecedent
+                    .iter()
+                    .all(|&ant| visited.contains(&ant) || results.contains_key(&ant));
+                if all_processed {
+                    // Union all antecedent types
+                    let ant_types: Vec<TypeId> = flow
+                        .antecedent
+                        .iter()
+                        .filter_map(|&ant| results.get(&ant).copied())
+                        .collect();
+
+                    let unioned = if ant_types.len() == 1 {
+                        ant_types[0]
+                    } else if !ant_types.is_empty() {
+                        self.interner.union(ant_types)
+                    } else {
+                        current_type
+                    };
+
+                    results.insert(current_flow, unioned);
+                    visited.insert(current_flow);
+                }
+            }
+        }
+
+        // Return the result for the initial flow_id
+        results.get(&flow_id).copied().unwrap_or(initial_type)
+    }
+
+    /// Helper function for switch clause handling in iterative mode.
+    fn handle_switch_clause_iterative(
+        &self,
+        reference: NodeIndex,
+        current_type: TypeId,
+        flow: &FlowNode,
+        results: &FxHashMap<FlowNodeId, TypeId>,
+        worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
+        in_worklist: &mut FxHashSet<FlowNodeId>,
+        visited: FxHashSet<FlowNodeId>,
+    ) -> TypeId {
+        let clause_idx = flow.node;
+        let Some(switch_idx) = self.binder.get_switch_for_clause(clause_idx) else {
+            return current_type;
+        };
+        let Some(switch_node) = self.arena.get(switch_idx) else {
+            return current_type;
+        };
+        let Some(switch_data) = self.arena.get_switch(switch_node) else {
+            return current_type;
+        };
+        let Some(clause_node) = self.arena.get(clause_idx) else {
+            return current_type;
+        };
+        let Some(clause) = self.arena.get_case_clause(clause_node) else {
+            return current_type;
         };
 
-        // Handle different flow node types
-        if flow.has_any_flags(flow_flags::BRANCH_LABEL) {
-            return self.handle_branch_label(reference, type_id, flow, visited);
-        }
-
-        if flow.has_any_flags(flow_flags::LOOP_LABEL) {
-            return self.handle_loop_label(reference, type_id, flow, visited);
-        }
-
-        if flow.has_any_flags(flow_flags::CONDITION) {
-            return self.handle_condition(reference, type_id, flow, visited);
-        }
-
-        if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
-            return self.handle_switch_clause(reference, type_id, flow, visited);
-        }
-
-        if flow.has_any_flags(flow_flags::ASSIGNMENT) {
-            return self.handle_assignment(reference, type_id, flow, visited);
-        }
-
-        if flow.has_any_flags(flow_flags::ARRAY_MUTATION) {
-            return self.handle_array_mutation(reference, type_id, flow, visited);
-        }
-
-        if flow.has_any_flags(flow_flags::CALL) {
-            return self.handle_call(reference, type_id, flow, visited);
-        }
-
-        if flow.has_any_flags(flow_flags::START) {
-            // For closures with captured enclosing flow, continue to antecedent
-            // This preserves narrowing from outer scope for const/let variables
-            if let Some(&ant) = flow.antecedent.first() {
-                return self.check_flow(reference, type_id, ant, visited);
-            }
-            // Reached start of flow with no antecedent - return initial type
-            return type_id;
-        }
-
-        // Default: continue to antecedent
-        if let Some(&ant) = flow.antecedent.first() {
-            self.check_flow(reference, type_id, ant, visited)
+        let pre_switch_type = if let Some(&ant) = flow.antecedent.first() {
+            *results.get(&ant).unwrap_or(&current_type)
         } else {
-            type_id
+            current_type
+        };
+
+        let narrowing = NarrowingContext::new(self.interner);
+        let clause_type = if clause.expression.is_none() {
+            self.narrow_by_default_switch_clause(
+                pre_switch_type,
+                switch_data.expression,
+                switch_data.case_block,
+                reference,
+                &narrowing,
+            )
+        } else {
+            self.narrow_by_switch_clause(
+                pre_switch_type,
+                switch_data.expression,
+                clause.expression,
+                reference,
+                &narrowing,
+            )
+        };
+
+        // Handle fallthrough
+        if flow.antecedent.len() > 1 {
+            // Add fallthrough antecedents to worklist
+            for &ant in flow.antecedent.iter().skip(1) {
+                if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                    worklist.push_back((ant, current_type));
+                    in_worklist.insert(ant);
+                }
+            }
         }
+
+        clause_type
+    }
+
+    /// Helper function for call handling in iterative mode.
+    fn handle_call_iterative(
+        &self,
+        reference: NodeIndex,
+        current_type: TypeId,
+        flow: &FlowNode,
+        results: &FxHashMap<FlowNodeId, TypeId>,
+        worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
+        in_worklist: &mut FxHashSet<FlowNodeId>,
+        visited: &FxHashSet<FlowNodeId>,
+    ) -> TypeId {
+        let pre_type = if let Some(&ant) = flow.antecedent.first() {
+            *results.get(&ant).unwrap_or(&current_type)
+        } else {
+            current_type
+        };
+
+        let Some(node) = self.arena.get(flow.node) else {
+            return pre_type;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return pre_type;
+        }
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return pre_type;
+        };
+
+        let Some(node_types) = self.node_types else {
+            return pre_type;
+        };
+        let Some(&callee_type) = node_types.get(&call.expression.0) else {
+            return pre_type;
+        };
+        let Some(signature) = self.predicate_signature_for_type(callee_type) else {
+            return pre_type;
+        };
+        if !signature.predicate.asserts {
+            return pre_type;
+        }
+
+        let Some(predicate_target) =
+            self.predicate_target_expression(call, &signature.predicate, &signature.params)
+        else {
+            return pre_type;
+        };
+        if !self.is_matching_reference(predicate_target, reference) {
+            return pre_type;
+        }
+
+        self.apply_type_predicate_narrowing(pre_type, &signature.predicate, true)
     }
 
     /// Recursive flow graph traversal for definite assignment checks.

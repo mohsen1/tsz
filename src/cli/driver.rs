@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crate::binder::{SymbolId, SymbolTable, symbol_flags};
 use crate::checker::TypeCache;
+use crate::checker::context::LibContext;
 use crate::checker::types::diagnostics::{
     Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
 };
@@ -17,7 +18,6 @@ use crate::cli::config::{
     resolve_compiler_options,
 };
 use crate::cli::fs::{FileDiscoveryOptions, discover_ts_files, is_valid_module_file};
-use crate::checker::context::LibContext;
 use crate::declaration_emitter::DeclarationEmitter;
 use crate::parallel::{self, BindResult, BoundFile, MergedProgram};
 use crate::parser::NodeIndex;
@@ -2314,8 +2314,8 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
 /// and returns LibContext objects that can be used by the checker to resolve global
 /// symbols like `console`, `Array`, `Promise`, etc.
 fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
-    use crate::thin_parser::ThinParserState;
     use crate::thin_binder::ThinBinderState;
+    use crate::thin_parser::ThinParserState;
     use std::sync::Arc;
 
     let mut lib_contexts = Vec::new();
@@ -2384,8 +2384,10 @@ fn collect_diagnostics(
     for file in &program.files {
         let canonical = canonicalize_or_owned(Path::new(&file.file_name));
         program_paths.insert(canonical);
-        canonical_to_file_name
-            .insert(canonicalize_or_owned(Path::new(&file.file_name)), file.file_name.clone());
+        canonical_to_file_name.insert(
+            canonicalize_or_owned(Path::new(&file.file_name)),
+            file.file_name.clone(),
+        );
     }
 
     // Load lib.d.ts files for global symbol resolution (console, Array, Promise, etc.)

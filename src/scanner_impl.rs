@@ -12,8 +12,8 @@
 use crate::char_codes::CharacterCodes;
 use crate::interner::{Atom, Interner};
 use crate::scanner::SyntaxKind;
-use wasm_bindgen::prelude::*;
 use std::sync::Arc;
+use wasm_bindgen::prelude::*;
 
 // =============================================================================
 // Token Flags

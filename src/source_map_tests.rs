@@ -205,7 +205,10 @@ fn test_simple_map_generic() {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("Map"), "expected output to contain Map. output: {output}");
+    assert!(
+        output.contains("Map"),
+        "expected output to contain Map. output: {output}"
+    );
 }
 
 #[test]
@@ -236,7 +239,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -273,7 +279,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -314,7 +323,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -360,7 +372,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -397,7 +412,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -438,7 +456,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -469,7 +490,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -519,7 +543,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]
@@ -570,7 +597,10 @@ class ApiController {
     printer.emit(root);
 
     let output = printer.get_output().to_string();
-    assert!(output.contains("ApiController"), "expected output to contain ApiController. output: {output}");
+    assert!(
+        output.contains("ApiController"),
+        "expected output to contain ApiController. output: {output}"
+    );
 }
 
 #[test]

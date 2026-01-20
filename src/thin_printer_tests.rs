@@ -2,8 +2,8 @@
 
 use crate::thin_parser::ThinParserState;
 use crate::thin_printer::{
-    lower_and_print, print_to_string, print_with_source_map, PrintOptions, Printer, StreamingPrinter,
-    safe_slice,
+    PrintOptions, Printer, StreamingPrinter, lower_and_print, print_to_string,
+    print_with_source_map, safe_slice,
 };
 
 // =============================================================================
@@ -56,7 +56,11 @@ fn test_lower_and_print_es5_class() {
 
     let result = lower_and_print(&parser.arena, root, PrintOptions::es5());
     // ES5 output should use function instead of class
-    assert!(result.code.contains("function Foo"), "Output: {}", result.code);
+    assert!(
+        result.code.contains("function Foo"),
+        "Output: {}",
+        result.code
+    );
 }
 
 #[test]
@@ -99,7 +103,10 @@ fn test_print_with_source_map() {
     let result = print_with_source_map(&parser.arena, root, source, "test.ts", "test.js", options);
 
     assert!(result.code.contains("const x = 1"), "Code: {}", result.code);
-    assert!(result.source_map.is_some(), "Source map should be generated");
+    assert!(
+        result.source_map.is_some(),
+        "Source map should be generated"
+    );
 
     let map = result.source_map.unwrap();
     assert!(map.contains("\"sources\""), "Map: {}", map);
@@ -250,26 +257,41 @@ fn test_streaming_printer_newlines() {
 #[test]
 fn test_print_options_es5() {
     let opts = PrintOptions::es5();
-    assert!(matches!(opts.target, crate::thin_emitter::ScriptTarget::ES5));
+    assert!(matches!(
+        opts.target,
+        crate::thin_emitter::ScriptTarget::ES5
+    ));
 }
 
 #[test]
 fn test_print_options_es6() {
     let opts = PrintOptions::es6();
-    assert!(matches!(opts.target, crate::thin_emitter::ScriptTarget::ES2015));
+    assert!(matches!(
+        opts.target,
+        crate::thin_emitter::ScriptTarget::ES2015
+    ));
 }
 
 #[test]
 fn test_print_options_commonjs() {
     let opts = PrintOptions::commonjs();
-    assert!(matches!(opts.module, crate::thin_emitter::ModuleKind::CommonJS));
+    assert!(matches!(
+        opts.module,
+        crate::thin_emitter::ModuleKind::CommonJS
+    ));
 }
 
 #[test]
 fn test_print_options_es5_commonjs() {
     let opts = PrintOptions::es5_commonjs();
-    assert!(matches!(opts.target, crate::thin_emitter::ScriptTarget::ES5));
-    assert!(matches!(opts.module, crate::thin_emitter::ModuleKind::CommonJS));
+    assert!(matches!(
+        opts.target,
+        crate::thin_emitter::ScriptTarget::ES5
+    ));
+    assert!(matches!(
+        opts.module,
+        crate::thin_emitter::ModuleKind::CommonJS
+    ));
 }
 
 // =============================================================================
@@ -292,12 +314,20 @@ const calc = new Calculator();
 
     // Test ES6+ output
     let es6_output = print_to_string(&parser.arena, root, PrintOptions::default());
-    assert!(es6_output.contains("class Calculator"), "ES6: {}", es6_output);
+    assert!(
+        es6_output.contains("class Calculator"),
+        "ES6: {}",
+        es6_output
+    );
     assert!(es6_output.contains("add(a, b)"), "ES6: {}", es6_output);
 
     // Test ES5 output
     let es5_result = lower_and_print(&parser.arena, root, PrintOptions::es5());
-    assert!(es5_result.code.contains("function Calculator"), "ES5: {}", es5_result.code);
+    assert!(
+        es5_result.code.contains("function Calculator"),
+        "ES5: {}",
+        es5_result.code
+    );
 }
 
 #[test]
@@ -317,8 +347,16 @@ fn test_emit_produces_valid_javascript() {
         let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
-        assert!(output.contains("function greet(name)"), "Output: {}", output);
-        assert!(!output.contains(": string"), "Types should be stripped: {}", output);
+        assert!(
+            output.contains("function greet(name)"),
+            "Output: {}",
+            output
+        );
+        assert!(
+            !output.contains(": string"),
+            "Types should be stripped: {}",
+            output
+        );
     }
 
     // Class

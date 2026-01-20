@@ -339,10 +339,7 @@ impl TypeScriptQuirks {
             "method-bivariance",
             "Methods are always bivariant regardless of strictFunctionTypes",
         ),
-        (
-            "void-return",
-            "() => void accepts () => T for any T",
-        ),
+        ("void-return", "() => void accepts () => T for any T"),
         (
             "weak-types",
             "Objects with only optional properties require common properties (TS2559)",

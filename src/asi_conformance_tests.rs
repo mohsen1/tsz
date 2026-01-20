@@ -4,8 +4,8 @@
 //! Focus on TS1005 (token expected) and TS1109 (expression expected) error codes.
 
 use crate::checker::types::diagnostics::diagnostic_codes;
-use crate::thin_parser::ThinParserState;
 use crate::scanner::SyntaxKind;
+use crate::thin_parser::ThinParserState;
 
 /// Test that throw with line break reports TS1109
 #[test]
@@ -19,14 +19,13 @@ function f() {
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
-    let codes: Vec<u32> = parser
-        .get_diagnostics()
-        .iter()
-        .map(|d| d.code)
-        .collect();
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
-    assert!(codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
-        "Should emit TS1109 for line break after throw, got: {:?}", codes);
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Should emit TS1109 for line break after throw, got: {:?}",
+        codes
+    );
 }
 
 /// Test that throw without line break is OK
@@ -40,14 +39,13 @@ function f() {
     let mut parser = ThinParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
-    let codes: Vec<u32> = parser
-        .get_diagnostics()
-        .iter()
-        .map(|d| d.code)
-        .collect();
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
-    assert!(!codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
-        "Should NOT emit TS1109 for throw on same line, got: {:?}", codes);
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Should NOT emit TS1109 for throw on same line, got: {:?}",
+        codes
+    );
 }
 
 /// Test return with line break (ASI applies, returns undefined)
@@ -174,15 +172,28 @@ fn test_asi_comprehensive_edge_cases() {
     let test_cases = vec![
         // (source, should_have_errors, description)
         // Valid ASI cases
-        (r#"function f() { return }"#, false, "return without semicolon"),
-        (r#"function f() { throw {}"#, false, "throw without semicolon (should error but for different reason)"),
-
+        (
+            r#"function f() { return }"#,
+            false,
+            "return without semicolon",
+        ),
+        (
+            r#"function f() { throw {}"#,
+            false,
+            "throw without semicolon (should error but for different reason)",
+        ),
         // Line break triggers ASI
-        (r#"function f() { return\nx }"#, false, "return with line break (ASI)"),
-
+        (
+            r#"function f() { return\nx }"#,
+            false,
+            "return with line break (ASI)",
+        ),
         // throw with line break should error
-        (r#"function f() { throw\nnew Error() }"#, true, "throw with line break (TS1109)"),
-
+        (
+            r#"function f() { throw\nnew Error() }"#,
+            true,
+            "throw with line break (TS1109)",
+        ),
         // Postfix operators with line break
         (r#"let x = 5\nx++"#, false, "postfix ++ after line break"),
         (r#"let y = 5\ny--"#, false, "postfix -- after line break"),
@@ -195,7 +206,10 @@ fn test_asi_comprehensive_edge_cases() {
         let has_errors = !parser.get_diagnostics().is_empty();
 
         if *should_have_errors && !has_errors {
-            panic!("Test case {} ({}) expected errors but got none: {:?}", i, description, source);
+            panic!(
+                "Test case {} ({}) expected errors but got none: {:?}",
+                i, description, source
+            );
         }
     }
 }
@@ -206,7 +220,11 @@ fn test_asi_ts1005_token_expected_patterns() {
     let test_cases = vec![
         // Missing tokens that should trigger TS1005
         (r#"function f() { }"#, false, "complete function"),
-        (r#"function f( { }"#, true, "missing closing paren in function params"),
+        (
+            r#"function f( { }"#,
+            true,
+            "missing closing paren in function params",
+        ),
         (r#"if (true { }"#, true, "missing closing paren in if"),
     ];
 
@@ -217,9 +235,11 @@ fn test_asi_ts1005_token_expected_patterns() {
         let diagnostics = parser.get_diagnostics();
         let has_errors = !diagnostics.is_empty();
 
-
         if *should_have_errors && !has_errors {
-            panic!("Test case {} ({}) expected errors but got none", i, description);
+            panic!(
+                "Test case {} ({}) expected errors but got none",
+                i, description
+            );
         }
     }
 }
@@ -231,16 +251,29 @@ fn test_async_function_await_computed_property() {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new("asyncFunctionDeclaration9_es2017.ts".to_string(), source.to_string());
+    let mut parser = ThinParserState::new(
+        "asyncFunctionDeclaration9_es2017.ts".to_string(),
+        source.to_string(),
+    );
     parser.parse_source_file();
 
     let diagnostics = parser.get_diagnostics();
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
-    let ts1005_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED).count();
+    let ts1109_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
+    let ts1005_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED)
+        .count();
 
     assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 error");
     assert_eq!(ts1005_count, 0, "Should emit no TS1005 errors");
-    assert_eq!(diagnostics.len(), 1, "Should emit exactly 1 diagnostic total");
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "Should emit exactly 1 diagnostic total"
+    );
 }
 
 /// Test async await issue - arrow function
@@ -250,16 +283,27 @@ fn test_async_arrow_await_computed_property() {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new("asyncArrowFunction8_es6.ts".to_string(), source.to_string());
+    let mut parser =
+        ThinParserState::new("asyncArrowFunction8_es6.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     let diagnostics = parser.get_diagnostics();
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
-    let ts1005_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED).count();
+    let ts1109_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
+    let ts1005_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED)
+        .count();
 
     assert_eq!(ts1109_count, 1, "Should emit exactly 1 TS1109 error");
     assert_eq!(ts1005_count, 0, "Should emit no TS1005 errors");
-    assert_eq!(diagnostics.len(), 1, "Should emit exactly 1 diagnostic total");
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "Should emit exactly 1 diagnostic total"
+    );
 }
 
 /// Test exact conformance test files
@@ -273,7 +317,10 @@ var foo = async (): Promise<void> => {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new("asyncArrowFunction8_es2017.ts".to_string(), arrow_source.to_string());
+    let mut parser = ThinParserState::new(
+        "asyncArrowFunction8_es2017.ts".to_string(),
+        arrow_source.to_string(),
+    );
     parser.parse_source_file();
     let arrow_diagnostics = parser.get_diagnostics();
 
@@ -284,18 +331,27 @@ async function foo(): Promise<void> {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new("asyncFunctionDeclaration9_es2017.ts".to_string(), func_source.to_string());
+    let mut parser = ThinParserState::new(
+        "asyncFunctionDeclaration9_es2017.ts".to_string(),
+        func_source.to_string(),
+    );
     parser.parse_source_file();
     let func_diagnostics = parser.get_diagnostics();
 
     eprintln!("Arrow function diagnostics:");
     for diag in arrow_diagnostics.iter() {
-        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+        eprintln!(
+            "  Code: {}, Message: {}, Start: {}",
+            diag.code, diag.message, diag.start
+        );
     }
 
     eprintln!("Function declaration diagnostics:");
     for diag in func_diagnostics.iter() {
-        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+        eprintln!(
+            "  Code: {}, Message: {}, Start: {}",
+            diag.code, diag.message, diag.start
+        );
     }
 }
 
@@ -328,12 +384,18 @@ function test() {
 
     eprintln!("Throw with line break diagnostics:");
     for diag in throw_diagnostics.iter() {
-        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+        eprintln!(
+            "  Code: {}, Message: {}, Start: {}",
+            diag.code, diag.message, diag.start
+        );
     }
 
     eprintln!("Return with line break diagnostics:");
     for diag in return_diagnostics.iter() {
-        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+        eprintln!(
+            "  Code: {}, Message: {}, Start: {}",
+            diag.code, diag.message, diag.start
+        );
     }
 }
 
@@ -349,16 +411,25 @@ fn test_yield_ts1109() {
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let ts1109_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
 
     eprintln!("Yield diagnostics:");
     for diag in diagnostics.iter() {
-        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+        eprintln!(
+            "  Code: {}, Message: {}, Start: {}",
+            diag.code, diag.message, diag.start
+        );
     }
 
     // `yield` is a restricted production: a line break after `yield` means the yield expression
     // has no operand (`yield;`) and the next line starts a new statement.
-    assert_eq!(ts1109_count, 0, "Yield with line break should not emit TS1109");
+    assert_eq!(
+        ts1109_count, 0,
+        "Yield with line break should not emit TS1109"
+    );
 }
 
 /// Test other ASI edge cases that might need TS1109
@@ -370,11 +441,12 @@ x
 ++;
 console.log(x);"#;
 
-    let mut parser = ThinParserState::new("postfix_test.ts".to_string(), postfix_source.to_string());
+    let mut parser =
+        ThinParserState::new("postfix_test.ts".to_string(), postfix_source.to_string());
     parser.parse_source_file();
     let postfix_diagnostics = parser.get_diagnostics();
 
-    // Pattern 2: Array access with line break  
+    // Pattern 2: Array access with line break
     let array_source = r#"let arr = [1, 2, 3];
 let val = arr
 [0];"#;
@@ -385,12 +457,18 @@ let val = arr
 
     eprintln!("Postfix increment diagnostics:");
     for diag in postfix_diagnostics.iter() {
-        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+        eprintln!(
+            "  Code: {}, Message: {}, Start: {}",
+            diag.code, diag.message, diag.start
+        );
     }
 
     eprintln!("Array access diagnostics:");
     for diag in array_diagnostics.iter() {
-        eprintln!("  Code: {}, Message: {}, Start: {}", diag.code, diag.message, diag.start);
+        eprintln!(
+            "  Code: {}, Message: {}, Start: {}",
+            diag.code, diag.message, diag.start
+        );
     }
 }
 
@@ -405,19 +483,30 @@ var foo = async (): Promise<void> => {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser = ThinParserState::new("asyncArrowFunction8_es2017.ts".to_string(), source.to_string());
+    let mut parser = ThinParserState::new(
+        "asyncArrowFunction8_es2017.ts".to_string(),
+        source.to_string(),
+    );
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
     eprintln!("=== EXACT FILE CONTENT TEST ===");
     eprintln!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
-                  i, diag.code, diag.message, diag.start, diag.length);
+        eprintln!(
+            "  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
+            i, diag.code, diag.message, diag.start, diag.length
+        );
     }
 
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
-    let ts1005_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED).count();
+    let ts1109_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
+    let ts1005_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TOKEN_EXPECTED)
+        .count();
 
     eprintln!("TS1109 count: {}", ts1109_count);
     eprintln!("TS1005 count: {}", ts1005_count);
@@ -441,11 +530,16 @@ fn test_incomplete_expressions_ts1109() {
     eprintln!("=== INCOMPLETE EXPRESSIONS TEST ===");
     eprintln!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
-                  i, diag.code, diag.message, diag.start, diag.length);
+        eprintln!(
+            "  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
+            i, diag.code, diag.message, diag.start, diag.length
+        );
     }
 
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let ts1109_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
     eprintln!("TS1109 count: {}", ts1109_count);
 }
 
@@ -454,22 +548,31 @@ fn test_incomplete_expressions_ts1109() {
 fn test_new_missing_identifier_ts1109() {
     let source = r#"var x = new ();"#;
 
-    let mut parser = ThinParserState::new("newMissingIdentifier.ts".to_string(), source.to_string());
+    let mut parser =
+        ThinParserState::new("newMissingIdentifier.ts".to_string(), source.to_string());
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
     eprintln!("=== NEW MISSING IDENTIFIER TEST ===");
     eprintln!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
-                  i, diag.code, diag.message, diag.start, diag.length);
+        eprintln!(
+            "  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
+            i, diag.code, diag.message, diag.start, diag.length
+        );
     }
 
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let ts1109_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
     eprintln!("TS1109 count: {}", ts1109_count);
-    
+
     // Should have exactly 1 TS1109 error
-    assert!(ts1109_count >= 1, "Should emit at least 1 TS1109 for missing identifier after new");
+    assert!(
+        ts1109_count >= 1,
+        "Should emit at least 1 TS1109 for missing identifier after new"
+    );
 }
 
 /// Test await and yield* missing value patterns
@@ -480,7 +583,8 @@ fn test_await_yield_missing_value_ts1109() {
     await;
 }"#;
 
-    let mut parser = ThinParserState::new("awaitMissingValue.ts".to_string(), await_source.to_string());
+    let mut parser =
+        ThinParserState::new("awaitMissingValue.ts".to_string(), await_source.to_string());
     parser.parse_source_file();
     let await_diagnostics = parser.get_diagnostics();
 
@@ -489,31 +593,46 @@ fn test_await_yield_missing_value_ts1109() {
     yield *;
 }"#;
 
-    let mut parser = ThinParserState::new("yieldStarMissingValue.ts".to_string(), yield_star_source.to_string());
+    let mut parser = ThinParserState::new(
+        "yieldStarMissingValue.ts".to_string(),
+        yield_star_source.to_string(),
+    );
     parser.parse_source_file();
     let yield_star_diagnostics = parser.get_diagnostics();
 
     eprintln!("=== AWAIT/YIELD* MISSING VALUE TEST ===");
-    
+
     eprintln!("Await missing value diagnostics:");
     for (i, diag) in await_diagnostics.iter().enumerate() {
-        eprintln!("  [{}] Code: {}, Message: \"{}\"", i, diag.code, diag.message);
+        eprintln!(
+            "  [{}] Code: {}, Message: \"{}\"",
+            i, diag.code, diag.message
+        );
     }
 
     eprintln!("Yield* missing value diagnostics:");
     for (i, diag) in yield_star_diagnostics.iter().enumerate() {
-        eprintln!("  [{}] Code: {}, Message: \"{}\"", i, diag.code, diag.message);
+        eprintln!(
+            "  [{}] Code: {}, Message: \"{}\"",
+            i, diag.code, diag.message
+        );
     }
 
-    let await_ts1109 = await_diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
-    let yield_star_ts1109 = yield_star_diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let await_ts1109 = await_diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
+    let yield_star_ts1109 = yield_star_diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
 
     eprintln!("Await TS1109 count: {}", await_ts1109);
     eprintln!("Yield* TS1109 count: {}", yield_star_ts1109);
 }
 
 /// Debug await semicolon specifically
-#[test]  
+#[test]
 fn debug_await_semicolon() {
     let source = r#"async function f() {
     await;
@@ -526,7 +645,10 @@ fn debug_await_semicolon() {
     eprintln!("=== AWAIT SEMICOLON DEBUG ===");
     eprintln!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}", i, diag.code, diag.message, diag.start);
+        eprintln!(
+            "  [{}] Code: {}, Message: \"{}\" Start: {}",
+            i, diag.code, diag.message, diag.start
+        );
     }
 }
 
@@ -543,9 +665,15 @@ fn test_await_parameter_default_ts1109() {
     eprintln!("=== AWAIT PARAMETER DEFAULT TEST ===");
     eprintln!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!("  [{}] Code: {}, Message: \"{}\" Start: {}", i, diag.code, diag.message, diag.start);
+        eprintln!(
+            "  [{}] Code: {}, Message: \"{}\" Start: {}",
+            i, diag.code, diag.message, diag.start
+        );
     }
 
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED).count();
+    let ts1109_count = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
     eprintln!("TS1109 count: {}", ts1109_count);
 }

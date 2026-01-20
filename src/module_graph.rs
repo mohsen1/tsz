@@ -9,7 +9,7 @@
 
 use crate::exports::ExportTracker;
 use crate::imports::ImportTracker;
-use crate::module_resolver::{ModuleResolver, ResolvedModule, ResolutionFailure};
+use crate::module_resolver::{ModuleResolver, ResolutionFailure, ResolvedModule};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -151,9 +151,7 @@ impl ModuleGraph {
     /// Add or get a module by path
     pub fn add_module(&mut self, path: &Path) -> ModuleId {
         // Canonicalize path
-        let canonical = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         if let Some(&id) = self.path_to_id.get(&canonical) {
             return id;
@@ -202,9 +200,7 @@ impl ModuleGraph {
 
     /// Get a module by path
     pub fn get_module_by_path(&self, path: &Path) -> Option<&ModuleInfo> {
-        let canonical = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         self.path_to_id
             .get(&canonical)
@@ -213,9 +209,7 @@ impl ModuleGraph {
 
     /// Get module ID by path
     pub fn get_module_id(&self, path: &Path) -> Option<ModuleId> {
-        let canonical = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         self.path_to_id.get(&canonical).copied()
     }
@@ -338,10 +332,8 @@ impl ModuleGraph {
                     .filter_map(|id| self.modules.get(id).map(|m| m.path.clone()))
                     .collect();
 
-                self.circular_dependencies.push(CircularDependency {
-                    cycle: scc,
-                    paths,
-                });
+                self.circular_dependencies
+                    .push(CircularDependency { cycle: scc, paths });
             } else if scc.len() == 1 {
                 // Check for self-loop
                 let id = scc[0];
@@ -592,7 +584,11 @@ pub struct CircularDependencyError {
 
 impl std::fmt::Display for CircularDependencyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Circular dependency detected involving {} modules", self.cycle.len())
+        write!(
+            f,
+            "Circular dependency detected involving {} modules",
+            self.cycle.len()
+        )
     }
 }
 
@@ -711,12 +707,14 @@ mod tests {
         assert!(
             pos_c < pos_b,
             "c (pos {}) should come before b (pos {}) since b depends on c",
-            pos_c, pos_b
+            pos_c,
+            pos_b
         );
         assert!(
             pos_b < pos_a,
             "b (pos {}) should come before a (pos {}) since a depends on b",
-            pos_b, pos_a
+            pos_b,
+            pos_a
         );
     }
 

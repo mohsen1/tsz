@@ -2,7 +2,8 @@
 //!
 //! Measures the performance impact of CFA on type checking operations.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use wasm::checker::CheckerOptions;
 use wasm::solver::{TypeId, TypeInterner};
 use wasm::thin_binder::ThinBinderState;
 use wasm::thin_checker::ThinCheckerState;
@@ -265,19 +266,15 @@ fn bench_flow_analysis(c: &mut Criterion) {
     ];
 
     for (name, code) in test_cases {
-        group.bench_with_input(
-            BenchmarkId::new("bind_with_flow", name),
-            code,
-            |b, code| {
-                b.iter(|| {
-                    let mut parser = ThinParserState::new("bench.ts".to_string(), code.to_string());
-                    let root = parser.parse_source_file();
-                    let mut binder = ThinBinderState::new();
-                    binder.bind_source_file(parser.get_arena(), root);
-                    black_box(root)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("bind_with_flow", name), code, |b, code| {
+            b.iter(|| {
+                let mut parser = ThinParserState::new("bench.ts".to_string(), code.to_string());
+                let root = parser.parse_source_file();
+                let mut binder = ThinBinderState::new();
+                binder.bind_source_file(parser.get_arena(), root);
+                black_box(root)
+            })
+        });
     }
 
     group.finish();
@@ -301,28 +298,24 @@ fn bench_scaling(c: &mut Criterion) {
         }
         code.push_str("else { x = -1; }\nconsole.log(x);\n");
 
-        group.bench_with_input(
-            BenchmarkId::new("branches", n),
-            &code,
-            |b, code| {
-                b.iter(|| {
-                    let mut parser = ThinParserState::new("bench.ts".to_string(), code.clone());
-                    let root = parser.parse_source_file();
-                    let mut binder = ThinBinderState::new();
-                    binder.bind_source_file(parser.get_arena(), root);
-                    let types = TypeInterner::new();
-                    let mut checker = ThinCheckerState::new(
-                        parser.get_arena(),
-                        &binder,
-                        &types,
-                        "bench.ts".to_string(),
-                        false,
-                    );
-                    checker.check_source_file(root);
-                    black_box(root)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("branches", n), &code, |b, code| {
+            b.iter(|| {
+                let mut parser = ThinParserState::new("bench.ts".to_string(), code.clone());
+                let root = parser.parse_source_file();
+                let mut binder = ThinBinderState::new();
+                binder.bind_source_file(parser.get_arena(), root);
+                let types = TypeInterner::new();
+                let mut checker = ThinCheckerState::new(
+                    parser.get_arena(),
+                    &binder,
+                    &types,
+                    "bench.ts".to_string(),
+                    CheckerOptions::default(),
+                );
+                checker.check_source_file(root);
+                black_box(root)
+            })
+        });
     }
 
     // Generate code with increasing nesting depth
@@ -339,28 +332,24 @@ fn bench_scaling(c: &mut Criterion) {
         }
         code.push_str("console.log(x);\n");
 
-        group.bench_with_input(
-            BenchmarkId::new("nesting", depth),
-            &code,
-            |b, code| {
-                b.iter(|| {
-                    let mut parser = ThinParserState::new("bench.ts".to_string(), code.clone());
-                    let root = parser.parse_source_file();
-                    let mut binder = ThinBinderState::new();
-                    binder.bind_source_file(parser.get_arena(), root);
-                    let types = TypeInterner::new();
-                    let mut checker = ThinCheckerState::new(
-                        parser.get_arena(),
-                        &binder,
-                        &types,
-                        "bench.ts".to_string(),
-                        false,
-                    );
-                    checker.check_source_file(root);
-                    black_box(root)
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("nesting", depth), &code, |b, code| {
+            b.iter(|| {
+                let mut parser = ThinParserState::new("bench.ts".to_string(), code.clone());
+                let root = parser.parse_source_file();
+                let mut binder = ThinBinderState::new();
+                binder.bind_source_file(parser.get_arena(), root);
+                let types = TypeInterner::new();
+                let mut checker = ThinCheckerState::new(
+                    parser.get_arena(),
+                    &binder,
+                    &types,
+                    "bench.ts".to_string(),
+                    CheckerOptions::default(),
+                );
+                checker.check_source_file(root);
+                black_box(root)
+            })
+        });
     }
 
     group.finish();

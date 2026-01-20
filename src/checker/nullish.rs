@@ -29,9 +29,9 @@
 //! a ?? (b && c);   // OK
 //! ```
 
+use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
 use crate::parser::thin_node::ThinNodeArena;
-use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 
@@ -89,9 +89,9 @@ fn is_definitely_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bo
     };
 
     match key {
-        TypeKey::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-            true
-        }
+        TypeKey::Intrinsic(
+            IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void,
+        ) => true,
         TypeKey::Union(members) => {
             // A union is definitely nullish if all members are nullish
             let members = types.type_list(members);
@@ -114,9 +114,9 @@ fn can_be_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
     };
 
     match key {
-        TypeKey::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-            true
-        }
+        TypeKey::Intrinsic(
+            IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void,
+        ) => true,
         TypeKey::Union(members) => {
             let members = types.type_list(members);
             members.iter().any(|&m| can_be_nullish(types, m))
@@ -134,9 +134,9 @@ fn get_non_nullish_type(types: &mut impl TypeDatabase, type_id: SolverTypeId) ->
     };
 
     match key {
-        TypeKey::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-            SolverTypeId::NEVER
-        }
+        TypeKey::Intrinsic(
+            IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void,
+        ) => SolverTypeId::NEVER,
         TypeKey::Union(members) => {
             let members = types.type_list(members);
             let non_nullish: Vec<SolverTypeId> = members
@@ -186,9 +186,7 @@ pub fn check_nullish_coalescing_precedence(
     };
 
     let op = binary.operator_token;
-    if op == SyntaxKind::AmpersandAmpersandToken as u16
-        || op == SyntaxKind::BarBarToken as u16
-    {
+    if op == SyntaxKind::AmpersandAmpersandToken as u16 || op == SyntaxKind::BarBarToken as u16 {
         return Some(PrecedenceError {
             operator: if op == SyntaxKind::AmpersandAmpersandToken as u16 {
                 "&&"
@@ -240,7 +238,8 @@ mod tests {
         let mut types = TypeInterner::new();
 
         // null ?? string should be string
-        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::NULL, SolverTypeId::STRING);
+        let result =
+            get_nullish_coalescing_type(&mut types, SolverTypeId::NULL, SolverTypeId::STRING);
         assert_eq!(result, SolverTypeId::STRING);
     }
 
@@ -249,7 +248,8 @@ mod tests {
         let mut types = TypeInterner::new();
 
         // undefined ?? number should be number
-        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::UNDEFINED, SolverTypeId::NUMBER);
+        let result =
+            get_nullish_coalescing_type(&mut types, SolverTypeId::UNDEFINED, SolverTypeId::NUMBER);
         assert_eq!(result, SolverTypeId::NUMBER);
     }
 
@@ -258,7 +258,8 @@ mod tests {
         let mut types = TypeInterner::new();
 
         // string ?? number should be string (string is never nullish)
-        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::STRING, SolverTypeId::NUMBER);
+        let result =
+            get_nullish_coalescing_type(&mut types, SolverTypeId::STRING, SolverTypeId::NUMBER);
         assert_eq!(result, SolverTypeId::STRING);
     }
 
@@ -267,7 +268,8 @@ mod tests {
         let mut types = TypeInterner::new();
 
         // any ?? number should be any
-        let result = get_nullish_coalescing_type(&mut types, SolverTypeId::ANY, SolverTypeId::NUMBER);
+        let result =
+            get_nullish_coalescing_type(&mut types, SolverTypeId::ANY, SolverTypeId::NUMBER);
         assert_eq!(result, SolverTypeId::ANY);
     }
 

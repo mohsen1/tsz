@@ -458,10 +458,22 @@ impl<'a> Completions<'a> {
                     compiler_options.clone(),
                 )
             } else {
-                ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options.clone())
+                ThinCheckerState::new(
+                    self.arena,
+                    self.binder,
+                    interner,
+                    file_name.clone(),
+                    compiler_options.clone(),
+                )
             }
         } else {
-            ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options)
+            ThinCheckerState::new(
+                self.arena,
+                self.binder,
+                interner,
+                file_name.clone(),
+                compiler_options,
+            )
         };
 
         let type_id = checker.get_type_of_node(expr_idx);
@@ -652,10 +664,22 @@ impl<'a> Completions<'a> {
                     compiler_options.clone(),
                 )
             } else {
-                ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options.clone())
+                ThinCheckerState::new(
+                    self.arena,
+                    self.binder,
+                    interner,
+                    file_name.clone(),
+                    compiler_options.clone(),
+                )
             }
         } else {
-            ThinCheckerState::new(self.arena, self.binder, interner, file_name.clone(), compiler_options)
+            ThinCheckerState::new(
+                self.arena,
+                self.binder,
+                interner,
+                file_name.clone(),
+                compiler_options,
+            )
         };
 
         let context_type = self.get_contextual_type(object_literal_idx, &mut checker)?;
