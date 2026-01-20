@@ -38,12 +38,7 @@ fn fn_type(interner: &TypeInterner, param: TypeId, ret: TypeId) -> TypeId {
 }
 
 /// Create a function type with two parameters
-fn fn_type2(
-    interner: &TypeInterner,
-    param1: TypeId,
-    param2: TypeId,
-    ret: TypeId,
-) -> TypeId {
+fn fn_type2(interner: &TypeInterner, param1: TypeId, param2: TypeId, ret: TypeId) -> TypeId {
     let sig = FunctionShape {
         type_params: vec![],
         params: vec![

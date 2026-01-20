@@ -122,7 +122,8 @@ impl ModuleResolutionDebugger {
 
         // Track symbol origin (only for first declaration)
         if !is_merge && !self.symbol_origins.contains_key(&symbol_id) {
-            self.symbol_origins.insert(symbol_id, self.current_file.clone());
+            self.symbol_origins
+                .insert(symbol_id, self.current_file.clone());
         }
 
         if is_debug_enabled() {
@@ -176,12 +177,7 @@ impl ModuleResolutionDebugger {
     }
 
     /// Record a symbol lookup.
-    pub fn record_lookup(
-        &mut self,
-        name: &str,
-        scope_path: Vec<String>,
-        result: Option<SymbolId>,
-    ) {
+    pub fn record_lookup(&mut self, name: &str, scope_path: Vec<String>, result: Option<SymbolId>) {
         if !is_debug_enabled() {
             return;
         }
@@ -249,11 +245,7 @@ impl ModuleResolutionDebugger {
         }
 
         // Failed lookups
-        let failed_lookups: Vec<_> = self
-            .lookup_events
-            .iter()
-            .filter(|e| !e.found)
-            .collect();
+        let failed_lookups: Vec<_> = self.lookup_events.iter().filter(|e| !e.found).collect();
         if !failed_lookups.is_empty() {
             summary.push_str("\nFailed Lookups:\n");
             for event in failed_lookups {
@@ -395,7 +387,11 @@ mod tests {
         assert_eq!(debugger.merge_events[0].name, "MyInterface");
 
         // Record a lookup
-        debugger.record_lookup("MyClass", vec!["local".into(), "file".into()], Some(SymbolId(1)));
+        debugger.record_lookup(
+            "MyClass",
+            vec!["local".into(), "file".into()],
+            Some(SymbolId(1)),
+        );
 
         assert_eq!(debugger.lookup_events.len(), 1);
         assert!(debugger.lookup_events[0].found);

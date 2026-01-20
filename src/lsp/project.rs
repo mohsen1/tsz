@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::binder::SymbolId;
+use crate::checker::TypeCache;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::cli::config::{load_tsconfig, resolve_compiler_options};
-use crate::checker::TypeCache;
 use crate::lsp::code_actions::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider, ImportCandidate,
     ImportCandidateKind,
@@ -865,30 +865,42 @@ impl ProjectFile {
         };
 
         match node.kind {
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => arena
-                .get_function(node)
-                .and_then(|func| arena.get_identifier_text(func.name))
-                == Some(export_name),
-            k if k == syntax_kind_ext::CLASS_DECLARATION => arena
-                .get_class(node)
-                .and_then(|class| arena.get_identifier_text(class.name))
-                == Some(export_name),
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => arena
-                .get_interface(node)
-                .and_then(|iface| arena.get_identifier_text(iface.name))
-                == Some(export_name),
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
-                .get_type_alias(node)
-                .and_then(|alias| arena.get_identifier_text(alias.name))
-                == Some(export_name),
-            k if k == syntax_kind_ext::ENUM_DECLARATION => arena
-                .get_enum(node)
-                .and_then(|enm| arena.get_identifier_text(enm.name))
-                == Some(export_name),
-            k if k == syntax_kind_ext::MODULE_DECLARATION => arena
-                .get_module(node)
-                .and_then(|module| arena.get_identifier_text(module.name))
-                == Some(export_name),
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                arena
+                    .get_function(node)
+                    .and_then(|func| arena.get_identifier_text(func.name))
+                    == Some(export_name)
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                arena
+                    .get_class(node)
+                    .and_then(|class| arena.get_identifier_text(class.name))
+                    == Some(export_name)
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                arena
+                    .get_interface(node)
+                    .and_then(|iface| arena.get_identifier_text(iface.name))
+                    == Some(export_name)
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                arena
+                    .get_type_alias(node)
+                    .and_then(|alias| arena.get_identifier_text(alias.name))
+                    == Some(export_name)
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                arena
+                    .get_enum(node)
+                    .and_then(|enm| arena.get_identifier_text(enm.name))
+                    == Some(export_name)
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                arena
+                    .get_module(node)
+                    .and_then(|module| arena.get_identifier_text(module.name))
+                    == Some(export_name)
+            }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT
                 || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                 || k == syntax_kind_ext::VARIABLE_DECLARATION =>

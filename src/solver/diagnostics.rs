@@ -972,7 +972,10 @@ impl<'a> DiagnosticBuilder<'a> {
     pub fn implicit_any_variable(&mut self, var_name: &str, var_type: TypeId) -> TypeDiagnostic {
         let type_str = self.formatter.format(var_type);
         TypeDiagnostic::error(
-            format!("Variable '{}' implicitly has an '{}' type.", var_name, type_str),
+            format!(
+                "Variable '{}' implicitly has an '{}' type.",
+                var_name, type_str
+            ),
             codes::IMPLICIT_ANY,
         )
     }

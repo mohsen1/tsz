@@ -82,4 +82,3 @@ impl NodeList {
         self.nodes.is_empty()
     }
 }
-

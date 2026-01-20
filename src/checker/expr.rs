@@ -76,9 +76,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
             }
 
             // Element access expression - array[index] or object[key]
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                self.check_element_access(idx)
-            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self.check_element_access(idx),
 
             // Default case - return UNKNOWN for unhandled expressions instead of ANY
             // This exposes type errors that were previously hidden by the permissive ANY default
@@ -108,7 +106,8 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
                         // Proper tuple element access with index checking
                         let index_type = self.check(access_data.name_or_argument);
                         if let Some(crate::solver::TypeKey::Literal(literal_value)) =
-                            self.ctx.types.lookup(index_type) {
+                            self.ctx.types.lookup(index_type)
+                        {
                             if let crate::solver::LiteralValue::Number(num) = literal_value {
                                 // Check if the numeric index is valid for this tuple
                                 let index = num.0 as usize;
@@ -126,7 +125,8 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
                         if tuple_list.is_empty() {
                             return TypeId::NEVER;
                         }
-                        let element_types: Vec<TypeId> = tuple_list.iter().map(|elem| elem.type_id).collect();
+                        let element_types: Vec<TypeId> =
+                            tuple_list.iter().map(|elem| elem.type_id).collect();
                         return self.ctx.types.union(element_types);
                     }
                     _ => {
@@ -167,8 +167,13 @@ mod tests {
         binder.bind_source_file(parser.get_arena(), root);
 
         let types = TypeInterner::new();
-        let mut ctx =
-            CheckerContext::new(parser.get_arena(), &binder, &types, "test.ts".to_string(), crate::checker::context::CheckerOptions::default());
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
 
         // Get the expression statement and its expression
         if let Some(root_node) = parser.get_arena().get(root) {

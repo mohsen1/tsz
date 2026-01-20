@@ -303,7 +303,8 @@ impl ThinParserState {
         } else {
             // Special case: Force error emission for missing ) when we see {
             // This is a common error pattern that should always be reported
-            let force_emit = kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken);
+            let force_emit =
+                kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken);
 
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
@@ -325,8 +326,10 @@ impl ThinParserState {
                             }
                             // For closing parentheses, be more strict when we see { or if
                             // These are common cases of missing ) in parameters or conditions
-                            else if kind == SyntaxKind::CloseParenToken &&
-                                   (self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::IfKeyword)) {
+                            else if kind == SyntaxKind::CloseParenToken
+                                && (self.is_token(SyntaxKind::OpenBraceToken)
+                                    || self.is_token(SyntaxKind::IfKeyword))
+                            {
                                 // If we're expecting ) but see { or if, this is likely a missing )
                                 // Don't suppress - emit the error
                                 false
@@ -339,12 +342,11 @@ impl ThinParserState {
                             // If there's a line break, give the user benefit of doubt
                             else if self.scanner.has_preceding_line_break() {
                                 true
-                            }
-                            else {
+                            } else {
                                 false
                             }
                         }
-                        _ => false
+                        _ => false,
                     }
                 };
 
@@ -701,9 +703,9 @@ impl ThinParserState {
         // Additional sync points that indicate statement boundaries in control structures
         match self.token() {
             // Control structure boundaries
-            SyntaxKind::ElseKeyword => true,  // if statement alternative
-            SyntaxKind::CaseKeyword | SyntaxKind::DefaultKeyword => true,  // switch cases
-            SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword => true,  // try-catch-finally
+            SyntaxKind::ElseKeyword => true, // if statement alternative
+            SyntaxKind::CaseKeyword | SyntaxKind::DefaultKeyword => true, // switch cases
+            SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword => true, // try-catch-finally
             // Comma can be a sync point in declaration lists and object/array literals
             SyntaxKind::CommaToken => true,
             _ => false,
@@ -790,7 +792,11 @@ impl ThinParserState {
             }
 
             // If we're at depth 0 and found a sync point, we've resync'd
-            if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 && self.is_resync_sync_point() {
+            if brace_depth == 0
+                && paren_depth == 0
+                && bracket_depth == 0
+                && self.is_resync_sync_point()
+            {
                 break;
             }
 
@@ -1112,7 +1118,9 @@ impl ThinParserState {
             } else {
                 // Statement parsing failed, resync to recover
                 // Emit error for unexpected token if we haven't already
-                if self.token_pos() != self.last_error_pos && !self.is_token(SyntaxKind::EndOfFileToken) {
+                if self.token_pos() != self.last_error_pos
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Declaration or statement expected.",
@@ -1147,7 +1155,9 @@ impl ThinParserState {
             } else {
                 // Statement parsing failed, resync to recover
                 // Emit error for unexpected token if we haven't already
-                if self.token_pos() != self.last_error_pos && !self.is_token(SyntaxKind::EndOfFileToken) {
+                if self.token_pos() != self.last_error_pos
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
                     use crate::checker::types::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Declaration or statement expected.",
@@ -2124,8 +2134,7 @@ impl ThinParserState {
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 // Check if there's another parameter without comma - this is a TS1005 error
-                if !self.is_token(SyntaxKind::CloseParenToken)
-                    && self.is_parameter_start() {
+                if !self.is_token(SyntaxKind::CloseParenToken) && self.is_parameter_start() {
                     // Emit TS1005 for missing comma between parameters: f(a b)
                     self.error_comma_expected();
                 }
@@ -2179,7 +2188,10 @@ impl ThinParserState {
             (Some(list), None) | (None, Some(list)) => Some(list),
             (Some(decorators), Some(param_modifiers)) => {
                 let mut nodes = Vec::with_capacity(
-                    decorators.nodes.len().saturating_add(param_modifiers.nodes.len()),
+                    decorators
+                        .nodes
+                        .len()
+                        .saturating_add(param_modifiers.nodes.len()),
                 );
                 nodes.extend(decorators.nodes);
                 nodes.extend(param_modifiers.nodes);
@@ -5343,7 +5355,8 @@ impl ThinParserState {
         };
 
         // Error recovery: if initializer parsing failed badly, resync to semicolon
-        if initializer.is_none() && !self.is_token(SyntaxKind::SemicolonToken)
+        if initializer.is_none()
+            && !self.is_token(SyntaxKind::SemicolonToken)
             && !self.is_token(SyntaxKind::InKeyword)
             && !self.is_token(SyntaxKind::OfKeyword)
         {
@@ -5376,7 +5389,8 @@ impl ThinParserState {
         };
 
         // Error recovery: if condition parsing failed badly, resync to semicolon
-        if condition.is_none() && !self.is_token(SyntaxKind::SemicolonToken)
+        if condition.is_none()
+            && !self.is_token(SyntaxKind::SemicolonToken)
             && !self.is_token(SyntaxKind::CloseParenToken)
         {
             self.resync_after_error();
@@ -5560,7 +5574,9 @@ impl ThinParserState {
         // For restricted productions (break), ASI applies immediately after line break
         // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
         // Optional label
-        let label = if !self.can_parse_semicolon_for_restricted_production() && self.is_identifier_or_keyword() {
+        let label = if !self.can_parse_semicolon_for_restricted_production()
+            && self.is_identifier_or_keyword()
+        {
             self.parse_identifier_name()
         } else {
             NodeIndex::NONE
@@ -5585,7 +5601,9 @@ impl ThinParserState {
         // For restricted productions (continue), ASI applies immediately after line break
         // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
         // Optional label
-        let label = if !self.can_parse_semicolon_for_restricted_production() && self.is_identifier_or_keyword() {
+        let label = if !self.can_parse_semicolon_for_restricted_production()
+            && self.is_identifier_or_keyword()
+        {
             self.parse_identifier_name()
         } else {
             NodeIndex::NONE
@@ -5614,7 +5632,8 @@ impl ThinParserState {
         let expression = if self.scanner.has_preceding_line_break()
             && !self.is_token(SyntaxKind::SemicolonToken)
             && !self.is_token(SyntaxKind::CloseBraceToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken) {
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
             // Line break after throw without semicolon/brace/EOF - emit error
             let start = self.token_pos();
             let end = self.token_end();
@@ -5926,7 +5945,8 @@ impl ThinParserState {
         // If expression parsing failed completely, resync to recover
         if expression.is_none() {
             // Emit error for unexpected token if we haven't already
-            if self.token_pos() != self.last_error_pos && !self.is_token(SyntaxKind::EndOfFileToken) {
+            if self.token_pos() != self.last_error_pos && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
                 use crate::checker::types::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Expression expected.",
@@ -7899,7 +7919,9 @@ impl ThinParserState {
             // Asterisk (for generator methods)
             SyntaxKind::AsteriskToken => true,
             // String/number literals (computed properties or shorthand)
-            SyntaxKind::StringLiteral | SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => true,
+            SyntaxKind::StringLiteral | SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => {
+                true
+            }
             // Identifier or keyword (property names)
             SyntaxKind::Identifier => true,
             // Bracket (computed property)
@@ -9338,12 +9360,6 @@ impl ThinParserState {
         // Template with substitutions: `prefix${T}middle${U}suffix`
         let head = self.parse_template_literal_head();
         let mut spans = Vec::new();
-
-        // Parse template spans: each span has a type and a template literal (middle or tail)
-        while self.is_token(SyntaxKind::TemplateMiddle) || self.is_token(SyntaxKind::TemplateTail) {
-            // This shouldn't happen - after parsing head we need to parse a type first
-            break;
-        }
 
         // After the head, we need to parse: type, then middle/tail, repeat until tail
         loop {

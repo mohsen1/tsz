@@ -12,8 +12,10 @@ mod tests {
         let diagnostics = parser.get_diagnostics();
         eprintln!("Diagnostics count: {}", diagnostics.len());
         for diag in diagnostics {
-            eprintln!("Code: {}, Message: '{}', Start: {}, Length: {}",
-                      diag.code, diag.message, diag.start, diag.length);
+            eprintln!(
+                "Code: {}, Message: '{}', Start: {}, Length: {}",
+                diag.code, diag.message, diag.start, diag.length
+            );
         }
 
         // For now, just check that we get some diagnostic

@@ -118,8 +118,16 @@ impl<'a> ES5ClassTransformer<'a> {
         let weakmap_decls: Vec<String> = private_fields
             .iter()
             .map(|f| f.weakmap_name.clone())
-            .chain(private_accessors.iter().filter_map(|a| a.get_var_name.clone()))
-            .chain(private_accessors.iter().filter_map(|a| a.set_var_name.clone()))
+            .chain(
+                private_accessors
+                    .iter()
+                    .filter_map(|a| a.get_var_name.clone()),
+            )
+            .chain(
+                private_accessors
+                    .iter()
+                    .filter_map(|a| a.set_var_name.clone()),
+            )
             .collect();
 
         let weakmap_inits: Vec<String> = private_fields
@@ -586,13 +594,11 @@ impl<'a> ES5ClassTransformer<'a> {
             k if k == SyntaxKind::TrueKeyword as u16 => Some(IRNode::BooleanLiteral(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(IRNode::BooleanLiteral(false)),
             k if k == SyntaxKind::NullKeyword as u16 => Some(IRNode::NullLiteral),
-            k if k == SyntaxKind::ThisKeyword as u16 => {
-                Some(if self.use_this_capture {
-                    IRNode::this_captured()
-                } else {
-                    IRNode::this()
-                })
-            }
+            k if k == SyntaxKind::ThisKeyword as u16 => Some(if self.use_this_capture {
+                IRNode::this_captured()
+            } else {
+                IRNode::this()
+            }),
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 let bin = self.arena.get_binary_expr(expr_node)?;
                 let left = self.transform_expression(bin.left)?;
@@ -1127,13 +1133,11 @@ impl<'a> ES5AsyncTransformer<'a> {
             k if k == SyntaxKind::TrueKeyword as u16 => Some(IRNode::BooleanLiteral(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(IRNode::BooleanLiteral(false)),
             k if k == SyntaxKind::NullKeyword as u16 => Some(IRNode::NullLiteral),
-            k if k == SyntaxKind::ThisKeyword as u16 => {
-                Some(if self.use_this_capture {
-                    IRNode::this_captured()
-                } else {
-                    IRNode::this()
-                })
-            }
+            k if k == SyntaxKind::ThisKeyword as u16 => Some(if self.use_this_capture {
+                IRNode::this_captured()
+            } else {
+                IRNode::this()
+            }),
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 let call = self.arena.get_call_expr(expr_node)?;
                 let callee = self.transform_expression(call.expression)?;

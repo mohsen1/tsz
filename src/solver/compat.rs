@@ -136,7 +136,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let result = if source == target {
             true
-        } else if let Some(any_result) = self.lawyer.check_any_propagation(source, target, self.interner) {
+        } else if let Some(any_result) =
+            self.lawyer
+                .check_any_propagation(source, target, self.interner)
+        {
             // The Lawyer layer decided the outcome based on `any` propagation rules.
             // In default mode, `any` is the JS escape hatch (top + bottom).
             // In strict mode, `any` may delegate to structural checking.
@@ -182,7 +185,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         // Use the lawyer layer for `any` propagation rules
-        if let Some(any_result) = self.lawyer.check_any_propagation(source, target, self.interner) {
+        if let Some(any_result) = self
+            .lawyer
+            .check_any_propagation(source, target, self.interner)
+        {
             return any_result;
         }
         if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
@@ -227,7 +233,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return None;
         }
         // Use the lawyer layer for `any` propagation rules
-        if self.lawyer.check_any_propagation(source, target, self.interner).is_some() {
+        if self
+            .lawyer
+            .check_any_propagation(source, target, self.interner)
+            .is_some()
+        {
             return None;
         }
         if target == TypeId::UNKNOWN {

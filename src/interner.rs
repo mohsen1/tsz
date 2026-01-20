@@ -370,7 +370,7 @@ impl ShardedInterner {
     pub fn try_resolve(&self, atom: Atom) -> Option<Arc<str>> {
         let (shard_idx, local_index) = Self::split_atom(atom)?;
         let shard = self.shards.get(shard_idx)?;
-        let state = shard.state.read().ok()?;  // Return None if lock is poisoned
+        let state = shard.state.read().ok()?; // Return None if lock is poisoned
         state.strings.get(local_index).cloned()
     }
 
@@ -381,7 +381,11 @@ impl ShardedInterner {
             .iter()
             .map(|shard| {
                 // Handle lock poisoning gracefully by returning 0 for failed shards
-                shard.state.read().map(|state| state.strings.len()).unwrap_or(0)
+                shard
+                    .state
+                    .read()
+                    .map(|state| state.strings.len())
+                    .unwrap_or(0)
             })
             .sum()
     }

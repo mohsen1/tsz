@@ -47,7 +47,9 @@ export class Component{i} {{
         return new Component{i}(name);
     }}
 }}
-"#, i = i));
+"#,
+            i = i
+        ));
     }
 
     source
@@ -102,6 +104,10 @@ fn bench_large_synthetic_emit_only(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_large_synthetic_parse_emit, bench_large_synthetic_emit_only);
+criterion_group!(
+    benches,
+    bench_large_synthetic_parse_emit,
+    bench_large_synthetic_emit_only
+);
 
 criterion_main!(benches);

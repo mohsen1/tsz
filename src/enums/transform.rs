@@ -64,10 +64,7 @@ impl<'a> EnumTransformer<'a> {
     }
 
     /// Create with options
-    pub fn with_options(
-        arena: &'a ThinNodeArena,
-        options: EnumTransformOptions,
-    ) -> Self {
+    pub fn with_options(arena: &'a ThinNodeArena, options: EnumTransformOptions) -> Self {
         EnumTransformer {
             arena,
             options,
@@ -149,7 +146,12 @@ impl<'a> EnumTransformer<'a> {
         member_name: &str,
     ) -> Option<String> {
         // Check if this is a const enum
-        if !self.const_enum_names.get(obj_name).copied().unwrap_or(false) {
+        if !self
+            .const_enum_names
+            .get(obj_name)
+            .copied()
+            .unwrap_or(false)
+        {
             return None;
         }
 
@@ -305,7 +307,10 @@ impl<'a> EnumTransformer<'a> {
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 if let Some(lit) = self.arena.get_literal(node) {
-                    format!("\"{}\"", lit.text.replace('\\', "\\\\").replace('"', "\\\""))
+                    format!(
+                        "\"{}\"",
+                        lit.text.replace('\\', "\\\\").replace('"', "\\\"")
+                    )
                 } else {
                     "\"\"".to_string()
                 }
@@ -441,10 +446,7 @@ pub struct ConstEnumInliner<'a> {
 }
 
 impl<'a> ConstEnumInliner<'a> {
-    pub fn new(
-        arena: &'a ThinNodeArena,
-        source_text: &'a str,
-    ) -> Self {
+    pub fn new(arena: &'a ThinNodeArena, source_text: &'a str) -> Self {
         ConstEnumInliner {
             transformer: EnumTransformer::new(arena),
             source_text,
@@ -549,10 +551,7 @@ mod tests {
                     transformer.register_enum(enum_idx);
                     let output = transformer.emit_enum_es5(enum_idx);
 
-                    assert!(
-                        output.is_empty(),
-                        "Const enum should be erased by default"
-                    );
+                    assert!(output.is_empty(), "Const enum should be erased by default");
                 }
             }
         }
@@ -569,8 +568,7 @@ mod tests {
                         preserve_const_enums: true,
                         ..Default::default()
                     };
-                    let mut transformer =
-                        EnumTransformer::with_options(&parser.arena, options);
+                    let mut transformer = EnumTransformer::with_options(&parser.arena, options);
                     transformer.register_enum(enum_idx);
                     let output = transformer.emit_enum_es5(enum_idx);
 
@@ -596,8 +594,7 @@ mod tests {
                     transformer.evaluate_enum(enum_idx);
 
                     // Try to inline
-                    let inlined_up =
-                        transformer.try_inline_const_enum_access("Direction", "Up");
+                    let inlined_up = transformer.try_inline_const_enum_access("Direction", "Up");
                     let inlined_down =
                         transformer.try_inline_const_enum_access("Direction", "Down");
 
@@ -619,8 +616,7 @@ mod tests {
                         emit_comments: true,
                         ..Default::default()
                     };
-                    let mut transformer =
-                        EnumTransformer::with_options(&parser.arena, options);
+                    let mut transformer = EnumTransformer::with_options(&parser.arena, options);
                     transformer.register_enum(enum_idx);
                     transformer.evaluate_enum(enum_idx);
 

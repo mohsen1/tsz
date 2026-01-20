@@ -48,10 +48,7 @@ impl WorkspaceEdit {
 
     /// Add an edit to the workspace edit.
     pub fn add_edit(&mut self, file_path: String, edit: TextEdit) {
-        self.changes
-            .entry(file_path)
-            .or_default()
-            .push(edit);
+        self.changes.entry(file_path).or_default().push(edit);
     }
 }
 

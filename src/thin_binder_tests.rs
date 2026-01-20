@@ -1034,11 +1034,12 @@ namespace Merge {
         "hidden should not be in Merge exports"
     );
     // Enum members should be in exports when merging with namespace (TypeScript behavior)
-    assert!(
-        exports.get("A").is_some(),
-        "A should be in Merge exports"
+    assert!(exports.get("A").is_some(), "A should be in Merge exports");
+    assert_eq!(
+        exports.len(),
+        2,
+        "Merge should have exactly 2 exports (enum member A + namespace export extra)"
     );
-    assert_eq!(exports.len(), 2, "Merge should have exactly 2 exports (enum member A + namespace export extra)");
 }
 
 #[test]
@@ -1084,11 +1085,12 @@ enum Merge {
         "hidden should not be in Merge exports"
     );
     // Enum members should be in exports when merging with namespace (TypeScript behavior)
-    assert!(
-        exports.get("A").is_some(),
-        "A should be in Merge exports"
+    assert!(exports.get("A").is_some(), "A should be in Merge exports");
+    assert_eq!(
+        exports.len(),
+        2,
+        "Merge should have exactly 2 exports (namespace export extra + enum member A)"
     );
-    assert_eq!(exports.len(), 2, "Merge should have exactly 2 exports (namespace export extra + enum member A)");
 }
 
 // =============================================================================
@@ -1689,8 +1691,14 @@ function foo() {
     binder.bind_source_file(arena, root);
 
     // Global symbols should be in file_locals
-    assert!(binder.file_locals.has("globalX"), "globalX should be in file_locals");
-    assert!(binder.file_locals.has("foo"), "foo function should be in file_locals");
+    assert!(
+        binder.file_locals.has("globalX"),
+        "globalX should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.has("foo"),
+        "foo function should be in file_locals"
+    );
 
     // localX should NOT be in file_locals (it's a function-local variable)
     assert!(
@@ -1806,21 +1814,47 @@ function outer() {
     binder.bind_source_file(arena, root);
 
     // Verify file_locals has the expected symbols
-    assert!(binder.file_locals.has("outerVar"), "outerVar should be in file_locals");
-    assert!(binder.file_locals.has("outer"), "outer function should be in file_locals");
+    assert!(
+        binder.file_locals.has("outerVar"),
+        "outerVar should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.has("outer"),
+        "outer function should be in file_locals"
+    );
 
     // Verify middleVar, innerVar, and localVar are NOT in file_locals (they're nested)
-    assert!(!binder.file_locals.has("middleVar"), "middleVar should NOT be in file_locals");
-    assert!(!binder.file_locals.has("innerVar"), "innerVar should NOT be in file_locals");
-    assert!(!binder.file_locals.has("localVar"), "localVar should NOT be in file_locals");
-    assert!(!binder.file_locals.has("middle"), "middle function should NOT be in file_locals");
-    assert!(!binder.file_locals.has("inner"), "inner function should NOT be in file_locals");
+    assert!(
+        !binder.file_locals.has("middleVar"),
+        "middleVar should NOT be in file_locals"
+    );
+    assert!(
+        !binder.file_locals.has("innerVar"),
+        "innerVar should NOT be in file_locals"
+    );
+    assert!(
+        !binder.file_locals.has("localVar"),
+        "localVar should NOT be in file_locals"
+    );
+    assert!(
+        !binder.file_locals.has("middle"),
+        "middle function should NOT be in file_locals"
+    );
+    assert!(
+        !binder.file_locals.has("inner"),
+        "inner function should NOT be in file_locals"
+    );
 
     // Verify we have multiple function scopes created
-    let function_scope_count = binder.scopes.iter()
+    let function_scope_count = binder
+        .scopes
+        .iter()
         .filter(|s| s.kind == ContainerKind::Function)
         .count();
-    assert!(function_scope_count >= 3, "Should have at least 3 function scopes (outer, middle, inner)");
+    assert!(
+        function_scope_count >= 3,
+        "Should have at least 3 function scopes (outer, middle, inner)"
+    );
 
     // Find the innermost scope and verify its parent chain exists
     let mut found_inner_scope = false;
@@ -1828,20 +1862,33 @@ function outer() {
         if scope.table.has("localVar") {
             found_inner_scope = true;
             // Verify this scope has a parent
-            assert!(!scope.parent.is_none(), "innermost scope should have a parent");
+            assert!(
+                !scope.parent.is_none(),
+                "innermost scope should have a parent"
+            );
             break;
         }
     }
-    assert!(found_inner_scope, "Should find the innermost scope with localVar");
+    assert!(
+        found_inner_scope,
+        "Should find the innermost scope with localVar"
+    );
 
     // Verify each nested variable is in a different scope
     let mut scopes_with_vars = Vec::new();
     for (idx, scope) in binder.scopes.iter().enumerate() {
-        if scope.table.has("middleVar") || scope.table.has("innerVar") || scope.table.has("localVar") {
+        if scope.table.has("middleVar")
+            || scope.table.has("innerVar")
+            || scope.table.has("localVar")
+        {
             scopes_with_vars.push(idx);
         }
     }
-    assert_eq!(scopes_with_vars.len(), 3, "middleVar, innerVar, and localVar should each be in different scopes");
+    assert_eq!(
+        scopes_with_vars.len(),
+        3,
+        "middleVar, innerVar, and localVar should each be in different scopes"
+    );
 }
 
 /// Test that class methods can access outer scope variables.
@@ -1877,19 +1924,28 @@ class MyClass {
     binder.bind_source_file(arena, root);
 
     // globalConfig should be in file_locals
-    assert!(binder.file_locals.has("globalConfig"), "globalConfig should be in file_locals");
-    assert!(binder.file_locals.has("MyClass"), "MyClass should be in file_locals");
+    assert!(
+        binder.file_locals.has("globalConfig"),
+        "globalConfig should be in file_locals"
+    );
+    assert!(
+        binder.file_locals.has("MyClass"),
+        "MyClass should be in file_locals"
+    );
 
     // The class methods should create their own scopes
     // Verify we have class/constructor/method scopes
-    assert!(binder.scopes.len() >= 2, "Should have multiple scopes for class and methods");
+    assert!(
+        binder.scopes.len() >= 2,
+        "Should have multiple scopes for class and methods"
+    );
 }
 
 #[test]
 fn test_block_scope_let_const() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     let source = r#"
 {
@@ -1931,9 +1987,9 @@ fn test_block_scope_let_const() {
 
 #[test]
 fn test_var_hoisting() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     let source = r#"
 function test() {
@@ -1962,9 +2018,9 @@ function test() {
 
 #[test]
 fn test_imported_symbol_visibility() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     let source = r#"
 import { foo, bar as baz } from 'module';
@@ -1986,15 +2042,17 @@ function test() {
     assert!(!binder.file_locals.has("bar"));
 
     let foo_sym_id = binder.file_locals.get("foo").expect("foo should exist");
-    let foo_symbol = binder.get_symbol(foo_sym_id).expect("foo symbol should exist");
+    let foo_symbol = binder
+        .get_symbol(foo_sym_id)
+        .expect("foo symbol should exist");
     assert!(foo_symbol.flags & symbol_flags::ALIAS != 0);
 }
 
 #[test]
 fn test_default_import_visibility() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     let source = r#"
 import defaultExport from 'module';
@@ -2010,16 +2068,19 @@ const value = defaultExport;
 
     assert!(binder.file_locals.has("defaultExport"));
 
-    let sym_id = binder.file_locals.get("defaultExport").expect("defaultExport should exist");
+    let sym_id = binder
+        .file_locals
+        .get("defaultExport")
+        .expect("defaultExport should exist");
     let symbol = binder.get_symbol(sym_id).expect("symbol should exist");
     assert!(symbol.flags & symbol_flags::ALIAS != 0);
 }
 
 #[test]
 fn test_namespace_import_visibility() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     let source = r#"
 import * as ns from 'module';
@@ -2062,15 +2123,17 @@ import type Type3 from 'module';
     assert!(binder.file_locals.has("Type3"));
 
     let type1_sym_id = binder.file_locals.get("Type1").expect("Type1 should exist");
-    let type1_symbol = binder.get_symbol(type1_sym_id).expect("Type1 symbol should exist");
+    let type1_symbol = binder
+        .get_symbol(type1_sym_id)
+        .expect("Type1 symbol should exist");
     assert!(type1_symbol.is_type_only);
 }
 
 #[test]
 fn test_re_export_from_module() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     let source = r#"
 export { foo, bar as baz } from 'module';
@@ -2087,7 +2150,9 @@ export { foo, bar as baz } from 'module';
     assert!(binder.file_locals.has("baz"));
 
     let foo_sym_id = binder.file_locals.get("foo").expect("foo should exist");
-    let foo_symbol = binder.get_symbol(foo_sym_id).expect("foo symbol should exist");
+    let foo_symbol = binder
+        .get_symbol(foo_sym_id)
+        .expect("foo symbol should exist");
     assert!(foo_symbol.flags & symbol_flags::ALIAS != 0);
 }
 
@@ -2111,8 +2176,13 @@ export const localValue = importedFunc();
     assert!(binder.file_locals.has("importedFunc"));
     assert!(binder.file_locals.has("localValue"));
 
-    let local_value_sym_id = binder.file_locals.get("localValue").expect("localValue should exist");
-    let local_value_symbol = binder.get_symbol(local_value_sym_id).expect("localValue symbol should exist");
+    let local_value_sym_id = binder
+        .file_locals
+        .get("localValue")
+        .expect("localValue should exist");
+    let local_value_symbol = binder
+        .get_symbol(local_value_sym_id)
+        .expect("localValue symbol should exist");
     assert!(local_value_symbol.is_exported);
 }
 
@@ -2135,7 +2205,11 @@ class MyClass { value: number = 42; }
     binder.bind_source_file(arena, root);
 
     let errors = binder.validate_symbol_table();
-    assert!(errors.is_empty(), "Valid code should have no validation errors: {:?}", errors);
+    assert!(
+        errors.is_empty(),
+        "Valid code should have no validation errors: {:?}",
+        errors
+    );
     assert!(binder.is_symbol_table_valid());
 }
 
@@ -2153,12 +2227,23 @@ fn test_symbol_table_validation_detects_orphans() {
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(arena, root);
 
-    let orphan_id = binder.symbols.alloc(crate::binder::symbol_flags::BLOCK_SCOPED_VARIABLE, "orphan".to_string());
+    let orphan_id = binder.symbols.alloc(
+        crate::binder::symbol_flags::BLOCK_SCOPED_VARIABLE,
+        "orphan".to_string(),
+    );
 
     let errors = binder.validate_symbol_table();
     assert!(!errors.is_empty());
 
-    let orphan_errors: Vec<_> = errors.iter().filter(|e| matches!(e, crate::thin_binder::ValidationError::OrphanedSymbol { .. })).collect();
+    let orphan_errors: Vec<_> = errors
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                crate::thin_binder::ValidationError::OrphanedSymbol { .. }
+            )
+        })
+        .collect();
     assert_eq!(orphan_errors.len(), 1);
 }
 
@@ -2182,7 +2267,15 @@ fn test_symbol_table_validation_broken_links() {
     let errors = binder.validate_symbol_table();
     assert!(!errors.is_empty());
 
-    let link_errors: Vec<_> = errors.iter().filter(|e| matches!(e, crate::thin_binder::ValidationError::BrokenSymbolLink { .. })).collect();
+    let link_errors: Vec<_> = errors
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                crate::thin_binder::ValidationError::BrokenSymbolLink { .. }
+            )
+        })
+        .collect();
     assert_eq!(link_errors.len(), 1);
 }
 
@@ -2213,11 +2306,17 @@ const functionExpr = function() {
     binder.bind_source_file(arena, root);
 
     // outerX should be in file_locals (module scope)
-    assert!(binder.file_locals.has("outerX"), "outerX should be in file_locals");
+    assert!(
+        binder.file_locals.has("outerX"),
+        "outerX should be in file_locals"
+    );
 
     // Verify scope chain is set up correctly
     // There should be multiple scopes: module scope, arrow function scope, function expression scope
-    assert!(binder.scopes.len() >= 3, "Should have at least module scope + 2 closure scopes");
+    assert!(
+        binder.scopes.len() >= 3,
+        "Should have at least module scope + 2 closure scopes"
+    );
 
     // Find the arrow function scope
     let mut arrow_fn_scope = None;
@@ -2237,14 +2336,24 @@ const functionExpr = function() {
     }
 
     // Both closures should have scopes
-    assert!(arrow_fn_scope.is_some(), "Arrow function should have a scope");
-    assert!(function_expr_scope.is_some(), "Function expression should have a scope");
+    assert!(
+        arrow_fn_scope.is_some(),
+        "Arrow function should have a scope"
+    );
+    assert!(
+        function_expr_scope.is_some(),
+        "Function expression should have a scope"
+    );
 
     // Verify that the parent chain points to module scope
     if let Some(arrow_idx) = arrow_fn_scope {
         let arrow_scope = &binder.scopes[arrow_idx];
         // The parent of arrow function should be module scope (index 0)
-        assert_eq!(arrow_scope.parent, crate::binder::ScopeId(0), "Arrow function parent should be module scope");
+        assert_eq!(
+            arrow_scope.parent,
+            crate::binder::ScopeId(0),
+            "Arrow function parent should be module scope"
+        );
     }
 }
 
@@ -2254,9 +2363,9 @@ const functionExpr = function() {
 
 #[test]
 fn test_module_import_resolution_basic_named_import() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     // Simulate file1.ts which exports symbols
     let exporter_source = r#"
@@ -2264,7 +2373,8 @@ export const foo = 42;
 export const bar = "hello";
 "#;
 
-    let mut exporter_parser = ThinParserState::new("file1.ts".to_string(), exporter_source.to_string());
+    let mut exporter_parser =
+        ThinParserState::new("file1.ts".to_string(), exporter_source.to_string());
     let exporter_root = exporter_parser.parse_source_file();
     let exporter_arena = exporter_parser.get_arena();
 
@@ -2272,8 +2382,14 @@ export const bar = "hello";
     exporter_binder.bind_source_file(exporter_arena, exporter_root);
 
     // Get the exported symbol IDs from file1
-    let foo_export_sym_id = exporter_binder.file_locals.get("foo").expect("foo should exist in exporter");
-    let bar_export_sym_id = exporter_binder.file_locals.get("bar").expect("bar should exist in exporter");
+    let foo_export_sym_id = exporter_binder
+        .file_locals
+        .get("foo")
+        .expect("foo should exist in exporter");
+    let bar_export_sym_id = exporter_binder
+        .file_locals
+        .get("bar")
+        .expect("bar should exist in exporter");
 
     // Simulate file2.ts which imports from file1
     let importer_source = r#"
@@ -2282,57 +2398,88 @@ const x = foo;
 const y = bar;
 "#;
 
-    let mut importer_parser = ThinParserState::new("file2.ts".to_string(), importer_source.to_string());
+    let mut importer_parser =
+        ThinParserState::new("file2.ts".to_string(), importer_source.to_string());
     let importer_root = importer_parser.parse_source_file();
     let importer_arena = importer_parser.get_arena();
 
     let mut importer_binder = ThinBinderState::new();
 
     // Populate module_exports with the exported symbols from file1
-    importer_binder.module_exports.insert(
-        "./file1".to_string(),
-        {
+    importer_binder
+        .module_exports
+        .insert("./file1".to_string(), {
             let mut table = crate::binder::SymbolTable::new();
             table.set("foo".to_string(), foo_export_sym_id);
             table.set("bar".to_string(), bar_export_sym_id);
             table
-        },
-    );
+        });
 
     importer_binder.bind_source_file(importer_arena, importer_root);
 
     // Verify that import symbols were created
-    assert!(importer_binder.file_locals.has("foo"), "foo should be in importer's file_locals");
-    assert!(importer_binder.file_locals.has("bar"), "bar should be in importer's file_locals");
+    assert!(
+        importer_binder.file_locals.has("foo"),
+        "foo should be in importer's file_locals"
+    );
+    assert!(
+        importer_binder.file_locals.has("bar"),
+        "bar should be in importer's file_locals"
+    );
 
     // Get the import symbol IDs
-    let foo_import_sym_id = importer_binder.file_locals.get("foo").expect("foo import should exist");
-    let bar_import_sym_id = importer_binder.file_locals.get("bar").expect("bar import should exist");
+    let foo_import_sym_id = importer_binder
+        .file_locals
+        .get("foo")
+        .expect("foo import should exist");
+    let bar_import_sym_id = importer_binder
+        .file_locals
+        .get("bar")
+        .expect("bar import should exist");
 
     // Verify they are ALIAS symbols (import symbols)
-    let foo_import_sym = importer_binder.get_symbol(foo_import_sym_id).expect("foo import symbol should exist");
-    let bar_import_sym = importer_binder.get_symbol(bar_import_sym_id).expect("bar import symbol should exist");
+    let foo_import_sym = importer_binder
+        .get_symbol(foo_import_sym_id)
+        .expect("foo import symbol should exist");
+    let bar_import_sym = importer_binder
+        .get_symbol(bar_import_sym_id)
+        .expect("bar import symbol should exist");
 
-    assert!(foo_import_sym.flags & symbol_flags::ALIAS != 0, "foo import should be an ALIAS symbol");
-    assert!(bar_import_sym.flags & symbol_flags::ALIAS != 0, "bar import should be an ALIAS symbol");
+    assert!(
+        foo_import_sym.flags & symbol_flags::ALIAS != 0,
+        "foo import should be an ALIAS symbol"
+    );
+    assert!(
+        bar_import_sym.flags & symbol_flags::ALIAS != 0,
+        "bar import should be an ALIAS symbol"
+    );
 
     // Verify import_module is set correctly
-    assert_eq!(foo_import_sym.import_module, Some("./file1".to_string()), "foo import should have import_module set");
-    assert_eq!(bar_import_sym.import_module, Some("./file1".to_string()), "bar import should have import_module set");
+    assert_eq!(
+        foo_import_sym.import_module,
+        Some("./file1".to_string()),
+        "foo import should have import_module set"
+    );
+    assert_eq!(
+        bar_import_sym.import_module,
+        Some("./file1".to_string()),
+        "bar import should have import_module set"
+    );
 }
 
 #[test]
 fn test_module_import_resolution_renamed_import() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     // Simulate file1.ts which exports a symbol
     let exporter_source = r#"
 export const originalValue = 42;
 "#;
 
-    let mut exporter_parser = ThinParserState::new("file1.ts".to_string(), exporter_source.to_string());
+    let mut exporter_parser =
+        ThinParserState::new("file1.ts".to_string(), exporter_source.to_string());
     let exporter_root = exporter_parser.parse_source_file();
     let exporter_arena = exporter_parser.get_arena();
 
@@ -2340,7 +2487,10 @@ export const originalValue = 42;
     exporter_binder.bind_source_file(exporter_arena, exporter_root);
 
     // Get the exported symbol ID from file1
-    let export_sym_id = exporter_binder.file_locals.get("originalValue").expect("originalValue should exist in exporter");
+    let export_sym_id = exporter_binder
+        .file_locals
+        .get("originalValue")
+        .expect("originalValue should exist in exporter");
 
     // Simulate file2.ts which imports with a renamed alias
     let importer_source = r#"
@@ -2348,45 +2498,67 @@ import { originalValue as aliasedValue } from './file1';
 const x = aliasedValue;
 "#;
 
-    let mut importer_parser = ThinParserState::new("file2.ts".to_string(), importer_source.to_string());
+    let mut importer_parser =
+        ThinParserState::new("file2.ts".to_string(), importer_source.to_string());
     let importer_root = importer_parser.parse_source_file();
     let importer_arena = importer_parser.get_arena();
 
     let mut importer_binder = ThinBinderState::new();
 
     // Populate module_exports with the exported symbol from file1
-    importer_binder.module_exports.insert(
-        "./file1".to_string(),
-        {
+    importer_binder
+        .module_exports
+        .insert("./file1".to_string(), {
             let mut table = crate::binder::SymbolTable::new();
             table.set("originalValue".to_string(), export_sym_id);
             table
-        },
-    );
+        });
 
     importer_binder.bind_source_file(importer_arena, importer_root);
 
     // Verify that the renamed import symbol was created
-    assert!(importer_binder.file_locals.has("aliasedValue"), "aliasedValue should be in importer's file_locals");
+    assert!(
+        importer_binder.file_locals.has("aliasedValue"),
+        "aliasedValue should be in importer's file_locals"
+    );
 
     // Get the import symbol ID
-    let import_sym_id = importer_binder.file_locals.get("aliasedValue").expect("aliasedValue import should exist");
+    let import_sym_id = importer_binder
+        .file_locals
+        .get("aliasedValue")
+        .expect("aliasedValue import should exist");
 
     // Verify it's an ALIAS symbol
-    let import_sym = importer_binder.get_symbol(import_sym_id).expect("aliasedValue import symbol should exist");
-    assert!(import_sym.flags & symbol_flags::ALIAS != 0, "aliasedValue import should be an ALIAS symbol");
+    let import_sym = importer_binder
+        .get_symbol(import_sym_id)
+        .expect("aliasedValue import symbol should exist");
+    assert!(
+        import_sym.flags & symbol_flags::ALIAS != 0,
+        "aliasedValue import should be an ALIAS symbol"
+    );
 
     // Verify import_module and import_name are set correctly
-    assert_eq!(import_sym.import_module, Some("./file1".to_string()), "import should have import_module set");
-    assert_eq!(import_sym.import_name, Some("originalValue".to_string()), "import should have import_name set to original name");
-    assert_eq!(import_sym.escaped_name, "aliasedValue", "symbol's escaped_name should be the local alias");
+    assert_eq!(
+        import_sym.import_module,
+        Some("./file1".to_string()),
+        "import should have import_module set"
+    );
+    assert_eq!(
+        import_sym.import_name,
+        Some("originalValue".to_string()),
+        "import should have import_name set to original name"
+    );
+    assert_eq!(
+        import_sym.escaped_name, "aliasedValue",
+        "symbol's escaped_name should be the local alias"
+    );
 }
 
 #[test]
 fn test_module_import_resolution_non_import_symbol_unchanged() {
+    use crate::binder::symbol_flags;
     use crate::thin_binder::ThinBinderState;
     use crate::thin_parser::ThinParserState;
-    use crate::binder::symbol_flags;
 
     // Test that regular (non-import) symbols are not affected by import resolution
     let source = r#"
@@ -2402,20 +2574,48 @@ function localFunction() { return localValue; }
     binder.bind_source_file(arena, root);
 
     // Verify local symbols exist
-    assert!(binder.file_locals.has("localValue"), "localValue should exist");
-    assert!(binder.file_locals.has("localFunction"), "localFunction should exist");
+    assert!(
+        binder.file_locals.has("localValue"),
+        "localValue should exist"
+    );
+    assert!(
+        binder.file_locals.has("localFunction"),
+        "localFunction should exist"
+    );
 
     // Get the symbol IDs
-    let value_sym_id = binder.file_locals.get("localValue").expect("localValue should exist");
-    let func_sym_id = binder.file_locals.get("localFunction").expect("localFunction should exist");
+    let value_sym_id = binder
+        .file_locals
+        .get("localValue")
+        .expect("localValue should exist");
+    let func_sym_id = binder
+        .file_locals
+        .get("localFunction")
+        .expect("localFunction should exist");
 
     // Verify they are NOT import symbols (no import_module set)
-    let value_sym = binder.get_symbol(value_sym_id).expect("localValue symbol should exist");
-    let func_sym = binder.get_symbol(func_sym_id).expect("localFunction symbol should exist");
+    let value_sym = binder
+        .get_symbol(value_sym_id)
+        .expect("localValue symbol should exist");
+    let func_sym = binder
+        .get_symbol(func_sym_id)
+        .expect("localFunction symbol should exist");
 
-    assert_eq!(value_sym.import_module, None, "localValue should not have import_module set");
-    assert_eq!(func_sym.import_module, None, "localFunction should not have import_module set");
+    assert_eq!(
+        value_sym.import_module, None,
+        "localValue should not have import_module set"
+    );
+    assert_eq!(
+        func_sym.import_module, None,
+        "localFunction should not have import_module set"
+    );
 
-    assert!(value_sym.flags & symbol_flags::ALIAS == 0, "localValue should not be an ALIAS symbol");
-    assert!(func_sym.flags & symbol_flags::ALIAS == 0, "localFunction should not be an ALIAS symbol");
+    assert!(
+        value_sym.flags & symbol_flags::ALIAS == 0,
+        "localValue should not be an ALIAS symbol"
+    );
+    assert!(
+        func_sym.flags & symbol_flags::ALIAS == 0,
+        "localFunction should not be an ALIAS symbol"
+    );
 }

@@ -2442,9 +2442,9 @@ fn test_project_code_actions_missing_import_reexport() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn test_project_load_tsconfig_strict_true() {
+    use std::env;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::env;
 
     // Create a temporary directory for the test
     let temp_dir = env::temp_dir().join("typescript_test_strict_true");
@@ -2469,7 +2469,11 @@ fn test_project_load_tsconfig_strict_true() {
     assert!(result.is_ok(), "load_tsconfig should succeed");
 
     // Verify strict mode is now true
-    assert_eq!(project.strict(), true, "Strict should be true after loading tsconfig");
+    assert_eq!(
+        project.strict(),
+        true,
+        "Strict should be true after loading tsconfig"
+    );
     assert_eq!(
         project.file("test.ts").unwrap().strict(),
         true,
@@ -2484,9 +2488,9 @@ fn test_project_load_tsconfig_strict_true() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn test_project_load_tsconfig_strict_false() {
+    use std::env;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::env;
 
     // Create a temporary directory for the test
     let temp_dir = env::temp_dir().join("typescript_test_strict_false");
@@ -2543,7 +2547,10 @@ fn test_project_load_tsconfig_missing_file() {
 
     // Try to load tsconfig from non-existent directory
     let result = project.load_tsconfig(&temp_dir);
-    assert!(result.is_ok(), "Missing tsconfig should not error, just keep default");
+    assert!(
+        result.is_ok(),
+        "Missing tsconfig should not error, just keep default"
+    );
 
     // Verify strict mode is unchanged (true, as we set it)
     assert_eq!(
@@ -2556,9 +2563,9 @@ fn test_project_load_tsconfig_missing_file() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn test_project_load_tsconfig_updates_all_files() {
+    use std::env;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::env;
 
     // Create a temporary directory for the test
     let temp_dir = env::temp_dir().join("typescript_test_multi_file");

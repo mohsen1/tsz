@@ -245,9 +245,7 @@ pub enum IRNode {
     },
 
     /// __extends helper call: `__extends(ClassName, _super);`
-    ExtendsHelper {
-        class_name: String,
-    },
+    ExtendsHelper { class_name: String },
 
     /// Prototype method assignment: `ClassName.prototype.method = function() {...};`
     PrototypeMethod {
@@ -330,10 +328,7 @@ pub enum IRNode {
     Raw(String),
 
     /// Comment: `/* text */` or `// text`
-    Comment {
-        text: String,
-        is_block: bool,
-    },
+    Comment { text: String, is_block: bool },
 
     /// Sequence of statements/nodes
     Sequence(Vec<IRNode>),
@@ -387,7 +382,7 @@ pub struct IRParam {
 /// Switch case
 #[derive(Debug, Clone)]
 pub struct IRSwitchCase {
-    pub test: Option<IRNode>,  // None for default case
+    pub test: Option<IRNode>, // None for default case
     pub statements: Vec<IRNode>,
 }
 
@@ -490,11 +485,7 @@ impl IRNode {
     }
 
     /// Create a function expression
-    pub fn func_expr(
-        name: Option<String>,
-        params: Vec<IRParam>,
-        body: Vec<IRNode>,
-    ) -> Self {
+    pub fn func_expr(name: Option<String>, params: Vec<IRParam>, body: Vec<IRNode>) -> Self {
         IRNode::FunctionExpr {
             name,
             parameters: params,

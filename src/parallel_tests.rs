@@ -782,7 +782,8 @@ fn test_parallel_type_checking_with_shared_interner() {
                 function add(a: number, b: number): number { return a + b; }
                 function subtract(a: number, b: number): number { return a - b; }
                 function multiply(a: number, b: number): number { return a * b; }
-            "#.to_string(),
+            "#
+            .to_string(),
         ),
         (
             "strings.ts".to_string(),
@@ -790,7 +791,8 @@ fn test_parallel_type_checking_with_shared_interner() {
                 function concat(a: string, b: string): string { return a + b; }
                 function upper(s: string): string { return s.toUpperCase(); }
                 function lower(s: string): string { return s.toLowerCase(); }
-            "#.to_string(),
+            "#
+            .to_string(),
         ),
         (
             "arrays.ts".to_string(),
@@ -798,7 +800,8 @@ fn test_parallel_type_checking_with_shared_interner() {
                 function first<T>(arr: T[]): T | undefined { return arr[0]; }
                 function last<T>(arr: T[]): T | undefined { return arr[arr.length - 1]; }
                 function isEmpty<T>(arr: T[]): boolean { return arr.length === 0; }
-            "#.to_string(),
+            "#
+            .to_string(),
         ),
         (
             "objects.ts".to_string(),
@@ -806,7 +809,8 @@ fn test_parallel_type_checking_with_shared_interner() {
                 function keys(obj: object): string[] { return Object.keys(obj); }
                 function values(obj: object): unknown[] { return Object.values(obj); }
                 function entries(obj: object): [string, unknown][] { return Object.entries(obj); }
-            "#.to_string(),
+            "#
+            .to_string(),
         ),
     ];
 
@@ -818,13 +822,19 @@ fn test_parallel_type_checking_with_shared_interner() {
 
     assert_eq!(stats.file_count, 4);
     // Each file has 3 functions
-    assert!(stats.function_count >= 12, "Expected at least 12 functions, got {}", stats.function_count);
+    assert!(
+        stats.function_count >= 12,
+        "Expected at least 12 functions, got {}",
+        stats.function_count
+    );
 
     // The shared TypeInterner should have deduplicated common types
     // (number, string, boolean, etc. are shared across all files)
     let interner_len = program.type_interner.len();
-    assert!(interner_len > TypeId::FIRST_USER as usize,
-        "TypeInterner should have user-defined types");
+    assert!(
+        interner_len > TypeId::FIRST_USER as usize,
+        "TypeInterner should have user-defined types"
+    );
 }
 
 #[test]
@@ -832,9 +842,18 @@ fn test_parallel_binding_produces_consistent_symbols() {
     // Test that parallel binding produces consistent results
     // by binding the same files multiple times
     let files = vec![
-        ("a.ts".to_string(), "export const x: number = 1;".to_string()),
-        ("b.ts".to_string(), "export const y: string = 'hello';".to_string()),
-        ("c.ts".to_string(), "export function add(a: number, b: number) { return a + b; }".to_string()),
+        (
+            "a.ts".to_string(),
+            "export const x: number = 1;".to_string(),
+        ),
+        (
+            "b.ts".to_string(),
+            "export const y: string = 'hello';".to_string(),
+        ),
+        (
+            "c.ts".to_string(),
+            "export function add(a: number, b: number) { return a + b; }".to_string(),
+        ),
     ];
 
     // Bind multiple times
@@ -851,8 +870,11 @@ fn test_parallel_binding_produces_consistent_symbols() {
 
         // Same symbols should be present
         for (name, _) in r1.file_locals.iter() {
-            assert!(r2.file_locals.has(name),
-                "Symbol {} should be present in both results", name);
+            assert!(
+                r2.file_locals.has(name),
+                "Symbol {} should be present in both results",
+                name
+            );
         }
     }
 }

@@ -171,8 +171,7 @@ pub mod diagnostic_messages {
     pub const FUNCTION_LACKS_ENDING_RETURN_STATEMENT: &str =
         "Function lacks ending return statement and return type does not include 'undefined'.";
     pub const ASYNC_FUNCTION_RETURNS_PROMISE: &str = "Async function return type must be Promise.";
-    pub const ASYNC_FUNCTION_REQUIRES_PROMISE_CONSTRUCTOR: &str =
-        "An async function or method in ES5/ES3 requires the 'Promise' constructor. \
+    pub const ASYNC_FUNCTION_REQUIRES_PROMISE_CONSTRUCTOR: &str = "An async function or method in ES5/ES3 requires the 'Promise' constructor. \
          Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your `--lib` option.";
     pub const UNREACHABLE_CODE_DETECTED: &str = "Unreachable code detected.";
 
