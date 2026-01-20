@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Parallel Conformance Test Runner
+ * High-Performance Parallel Conformance Test Runner
  *
- * Runs each test in a separate child process with timeout.
- * This ensures hanging tests can be killed without affecting others.
+ * Uses persistent worker threads that load WASM once.
+ * Workers that hang are terminated and respawned.
  */
 interface RunnerConfig {
     wasmPkgPath: string;
