@@ -43,11 +43,11 @@ interface WorkerResult {
 // Cached at worker startup
 let wasmModule: any = null;
 let libSource = '';
+let libPath = '';
 let workerId = -1;
 
 // Memory monitoring
 const getMemoryUsage = () => process.memoryUsage().heapUsed;
-const formatBytes = (b: number) => `${(b / 1024 / 1024).toFixed(1)}MB`;
 
 // Heartbeat to detect hangs
 let lastActivity = Date.now();
@@ -106,28 +106,188 @@ function parseTestDirectives(code: string, filePath: string): ParsedTestCase {
   return { options, isMultiFile, files, category };
 }
 
+// Target string to ScriptTarget mapping
+const TARGET_MAP: Record<string, ts.ScriptTarget> = {
+  es3: ts.ScriptTarget.ES3,
+  es5: ts.ScriptTarget.ES5,
+  es6: ts.ScriptTarget.ES2015,
+  es2015: ts.ScriptTarget.ES2015,
+  es2016: ts.ScriptTarget.ES2016,
+  es2017: ts.ScriptTarget.ES2017,
+  es2018: ts.ScriptTarget.ES2018,
+  es2019: ts.ScriptTarget.ES2019,
+  es2020: ts.ScriptTarget.ES2020,
+  es2021: ts.ScriptTarget.ES2021,
+  es2022: ts.ScriptTarget.ES2022,
+  esnext: ts.ScriptTarget.ESNext,
+};
+
+// Module string to ModuleKind mapping
+const MODULE_MAP: Record<string, ts.ModuleKind> = {
+  none: ts.ModuleKind.None,
+  commonjs: ts.ModuleKind.CommonJS,
+  amd: ts.ModuleKind.AMD,
+  umd: ts.ModuleKind.UMD,
+  system: ts.ModuleKind.System,
+  es6: ts.ModuleKind.ES2015,
+  es2015: ts.ModuleKind.ES2015,
+  es2020: ts.ModuleKind.ES2020,
+  es2022: ts.ModuleKind.ES2022,
+  esnext: ts.ModuleKind.ESNext,
+  node16: ts.ModuleKind.Node16,
+  nodenext: ts.ModuleKind.NodeNext,
+  preserve: ts.ModuleKind.Preserve,
+};
+
+// ModuleResolution string mapping
+const MODULE_RESOLUTION_MAP: Record<string, ts.ModuleResolutionKind> = {
+  classic: ts.ModuleResolutionKind.Classic,
+  node: ts.ModuleResolutionKind.NodeJs,
+  node10: ts.ModuleResolutionKind.NodeJs,
+  node16: ts.ModuleResolutionKind.Node16,
+  nodenext: ts.ModuleResolutionKind.NodeNext,
+  bundler: ts.ModuleResolutionKind.Bundler,
+};
+
+// JSX string mapping
+const JSX_MAP: Record<string, ts.JsxEmit> = {
+  none: ts.JsxEmit.None,
+  preserve: ts.JsxEmit.Preserve,
+  react: ts.JsxEmit.React,
+  'react-native': ts.JsxEmit.ReactNative,
+  'react-jsx': ts.JsxEmit.ReactJSX,
+  'react-jsxdev': ts.JsxEmit.ReactJSXDev,
+};
+
 function toCompilerOptions(opts: Record<string, unknown>): ts.CompilerOptions {
   const options: ts.CompilerOptions = {
-    strict: opts.strict !== false,
-    target: ts.ScriptTarget.ES2020,
-    module: ts.ModuleKind.ESNext,
     noEmit: true,
-    skipLibCheck: true,
   };
 
-  if (opts.target) {
-    const map: Record<string, ts.ScriptTarget> = {
-      es5: ts.ScriptTarget.ES5, es6: ts.ScriptTarget.ES2015, es2015: ts.ScriptTarget.ES2015,
-      es2017: ts.ScriptTarget.ES2017, es2020: ts.ScriptTarget.ES2020, esnext: ts.ScriptTarget.ESNext,
-    };
-    options.target = map[String(opts.target).toLowerCase()] || ts.ScriptTarget.ES2020;
+  // Target
+  if (opts.target !== undefined) {
+    const t = String(opts.target).toLowerCase();
+    options.target = TARGET_MAP[t] ?? ts.ScriptTarget.ES2020;
+  } else {
+    options.target = ts.ScriptTarget.ES2020;
   }
 
+  // Module
+  if (opts.module !== undefined) {
+    const m = String(opts.module).toLowerCase();
+    options.module = MODULE_MAP[m] ?? ts.ModuleKind.ESNext;
+  } else {
+    options.module = ts.ModuleKind.ESNext;
+  }
+
+  // Module resolution
+  if (opts.moduleresolution !== undefined) {
+    const mr = String(opts.moduleresolution).toLowerCase();
+    options.moduleResolution = MODULE_RESOLUTION_MAP[mr] ?? ts.ModuleResolutionKind.NodeJs;
+  }
+
+  // JSX
+  if (opts.jsx !== undefined) {
+    const j = String(opts.jsx).toLowerCase();
+    options.jsx = JSX_MAP[j] ?? ts.JsxEmit.None;
+  }
+
+  // Strict mode flags
+  if (opts.strict !== undefined) options.strict = opts.strict as boolean;
   if (opts.noimplicitany !== undefined) options.noImplicitAny = opts.noimplicitany as boolean;
   if (opts.strictnullchecks !== undefined) options.strictNullChecks = opts.strictnullchecks as boolean;
+  if (opts.strictfunctiontypes !== undefined) options.strictFunctionTypes = opts.strictfunctiontypes as boolean;
+  if (opts.strictbindcallapply !== undefined) options.strictBindCallApply = opts.strictbindcallapply as boolean;
+  if (opts.strictpropertyinitialization !== undefined) options.strictPropertyInitialization = opts.strictpropertyinitialization as boolean;
+  if (opts.noimplicitthis !== undefined) options.noImplicitThis = opts.noimplicitthis as boolean;
+  if (opts.alwaysstrict !== undefined) options.alwaysStrict = opts.alwaysstrict as boolean;
+
+  // Lib and noLib
   if (opts.nolib !== undefined) options.noLib = opts.nolib as boolean;
+  if (opts.lib !== undefined) {
+    const libVal = opts.lib;
+    if (typeof libVal === 'string') {
+      options.lib = libVal.split(',').map(s => s.trim());
+    } else if (Array.isArray(libVal)) {
+      options.lib = libVal as string[];
+    }
+  }
+  if (opts.skiplibcheck !== undefined) options.skipLibCheck = opts.skiplibcheck as boolean;
+
+  // JavaScript support
+  if (opts.allowjs !== undefined) options.allowJs = opts.allowjs as boolean;
+  if (opts.checkjs !== undefined) options.checkJs = opts.checkjs as boolean;
+
+  // Declaration emit
+  if (opts.declaration !== undefined) options.declaration = opts.declaration as boolean;
+  if (opts.declarationmap !== undefined) options.declarationMap = opts.declarationmap as boolean;
+  if (opts.emitdeclarationonly !== undefined) options.emitDeclarationOnly = opts.emitdeclarationonly as boolean;
+
+  // Decorators
+  if (opts.experimentaldecorators !== undefined) options.experimentalDecorators = opts.experimentaldecorators as boolean;
+  if (opts.emitdecoratormetadata !== undefined) options.emitDecoratorMetadata = opts.emitdecoratormetadata as boolean;
+
+  // Class fields
+  if (opts.usedefineforclassfields !== undefined) options.useDefineForClassFields = opts.usedefineforclassfields as boolean;
+
+  // Import helpers
+  if (opts.importhelpers !== undefined) options.importHelpers = opts.importhelpers as boolean;
+  if (opts.downleveliteration !== undefined) options.downlevelIteration = opts.downleveliteration as boolean;
+
+  // Module interop
+  if (opts.esmoduleinterop !== undefined) options.esModuleInterop = opts.esmoduleinterop as boolean;
+  if (opts.allowsyntheticdefaultimports !== undefined) options.allowSyntheticDefaultImports = opts.allowsyntheticdefaultimports as boolean;
+
+  // Output options
+  if (opts.outfile !== undefined) options.outFile = opts.outfile as string;
+  if (opts.outdir !== undefined) options.outDir = opts.outdir as string;
+  if (opts.rootdir !== undefined) options.rootDir = opts.rootdir as string;
+
+  // Type checking
+  if (opts.nounusedlocals !== undefined) options.noUnusedLocals = opts.nounusedlocals as boolean;
+  if (opts.nounusedparameters !== undefined) options.noUnusedParameters = opts.nounusedparameters as boolean;
+  if (opts.noimplicitreturns !== undefined) options.noImplicitReturns = opts.noimplicitreturns as boolean;
+  if (opts.nofallthroughcasesinswitch !== undefined) options.noFallthroughCasesInSwitch = opts.nofallthroughcasesinswitch as boolean;
+  if (opts.nouncheckedindexedaccess !== undefined) options.noUncheckedIndexedAccess = opts.nouncheckedindexedaccess as boolean;
+  if (opts.nopropertyaccessfromindexsignature !== undefined) options.noPropertyAccessFromIndexSignature = opts.nopropertyaccessfromindexsignature as boolean;
+  if (opts.exactoptionalpropertytypes !== undefined) options.exactOptionalPropertyTypes = opts.exactoptionalpropertytypes as boolean;
+
+  // Source maps
+  if (opts.sourcemap !== undefined) options.sourceMap = opts.sourcemap as boolean;
+  if (opts.inlinesourcemap !== undefined) options.inlineSourceMap = opts.inlinesourcemap as boolean;
+  if (opts.inlinesources !== undefined) options.inlineSources = opts.inlinesources as boolean;
+
+  // Isolated modules
+  if (opts.isolatedmodules !== undefined) options.isolatedModules = opts.isolatedmodules as boolean;
+
+  // Resolve JSON modules
+  if (opts.resolvejsonmodule !== undefined) options.resolveJsonModule = opts.resolvejsonmodule as boolean;
+
+  // Preserve const enums
+  if (opts.preserveconstenums !== undefined) options.preserveConstEnums = opts.preserveconstenums as boolean;
+
+  // Allow unreachable/unused labels
+  if (opts.allowunreachablecode !== undefined) options.allowUnreachableCode = opts.allowunreachablecode as boolean;
+  if (opts.allowunusedlabels !== undefined) options.allowUnusedLabels = opts.allowunusedlabels as boolean;
+
+  // forceConsistentCasingInFileNames
+  if (opts.forceconsistentcasinginfilenames !== undefined) {
+    options.forceConsistentCasingInFileNames = opts.forceconsistentcasinginfilenames as boolean;
+  }
 
   return options;
+}
+
+// Convert options to JSON for WASM (snake_case keys expected)
+function toWasmOptions(opts: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  
+  // Map all options to what WASM expects
+  for (const [key, value] of Object.entries(opts)) {
+    result[key] = value;
+  }
+  
+  return result;
 }
 
 function runTsc(testCase: ParsedTestCase): number[] {
@@ -136,28 +296,65 @@ function runTsc(testCase: ParsedTestCase): number[] {
   const fileNames: string[] = [];
 
   for (const file of testCase.files) {
-    const sf = ts.createSourceFile(file.name, file.content, ts.ScriptTarget.ES2020, true);
+    // Determine script kind based on file extension
+    let scriptKind = ts.ScriptKind.TS;
+    if (file.name.endsWith('.js')) scriptKind = ts.ScriptKind.JS;
+    else if (file.name.endsWith('.jsx')) scriptKind = ts.ScriptKind.JSX;
+    else if (file.name.endsWith('.tsx')) scriptKind = ts.ScriptKind.TSX;
+    else if (file.name.endsWith('.json')) scriptKind = ts.ScriptKind.JSON;
+    
+    const sf = ts.createSourceFile(
+      file.name, 
+      file.content, 
+      compilerOptions.target ?? ts.ScriptTarget.ES2020, 
+      true,
+      scriptKind
+    );
     sourceFiles.set(file.name, sf);
     fileNames.push(file.name);
   }
 
-  if (!testCase.options.nolib && libSource) {
-    sourceFiles.set('lib.d.ts', ts.createSourceFile('lib.d.ts', libSource, ts.ScriptTarget.ES2020, true));
+  // Add lib.d.ts unless noLib is set
+  if (!compilerOptions.noLib && libSource) {
+    sourceFiles.set('lib.d.ts', ts.createSourceFile(
+      'lib.d.ts', 
+      libSource, 
+      compilerOptions.target ?? ts.ScriptTarget.ES2020, 
+      true
+    ));
   }
 
   const host = ts.createCompilerHost(compilerOptions);
-  host.getSourceFile = (name) => sourceFiles.get(name);
+  host.getSourceFile = (name, languageVersion, onError, shouldCreateNewSourceFile) => {
+    return sourceFiles.get(name);
+  };
   host.fileExists = (name) => sourceFiles.has(name);
-  host.readFile = (name) => testCase.files.find(f => f.name === name)?.content || (name === 'lib.d.ts' ? libSource : undefined);
+  host.readFile = (name) => {
+    const file = testCase.files.find(f => f.name === name);
+    if (file) return file.content;
+    if (name === 'lib.d.ts') return libSource;
+    return undefined;
+  };
+  host.getDefaultLibFileName = () => 'lib.d.ts';
+  host.getCurrentDirectory = () => '/';
+  host.getCanonicalFileName = (name) => name;
+  host.useCaseSensitiveFileNames = () => true;
+  host.getNewLine = () => '\n';
+  host.writeFile = () => {};
 
   const program = ts.createProgram(fileNames, compilerOptions, host);
   const diags: number[] = [];
+  
   for (const sf of sourceFiles.values()) {
-    if (sf.fileName !== 'lib.d.ts') {
-      for (const d of program.getSyntacticDiagnostics(sf)) diags.push(d.code);
-      for (const d of program.getSemanticDiagnostics(sf)) diags.push(d.code);
-    }
+    if (sf.fileName === 'lib.d.ts') continue;
+    
+    for (const d of program.getSyntacticDiagnostics(sf)) diags.push(d.code);
+    for (const d of program.getSemanticDiagnostics(sf)) diags.push(d.code);
   }
+  
+  // Also get global diagnostics
+  for (const d of program.getGlobalDiagnostics()) diags.push(d.code);
+  
   return diags;
 }
 
@@ -167,16 +364,33 @@ function runWasm(testCase: ParsedTestCase): { codes: number[]; crashed: boolean;
   try {
     if (testCase.isMultiFile || testCase.files.length > 1) {
       const program = new wasmModule.WasmProgram();
-      if (!testCase.options.nolib && libSource) program.addFile('lib.d.ts', libSource);
-      for (const file of testCase.files) program.addFile(file.name, file.content);
+      
+      // Add lib.d.ts unless noLib
+      if (!testCase.options.nolib && libSource) {
+        program.addFile('lib.d.ts', libSource);
+      }
+      
+      for (const file of testCase.files) {
+        program.addFile(file.name, file.content);
+      }
+      
       const codes = Array.from(program.getAllDiagnosticCodes()) as number[];
       program.free();
       return { codes, crashed: false, oom: false };
     } else {
       const file = testCase.files[0];
       const parser = new wasmModule.ThinParser(file.name, file.content);
-      if (!testCase.options.nolib && libSource) parser.addLibFile('lib.d.ts', libSource);
-      if (parser.setCompilerOptions) parser.setCompilerOptions(JSON.stringify(testCase.options));
+      
+      // Add lib.d.ts unless noLib
+      if (!testCase.options.nolib && libSource) {
+        parser.addLibFile('lib.d.ts', libSource);
+      }
+      
+      // Pass compiler options to WASM
+      if (parser.setCompilerOptions) {
+        parser.setCompilerOptions(JSON.stringify(toWasmOptions(testCase.options)));
+      }
+      
       parser.parseSourceFile();
       const parseDiags = JSON.parse(parser.getDiagnosticsJson());
       const checkResult = JSON.parse(parser.checkSourceFile());
@@ -190,7 +404,7 @@ function runWasm(testCase: ParsedTestCase): { codes: number[]; crashed: boolean;
   } catch (e) {
     const memAfter = getMemoryUsage();
     const memGrowth = memAfter - memBefore;
-    const isOom = memGrowth > 100 * 1024 * 1024 || // 100MB growth suggests OOM
+    const isOom = memGrowth > 100 * 1024 * 1024 ||
                   (e instanceof Error && (
                     e.message.includes('memory') ||
                     e.message.includes('allocation') ||
@@ -285,12 +499,13 @@ process.on('unhandledRejection', (reason) => {
 
 // Initialize worker
 (async () => {
-  const { wasmPkgPath, libPath, id } = workerData as { wasmPkgPath: string; libPath: string; id: number };
-  workerId = id;
+  const data = workerData as { wasmPkgPath: string; libPath: string; id: number };
+  workerId = data.id;
+  libPath = data.libPath;
 
   // Load WASM module once
   try {
-    const wasmPath = path.join(wasmPkgPath, 'wasm.js');
+    const wasmPath = path.join(data.wasmPkgPath, 'wasm.js');
     const module = await import(wasmPath);
     if (typeof module.default === 'function') await module.default();
     wasmModule = module;
@@ -325,7 +540,6 @@ process.on('unhandledRejection', (reason) => {
   setInterval(() => {
     const sinceLastActivity = Date.now() - lastActivity;
     if (sinceLastActivity > 30000) {
-      // No activity for 30s - we might be stuck
       parentPort?.postMessage({
         type: 'heartbeat',
         workerId,
