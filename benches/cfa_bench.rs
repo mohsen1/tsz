@@ -3,9 +3,9 @@
 //! Measures the performance impact of CFA on type checking operations.
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use wasm::checker::CheckerOptions;
 use wasm::solver::{TypeId, TypeInterner};
 use wasm::thin_binder::ThinBinderState;
-use wasm::checker::CheckerOptions;
 use wasm::thin_checker::ThinCheckerState;
 use wasm::thin_parser::ThinParserState;
 
