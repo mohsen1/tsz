@@ -44,6 +44,8 @@ function logProgress(current, total, extra = '') {
 }
 /**
  * Parse test directives from TypeScript test files
+ *
+ * Directives are case-insensitive (e.g., @filename and @Filename are equivalent)
  */
 function parseTestDirectives(code, filePath) {
     const lines = code.split('\n');
@@ -55,8 +57,8 @@ function parseTestDirectives(code, filePath) {
     const cleanLines = [];
     for (const line of lines) {
         const trimmed = line.trim();
-        // Check for @filename directive (multi-file test)
-        const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/);
+        // Check for @filename directive (multi-file test) - case insensitive
+        const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/i);
         if (filenameMatch) {
             isMultiFile = true;
             // Save previous file if any
@@ -71,15 +73,15 @@ function parseTestDirectives(code, filePath) {
             currentFileLines = [];
             continue;
         }
-        // Parse compiler options like // @strict: true
-        const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/);
+        // Parse compiler options like // @strict: true - case insensitive
+        const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
         if (optionMatch) {
             const [, key, value] = optionMatch;
-            const lowKey = key.toLowerCase();
+            const lowKey = key.toLowerCase(); // normalize to lowercase
             // Parse boolean/number values
-            if (value === 'true')
+            if (value.toLowerCase() === 'true')
                 options[lowKey] = true;
-            else if (value === 'false')
+            else if (value.toLowerCase() === 'false')
                 options[lowKey] = false;
             else if (!isNaN(Number(value)))
                 options[lowKey] = Number(value);
