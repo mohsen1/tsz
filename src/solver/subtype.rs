@@ -2384,21 +2384,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let rest_is_top = self.allow_bivariant_rest
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
 
+        // In TypeScript, optional and required parameters are interchangeable.
+        // The main constraint is that source must be callable wherever target is callable.
+        // We need to check:
+        // 1. Source's required parameter count must not exceed target's ability to accept them
+        // 2. If source has more total params than target, target must have a rest param
+
         let source_required = self.required_param_count(&source.params);
+        let source_total = source.params.len();
         let target_required = self.required_param_count(&target.params);
-        let extra_required_ok = target_has_rest
-            && source_required > target_required
-            && self.extra_required_accepts_undefined(
-                &source.params,
-                target_required,
-                source_required,
-            );
+        let target_total = target.params.len();
+
+        // Source can have fewer required params than target (it's more permissive)
+        // Source can also have extra optional params (they're interchangeable with required)
+        // But source CANNOT have more required params than target has total params
         if !self.allow_bivariant_param_count
             && !rest_is_top
-            && source_required > target_required
-            && (!target_has_rest || !extra_required_ok)
+            && source_required > target_total
+            && !target_has_rest
         {
             return SubtypeResult::False;
+        }
+
+        // Also, if source has more total params than target, target needs a rest param
+        // UNLESS the extra params in source are optional (which are interchangeable)
+        let source_extra = source_total.saturating_sub(target_total);
+        if source_extra > 0 && !target_has_rest {
+            // Check if extra params are all optional
+            for i in target_total..source_total {
+                if !source.params[i].optional && !source.params[i].rest {
+                    // Source has an extra required param that target doesn't have
+                    return SubtypeResult::False;
+                }
+            }
         }
 
         // Count non-rest parameters
@@ -2419,19 +2437,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
 
-            // Check optional compatibility:
-            // - Required param can substitute for optional param (if types match)
-            // - Optional param CANNOT substitute for required param (unless type accepts undefined)
-            if s_param.optional && !t_param.optional {
-                // Source is optional, target is required
-                // Optional param can only substitute for required if the type accepts undefined
-                if !self
-                    .check_subtype(TypeId::UNDEFINED, t_param.type_id)
-                    .is_true()
-                {
-                    return SubtypeResult::False;
-                }
-            }
+            // In TypeScript, optional and required parameters are interchangeable.
+            // No special check needed here - we just check parameter type compatibility.
 
             // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
             // Methods use bivariance even in strict mode

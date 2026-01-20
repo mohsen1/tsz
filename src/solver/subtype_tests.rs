@@ -10840,8 +10840,9 @@ fn test_fn_optional_param_required_to_optional() {
 }
 
 #[test]
-fn test_fn_optional_param_optional_to_required_not_subtype() {
-    // (x?: string) => void is NOT subtype of (x: string) => void
+fn test_fn_optional_param_optional_to_required_is_subtype() {
+    // (x?: string) => void IS subtype of (x: string) => void
+    // In TypeScript, optional and required parameters are interchangeable
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -10875,8 +10876,8 @@ fn test_fn_optional_param_optional_to_required_not_subtype() {
         is_method: false,
     });
 
-    // Optional cannot substitute where required is expected
-    assert!(!checker.is_subtype_of(fn_optional, fn_required));
+    // Optional CAN substitute where required is expected (parameters are interchangeable)
+    assert!(checker.is_subtype_of(fn_optional, fn_required));
 }
 
 #[test]
