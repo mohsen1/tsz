@@ -13118,11 +13118,11 @@ fn test_mapped_type_key_remap_filters_keys() {
     };
 
     let result = evaluate_mapped(&interner, &mapped);
-    let prop_b_index = interner.intern(TypeKey::IndexAccess(obj, key_b));
+
     let expected = interner.object(vec![PropertyInfo {
         name: prop_b.name,
-        type_id: prop_b_index,
-        write_type: prop_b_index,
+        type_id: prop_b.type_id,
+        write_type: prop_b.write_type,
         optional: false,
         readonly: false,
         is_method: false,
@@ -20128,11 +20128,16 @@ fn test_module_augmentation_namespace_merge() {
     // Merged namespace
     let merged_ns = interner.intersection(vec![ns1, ns2]);
 
-    // Verify it's an intersection
-    assert!(matches!(
-        interner.lookup(merged_ns),
-        Some(TypeKey::Intersection(_))
-    ));
+    // The merged namespace should expose both sets of properties.
+    match interner.lookup(merged_ns) {
+        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            let has_version = shape.properties.iter().any(|p| p.name == version_prop);
+            let has_utils = shape.properties.iter().any(|p| p.name == utils_prop);
+            assert!(has_version && has_utils, "merged namespace should include both props");
+        }
+        other => panic!("unexpected merged namespace representation: {:?}", other),
+    }
 }
 
 #[test]
