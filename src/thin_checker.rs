@@ -5619,16 +5619,21 @@ impl<'a> ThinCheckerState<'a> {
             // 1. Static block TDZ - variable used in static block before its declaration
             // 2. Computed property TDZ - variable used in computed property name before its declaration
             // 3. Heritage clause TDZ - variable used in extends/implements before its declaration
+            // Return TypeId::ERROR after emitting TS2454 to prevent cascading errors (e.g., TS2571)
             if self.is_variable_used_before_declaration_in_static_block(sym_id, idx) {
                 self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
             } else if self.is_variable_used_before_declaration_in_computed_property(sym_id, idx) {
                 self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
             } else if self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx) {
                 self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
             } else if self.should_check_definite_assignment(sym_id, idx)
                 && !self.is_definitely_assigned_at(idx)
             {
                 self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
             }
             return self.apply_flow_narrowing(idx, declared_type);
         }
