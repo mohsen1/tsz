@@ -26,6 +26,8 @@ jobs:
     with:
       event_type: 'issue_labeled'
       issue_number: ${{ github.event.issue.number }}
+      max_ems: 24
+      review_wait_minutes: 10
     secrets:
       CLAUDE_CONFIGS: ${{ secrets.CLAUDE_CONFIGS }}
       CCO_PAT: ${{ secrets.GH_PAT }}

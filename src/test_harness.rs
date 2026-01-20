@@ -5,8 +5,45 @@
 //! - Shared test fixtures and setup helpers
 //! - Conformance test runner integration
 //! - Test result collection and reporting
+//! - Isolated test execution with resource limits (via isolated_test_runner)
+//!
+//! # Basic Usage
+//!
+//! ```ignore
+//! use test_harness::{run_with_timeout, DEFAULT_TEST_TIMEOUT};
+//!
+//! let result = run_with_timeout(DEFAULT_TEST_TIMEOUT, || {
+//!     assert_eq!(2 + 2, 4);
+//! });
+//! assert!(result.is_passed());
+//! ```
+//!
+//! # Enhanced Usage with Resource Limits
+//!
+//! For tests that need stricter resource control:
+//!
+//! ```ignore
+//! use test_harness::isolated::{run_enhanced_test, ResourceLimits};
+//!
+//! let result = run_enhanced_test(
+//!     "my_test",
+//!     Some(IsolatedTestConfig {
+//!         limits: ResourceLimits::with_memory_mb(512),
+//!         ..Default::default()
+//!     }),
+//!     || {
+//!         // test code here
+//!     }
+//! );
+//! ```
 
 use std::panic::{self, AssertUnwindSafe};
+
+// Re-export the isolated_test_runner for enhanced test execution
+pub use crate::isolated_test_runner::{
+    EnhancedTestResult, IsolatedTestConfig, MemoryInfo, MonitoredTestResult, ResourceLimits,
+    run_enhanced_test, run_isolated_test,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -389,3 +426,158 @@ mod tests {
         assert!(!report.all_passed());
     }
 }
+
+// =============================================================================
+// Documentation Examples
+// =============================================================================
+//
+// # Examples: Using the Enhanced Test Runner with Resource Limits
+//
+// This section demonstrates how to use the isolated test runner for
+// tests that need better hang protection and memory limit enforcement.
+//
+// ## Basic Usage
+//
+// ```ignore
+// use test_harness::{run_enhanced_test, IsolatedTestConfig};
+//
+// #[test]
+// fn my_test() {
+//     let result = run_enhanced_test(
+//         "my_test",
+//         None, // Use default config
+//         || {
+//             // Test code here
+//             assert_eq!(2 + 2, 4);
+//         }
+//     );
+//
+//     assert!(result.is_passed());
+// }
+// ```
+//
+// ## Custom Memory Limits
+//
+// ```ignore
+// use test_harness::{run_enhanced_test, IsolatedTestConfig, ResourceLimits};
+//
+// #[test]
+// fn memory_intensive_test() {
+//     let config = IsolatedTestConfig {
+//         limits: ResourceLimits::with_memory_mb(1024), // 1 GB limit
+//         ..Default::default()
+//     };
+//
+//     let result = run_enhanced_test("memory_test", Some(config), || {
+//         // Allocate up to 1GB of memory
+//         let data = vec![0u8; 512 * 1024 * 1024]; // 512 MB
+//         assert_eq!(data.len(), 512 * 1024 * 1024);
+//     });
+//
+//     assert!(result.is_passed());
+//
+//     // Check memory usage
+//     if let Some(mem_info) = result.memory_info {
+//         println!("Peak memory: {} MB", mem_info.peak_bytes / 1024 / 1024);
+//     }
+// }
+// ```
+//
+// ## Timeout Protection
+//
+// ```ignore
+// use test_harness::{run_enhanced_test, IsolatedTestConfig, ResourceLimits};
+// use std::time::Duration;
+//
+// #[test]
+// fn slow_operation_test() {
+//     let config = IsolatedTestConfig {
+//         limits: ResourceLimits::with_timeout(Duration::from_secs(5)),
+//         verbosity: 2, // Verbose output
+//         ..Default::default()
+//     };
+//
+//     let result = run_enhanced_test("slow_test", Some(config), || {
+//         // This will timeout after 5 seconds
+//         std::thread::sleep(Duration::from_secs(100));
+//     });
+//
+//     // Test should be marked as timed out
+//     assert!(!result.is_passed());
+//     assert!(matches!(result.base, test_harness::TestResult::TimedOut { .. }));
+// }
+// ```
+//
+// ## Unlimited Memory for Known-High-Memory Tests
+//
+// ```ignore
+// use test_harness::{run_enhanced_test, IsolatedTestConfig, ResourceLimits};
+//
+// #[test]
+// fn large_dataset_test() {
+//     let config = IsolatedTestConfig {
+//         limits: ResourceLimits::unlimited_memory(),
+//         ..Default::default()
+//     };
+//
+//     let result = run_enhanced_test("large_data_test", Some(config), || {
+//         // This test legitimately needs lots of memory
+//         let large_vec = vec![0u64; 100_000_000];
+//         assert_eq!(large_vec.len(), 100_000_000);
+//     });
+//
+//     assert!(result.is_passed());
+// }
+// ```
+//
+// # Comparison: run_with_timeout vs run_enhanced_test
+//
+// | Feature | run_with_timeout | run_enhanced_test |
+// |---------|------------------|-------------------|
+// | Timeout detection | ✓ | ✓ |
+// | Memory monitoring | ✗ | ✓ |
+// | Memory limit enforcement | ✗ | ✓ |
+// | Resource usage reporting | ✗ | ✓ |
+// | Process isolation (future) | ✗ | Planned |
+//
+// # When to Use Each
+//
+// - **Use `run_with_timeout`** for simple, fast-running tests where you just need
+//   basic timeout protection.
+//
+// - **Use `run_enhanced_test`** for:
+//   - Tests that process large amounts of data
+//   - Tests with complex control flow that might hang
+//   - Integration tests that need memory monitoring
+//   - Performance tests where you want to track resource usage
+//
+// # Integration with Existing Tests
+//
+// You can gradually migrate existing tests to use the enhanced runner:
+//
+// ```ignore
+// // Before:
+// #[test]
+// fn test_parser() {
+//     let result = run_with_timeout(PARSER_TEST_TIMEOUT, || {
+//         parse_large_file();
+//     });
+//     assert!(result.is_passed());
+// }
+//
+// // After:
+// #[test]
+// fn test_parser() {
+//     let config = IsolatedTestConfig {
+//         limits: ResourceLimits::with_memory_mb(256),
+//         ..Default::default()
+//     };
+//
+//     let result = run_enhanced_test(
+//         "test_parser",
+//         Some(config),
+//         parse_large_file
+//     );
+//     assert!(result.is_passed());
+// }
+// ```

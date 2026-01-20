@@ -110,7 +110,10 @@ DOCKERFILE
 fi
 
 # Calculate memory: ~1.5GB per worker, minimum 4GB
-MEMORY_GB=$(( WORKERS * 3 / 2 ))
+# Use MEMORY_GB from environment if set, otherwise calculate
+if [ -z "$MEMORY_GB" ]; then
+    MEMORY_GB=$(( WORKERS * 3 / 2 ))
+fi
 if [ $MEMORY_GB -lt 4 ]; then MEMORY_GB=4; fi
 
 echo ""

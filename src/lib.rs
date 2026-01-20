@@ -120,6 +120,14 @@ pub mod solver;
 // LSP (Language Server Protocol) support
 pub mod lsp;
 
+// Test Harness - Infrastructure for unit and conformance tests
+#[cfg(test)]
+mod test_harness;
+
+// Isolated Test Runner - Process-based test execution with resource limits
+#[cfg(test)]
+mod isolated_test_runner;
+
 // Native CLI (non-wasm targets only)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
