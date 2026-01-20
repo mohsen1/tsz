@@ -3,7 +3,7 @@
  * High-Performance Parallel Conformance Test Runner
  *
  * Uses persistent worker threads that load WASM once.
- * Workers that hang are terminated and respawned.
+ * Robust crash/OOM recovery with automatic worker respawn.
  */
 import * as path from 'path';
 import * as fs from 'fs';
@@ -27,6 +27,7 @@ const colors = {
     green: '\x1b[32m',
     yellow: '\x1b[33m',
     cyan: '\x1b[36m',
+    magenta: '\x1b[35m',
     dim: '\x1b[2m',
     bold: '\x1b[1m',
 };
@@ -74,26 +75,44 @@ function compareResults(tsc, wasm) {
 }
 class WorkerPool {
     workers = [];
-    available = [];
     pending = new Map();
     nextId = 0;
     workerPath;
-    workerData;
+    workerDataBase;
     timeout;
     testsBasePath;
+    nextWorkerId = 0;
+    // Stats
+    workersSpawned = 0;
+    workersCrashed = 0;
+    workersRespawned = 0;
     constructor(count, workerPath, workerData, timeout, testsBasePath) {
         this.workerPath = workerPath;
-        this.workerData = workerData;
+        this.workerDataBase = workerData;
         this.timeout = timeout;
         this.testsBasePath = testsBasePath;
         for (let i = 0; i < count; i++)
             this.spawnWorker();
     }
     spawnWorker() {
-        const worker = new Worker(this.workerPath, { workerData: this.workerData });
+        const id = this.nextWorkerId++;
+        this.workersSpawned++;
+        const worker = new Worker(this.workerPath, {
+            workerData: { ...this.workerDataBase, id },
+            // Enable GC exposure for memory management
+            execArgv: ['--expose-gc'],
+        });
+        const info = {
+            worker,
+            id,
+            busy: false,
+            currentTestId: null,
+            testsProcessed: 0,
+            crashCount: 0,
+        };
         worker.on('message', (msg) => {
             if (msg.type === 'ready') {
-                this.available.push(worker);
+                // Worker initialized successfully
                 return;
             }
             if (msg.type === 'result') {
@@ -101,94 +120,176 @@ class WorkerPool {
                 if (pending) {
                     clearTimeout(pending.timer);
                     this.pending.delete(msg.id);
-                    this.available.push(worker);
+                    info.busy = false;
+                    info.currentTestId = null;
+                    info.testsProcessed++;
                     pending.resolve({
                         tscCodes: msg.tscCodes,
                         wasmCodes: msg.wasmCodes,
                         crashed: msg.crashed,
                         timedOut: false,
+                        oom: msg.oom || false,
                         category: msg.category,
                         error: msg.error,
+                        filePath: pending.relPath,
                     });
                 }
+                return;
+            }
+            if (msg.type === 'crash') {
+                // Worker reported a crash but is still alive
+                info.crashCount++;
+                return;
+            }
+            if (msg.type === 'heartbeat') {
+                // Worker sent heartbeat - it's still alive but may be slow
+                return;
             }
         });
         worker.on('error', (err) => {
-            // Worker crashed - find any pending test and resolve as crashed
-            for (const [id, pending] of this.pending) {
-                clearTimeout(pending.timer);
-                this.pending.delete(id);
-                pending.resolve({
-                    tscCodes: [],
-                    wasmCodes: [],
-                    crashed: true,
-                    timedOut: false,
-                    category: 'unknown',
-                    error: `Worker error: ${err.message}`,
-                });
+            this.workersCrashed++;
+            info.crashCount++;
+            // Resolve any pending test as crashed
+            if (info.currentTestId !== null) {
+                const pending = this.pending.get(info.currentTestId);
+                if (pending) {
+                    clearTimeout(pending.timer);
+                    this.pending.delete(info.currentTestId);
+                    pending.resolve({
+                        tscCodes: [],
+                        wasmCodes: [],
+                        crashed: true,
+                        timedOut: false,
+                        oom: err.message.includes('memory') || err.message.includes('heap'),
+                        category: 'unknown',
+                        error: `Worker error: ${err.message}`,
+                        filePath: pending.relPath,
+                    });
+                }
             }
-            // Remove from workers array and spawn replacement
-            const idx = this.workers.indexOf(worker);
-            if (idx >= 0)
-                this.workers.splice(idx, 1);
-            this.workers.push(this.spawnWorker());
+            // Replace crashed worker
+            this.replaceWorker(info);
         });
-        worker.on('exit', (code) => {
-            if (code !== 0) {
-                // Unexpected exit - spawn replacement
-                const idx = this.workers.indexOf(worker);
-                if (idx >= 0)
-                    this.workers.splice(idx, 1);
-                this.workers.push(this.spawnWorker());
+        worker.on('exit', (code, signal) => {
+            if (code !== 0 && code !== null) {
+                // Abnormal exit
+                this.workersCrashed++;
+                info.crashCount++;
+                // Handle any pending test
+                if (info.currentTestId !== null) {
+                    const pending = this.pending.get(info.currentTestId);
+                    if (pending) {
+                        clearTimeout(pending.timer);
+                        this.pending.delete(info.currentTestId);
+                        // Signal 9 (SIGKILL) often indicates OOM killer
+                        const isOom = signal === 'SIGKILL' || code === 137;
+                        pending.resolve({
+                            tscCodes: [],
+                            wasmCodes: [],
+                            crashed: true,
+                            timedOut: false,
+                            oom: isOom,
+                            category: 'unknown',
+                            error: signal ? `Worker killed by ${signal}` : `Worker exited with code ${code}`,
+                            filePath: pending.relPath,
+                        });
+                    }
+                }
+                // Replace dead worker
+                this.replaceWorker(info);
             }
         });
-        this.workers.push(worker);
-        return worker;
+        this.workers.push(info);
+        return info;
+    }
+    replaceWorker(oldInfo) {
+        // Remove old worker from list
+        const idx = this.workers.indexOf(oldInfo);
+        if (idx >= 0) {
+            this.workers.splice(idx, 1);
+        }
+        // Try to terminate if not already dead
+        try {
+            oldInfo.worker.terminate();
+        }
+        catch { }
+        // Spawn replacement
+        this.workersRespawned++;
+        this.spawnWorker();
     }
     async ready() {
-        // Wait for all workers to be ready
-        while (this.available.length < this.workers.length) {
-            await new Promise(r => setTimeout(r, 10));
-        }
+        // Wait for all workers to signal ready
+        await new Promise((resolve) => {
+            const checkReady = () => {
+                const allReady = this.workers.every(w => !w.busy || w.testsProcessed > 0);
+                if (allReady && this.workers.length > 0) {
+                    resolve();
+                }
+                else {
+                    setTimeout(checkReady, 50);
+                }
+            };
+            setTimeout(checkReady, 100);
+        });
     }
     run(filePath) {
         return new Promise(resolve => {
             const id = this.nextId++;
             const relPath = filePath.replace(this.testsBasePath + path.sep, '');
             const tryRun = () => {
-                if (this.available.length > 0) {
-                    const worker = this.available.pop();
+                // Find available worker
+                const worker = this.workers.find(w => !w.busy);
+                if (worker) {
+                    worker.busy = true;
+                    worker.currentTestId = id;
                     const timer = setTimeout(() => {
-                        // Test timed out - terminate worker and spawn new one
+                        // Test timed out - terminate and respawn worker
                         this.pending.delete(id);
-                        const idx = this.workers.indexOf(worker);
-                        if (idx >= 0)
-                            this.workers.splice(idx, 1);
-                        worker.terminate();
-                        this.workers.push(this.spawnWorker());
+                        this.workersCrashed++;
                         resolve({
                             tscCodes: [],
                             wasmCodes: [],
                             crashed: false,
                             timedOut: true,
+                            oom: false,
                             category: 'unknown',
                             error: `Timeout after ${this.timeout}ms`,
+                            filePath: relPath,
                         });
+                        // Replace the stuck worker
+                        this.replaceWorker(worker);
                     }, this.timeout);
-                    this.pending.set(id, { id, filePath, relPath, resolve, timer });
-                    worker.postMessage({ id, filePath, testsBasePath: this.testsBasePath });
+                    this.pending.set(id, {
+                        id,
+                        filePath,
+                        relPath,
+                        resolve,
+                        timer,
+                        startTime: Date.now(),
+                    });
+                    worker.worker.postMessage({ id, filePath, testsBasePath: this.testsBasePath });
                 }
                 else {
                     // No worker available, wait and retry
-                    setTimeout(tryRun, 5);
+                    setTimeout(tryRun, 10);
                 }
             };
             tryRun();
         });
     }
+    getStats() {
+        return {
+            spawned: this.workersSpawned,
+            crashed: this.workersCrashed,
+            respawned: this.workersRespawned,
+        };
+    }
     async terminate() {
-        for (const worker of this.workers) {
-            await worker.terminate();
+        for (const info of this.workers) {
+            try {
+                await info.worker.terminate();
+            }
+            catch { }
         }
     }
 }
@@ -215,7 +316,12 @@ export async function runConformanceTests(config = {}) {
     log(`  Workers: ${cfg.workers} | Timeout: ${cfg.testTimeout}ms`, colors.dim);
     if (allTestFiles.length === 0) {
         log('\nNo test files found!', colors.yellow);
-        return { total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, timedOut: 0, byCategory: {}, missingCodes: new Map(), extraCodes: new Map() };
+        return {
+            total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, timedOut: 0, oom: 0,
+            byCategory: {}, missingCodes: new Map(), extraCodes: new Map(),
+            crashedTests: [], oomTests: [], timedOutTests: [],
+            workerStats: { spawned: 0, crashed: 0, respawned: 0 },
+        };
     }
     // Create worker pool
     const workerPath = path.join(__dirname, 'worker.js');
@@ -231,21 +337,27 @@ export async function runConformanceTests(config = {}) {
         crashed: 0,
         skipped: 0,
         timedOut: 0,
+        oom: 0,
         byCategory: {},
         missingCodes: new Map(),
         extraCodes: new Map(),
+        crashedTests: [],
+        oomTests: [],
+        timedOutTests: [],
+        workerStats: { spawned: 0, crashed: 0, respawned: 0 },
     };
     let completed = 0;
     const updateProgress = () => {
         const pct = ((completed / allTestFiles.length) * 100).toFixed(1);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const rate = completed > 0 ? (completed / ((Date.now() - startTime) / 1000)).toFixed(0) : '0';
-        process.stdout.write(`\r  Progress: ${completed}/${allTestFiles.length} (${pct}%) | ${rate} tests/sec | ${elapsed}s    `);
+        const workerStats = pool.getStats();
+        const crashInfo = workerStats.crashed > 0 ? ` | ⚠ ${workerStats.crashed} crashes` : '';
+        process.stdout.write(`\r  Progress: ${completed}/${allTestFiles.length} (${pct}%) | ${rate}/s | ${elapsed}s${crashInfo}    `);
     };
     // Run all tests
     log(`\nRunning tests...`, colors.cyan);
     const promises = allTestFiles.map(async (filePath) => {
-        const relPath = filePath.replace(cfg.testsBasePath + path.sep, '');
         const result = await pool.run(filePath);
         completed++;
         if (!cfg.verbose)
@@ -258,15 +370,26 @@ export async function runConformanceTests(config = {}) {
         if (result.timedOut) {
             stats.timedOut++;
             stats.failed++;
+            stats.timedOutTests.push(result.filePath || filePath);
             if (cfg.verbose)
-                log(`\n  ${relPath}: TIMEOUT`, colors.red);
+                log(`\n  ${result.filePath}: TIMEOUT`, colors.yellow);
+            return;
+        }
+        if (result.oom) {
+            stats.oom++;
+            stats.crashed++;
+            stats.failed++;
+            stats.oomTests.push(result.filePath || filePath);
+            if (cfg.verbose)
+                log(`\n  ${result.filePath}: OOM`, colors.red);
             return;
         }
         if (result.crashed) {
             stats.crashed++;
             stats.failed++;
+            stats.crashedTests.push({ path: result.filePath || filePath, error: result.error || 'Unknown' });
             if (cfg.verbose)
-                log(`\n  ${relPath}: CRASH - ${result.error}`, colors.red);
+                log(`\n  ${result.filePath}: CRASH - ${result.error}`, colors.red);
             return;
         }
         const cmp = compareResults(result.tscCodes, result.wasmCodes);
@@ -281,7 +404,7 @@ export async function runConformanceTests(config = {}) {
             for (const c of cmp.extra)
                 stats.extraCodes.set(c, (stats.extraCodes.get(c) || 0) + 1);
             if (cfg.verbose) {
-                log(`\n  ${relPath}:`, colors.yellow);
+                log(`\n  ${result.filePath}:`, colors.yellow);
                 if (cmp.missing.length)
                     log(`    Missing: TS${[...new Set(cmp.missing)].join(', TS')}`, colors.dim);
                 if (cmp.extra.length)
@@ -290,9 +413,10 @@ export async function runConformanceTests(config = {}) {
         }
     });
     await Promise.all(promises);
+    stats.workerStats = pool.getStats();
     await pool.terminate();
     if (!cfg.verbose)
-        process.stdout.write('\r' + ' '.repeat(80) + '\r');
+        process.stdout.write('\r' + ' '.repeat(100) + '\r');
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const rate = (allTestFiles.length / ((Date.now() - startTime) / 1000)).toFixed(0);
     // Results
@@ -303,25 +427,58 @@ export async function runConformanceTests(config = {}) {
     log(`\nPass Rate: ${passRate}% (${stats.passed}/${stats.total})`, stats.passed === stats.total ? colors.green : colors.yellow);
     log(`Time: ${elapsed}s (${rate} tests/sec)`, colors.dim);
     log('\nSummary:', colors.bold);
-    log(`  Passed:   ${stats.passed}`, colors.green);
-    log(`  Failed:   ${stats.failed}`, stats.failed > 0 ? colors.red : colors.dim);
-    log(`  Crashed:  ${stats.crashed}`, stats.crashed > 0 ? colors.red : colors.dim);
-    log(`  Timeout:  ${stats.timedOut}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
-    log(`  Skipped:  ${stats.skipped}`, colors.dim);
+    log(`  ✓ Passed:   ${stats.passed}`, colors.green);
+    log(`  ✗ Failed:   ${stats.failed - stats.crashed - stats.timedOut}`, stats.failed > stats.crashed + stats.timedOut ? colors.red : colors.dim);
+    log(`  💥 Crashed:  ${stats.crashed - stats.oom}`, stats.crashed - stats.oom > 0 ? colors.red : colors.dim);
+    log(`  💾 OOM:      ${stats.oom}`, stats.oom > 0 ? colors.magenta : colors.dim);
+    log(`  ⏱ Timeout:  ${stats.timedOut}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
+    // Worker stats
+    log('\nWorker Health:', colors.bold);
+    log(`  Spawned:   ${stats.workerStats.spawned}`, colors.dim);
+    log(`  Crashed:   ${stats.workerStats.crashed}`, stats.workerStats.crashed > 0 ? colors.red : colors.dim);
+    log(`  Respawned: ${stats.workerStats.respawned}`, stats.workerStats.respawned > 0 ? colors.yellow : colors.dim);
     log('\nBy Category:', colors.bold);
     for (const [cat, s] of Object.entries(stats.byCategory)) {
         const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
         log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
     }
-    if (cfg.verbose) {
-        log('\nTop Missing:', colors.bold);
-        for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
-            log(`  TS${c}: ${n}x`, colors.yellow);
+    // Show problematic tests
+    if (stats.crashedTests.length > 0) {
+        log('\nCrashed Tests:', colors.red);
+        for (const t of stats.crashedTests.slice(0, 5)) {
+            log(`  ${t.path}`, colors.dim);
+            log(`    ${t.error.slice(0, 80)}`, colors.dim);
         }
-        log('\nTop Extra:', colors.bold);
-        for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
-            log(`  TS${c}: ${n}x`, colors.yellow);
+        if (stats.crashedTests.length > 5) {
+            log(`  ... and ${stats.crashedTests.length - 5} more`, colors.dim);
         }
+    }
+    if (stats.oomTests.length > 0) {
+        log('\nOOM Tests:', colors.magenta);
+        for (const t of stats.oomTests.slice(0, 5)) {
+            log(`  ${t}`, colors.dim);
+        }
+        if (stats.oomTests.length > 5) {
+            log(`  ... and ${stats.oomTests.length - 5} more`, colors.dim);
+        }
+    }
+    if (stats.timedOutTests.length > 0) {
+        log('\nTimed Out Tests:', colors.yellow);
+        for (const t of stats.timedOutTests.slice(0, 5)) {
+            log(`  ${t}`, colors.dim);
+        }
+        if (stats.timedOutTests.length > 5) {
+            log(`  ... and ${stats.timedOutTests.length - 5} more`, colors.dim);
+        }
+    }
+    // Top errors
+    log('\nTop Missing Errors:', colors.bold);
+    for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+        log(`  TS${c}: ${n}x`, colors.yellow);
+    }
+    log('\nTop Extra Errors:', colors.bold);
+    for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)) {
+        log(`  TS${c}: ${n}x`, colors.yellow);
     }
     log('\n' + '═'.repeat(60), colors.dim);
     return stats;
