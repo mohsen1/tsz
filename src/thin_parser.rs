@@ -2791,6 +2791,42 @@ impl ThinParserState {
         self.parse_heritage_left_hand_expression()
     }
 
+    /// Parse heritage type reference for interfaces (extends clause).
+    /// Interfaces must reference types; literals or arbitrary expressions should produce diagnostics.
+    fn parse_interface_heritage_type_reference(&mut self) -> NodeIndex {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        if matches!(
+            self.token(),
+            SyntaxKind::NullKeyword
+                | SyntaxKind::TrueKeyword
+                | SyntaxKind::FalseKeyword
+                | SyntaxKind::UndefinedKeyword
+                | SyntaxKind::VoidKeyword
+                | SyntaxKind::NumericLiteral
+                | SyntaxKind::StringLiteral
+                | SyntaxKind::BigIntLiteral
+                | SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::TemplateHead
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::NewKeyword
+                | SyntaxKind::OpenParenToken
+        ) {
+            let start = self.token_pos();
+            let end = self.token_end();
+            self.parse_error_at_current_token(
+                "Type name expected in interface extends clause.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            self.next_token();
+            return self
+                .arena
+                .add_token(SyntaxKind::Unknown as u16, start, end);
+        }
+
+        self.parse_heritage_type_reference()
+    }
+
     /// Parse left-hand expression for heritage clauses: Foo, Foo.Bar, or Mixin(Parent)
     /// This is a subset of member expression that allows identifiers, dots, and call expressions
     fn parse_heritage_left_hand_expression(&mut self) -> NodeIndex {
@@ -3686,7 +3722,7 @@ impl ThinParserState {
 
             let mut types = Vec::new();
             loop {
-                let type_ref = self.parse_heritage_type_reference();
+                let type_ref = self.parse_interface_heritage_type_reference();
                 types.push(type_ref);
                 if !self.parse_optional(SyntaxKind::CommaToken) {
                     break;
@@ -7301,8 +7337,23 @@ impl ThinParserState {
             }
         }
 
-        let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        let end_pos = if self.parse_expected(SyntaxKind::CloseBraceToken) {
+            self.token_end()
+        } else {
+            // Recover by advancing until we see a closing brace or EOF to avoid infinite loops.
+            while !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::CloseBraceToken) {
+                let end = self.token_end();
+                self.next_token();
+                end
+            } else {
+                self.token_end()
+            }
+        };
 
         self.arena.add_binding_pattern(
             syntax_kind_ext::OBJECT_BINDING_PATTERN,

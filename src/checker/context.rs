@@ -33,6 +33,26 @@ pub struct CheckerOptions {
     /// When true, optional properties are treated as exactly `T | undefined` not `T | undefined | missing`
     pub exact_optional_property_types: bool,
 }
+
+impl CheckerOptions {
+    /// Apply TypeScript's `--strict` defaults to individual strict flags.
+    /// In tsc, enabling `strict` turns on the strict family unless explicitly disabled.
+    /// We mirror that behavior by OR-ing the per-flag booleans with `strict`.
+    pub fn apply_strict_defaults(mut self) -> Self {
+        if self.strict {
+            self.no_implicit_any = self.no_implicit_any || true;
+            self.no_implicit_this = self.no_implicit_this || true;
+            self.strict_null_checks = self.strict_null_checks || true;
+            self.strict_function_types = self.strict_function_types || true;
+            self.strict_bind_call_apply = self.strict_bind_call_apply || true;
+            self.strict_property_initialization = self.strict_property_initialization || true;
+            self.use_unknown_in_catch_variables =
+                self.use_unknown_in_catch_variables || true;
+            // exactOptionalPropertyTypes and other opts are not implied by --strict
+        }
+        self
+    }
+}
 use crate::parser::thin_node::ThinNodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
 use crate::thin_binder::ThinBinderState;
@@ -278,6 +298,7 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
+        let compiler_options = compiler_options.apply_strict_defaults();
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -334,6 +355,7 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
+        let compiler_options = compiler_options.clone().apply_strict_defaults();
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -342,7 +364,7 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            compiler_options: compiler_options.clone(),
+            compiler_options,
             report_unresolved_imports: true,
             symbol_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -392,6 +414,7 @@ impl<'a> CheckerContext<'a> {
         cache: TypeCache,
         compiler_options: CheckerOptions,
     ) -> Self {
+        let compiler_options = compiler_options.apply_strict_defaults();
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -449,6 +472,7 @@ impl<'a> CheckerContext<'a> {
         cache: TypeCache,
         compiler_options: &CheckerOptions,
     ) -> Self {
+        let compiler_options = compiler_options.clone().apply_strict_defaults();
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -457,7 +481,7 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
-            compiler_options: compiler_options.clone(),
+            compiler_options,
             report_unresolved_imports: true,
             symbol_types: cache.symbol_types,
             var_decl_types: FxHashMap::default(),
