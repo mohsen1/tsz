@@ -86,15 +86,24 @@ echo "║  Categories: $(printf '%-43s' "$CATEGORIES") ║"
 echo "║  Timeout:    $(printf '%-43s' "${TIMEOUT}s") ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 
+# Build TypeScript runner
+echo ""
+echo "📦 Building conformance runner..."
+cd "$SCRIPT_DIR"
+if [ ! -d "node_modules" ]; then
+    npm install --silent
+fi
+npm run build --silent
+cd "$ROOT_DIR"
+echo "✅ Runner built"
+
 # Build Docker image if needed
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
     echo ""
-    echo "📦 Building Docker image..."
+    echo "🐳 Building Docker image..."
     docker build -t "$IMAGE_NAME" -f - "$SCRIPT_DIR" << 'DOCKERFILE'
 FROM node:22-slim
-RUN npm install -g typescript
 WORKDIR /app
-# Pre-create directories
 RUN mkdir -p /app/conformance /app/pkg /app/TypeScript/tests
 DOCKERFILE
     echo "✅ Docker image built"
