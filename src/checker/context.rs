@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::binder::SymbolId;
 use crate::checker::control_flow::FlowGraph;
+use crate::checker::property_checker::PropertyChecker;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::NodeIndex;
 
@@ -226,6 +227,9 @@ pub struct CheckerContext<'a> {
     /// Current enclosing class info.
     pub enclosing_class: Option<EnclosingClassInfo>,
 
+    /// Property checker to avoid duplicate TS2339 errors.
+    pub property_checker: PropertyChecker,
+
     /// Type environment for symbol resolution with type parameters.
     /// Used by the evaluator to expand Application types.
     pub type_env: RefCell<TypeEnvironment>,
@@ -314,6 +318,7 @@ impl<'a> CheckerContext<'a> {
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            property_checker: PropertyChecker::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
@@ -370,6 +375,7 @@ impl<'a> CheckerContext<'a> {
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            property_checker: PropertyChecker::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
@@ -428,6 +434,7 @@ impl<'a> CheckerContext<'a> {
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            property_checker: PropertyChecker::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,
@@ -485,6 +492,7 @@ impl<'a> CheckerContext<'a> {
             return_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
+            property_checker: PropertyChecker::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             abstract_constructor_types: cache.abstract_constructor_types,
             protected_constructor_types: cache.protected_constructor_types,

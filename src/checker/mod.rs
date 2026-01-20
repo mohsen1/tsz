@@ -26,6 +26,7 @@ pub mod flow_graph_builder;
 pub mod jsx;
 pub mod nullish;
 pub mod optional_chain;
+pub mod property_checker;
 pub mod reachability_analyzer;
 pub mod statements;
 pub mod types;
@@ -52,3 +53,4 @@ pub use types::{
     ObjectType, Signature, TemplateLiteralType, TupleTypeInfo, Type, TypeId, TypeParameter,
     TypeReference, UnionType, diagnostic_codes, object_flags, signature_flags, type_flags,
 };
+pub use property_checker::{PropertyChecker, PropertyAccessEvaluation};

@@ -4275,10 +4275,13 @@ impl ThinParserState {
                     || self.is_token(SyntaxKind::PrivateIdentifier)
                     || self.is_token(SyntaxKind::OpenBracketToken)
                 {
-                    self.parse_error_at_current_token(
-                        "',' expected",
-                        diagnostic_codes::TOKEN_EXPECTED,
-                    );
+                    // Only emit error if we haven't already emitted one at this position
+                    if self.token_pos() != self.last_error_pos {
+                        self.parse_error_at_current_token(
+                            "',' expected",
+                            diagnostic_codes::TOKEN_EXPECTED,
+                        );
+                    }
                     // Continue to next iteration to parse the next member
                     continue;
                 }
