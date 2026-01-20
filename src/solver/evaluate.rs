@@ -1850,9 +1850,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
 
-            // Substitute into the template
-            let property_type =
-                self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
+            // Substitute into the template (don't evaluate - preserve indexed access types)
+            let property_type = instantiate_type(self.interner, mapped.template, &subst);
 
             properties.push(PropertyInfo {
                 name: remapped_name,
@@ -1873,8 +1872,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let key_type = TypeId::STRING;
                     let mut subst = TypeSubstitution::new();
                     subst.insert(mapped.type_param.name, key_type);
-                    let mut value_type =
-                        self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
+                    // Don't evaluate - preserve indexed access types
+                    let mut value_type = instantiate_type(self.interner, mapped.template, &subst);
                     if optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
@@ -1900,8 +1899,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let key_type = TypeId::NUMBER;
                     let mut subst = TypeSubstitution::new();
                     subst.insert(mapped.type_param.name, key_type);
-                    let mut value_type =
-                        self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
+                    // Don't evaluate - preserve indexed access types
+                    let mut value_type = instantiate_type(self.interner, mapped.template, &subst);
                     if optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
@@ -3146,6 +3145,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 };
                                 let mut member_bindings = FxHashMap::default();
                                 if !match_function_params_and_return(
+                                    member,
+                                    source_fn_id,
+                                    &mut member_bindings,
+                                ) {
+                                    return false;
+                                }
+                                for (name, ty) in member_bindings {
+                                    combined
+                                        .entry(name)
+                                        .and_modify(|existing| {
+                                            *existing = self.interner.union2(*existing, ty);
+                                        })
+                                        .or_insert(ty);
+                                }
+                            }
+                            bindings.extend(combined);
+                            true
+                        }
+                        _ => false,
+                    };
+                }
+
+                // Case: Only return type has infer (e.g., ReturnType<T>)
+                // For ReturnType<T>, we only care about matching the return type,
+                // not the parameters. This handles cases like:
+                // (x: unknown) => x is string extends (...args: any[]) => infer R
+                if pattern_fn.this_type.is_none() && !has_param_infer && has_return_infer {
+                    let mut match_function_return = |_source_type: TypeId,
+                                                    source_fn_id: FunctionShapeId,
+                                                    bindings: &mut FxHashMap<Atom, TypeId>|
+                     -> bool {
+                        let source_fn = self.interner.function_shape(source_fn_id);
+                        // Use the actual return type, not the predicate target
+                        // For type predicate functions, the return type is the actual return type (e.g., boolean)
+                        let return_type = source_fn.return_type;
+                        let mut local_visited = FxHashSet::default();
+                        self.match_infer_pattern(
+                            return_type,
+                            pattern_fn.return_type,
+                            bindings,
+                            &mut local_visited,
+                            checker,
+                        )
+                    };
+
+                    return match self.interner.lookup(source) {
+                        Some(TypeKey::Function(source_fn_id)) => {
+                            match_function_return(source, source_fn_id, bindings)
+                        }
+                        Some(TypeKey::Union(members)) => {
+                            let members = self.interner.type_list(members);
+                            let mut combined = FxHashMap::default();
+                            for &member in members.iter() {
+                                let Some(TypeKey::Function(source_fn_id)) =
+                                    self.interner.lookup(member)
+                                else {
+                                    return false;
+                                };
+                                let mut member_bindings = FxHashMap::default();
+                                if !match_function_return(
                                     member,
                                     source_fn_id,
                                     &mut member_bindings,

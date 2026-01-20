@@ -870,6 +870,9 @@ impl TypeInterner {
         // Sort properties by name for consistent hashing
         merged_props.sort_by_key(|p| p.name.0);
 
+        let has_string_index = merged_string_index.is_some();
+        let has_number_index = merged_number_index.is_some();
+
         let shape = ObjectShape {
             properties: merged_props,
             string_index: merged_string_index,
@@ -877,19 +880,45 @@ impl TypeInterner {
         };
 
         let shape_id = self.intern_object_shape(shape);
-        Some(self.intern(TypeKey::Object(shape_id)))
+        // Return ObjectWithIndex if there are any index signatures, otherwise Object
+        if has_string_index || has_number_index {
+            Some(self.intern(TypeKey::ObjectWithIndex(shape_id)))
+        } else {
+            Some(self.intern(TypeKey::Object(shape_id)))
+        }
     }
 
     fn intersection_has_disjoint_primitives(&self, members: &[TypeId]) -> bool {
         let mut class: Option<PrimitiveClass> = None;
         let mut has_primitive = false;
-        let mut has_non_primitive = false;
+        let mut has_non_empty_non_primitive = false;
         let mut literals: smallvec::SmallVec<[TypeId; 4]> = SmallVec::new();
 
         for &member in members {
             let Some(member_class) = self.primitive_class_for(member) else {
                 // Not a primitive - check if it's an object-like type
-                has_non_primitive = self.is_object_like_type(member);
+                // Empty objects are compatible with primitives in TypeScript
+                if self.is_object_like_type(member) {
+                    // Check if it's an empty object
+                    match self.lookup(member) {
+                        Some(TypeKey::Object(shape_id)) => {
+                            let shape = self.object_shape(shape_id);
+                            if !shape.properties.is_empty()
+                                || shape.string_index.is_some()
+                                || shape.number_index.is_some()
+                            {
+                                has_non_empty_non_primitive = true;
+                            }
+                            // Empty object doesn't count as disjoint
+                        }
+                        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                            has_non_empty_non_primitive = true;
+                        }
+                        _ => {
+                            has_non_empty_non_primitive = true;
+                        }
+                    }
+                }
                 continue;
             };
             has_primitive = true;
@@ -917,8 +946,8 @@ impl TypeInterner {
             }
         }
 
-        // If we have both primitives and non-primitives (objects), they're disjoint
-        if has_primitive && has_non_primitive {
+        // If we have both primitives and non-empty non-primitives (objects), they're disjoint
+        if has_primitive && has_non_empty_non_primitive {
             return true;
         }
 
