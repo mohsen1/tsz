@@ -76,8 +76,9 @@ The project mimics TypeScript's architecture *too* closely in some places (like 
 
 ### Improve Conformance Test Pass Rate
 
-Current pass rate: **45.5%** on 100 tests, 0 crashes.
+Current pass rate: **45.5%** on 100 tests, **36%** on 500 tests, 0 crashes.
 Target: 95%+. Recent fixes:
+- Fixed TS1040 for 'declare async function' (parser was losing declare modifier)
 - Fixed await expressions to return original type when not Promise-like (TS2571 reduction)
 - Fixed TS2664 to only emit in module files, not script files
 - Fixed TS2391 to skip ambient modules (function implementation check)
