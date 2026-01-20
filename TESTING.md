@@ -19,8 +19,7 @@ node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/2dArrays.ts
 
 ### 🦀 Rust Unit Tests
 **Location**: `./scripts/test.sh`  
-**Purpose**: Test core compiler logic (parsing, binding, type checking)  
-**Speed**: Fast (~10s)
+**Purpose**: Test core compiler logic (parsing, binding, type checking)
 
 ```bash
 ./scripts/test.sh                    # All tests
@@ -30,19 +29,18 @@ cargo test --lib solver::            # Solver tests
 
 ### 📊 Conformance Tests  
 **Location**: `./conformance/`  
-**Purpose**: Compare WASM output against TypeScript compiler  
-**Speed**: ~70 tests/sec
+**Purpose**: Compare WASM output against TypeScript compiler
 
 ⚠️ **Always run in Docker** - Tests can cause infinite loops or OOM.
 
 ```bash
-# Quick iteration (500 tests, ~7s)
+# Quick iteration (500 tests)
 ./conformance/run-conformance.sh --max=500
 
-# Medium suite (2000 tests, ~30s)
+# Medium suite (2000 tests)
 ./conformance/run-conformance.sh --max=2000
 
-# Full suite (12K+ tests, ~3 mins)
+# Full suite (12K+ tests)
 ./conformance/run-conformance.sh --all
 
 # Verbose output (shows individual failures)
@@ -65,76 +63,25 @@ node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/arrayLiterals.t
 node scripts/validate-wasm.mjs
 ```
 
-## Workflow for Developers
+## Workflow
 
 ### 🚀 When Starting Work
 ```bash
-# 1. Make sure everything builds
 cargo build --release
-
-# 2. Run unit tests
 ./scripts/test.sh
-
-# 3. Get baseline conformance
 ./conformance/run-conformance.sh --max=500
 ```
 
 ### 🔧 During Development  
 ```bash
-# Test specific file you're working on
 node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/yourTest.ts
-
-# Quick conformance check
 ./conformance/run-conformance.sh --max=500
 ```
 
 ### ✅ Before Committing
 ```bash
-# 1. All Rust tests pass
 ./scripts/test.sh
-
-# 2. Conformance hasn't regressed
 ./conformance/run-conformance.sh --max=2000
-
-# 3. If working on parser/checker, run full suite
-./conformance/run-conformance.sh --all
-```
-
-## Understanding Conformance Metrics
-
-The conformance test runner outputs:
-
-```
-Pass Rate: 30.0% (150/500)
-Time: 7.4s (68 tests/sec)
-
-Summary:
-  ✓ Passed:   150
-  ✗ Failed:   350
-  💥 Crashed:  0
-  💾 OOM:      0
-  ⏱ Timeout:  0
-```
-
-### Key Metrics
-- **Pass Rate**: % of tests with identical error codes (target: 50%+)
-- **Crashes**: Tests that caused WASM exceptions (target: 0)
-- **OOM**: Tests that ran out of memory (target: 0)
-- **Timeout**: Tests that took >10s (target: 0)
-
-### Error Analysis
-The runner shows top missing and extra errors:
-
-```
-Top Missing Errors (we should emit but don't):
-  TS2318: 696x  - Cannot find global type (@noLib tests)
-  TS2583: 298x  - Cannot find name (ES2015+ lib)
-  TS2304: 59x   - Cannot find name
-
-Top Extra Errors (we emit but shouldn't):
-  TS2300: 60x   - Duplicate identifier
-  TS1005: 58x   - Expected token (parser)
-  TS2339: 34x   - Property does not exist
 ```
 
 ## Directory Structure
@@ -145,8 +92,6 @@ scripts/
 ├── bench.sh                    # Benchmark runner
 ├── build-wasm.sh               # WASM build script
 ├── docker/                     # Docker configuration
-│   ├── Dockerfile              # Main Dockerfile
-│   └── Dockerfile.bench        # Benchmark Dockerfile
 ├── run-single-test.mjs         # Test one file
 ├── validate-wasm.mjs           # WASM module validation
 └── help.mjs                    # Help/usage info
@@ -162,9 +107,8 @@ conformance/                    # Conformance test suite
 
 ## Tips
 
-- Use `--max=500` for quick feedback during development (~7s)
-- Use `--max=2000` for thorough testing before commits (~30s)
-- Use `--all` for comprehensive testing before major changes (~3 mins)
+- Use `--max=500` for quick feedback during development
+- Use `--max=2000` for thorough testing before commits
+- Use `--all` for comprehensive testing before major changes
 - Always run conformance tests in Docker to prevent system hangs
-- Focus on reducing the top extra errors (we emit but shouldn't)
 - Run `./scripts/test.sh` before every commit
