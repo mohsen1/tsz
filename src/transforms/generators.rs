@@ -197,15 +197,10 @@ impl GeneratorTransformState {
 }
 
 /// Generator ES5 transformer for converting generator functions to state machines.
+///
+/// This transformer produces IR nodes only. String emission is handled by ir_printer.rs.
 pub struct GeneratorES5Transformer<'a> {
     arena: &'a ThinNodeArena,
-    output: String,
-    indent_level: u32,
-    source_text: Option<&'a str>,
-    source_index: u32,
-    mappings: Vec<Mapping>,
-    line: u32,
-    column: u32,
     state: GeneratorTransformState,
     helpers_needed: HelpersNeeded,
 }
@@ -214,25 +209,18 @@ impl<'a> GeneratorES5Transformer<'a> {
     pub fn new(arena: &'a ThinNodeArena) -> Self {
         Self {
             arena,
-            output: String::with_capacity(1024),
-            indent_level: 0,
-            source_text: None,
-            source_index: 0,
-            mappings: Vec::new(),
-            line: 0,
-            column: 0,
             state: GeneratorTransformState::new(),
             helpers_needed: HelpersNeeded::default(),
         }
     }
 
-    /// Transform a generator function declaration
-    pub fn transform_generator_function(&mut self, func_idx: NodeIndex) -> String {
+    /// Transform a generator function declaration to IR
+    pub fn transform_generator_function(&mut self, func_idx: NodeIndex) -> IRNode {
         self.reset();
         self.helpers_needed.generator = true;
 
         let Some(node) = self.arena.get(func_idx) else {
-            return String::new();
+            return IRNode::Raw(String::new());
         };
 
         // Get function details
@@ -242,7 +230,7 @@ impl<'a> GeneratorES5Transformer<'a> {
                 let params = self.collect_parameters(&func.parameters);
                 (Some(name), params, func.body)
             } else {
-                return String::new();
+                return IRNode::Raw(String::new());
             }
         } else if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION {
             if let Some(func) = self.arena.get_function_expression(node) {
@@ -254,46 +242,58 @@ impl<'a> GeneratorES5Transformer<'a> {
                 let params = self.collect_parameters(&func.parameters);
                 (name, params, func.body)
             } else {
-                return String::new();
+                return IRNode::Raw(String::new());
             }
         } else {
-            return String::new();
+            return IRNode::Raw(String::new());
         };
 
         // Build the generator body
         let generator_cases = self.build_generator_cases(body_idx);
 
-        // Emit the transformed function
-        self.emit_generator_function(name.as_deref(), &params, &generator_cases);
-
-        std::mem::take(&mut self.output)
+        // Return IR node for the generator function
+        IRNode::GeneratorFunction {
+            name: name.clone(),
+            parameters: params,
+            generator_body: Box::new(IRNode::GeneratorBody {
+                has_await: false,
+                cases: generator_cases,
+            }),
+        }
     }
 
-    /// Transform a generator method
-    pub fn transform_generator_method(&mut self, method_idx: NodeIndex, class_name: &str) -> String {
+    /// Transform a generator method to IR
+    pub fn transform_generator_method(&mut self, method_idx: NodeIndex, class_name: &str) -> IRNode {
         self.reset();
         self.helpers_needed.generator = true;
 
         let Some(node) = self.arena.get(method_idx) else {
-            return String::new();
+            return IRNode::Raw(String::new());
         };
 
         if node.kind != syntax_kind_ext::METHOD_DECLARATION {
-            return String::new();
+            return IRNode::Raw(String::new());
         }
 
         let Some(method) = self.arena.get_method(node) else {
-            return String::new();
+            return IRNode::Raw(String::new());
         };
 
         let method_name = self.get_identifier_text(method.name);
         let params = self.collect_parameters(&method.parameters);
         let generator_cases = self.build_generator_cases(method.body);
 
-        // Emit prototype method assignment with generator body
-        self.emit_generator_method(class_name, &method_name, &params, &generator_cases, method.is_static);
-
-        std::mem::take(&mut self.output)
+        // Return IR node for the generator method
+        IRNode::GeneratorMethod {
+            class_name: class_name.to_string(),
+            method_name,
+            parameters: params,
+            generator_body: Box::new(IRNode::GeneratorBody {
+                has_await: false,
+                cases: generator_cases,
+            }),
+            is_static: method.is_static,
+        }
     }
 
     /// Get the helpers needed after transformation
@@ -1136,10 +1136,6 @@ impl<'a> GeneratorES5Transformer<'a> {
     // =========================================================================
 
     fn reset(&mut self) {
-        self.output.clear();
-        self.mappings.clear();
-        self.line = 0;
-        self.column = 0;
         self.state.reset();
         self.helpers_needed = HelpersNeeded::default();
     }

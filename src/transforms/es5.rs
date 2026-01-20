@@ -114,26 +114,32 @@ impl<'a> ES5ClassTransformer<'a> {
         // Add return statement
         body.push(IRNode::ret(Some(IRNode::id(&class_name))));
 
-        // Collect WeakMap names
-        let weakmap_decls: Vec<String> = private_fields
+        // Collect WeakMap declarations as IR nodes
+        let weakmap_decls: Vec<IRNode> = private_fields
             .iter()
-            .map(|f| f.weakmap_name.clone())
+            .map(|f| IRNode::var_decl(&f.weakmap_name, None))
             .chain(
                 private_accessors
                     .iter()
-                    .filter_map(|a| a.get_var_name.clone()),
+                    .filter_map(|a| a.get_var_name.as_ref().map(|name| IRNode::var_decl(name, None))),
             )
             .chain(
                 private_accessors
                     .iter()
-                    .filter_map(|a| a.set_var_name.clone()),
+                    .filter_map(|a| a.set_var_name.as_ref().map(|name| IRNode::var_decl(name, None))),
             )
             .collect();
 
-        let weakmap_inits: Vec<String> = private_fields
+        // Collect WeakMap instantiations as IR nodes
+        let weakmap_inits: Vec<IRNode> = private_fields
             .iter()
             .filter(|f| !f.is_static)
-            .map(|f| format!("{} = new WeakMap()", f.weakmap_name))
+            .map(|f| {
+                IRNode::expr_stmt(IRNode::assign(
+                    IRNode::id(&f.weakmap_name),
+                    IRNode::call(IRNode::id("WeakMap"), vec![]),
+                ))
+            })
             .chain(
                 private_accessors
                     .iter()
@@ -141,10 +147,16 @@ impl<'a> ES5ClassTransformer<'a> {
                     .flat_map(|a| {
                         let mut inits = Vec::new();
                         if let Some(ref name) = a.get_var_name {
-                            inits.push(format!("{} = new WeakMap()", name));
+                            inits.push(IRNode::expr_stmt(IRNode::assign(
+                                IRNode::id(name),
+                                IRNode::call(IRNode::id("WeakMap"), vec![]),
+                            )));
                         }
                         if let Some(ref name) = a.set_var_name {
-                            inits.push(format!("{} = new WeakMap()", name));
+                            inits.push(IRNode::expr_stmt(IRNode::assign(
+                                IRNode::id(name),
+                                IRNode::call(IRNode::id("WeakMap"), vec![]),
+                            )));
                         }
                         inits
                     }),

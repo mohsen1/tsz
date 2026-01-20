@@ -406,10 +406,12 @@ impl<'a> IRPrinter<'a> {
                 weakmap_inits,
             } => {
                 // Emit WeakMap declarations if any
+                for decl in weakmap_decls {
+                    self.emit_node(decl);
+                }
+
+                // Empty line before class
                 if !weakmap_decls.is_empty() {
-                    self.write("var ");
-                    self.write(&weakmap_decls.join(", "));
-                    self.write(";");
                     self.write_line();
                 }
 
@@ -439,10 +441,8 @@ impl<'a> IRPrinter<'a> {
                 self.write("));");
 
                 // Emit WeakMap instantiations if any
-                if !weakmap_inits.is_empty() {
-                    self.write_line();
-                    self.write(&weakmap_inits.join(", "));
-                    self.write(";");
+                for init in weakmap_inits {
+                    self.emit_node(init);
                 }
             }
             IRNode::ExtendsHelper { class_name } => {
@@ -660,6 +660,82 @@ impl<'a> IRPrinter<'a> {
                 self.write(", ");
                 self.emit_node(value);
                 self.write(")");
+            }
+
+            // Generator Transform Specific
+            IRNode::GeneratorFunction {
+                name,
+                parameters,
+                generator_body,
+            } => {
+                self.write("function ");
+                if let Some(n) = name {
+                    self.write(n);
+                }
+                self.write("(");
+                for (i, param) in parameters.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(param);
+                }
+                self.write(") {\n");
+
+                self.increase_indent();
+                self.write_indent();
+                self.write("return __generator(this, function (_a) {\n");
+
+                self.increase_indent();
+                self.emit_node(generator_body);
+                self.decrease_indent();
+
+                self.write_indent();
+                self.write("});\n");
+
+                self.decrease_indent();
+                self.write_indent();
+                self.write("}");
+            }
+
+            IRNode::GeneratorMethod {
+                class_name,
+                method_name,
+                parameters,
+                generator_body,
+                is_static,
+            } => {
+                // ClassName.prototype.methodName = function(params) { ... }
+                // or ClassName.methodName = function(params) { ... } for static
+                self.write(class_name);
+                if !*is_static {
+                    self.write(".prototype");
+                }
+                self.write(".");
+                self.write(method_name);
+                self.write(" = function (");
+
+                for (i, param) in parameters.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    self.write(param);
+                }
+                self.write(") {\n");
+
+                self.increase_indent();
+                self.write_indent();
+                self.write("return __generator(this, function (_a) {\n");
+
+                self.increase_indent();
+                self.emit_node(generator_body);
+                self.decrease_indent();
+
+                self.write_indent();
+                self.write("});\n");
+
+                self.decrease_indent();
+                self.write_indent();
+                self.write("};");
             }
 
             // Special

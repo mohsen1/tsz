@@ -239,9 +239,9 @@ pub enum IRNode {
         base_class: Option<Box<IRNode>>,
         body: Vec<IRNode>,
         /// WeakMap declarations for private fields (before the IIFE)
-        weakmap_decls: Vec<String>,
+        weakmap_decls: Vec<IRNode>,
         /// WeakMap instantiations (after the IIFE)
-        weakmap_inits: Vec<String>,
+        weakmap_inits: Vec<IRNode>,
     },
 
     /// __extends helper call: `__extends(ClassName, _super);`
@@ -275,6 +275,22 @@ pub enum IRNode {
     AwaiterCall {
         this_arg: Box<IRNode>,
         generator_body: Box<IRNode>,
+    },
+
+    /// Generator function (standalone or expression)
+    GeneratorFunction {
+        name: Option<String>,
+        parameters: Vec<String>,
+        generator_body: Box<IRNode>,
+    },
+
+    /// Generator method (class method)
+    GeneratorMethod {
+        class_name: String,
+        method_name: String,
+        parameters: Vec<String>,
+        generator_body: Box<IRNode>,
+        is_static: bool,
     },
 
     /// __generator helper body
