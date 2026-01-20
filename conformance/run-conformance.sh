@@ -142,7 +142,7 @@ docker run --rm \
     "$IMAGE_NAME" sh -c "
         cd /app/conformance
         npm install --silent 2>/dev/null || true
-        timeout ${TIMEOUT}s node dist/runner.js $RUNNER_ARGS
+        timeout ${TIMEOUT}s node --expose-gc dist/runner.js $RUNNER_ARGS
         EXIT_CODE=\$?
         if [ \$EXIT_CODE -eq 124 ]; then
             echo ''

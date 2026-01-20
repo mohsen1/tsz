@@ -36,6 +36,11 @@ const DEFAULT_CONFIG: RunnerConfig = {
   testTimeout: 10000,
 };
 
+// Recycle workers after this many tests to prevent memory leaks
+const TESTS_BEFORE_RECYCLE = 500;
+// Memory threshold in bytes - restart worker if it exceeds this (500MB)
+const MEMORY_THRESHOLD = 500 * 1024 * 1024;
+
 interface TestResult {
   tscCodes: number[];
   wasmCodes: number[];
@@ -131,6 +136,7 @@ interface WorkerInfo {
   currentTestId: number | null;
   testsProcessed: number;
   crashCount: number;
+  memoryUsed?: number;
 }
 
 class WorkerPool {
@@ -193,7 +199,14 @@ class WorkerPool {
           info.busy = false;
           info.currentTestId = null;
           info.testsProcessed++;
-          
+          if (msg.memoryUsed !== undefined) {
+            info.memoryUsed = msg.memoryUsed;
+          }
+
+          // Recycle worker after N tests or if memory is high
+          const shouldRecycle = info.testsProcessed >= TESTS_BEFORE_RECYCLE ||
+                              (info.memoryUsed !== undefined && info.memoryUsed > MEMORY_THRESHOLD);
+
           pending.resolve({
             tscCodes: msg.tscCodes,
             wasmCodes: msg.wasmCodes,
@@ -204,6 +217,11 @@ class WorkerPool {
             error: msg.error,
             filePath: pending.relPath,
           });
+
+          // Recycle worker after resolving the current test
+          if (shouldRecycle && !info.busy) {
+            this.replaceWorker(info);
+          }
         }
         return;
       }
@@ -215,7 +233,14 @@ class WorkerPool {
       }
       
       if (msg.type === 'heartbeat') {
-        // Worker sent heartbeat - it's still alive but may be slow
+        // Track memory usage from heartbeat
+        if (msg.memoryUsed !== undefined) {
+          info.memoryUsed = msg.memoryUsed;
+        }
+        // Recycle if memory is too high and worker is idle
+        if (msg.memoryUsed !== undefined && msg.memoryUsed > MEMORY_THRESHOLD && !info.busy) {
+          this.replaceWorker(info);
+        }
         return;
       }
     });

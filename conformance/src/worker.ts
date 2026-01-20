@@ -428,21 +428,30 @@ function runWasm(testCase: ParsedTestCase): { codes: number[]; crashed: boolean;
 function processTest(job: TestJob): WorkerResult {
   lastActivity = Date.now();
   const memBefore = getMemoryUsage();
-  
+
   try {
     const code = fs.readFileSync(job.filePath, 'utf8');
     const testCase = parseTestDirectives(code, job.filePath);
-    
+
     // Run TSC first (more stable)
     const tscCodes = runTsc(testCase);
     lastActivity = Date.now();
-    
+
     // Run WASM (may crash)
     const wasmResult = runWasm(testCase);
     lastActivity = Date.now();
-    
+
     const memAfter = getMemoryUsage();
-    
+
+    // Try to run garbage collection if available (Node.js with --expose-gc)
+    if (global.gc) {
+      try {
+        global.gc();
+      } catch {
+        // Ignore GC errors
+      }
+    }
+
     return {
       type: 'result',
       id: job.id,
@@ -457,7 +466,16 @@ function processTest(job: TestJob): WorkerResult {
   } catch (e) {
     const memAfter = getMemoryUsage();
     const isOom = (memAfter - memBefore) > 100 * 1024 * 1024;
-    
+
+    // Try to run garbage collection if available
+    if (global.gc) {
+      try {
+        global.gc();
+      } catch {
+        // Ignore GC errors
+      }
+    }
+
     return {
       type: 'result',
       id: job.id,
