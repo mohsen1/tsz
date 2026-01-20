@@ -6,10 +6,10 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 | Metric | Value |
 |--------|-------|
-| Conformance (500 tests) | **23.2%** (116/500) |
+| Conformance (12,053 tests) | **24.7%** (2,983/12,053) |
 | Driver Tests | 113/113 passing |
-| Test Speed | **87 tests/sec** |
-| Crashes | 27 (handled gracefully) |
+| Test Speed | **106 tests/sec** |
+| Crashes | 865 | OOM: 37 | Timeout: 57 |
 
 ---
 
@@ -22,21 +22,21 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 #### Top Missing Errors (we should emit but don't)
 | Error | Count | Description |
 |-------|-------|-------------|
-| TS2583 | 296x | Cannot find name (need ES2015+ lib) |
-| TS2304 | 95x | Cannot find name |
-| TS2792 | 75x | Cannot find module |
-| TS2339 | 62x | Property does not exist |
-| TS7006 | 52x | Parameter implicitly has 'any' type |
-| TS1202 | 48x | Import assignment in ESM |
+| TS2304 | 4,764x | Cannot find name |
+| TS7053 | 2,458x | Element implicitly has 'any' type |
+| TS2792 | 2,377x | Cannot find module |
+| TS2339 | 2,147x | Property does not exist |
+| TS2583 | 1,882x | Cannot find name (need ES2015+ lib) |
+| TS2488 | 1,571x | Type must have Symbol.iterator |
 
 #### Top Extra Errors (we emit but shouldn't)
 | Error | Count | Description |
 |-------|-------|-------------|
-| TS2300 | 70x | Duplicate identifier |
-| TS2571 | 66x | Object is of type 'unknown' |
-| TS2322 | 63x | Type not assignable |
-| TS1005 | 58x | Expected token (parser) |
-| TS2339 | 27x | Property does not exist |
+| TS2304 | 393,322x | Cannot find name (symbol resolution bug!) |
+| TS2322 | 11,939x | Type not assignable |
+| TS1005 | 3,473x | Expected token (parser) |
+| TS2571 | 3,137x | Object is of type 'unknown' |
+| TS2694 | 3,105x | Namespace has no exported member |
 
 ### 2. Make Flow Analysis Iterative
 
