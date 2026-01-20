@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "issue": {
+    "number": 57,
+    "title": "Improve TypeScript Conformance Test Pass Rate to 50%+",
+    "body": "# Project Zang\n\nTypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.\n\n## Current Status\n\n| Metric | Value |\n|--------|-------|\n| Conformance (500 tests) | **30.0%** (150/500) |\n| Driver Tests | 113/113 passing |\n| Test Speed | **68 tests/sec** |\n| Crashes | 0 | OOM: 0 | Timeout: 0 |\n\n### Recent Improvements\n- TS2571 \"Object is of type 'unknown'\" reduced 64% (use ANY for unresolved symbols)\n- TS2300 \"Duplicate identifier\" reduced 14% (static vs instance member fix)\n- Crashes eliminated: 865 → 0 (comprehensive compiler options support)\n\n---\n\n## Priority List\n\n### 1. Improve Conformance Test Pass Rate\n\n**Target: 50%+ (currently 30%)**\n\n#### Top Missing Errors (we should emit but don't)\n| Error | Count | Description |\n|-------|-------|-------------|\n| TS2318 | 696x | Cannot find global type (expected with @noLib tests) |\n| TS2583 | 298x | Cannot find name (need ES2015+ lib) |\n| TS2304 | 59x | Cannot find name |\n| TS2307 | 53x | Cannot find module |\n| TS7006 | 27x | Parameter implicitly has 'any' type |\n\n#### Top Extra Errors (we emit but shouldn't)\n| Error | Count | Description |\n|-------|-------|-------------|\n| TS2300 | 60x | Duplicate identifier |\n| TS1005 | 58x | Expected token (parser) |\n| TS2339 | 34x | Property does not exist |\n| TS1202 | 28x | Import assignment in ESM |\n| TS2454 | 26x | Variable used before assigned |\n\n### 2. Make Flow Analysis Iterative\n\n`src/checker/flow_analyzer.rs`: `check_flow` is recursive. Deeply nested control flow will blow the stack. **Needs iterative worklist algorithm.**\n\n### 3. Fix Transform Pipeline\n\n`src/transforms/` mixes AST manipulation with string emission. Transforms should produce a lowered AST, then the printer should emit strings.\n\n### 4. Code Hygiene\n\n- Remove `#![allow(dead_code)]` and fix unused code\n- Add proper tracing infrastructure (replace print statements)\n- Clean up Clippy ignores in `clippy.toml`\n\n---\n\n## Key Files\n\n| File | Purpose | Lines |\n|------|---------|-------|\n| `src/thin_checker.rs` | Type checker | 25,315 |\n| `src/thin_parser.rs` | Parser | 10,704 |\n| `src/thin_binder.rs` | Symbol binding | 4,452 |\n| `src/solver/` | Type resolution | 37 files |\n\n---\n\n## Commands\n\n```bash\ncargo build                              # Build\ncargo test --lib                         # Run all tests\ncargo test --lib solver::                # Run specific module\nwasm-pack build --target nodejs          # Build WASM\n./conformance/run-conformance.sh --max=500   # Run 500 conformance tests\n./conformance/run-conformance.sh --all       # Run all conformance tests\n```\n\n---\n\n## Rules\n\n- All commits must pass unit tests\n- No test-aware code in source\n- Fix root causes, not symptoms\n\n| Don't | Do Instead |\n|-------|------------|\n| Check file names in checker | Fix the underlying logic |\n| Suppress errors for specific tests | Implement correct behavior |\n\n---\n\n## Merge Criteria\n\n1. `cargo build` passes\n2. `cargo test` passes\n3. Tests run in < 30 seconds\n"
+  },
+  "repo": {
+    "owner": "mohsen1",
+    "name": "tsz"
+  },
+  "phase": "initialized",
+  "workBranch": "cco/57-improve-typescript-conformance-test-pass-rate-to-5",
+  "baseBranch": "main",
+  "ems": [],
+  "config": {
+    "maxEms": 3,
+    "maxWorkersPerEm": 3,
+    "reviewWaitMinutes": 5,
+    "prLabel": "cco"
+  },
+  "createdAt": "2026-01-20T05:50:00.445Z",
+  "updatedAt": "2026-01-20T05:50:00.745Z"
+}
