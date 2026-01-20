@@ -76,8 +76,10 @@ The project mimics TypeScript's architecture *too* closely in some places (like 
 
 ### Improve Conformance Test Pass Rate
 
-Current pass rate: **40%** on 500 tests, 0 crashes.
+Current pass rate: **53.5%** on 100 tests, **40.8%** on 500 tests, 0 crashes.
 Target: 95%+. Recent fixes:
+- Fixed TS2454 to return ERROR type (prevents cascading TS2571)
+- Implemented TS2435: nested ambient modules error
 - Implemented TS1042: async getters/setters
 - Implemented TS1202: import equals in ESM context
 - Implemented TS2372: parameter cannot reference itself (`function f(x = x)`)
@@ -86,9 +88,6 @@ Target: 95%+. Recent fixes:
 - Fixed Promise<T> type extraction for await expressions without lib files (PROMISE_BASE)
 - Fixed TS1040 for 'declare async function' (parser was losing declare modifier)
 - Fixed await expressions to return original type when not Promise-like
-- Fixed TS2664 to only emit in module files, not script files
-- Fixed TS2391 to skip ambient modules (function implementation check)
-- Fixed TS2705 false positives for async functions with Promise return types
 
 Top remaining extra errors: TS2571, TS2322, TS2349.
 Top remaining missing errors: TS1109 (parser), TS1359 (parser), TS2304, TS2403.
