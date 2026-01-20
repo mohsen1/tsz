@@ -16,14 +16,16 @@ TypeScript tests use `// @directive: value` comments at the top of test files to
 // @target: es2017
 // @strict: true
 // @noEmitHelpers: true
-// @filename: file1.ts
+// @Filename: file1.ts
 ```
+
+**Important**: Directives are case-insensitive. Both `@filename` and `@Filename` are valid.
 
 ### Most Common Directives (from 5,200 conformance tests)
 
 | Directive | Count | Purpose |
 |-----------|-------|---------|
-| `@filename` | 3,414 | Multi-file test: defines file boundaries |
+| `@filename` / `@Filename` | 3,414 | Multi-file test: defines file boundaries |
 | `@target` | 1,572 | ES target: es5, es6, es2017, esnext |
 | `@strict` | 1,437 | Enable all strict checks |
 | `@module` | 593 | Module system: commonjs, es2015, esnext |
@@ -47,10 +49,10 @@ TypeScript tests use `// @directive: value` comments at the top of test files to
 Use `@filename` (or `@Filename`) to split a test into multiple virtual files:
 
 ```typescript
-// @filename: declarations.d.ts
+// @Filename: declarations.d.ts
 declare module "jquery"
 
-// @filename: user.ts
+// @Filename: user.ts
 import foo from "jquery";
 foo();
 ```
@@ -69,6 +71,27 @@ For each test `foo.ts`, TypeScript generates baselines in `tests/baselines/refer
 
 **Key insight**: If `foo.errors.txt` doesn't exist, the test should produce **zero errors**.
 
+### .errors.txt Format
+
+The `.errors.txt` baseline has a specific multi-line structure:
+
+```
+foo.ts(1,13): error TS1110: Type expected.
+
+
+==== foo.ts (1 errors) ====
+    var v = (a: ) => {
+                ~
+!!! error TS1110: Type expected.
+       
+    };
+```
+
+**Structure:**
+1. **Header lines**: `file(line,col): error TSxxxx: message`
+2. **File sections**: `==== filename (N errors) ====`
+3. **Source with annotations**: Original code with `~` underlines and `!!! error` markers
+
 ---
 
 ## Part 2: Current State Analysis
@@ -77,26 +100,26 @@ For each test `foo.ts`, TypeScript generates baselines in `tests/baselines/refer
 
 | File | Lines | Status |
 |------|-------|--------|
-| `conformance/conformance-runner.mjs` | 609 | **DELETE** - superseded |
-| `conformance/conformance-child.mjs` | 422 | **DELETE** - unused worker |
-| `conformance/conformance-embedded.mjs` | 373 | **DELETE** - alternative |
-| `conformance/conformance-worker.mjs` | 388 | **DELETE** - unused |
-| `conformance/conformance-simple.mjs` | 114 | **DELETE** - simplified |
-| `conformance/parallel-conformance.mjs` | 282 | **DELETE** - superseded |
-| `conformance/process-pool-conformance.mjs` | 344 | **DELETE** - superseded |
-| `conformance/metrics-tracker.mjs` | 520 | **DELETE** - unused |
-| `conformance/test-strict-directive.mjs` | 129 | **DELETE** - one-off test |
-| `conformance/test-single-file.mjs` | 53 | **MOVE** to scripts/ |
+| `conformance/conformance-runner.mjs` | 609 | **DELETE** |
+| `conformance/conformance-child.mjs` | 422 | **DELETE** |
+| `conformance/conformance-embedded.mjs` | 373 | **DELETE** |
+| `conformance/conformance-worker.mjs` | 388 | **DELETE** |
+| `conformance/conformance-simple.mjs` | 114 | **DELETE** |
+| `conformance/parallel-conformance.mjs` | 282 | **DELETE** |
+| `conformance/process-pool-conformance.mjs` | 344 | **DELETE** |
+| `conformance/metrics-tracker.mjs` | 520 | **DELETE** |
+| `conformance/test-strict-directive.mjs` | 129 | **DELETE** |
+| `conformance/test-single-file.mjs` | 53 | **DELETE** |
 | **conformance/src/runner.ts** | 744 | **KEEP** - primary |
 | **conformance/src/compare.ts** | 310 | **KEEP** - core logic |
 
-### scripts/ Overlap
+### scripts/ Analysis
 
 | File | Lines | Status |
 |------|-------|--------|
-| `scripts/run-single-test.mjs` | 400 | **KEEP** - useful |
-| `scripts/run-batch-tests.mjs` | 350 | **REVIEW** - may overlap |
-| `scripts/compare-baselines.mjs` | 530 | **REVIEW** - useful? |
+| `scripts/run-single-test.mjs` | 400 | **KEEP** - useful for debugging |
+| `scripts/run-batch-tests.mjs` | 350 | **DELETE** - overlaps with runner.ts |
+| `scripts/compare-baselines.mjs` | 530 | **DELETE** - unused |
 | `scripts/measure-baseline.mjs` | 260 | **DELETE** - one-off |
 | `scripts/validate-wasm.mjs` | 90 | **KEEP** - useful |
 
@@ -104,7 +127,20 @@ For each test `foo.ts`, TypeScript generates baselines in `tests/baselines/refer
 
 ## Part 3: Execution Plan
 
-### Phase 1: Delete Redundant Files
+### Phase 1: Dependency Scan & Delete Redundant Files
+
+**Step 1: Scan for references before deleting**
+
+```bash
+# Check what references these files
+rg "conformance-runner|conformance-child|conformance-embedded" .
+rg "parallel-conformance|process-pool|metrics-tracker" .
+rg "run-batch-tests|compare-baselines|measure-baseline" .
+```
+
+**Step 2: Update any references found (test.sh, docs, CI)**
+
+**Step 3: Delete redundant files**
 
 ```bash
 # Delete redundant conformance runners
@@ -120,6 +156,8 @@ rm conformance/test-strict-directive.mjs
 rm conformance/test-single-file.mjs
 
 # Delete unused scripts
+rm scripts/run-batch-tests.mjs
+rm scripts/compare-baselines.mjs
 rm scripts/measure-baseline.mjs
 ```
 
@@ -139,14 +177,31 @@ Update `conformance/package.json` to remove dead scripts:
 }
 ```
 
-### Phase 3: Improve Directive Parsing
+### Phase 3: Fix Directive Parsing (Case-Insensitive)
 
-Update `conformance/src/runner.ts` to fully support all directives:
+**Bug**: Current parser only matches lowercase `@filename`, missing `@Filename` (1,095 occurrences).
+
+**Fix in `conformance/src/runner.ts`:**
+
+```typescript
+// BEFORE (broken):
+const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/);
+
+// AFTER (case-insensitive):
+const filenameMatch = trimmed.match(/^\/\/\s*@filename:\s*(.+)$/i);
+
+// Also normalize all directive keys to lowercase:
+const optionMatch = trimmed.match(/^\/\/\s*@(\w+):\s*(.+)$/i);
+if (optionMatch) {
+  const key = optionMatch[1].toLowerCase(); // normalize
+  // ...
+}
+```
 
 **Currently Supported:**
 - [x] `@target`
 - [x] `@strict`
-- [x] `@filename` / `@Filename`
+- [ ] `@filename` / `@Filename` ← **NEEDS FIX** (case-insensitive)
 - [x] `@noImplicitAny`
 - [x] `@strictNullChecks`
 - [x] `@declaration`
@@ -165,23 +220,68 @@ Update `conformance/src/runner.ts` to fully support all directives:
 
 ### Phase 4: Add Baseline Comparison
 
-The current runner only compares error **codes**. Add comparison against `.errors.txt` baselines:
+The current runner only compares error **codes**. Add full comparison against `.errors.txt` baselines.
+
+**Step 1: Parse header errors**
+
+```typescript
+interface ParsedError {
+  file: string;
+  line: number;
+  column: number;
+  code: number;
+  message: string;
+}
+
+function parseErrorsBaseline(content: string): ParsedError[] {
+  const errors: ParsedError[] = [];
+  
+  // Parse header lines: "foo.ts(1,13): error TS1110: Type expected."
+  const headerRegex = /^(.+)\((\d+),(\d+)\): error TS(\d+): (.+)$/gm;
+  let match;
+  while ((match = headerRegex.exec(content)) !== null) {
+    errors.push({
+      file: match[1],
+      line: parseInt(match[2]),
+      column: parseInt(match[3]),
+      code: parseInt(match[4]),
+      message: match[5],
+    });
+  }
+  
+  return errors;
+}
+```
+
+**Step 2: Load baseline if exists**
+
+```typescript
+function loadBaseline(testPath: string): ParsedError[] | null {
+  const baseName = path.basename(testPath, '.ts');
+  const baselinePath = path.join(
+    'TypeScript/tests/baselines/reference',
+    `${baseName}.errors.txt`
+  );
+  
+  if (!fs.existsSync(baselinePath)) {
+    return []; // No errors expected
+  }
+  
+  const content = fs.readFileSync(baselinePath, 'utf8');
+  return parseErrorsBaseline(content);
+}
+```
+
+**Step 3: Compare with actual errors**
 
 ```typescript
 interface BaselineComparison {
   hasBaseline: boolean;
-  baselineErrors: ParsedError[];
+  expectedErrors: ParsedError[];
   actualErrors: ParsedError[];
   exactMatch: boolean;
-  missingErrors: ParsedError[];
-  extraErrors: ParsedError[];
-}
-
-function parseErrorsBaseline(content: string): ParsedError[] {
-  // Parse format:
-  // foo.ts(1,13): error TS1110: Type expected.
-  const regex = /^(.+)\((\d+),(\d+)\): error TS(\d+): (.+)$/gm;
-  // ...
+  missingErrors: ParsedError[];  // in baseline but not actual
+  extraErrors: ParsedError[];    // in actual but not baseline
 }
 ```
 
@@ -194,26 +294,29 @@ const CATEGORIES = {
   conformance: 'TypeScript/tests/cases/conformance',
   compiler: 'TypeScript/tests/cases/compiler',
 };
+
+// Update CLI:
+// node dist/runner.js --category=compiler --max=1000
 ```
 
-### Phase 6: Directory Structure
-
-Final structure:
+### Phase 6: Final Directory Structure
 
 ```
 conformance/
 ├── src/
 │   ├── runner.ts      # Main runner
 │   ├── compare.ts     # Diagnostic comparison
-│   └── directives.ts  # Directive parsing (new)
+│   ├── directives.ts  # Directive parsing (extracted)
+│   └── baseline.ts    # Baseline loading/parsing (new)
 ├── dist/              # Compiled output
 ├── package.json
 └── tsconfig.json
 
 scripts/
-├── run-single-test.mjs
-├── validate-wasm.mjs
-├── test.sh
+├── run-single-test.mjs  # Debug single test
+├── validate-wasm.mjs    # Validate WASM build
+├── test.sh              # Main test script
+├── build-wasm.sh
 └── docker/
     └── Dockerfile
 ```
@@ -223,14 +326,19 @@ scripts/
 ## Part 4: Implementation Checklist
 
 ### Immediate (Phase 1-2)
-- [ ] Delete 10 redundant .mjs files
-- [ ] Update package.json scripts
+- [ ] Run dependency scan for references to deleted files
+- [ ] Update scripts/test.sh if needed
+- [ ] Delete 10 redundant .mjs files in conformance/
+- [ ] Delete 3 unused scripts in scripts/
+- [ ] Update conformance/package.json
 - [ ] Verify `npm run test:100` still works
 
 ### Short-term (Phase 3-4)
-- [ ] Add missing directive support
-- [ ] Add baseline file comparison
-- [ ] Compare against `.errors.txt` files
+- [ ] Fix case-insensitive directive matching (`@Filename`)
+- [ ] Add missing directive support (`@module`, `@lib`, etc.)
+- [ ] Implement baseline file loading
+- [ ] Implement `.errors.txt` parsing (header format)
+- [ ] Add baseline comparison to test output
 
 ### Medium-term (Phase 5)
 - [ ] Add compiler/ test support
@@ -248,10 +356,10 @@ scripts/
 
 | Metric | Current | Target |
 |--------|---------|--------|
-| Conformance files | 10 | 2 |
+| Runner files in conformance/ | 10 .mjs + 2 .ts | 2 .ts only |
 | Test coverage | 500 tests | 10,000+ tests |
-| Pass rate (100) | 53.5% | 80%+ |
-| Pass rate (500) | 40.8% | 70%+ |
+| Pass rate (100 tests) | 53.5% | 80%+ |
+| Pass rate (500 tests) | 40.8% | 70%+ |
 | Runner startup | ~2s | <1s |
 
 ---
