@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Parallel Conformance Test Runner
+ * High-Performance Parallel Conformance Test Runner
  *
- * Runs each test in a separate child process with timeout.
- * This ensures hanging tests can be killed without affecting others.
+ * Uses persistent worker threads that load WASM once.
+ * Workers that hang are terminated and respawned.
  */
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { fork } from 'child_process';
+import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG = {
@@ -18,8 +18,8 @@ const DEFAULT_CONFIG = {
     maxTests: 500,
     verbose: false,
     categories: ['conformance', 'compiler'],
-    workers: Math.max(1, os.cpus().length - 1),
-    testTimeout: 10000, // 10 seconds per test
+    workers: Math.max(1, os.cpus().length),
+    testTimeout: 10000,
 };
 const colors = {
     reset: '\x1b[0m',
@@ -35,207 +35,160 @@ function log(msg, color = '') {
 }
 function collectTestFiles(dir, maxFiles) {
     const files = [];
-    function walk(currentDir) {
+    function walk(d) {
         if (files.length >= maxFiles)
             return;
-        let entries;
         try {
-            entries = fs.readdirSync(currentDir);
-        }
-        catch {
-            return;
-        }
-        for (const entry of entries) {
-            if (files.length >= maxFiles)
-                break;
-            const fullPath = path.join(currentDir, entry);
-            let stat;
-            try {
-                stat = fs.statSync(fullPath);
+            for (const entry of fs.readdirSync(d)) {
+                if (files.length >= maxFiles)
+                    break;
+                const p = path.join(d, entry);
+                const stat = fs.statSync(p);
+                if (stat.isDirectory())
+                    walk(p);
+                else if (entry.endsWith('.ts') && !entry.endsWith('.d.ts'))
+                    files.push(p);
             }
-            catch {
-                continue;
-            }
-            if (stat.isDirectory())
-                walk(fullPath);
-            else if (entry.endsWith('.ts') && !entry.endsWith('.d.ts'))
-                files.push(fullPath);
         }
+        catch { }
     }
     walk(dir);
     return files;
 }
-function compareResults(tscCodes, wasmCodes) {
-    const tscSet = new Map();
-    const wasmSet = new Map();
-    for (const c of tscCodes)
-        tscSet.set(c, (tscSet.get(c) || 0) + 1);
-    for (const c of wasmCodes)
-        wasmSet.set(c, (wasmSet.get(c) || 0) + 1);
+function compareResults(tsc, wasm) {
+    const tscMap = new Map();
+    const wasmMap = new Map();
+    for (const c of tsc)
+        tscMap.set(c, (tscMap.get(c) || 0) + 1);
+    for (const c of wasm)
+        wasmMap.set(c, (wasmMap.get(c) || 0) + 1);
     const missing = [];
     const extra = [];
-    for (const [code, count] of tscSet) {
-        const wasmCount = wasmSet.get(code) || 0;
-        for (let i = 0; i < count - wasmCount; i++)
-            missing.push(code);
-    }
-    for (const [code, count] of wasmSet) {
-        const tscCount = tscSet.get(code) || 0;
-        for (let i = 0; i < count - tscCount; i++)
-            extra.push(code);
-    }
-    return { exactMatch: missing.length === 0 && extra.length === 0, missing, extra };
+    for (const [c, n] of tscMap)
+        for (let i = 0; i < n - (wasmMap.get(c) || 0); i++)
+            missing.push(c);
+    for (const [c, n] of wasmMap)
+        for (let i = 0; i < n - (tscMap.get(c) || 0); i++)
+            extra.push(c);
+    return { match: missing.length === 0 && extra.length === 0, missing, extra };
 }
-/**
- * Run a single test in an isolated child process with timeout
- */
-function runTestInProcess(filePath, wasmPkgPath, libPath, timeout, testsBasePath) {
-    return new Promise((resolve) => {
-        const relPath = filePath.replace(testsBasePath + path.sep, '');
-        const executorPath = path.join(__dirname, 'test-executor.js');
-        let child = null;
-        let resolved = false;
-        let output = '';
-        const timeoutId = setTimeout(() => {
-            if (!resolved) {
-                resolved = true;
-                if (child) {
-                    child.kill('SIGKILL');
-                }
-                resolve({
-                    filePath,
-                    relPath,
-                    category: 'unknown',
-                    tscCodes: [],
-                    wasmCodes: [],
-                    crashed: false,
-                    timedOut: true,
-                    skipped: false,
-                    error: `Timeout after ${timeout}ms`,
-                });
+class WorkerPool {
+    workers = [];
+    available = [];
+    pending = new Map();
+    nextId = 0;
+    workerPath;
+    workerData;
+    timeout;
+    testsBasePath;
+    constructor(count, workerPath, workerData, timeout, testsBasePath) {
+        this.workerPath = workerPath;
+        this.workerData = workerData;
+        this.timeout = timeout;
+        this.testsBasePath = testsBasePath;
+        for (let i = 0; i < count; i++)
+            this.spawnWorker();
+    }
+    spawnWorker() {
+        const worker = new Worker(this.workerPath, { workerData: this.workerData });
+        worker.on('message', (msg) => {
+            if (msg.type === 'ready') {
+                this.available.push(worker);
+                return;
             }
-        }, timeout);
-        try {
-            child = fork(executorPath, [filePath, wasmPkgPath, libPath], {
-                stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-                timeout: timeout + 1000, // Extra buffer for fork timeout
-            });
-            child.stdout?.on('data', (data) => {
-                output += data.toString();
-            });
-            child.stderr?.on('data', (data) => {
-                // Ignore stderr - might contain WASM warnings
-            });
-            child.on('exit', (code) => {
-                clearTimeout(timeoutId);
-                if (resolved)
-                    return;
-                resolved = true;
-                try {
-                    // Find JSON in output (might have extra content)
-                    const jsonMatch = output.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) {
-                        const result = JSON.parse(jsonMatch[0]);
-                        resolve({
-                            filePath,
-                            relPath,
-                            category: result.category || 'unknown',
-                            tscCodes: result.tscCodes || [],
-                            wasmCodes: result.wasmCodes || [],
-                            crashed: result.crashed || false,
-                            timedOut: false,
-                            skipped: false,
-                            error: result.error,
-                        });
-                    }
-                    else {
-                        resolve({
-                            filePath,
-                            relPath,
-                            category: 'unknown',
-                            tscCodes: [],
-                            wasmCodes: [],
-                            crashed: true,
-                            timedOut: false,
-                            skipped: false,
-                            error: `No valid output from test process (exit code: ${code})`,
-                        });
-                    }
-                }
-                catch (e) {
-                    resolve({
-                        filePath,
-                        relPath,
-                        category: 'unknown',
-                        tscCodes: [],
-                        wasmCodes: [],
-                        crashed: true,
+            if (msg.type === 'result') {
+                const pending = this.pending.get(msg.id);
+                if (pending) {
+                    clearTimeout(pending.timer);
+                    this.pending.delete(msg.id);
+                    this.available.push(worker);
+                    pending.resolve({
+                        tscCodes: msg.tscCodes,
+                        wasmCodes: msg.wasmCodes,
+                        crashed: msg.crashed,
                         timedOut: false,
-                        skipped: false,
-                        error: `Failed to parse output: ${e}`,
+                        category: msg.category,
+                        error: msg.error,
                     });
                 }
-            });
-            child.on('error', (err) => {
-                clearTimeout(timeoutId);
-                if (resolved)
-                    return;
-                resolved = true;
-                resolve({
-                    filePath,
-                    relPath,
-                    category: 'unknown',
+            }
+        });
+        worker.on('error', (err) => {
+            // Worker crashed - find any pending test and resolve as crashed
+            for (const [id, pending] of this.pending) {
+                clearTimeout(pending.timer);
+                this.pending.delete(id);
+                pending.resolve({
                     tscCodes: [],
                     wasmCodes: [],
                     crashed: true,
                     timedOut: false,
-                    skipped: false,
-                    error: `Process error: ${err.message}`,
-                });
-            });
-        }
-        catch (err) {
-            clearTimeout(timeoutId);
-            if (!resolved) {
-                resolved = true;
-                resolve({
-                    filePath,
-                    relPath,
                     category: 'unknown',
-                    tscCodes: [],
-                    wasmCodes: [],
-                    crashed: true,
-                    timedOut: false,
-                    skipped: true,
-                    error: `Failed to spawn: ${err}`,
+                    error: `Worker error: ${err.message}`,
                 });
             }
-        }
-    });
-}
-/**
- * Process pool that runs tests with controlled concurrency
- */
-class ProcessPool {
-    maxConcurrency;
-    running = 0;
-    queue = [];
-    constructor(maxConcurrency) {
-        this.maxConcurrency = maxConcurrency;
+            // Remove from workers array and spawn replacement
+            const idx = this.workers.indexOf(worker);
+            if (idx >= 0)
+                this.workers.splice(idx, 1);
+            this.workers.push(this.spawnWorker());
+        });
+        worker.on('exit', (code) => {
+            if (code !== 0) {
+                // Unexpected exit - spawn replacement
+                const idx = this.workers.indexOf(worker);
+                if (idx >= 0)
+                    this.workers.splice(idx, 1);
+                this.workers.push(this.spawnWorker());
+            }
+        });
+        this.workers.push(worker);
+        return worker;
     }
-    async run(task) {
-        if (this.running >= this.maxConcurrency) {
-            await new Promise(resolve => this.queue.push(resolve));
+    async ready() {
+        // Wait for all workers to be ready
+        while (this.available.length < this.workers.length) {
+            await new Promise(r => setTimeout(r, 10));
         }
-        this.running++;
-        try {
-            return await task();
-        }
-        finally {
-            this.running--;
-            const next = this.queue.shift();
-            if (next)
-                next();
+    }
+    run(filePath) {
+        return new Promise(resolve => {
+            const id = this.nextId++;
+            const relPath = filePath.replace(this.testsBasePath + path.sep, '');
+            const tryRun = () => {
+                if (this.available.length > 0) {
+                    const worker = this.available.pop();
+                    const timer = setTimeout(() => {
+                        // Test timed out - terminate worker and spawn new one
+                        this.pending.delete(id);
+                        const idx = this.workers.indexOf(worker);
+                        if (idx >= 0)
+                            this.workers.splice(idx, 1);
+                        worker.terminate();
+                        this.workers.push(this.spawnWorker());
+                        resolve({
+                            tscCodes: [],
+                            wasmCodes: [],
+                            crashed: false,
+                            timedOut: true,
+                            category: 'unknown',
+                            error: `Timeout after ${this.timeout}ms`,
+                        });
+                    }, this.timeout);
+                    this.pending.set(id, { id, filePath, relPath, resolve, timer });
+                    worker.postMessage({ id, filePath, testsBasePath: this.testsBasePath });
+                }
+                else {
+                    // No worker available, wait and retry
+                    setTimeout(tryRun, 5);
+                }
+            };
+            tryRun();
+        });
+    }
+    async terminate() {
+        for (const worker of this.workers) {
+            await worker.terminate();
         }
     }
 }
@@ -243,30 +196,34 @@ export async function runConformanceTests(config = {}) {
     const cfg = { ...DEFAULT_CONFIG, ...config };
     const startTime = Date.now();
     log('╔══════════════════════════════════════════════════════════╗', colors.cyan);
-    log('║     Parallel Conformance Test Runner (Process Pool)      ║', colors.cyan);
+    log('║    High-Performance Parallel Conformance Test Runner     ║', colors.cyan);
     log('╚══════════════════════════════════════════════════════════╝', colors.cyan);
     // Collect test files
     log(`\nCollecting test files...`, colors.cyan);
     const allTestFiles = [];
-    const testsPerCategory = Math.ceil(cfg.maxTests / cfg.categories.length);
-    for (const category of cfg.categories) {
-        const categoryDir = path.join(cfg.testsBasePath, category);
-        if (fs.existsSync(categoryDir)) {
+    const perCat = Math.ceil(cfg.maxTests / cfg.categories.length);
+    for (const cat of cfg.categories) {
+        const dir = path.join(cfg.testsBasePath, cat);
+        if (fs.existsSync(dir)) {
             const remaining = cfg.maxTests - allTestFiles.length;
-            const limit = Math.min(testsPerCategory, remaining);
-            const files = collectTestFiles(categoryDir, limit);
+            const files = collectTestFiles(dir, Math.min(perCat, remaining));
             allTestFiles.push(...files);
-            log(`  ${category}: ${files.length} files`, colors.dim);
+            log(`  ${cat}: ${files.length} files`, colors.dim);
         }
     }
     log(`  Total: ${allTestFiles.length} test files`, colors.cyan);
-    log(`  Workers: ${cfg.workers} (${cfg.testTimeout}ms timeout per test)`, colors.dim);
+    log(`  Workers: ${cfg.workers} | Timeout: ${cfg.testTimeout}ms`, colors.dim);
     if (allTestFiles.length === 0) {
         log('\nNo test files found!', colors.yellow);
         return { total: 0, passed: 0, failed: 0, crashed: 0, skipped: 0, timedOut: 0, byCategory: {}, missingCodes: new Map(), extraCodes: new Map() };
     }
-    // Run tests with process pool
-    log(`\nRunning tests...`, colors.cyan);
+    // Create worker pool
+    const workerPath = path.join(__dirname, 'worker.js');
+    const pool = new WorkerPool(cfg.workers, workerPath, { wasmPkgPath: cfg.wasmPkgPath, libPath: cfg.libPath }, cfg.testTimeout, cfg.testsBasePath);
+    log(`\nInitializing ${cfg.workers} workers...`, colors.cyan);
+    await pool.ready();
+    log(`  Workers ready!`, colors.green);
+    // Stats
     const stats = {
         total: allTestFiles.length,
         passed: 0,
@@ -278,7 +235,6 @@ export async function runConformanceTests(config = {}) {
         missingCodes: new Map(),
         extraCodes: new Map(),
     };
-    const pool = new ProcessPool(cfg.workers);
     let completed = 0;
     const updateProgress = () => {
         const pct = ((completed / allTestFiles.length) * 100).toFixed(1);
@@ -286,64 +242,60 @@ export async function runConformanceTests(config = {}) {
         const rate = completed > 0 ? (completed / ((Date.now() - startTime) / 1000)).toFixed(0) : '0';
         process.stdout.write(`\r  Progress: ${completed}/${allTestFiles.length} (${pct}%) | ${rate} tests/sec | ${elapsed}s    `);
     };
-    const promises = allTestFiles.map(filePath => pool.run(async () => {
-        const result = await runTestInProcess(filePath, cfg.wasmPkgPath, cfg.libPath, cfg.testTimeout, cfg.testsBasePath);
+    // Run all tests
+    log(`\nRunning tests...`, colors.cyan);
+    const promises = allTestFiles.map(async (filePath) => {
+        const relPath = filePath.replace(cfg.testsBasePath + path.sep, '');
+        const result = await pool.run(filePath);
         completed++;
         if (!cfg.verbose)
             updateProgress();
         // Update stats
-        if (!stats.byCategory[result.category]) {
-            stats.byCategory[result.category] = { total: 0, passed: 0 };
-        }
-        stats.byCategory[result.category].total++;
+        const cat = result.category;
+        if (!stats.byCategory[cat])
+            stats.byCategory[cat] = { total: 0, passed: 0 };
+        stats.byCategory[cat].total++;
         if (result.timedOut) {
             stats.timedOut++;
             stats.failed++;
             if (cfg.verbose)
-                log(`\n  ${result.relPath}: TIMEOUT`, colors.red);
-            return;
-        }
-        if (result.skipped) {
-            stats.skipped++;
+                log(`\n  ${relPath}: TIMEOUT`, colors.red);
             return;
         }
         if (result.crashed) {
             stats.crashed++;
             stats.failed++;
             if (cfg.verbose)
-                log(`\n  ${result.relPath}: CRASH - ${result.error}`, colors.red);
+                log(`\n  ${relPath}: CRASH - ${result.error}`, colors.red);
             return;
         }
-        const comparison = compareResults(result.tscCodes, result.wasmCodes);
-        if (comparison.exactMatch) {
+        const cmp = compareResults(result.tscCodes, result.wasmCodes);
+        if (cmp.match) {
             stats.passed++;
-            stats.byCategory[result.category].passed++;
+            stats.byCategory[cat].passed++;
         }
         else {
             stats.failed++;
-            for (const code of comparison.missing) {
-                stats.missingCodes.set(code, (stats.missingCodes.get(code) || 0) + 1);
-            }
-            for (const code of comparison.extra) {
-                stats.extraCodes.set(code, (stats.extraCodes.get(code) || 0) + 1);
-            }
+            for (const c of cmp.missing)
+                stats.missingCodes.set(c, (stats.missingCodes.get(c) || 0) + 1);
+            for (const c of cmp.extra)
+                stats.extraCodes.set(c, (stats.extraCodes.get(c) || 0) + 1);
             if (cfg.verbose) {
-                log(`\n  ${result.relPath}:`, colors.yellow);
-                if (comparison.missing.length > 0)
-                    log(`    Missing: TS${[...new Set(comparison.missing)].join(', TS')}`, colors.dim);
-                if (comparison.extra.length > 0)
-                    log(`    Extra: TS${[...new Set(comparison.extra)].join(', TS')}`, colors.dim);
+                log(`\n  ${relPath}:`, colors.yellow);
+                if (cmp.missing.length)
+                    log(`    Missing: TS${[...new Set(cmp.missing)].join(', TS')}`, colors.dim);
+                if (cmp.extra.length)
+                    log(`    Extra: TS${[...new Set(cmp.extra)].join(', TS')}`, colors.dim);
             }
         }
-    }));
+    });
     await Promise.all(promises);
-    // Clear progress line
-    if (!cfg.verbose) {
+    await pool.terminate();
+    if (!cfg.verbose)
         process.stdout.write('\r' + ' '.repeat(80) + '\r');
-    }
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const rate = (allTestFiles.length / ((Date.now() - startTime) / 1000)).toFixed(0);
-    // Print results
+    // Results
     log('\n' + '═'.repeat(60), colors.dim);
     log('CONFORMANCE TEST RESULTS', colors.bold);
     log('═'.repeat(60), colors.dim);
@@ -357,20 +309,18 @@ export async function runConformanceTests(config = {}) {
     log(`  Timeout:  ${stats.timedOut}`, stats.timedOut > 0 ? colors.yellow : colors.dim);
     log(`  Skipped:  ${stats.skipped}`, colors.dim);
     log('\nBy Category:', colors.bold);
-    for (const [cat, catStats] of Object.entries(stats.byCategory)) {
-        const catRate = catStats.total > 0 ? ((catStats.passed / catStats.total) * 100).toFixed(1) : '0.0';
-        log(`  ${cat}: ${catStats.passed}/${catStats.total} (${catRate}%)`, catStats.passed === catStats.total ? colors.green : colors.yellow);
+    for (const [cat, s] of Object.entries(stats.byCategory)) {
+        const r = s.total > 0 ? ((s.passed / s.total) * 100).toFixed(1) : '0.0';
+        log(`  ${cat}: ${s.passed}/${s.total} (${r}%)`, s.passed === s.total ? colors.green : colors.yellow);
     }
     if (cfg.verbose) {
-        log('\nTop Missing Errors:', colors.bold);
-        const sortedMissing = [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-        for (const [code, count] of sortedMissing) {
-            log(`  TS${code}: ${count}x`, colors.yellow);
+        log('\nTop Missing:', colors.bold);
+        for (const [c, n] of [...stats.missingCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+            log(`  TS${c}: ${n}x`, colors.yellow);
         }
-        log('\nTop Extra Errors:', colors.bold);
-        const sortedExtra = [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-        for (const [code, count] of sortedExtra) {
-            log(`  TS${code}: ${count}x`, colors.yellow);
+        log('\nTop Extra:', colors.bold);
+        for (const [c, n] of [...stats.extraCodes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)) {
+            log(`  TS${c}: ${n}x`, colors.yellow);
         }
     }
     log('\n' + '═'.repeat(60), colors.dim);
