@@ -1,0 +1,71 @@
+name: Claude Orchestrator
+
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [closed]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to check/resume'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  start:
+    if: github.event_name == 'issues' && github.event.label.name == 'cco'
+    uses: mohsen1/claude-orchestrator-action/.github/workflows/orchestrate.yml@main
+    with:
+      event_type: 'issue_labeled'
+      issue_number: ${{ github.event.issue.number }}
+    secrets:
+      CLAUDE_CONFIGS: ${{ secrets.CLAUDE_CONFIGS }}
+      CCO_PAT: ${{ secrets.GH_PAT }}
+
+  on-pr-merged:
+    if: |
+      github.event_name == 'pull_request' && 
+      github.event.pull_request.merged == true &&
+      startsWith(github.event.pull_request.head.ref, 'cco/')
+    uses: mohsen1/claude-orchestrator-action/.github/workflows/orchestrate.yml@main
+    with:
+      event_type: 'pull_request_merged'
+      pr_number: ${{ github.event.pull_request.number }}
+      branch: ${{ github.event.pull_request.head.ref }}
+    secrets:
+      CLAUDE_CONFIGS: ${{ secrets.CLAUDE_CONFIGS }}
+      CCO_PAT: ${{ secrets.GH_PAT }}
+
+  on-review:
+    if: |
+      github.event_name == 'pull_request_review' && 
+      github.event.review.state == 'changes_requested' &&
+      startsWith(github.event.pull_request.head.ref, 'cco/')
+    uses: mohsen1/claude-orchestrator-action/.github/workflows/orchestrate.yml@main
+    with:
+      event_type: 'pull_request_review'
+      pr_number: ${{ github.event.pull_request.number }}
+      branch: ${{ github.event.pull_request.head.ref }}
+      review_state: ${{ github.event.review.state }}
+      review_body: ${{ github.event.review.body }}
+    secrets:
+      CLAUDE_CONFIGS: ${{ secrets.CLAUDE_CONFIGS }}
+      CCO_PAT: ${{ secrets.GH_PAT }}
+
+  manual:
+    if: github.event_name == 'workflow_dispatch'
+    uses: mohsen1/claude-orchestrator-action/.github/workflows/orchestrate.yml@main
+    with:
+      event_type: 'workflow_dispatch'
+      issue_number: ${{ inputs.issue_number }}
+    secrets:
+      CLAUDE_CONFIGS: ${{ secrets.CLAUDE_CONFIGS }}
+      CCO_PAT: ${{ secrets.GH_PAT }}
