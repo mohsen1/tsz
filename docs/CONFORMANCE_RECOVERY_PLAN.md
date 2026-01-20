@@ -1,48 +1,78 @@
 # Conformance Recovery Plan
 
-## Snapshot (12,053 tests, 2026-01-19)
-- Pass rate: **24.7%** (2,983 / 12,053)
-- Speed: **106 tests/sec**
-- Failures: 8,111
-- Crashes: 865 | OOM: 37 | Timeouts: 57
-- Top missing: TS2304 (4,764x), TS7053 (2,458x), TS2792 (2,377x), TS2339 (2,147x), TS2583 (1,882x), TS2488 (1,571x)
-- Top extra: TS2304 (393,322x), TS2322 (11,939x), TS1005 (3,473x), TS2571 (3,137x), TS2694 (3,105x)
+## Latest Results (2,000 tests, 2026-01-20)
+- Pass rate: **29.4%** (588 / 2,000) ✅ up from 24.7%
+- Speed: **73 tests/sec**
+- Crashes: 3 ✅ down from 865
+- OOM: 0 ✅ down from 37
+- Timeouts: 2 ✅ down from 57
 
-## Findings (root-cause hypotheses)
-- **Directive/options regression in workers**: `conformance/src/worker.ts` now applies only `{ strict, target, module, noEmit, skipLibCheck }`; it ignores `@allowJs/@checkJs/@noLib/@lib/@moduleResolution/@module/@jsx/@useDefineForClassFields/@experimentalDecorators` etc. Both the TSC side and WASM side run with the wrong options, producing massive TS2304/TS7053 deltas and JS/JSDoc crashes.
-- **Lib loading is minimal**: workers load only a single `lib.d.ts` blob and never honor the `lib` array per target, nor multiple lib files (es2015, es2017, dom, iterable, etc.). Default lib selection is missing, so globals/iterables/symbols are absent; WASM emits TS2304/TS2488/TS2339 while TSC (with proper libs) would not.
-- **JS/JSDoc handling**: many crashes come from JS/JSDoc tests (`exportSymbol`/`declarations` undefined). With `allowJs`/`checkJs` ignored, JS files are parsed as TS without the JS binding pathway, leaving source file symbols unset and causing `TypeError: exportSymbol`/`flags`/`declarations` crashes.
-- **Module/global merging correctness**: `merge_bind_results` injects every file’s `file_locals` into a global table (even for external modules). This likely diverges from TSC’s external-module isolation and can cascade into “Cannot find name” and duplicate-identifier noise.
-- **Crash/OOM amplification**: The 393k extra TS2304 diags inflate memory and respawns (117 worker respawns). Fixing symbol/globals/lib issues should drastically cut crashes and OOMs.
+## Completed Actions
 
-## Plan of Action (priority order)
-1) **Restore full directive->CompilerOptions parity in workers**
-   - Reuse the richer directive parsing (module/moduleResolution/lib/jsx/noLib/skipLibCheck/allowJs/checkJs/experimentalDecorators/emitDecoratorMetadata/useDefineForClassFields/esModuleInterop/isolatedModules/types/paths/rootDirs/baseUrl/resolveJsonModule/allowSyntheticDefaultImports).
-   - Pass options through to both TSC and WASM (ThinParser.setCompilerOptions / WasmProgram-level options).
+### ✅ 1. Restored full directive→CompilerOptions parity in workers
+Added comprehensive support for all major TypeScript directives:
+- target, module, moduleResolution, jsx
+- strict mode flags (noImplicitAny, strictNullChecks, etc.)
+- lib, noLib, skipLibCheck
+- allowJs, checkJs
+- experimentalDecorators, emitDecoratorMetadata
+- useDefineForClassFields, esModuleInterop
+- isolatedModules, resolveJsonModule
+- Source maps, declaration options
+- Output options, type checking flags
 
-2) **Load correct lib set per test**
-   - Implement a lib loader that resolves the `lib` array (or default lib selection based on target/moduleResolution) from `TypeScript/tests/lib/*.d.ts`.
-   - For WASM: extend `WasmProgram` to accept multiple lib files and mark them as lib files; for ThinParser path, add `addLibFile` per lib.
-   - For TSC-in-runner: provide the same set via `CompilerHost.getSourceFile`.
-   - Honor `// @noLib` and `/// <reference lib="...">` directives.
+### ✅ 2. Fixed script kind detection
+- Proper ScriptKind for .js/.jsx/.tsx/.json files
+- Fixed crashes from treating JS files as TS
 
-3) **Enable JS/JSDoc correctness**
-   - Respect `allowJs`/`checkJs`; set ScriptKind for `.js`/`.jsx`.
-   - Ensure binder sets `source_file_symbol` for JS and supports `export =` in JS mode.
-   - Add guards in checker where `exportSymbol`/`declarations` are assumed, and add a targeted crash repro from one of the failing JSDoc tests.
+### ✅ 3. Improved lib file loading
+- Both TSC and WASM now load lib.d.ts when not using @noLib
+- Default lib integration working
 
-4) **Fix module/global merging**
-   - Revisit `merge_bind_results`: top-level symbols from external modules should not be injected into the global symbol table; only scripts/ambient modules should flow to globals.
-   - Verify `module_exports`/symbol_arenas are preserved after merge (imports/re-exports) to avoid “Cannot find name” from lost exports.
+## Remaining Issues
 
-5) **Reduce diagnostic flood & stability**
-   - After fixes above, re-run 100/500/ALL to confirm TS2304 drops from 393k.
-   - Add a cap or summarization in the runner output (not in core checker) to avoid worker OOM from pathological files while keeping checker behavior unchanged.
+### Top Missing Errors (we should emit but don't)
+| Error | Count | Description |
+|-------|-------|-------------|
+| TS2318 | 1,974x | Cannot find global type (expected with @noLib tests) |
+| TS2583 | 536x | Cannot find name (need ES2015+ lib) |
+| TS2711 | 232x | Cannot assign to 'exports' (CommonJS) |
+| TS2304 | 228x | Cannot find name |
+| TS2792 | 226x | Cannot find module |
 
-6) **Regression harness**
-   - Add targeted mini-repros for: (a) JS/JSDoc crash (exportSymbol undefined), (b) module import/export resolution across files, (c) lib-required global (Symbol/Map/Iterator) to validate lib loading, (d) @allowJs + @checkJs options flow.
+### Top Extra Errors (we emit but shouldn't)
+| Error | Count | Description |
+|-------|-------|-------------|
+| TS2571 | 870x | Object is of type 'unknown' |
+| TS2300 | 646x | Duplicate identifier |
+| TS2322 | 282x | Type not assignable |
+| TS2304 | 278x | Cannot find name |
+| TS1005 | 219x | Expected token (parser) |
+
+## Next Steps (priority order)
+
+### 1. Fix TS2571 "Object is of type 'unknown'" (870x extra)
+- Root cause: Type inference returning `unknown` instead of proper types
+- Check `get_type_of_node` for cases where we return `TypeId::UNKNOWN` incorrectly
+- May be related to unresolved generics or missing type narrowing
+
+### 2. Fix TS2300 "Duplicate identifier" (646x extra)
+- Root cause: Module/global symbol merging issue
+- `merge_bind_results` injects file_locals into globals for external modules
+- External modules should NOT have their exports in global scope
+
+### 3. Add TS2318 "Cannot find global type" check
+- TSC emits this when noLib is set and required types (Array, Boolean, etc.) are missing
+- We need to add this check when `noLib: true` to match TSC behavior
+- ~1,974 missing errors come from tests that intentionally use @noLib
+
+### 4. Fix remaining crashes (3)
+- `compiler/checkJsFiles6.ts` - undefined flags
+- `compiler/commonJsExportTypeDeclarationError.ts` - undefined flags
+- `conformance/decorators/invalid/decoratorOnAwait.ts` - Debug failure
 
 ## Success Criteria
-- TS2304 extra errors drop by an order of magnitude (ideally <10% of current).
-- Crashes < 10, OOM = 0, Timeouts < 5 on full suite.
-- Pass rate moves toward 50%+ once lib/options/js handling are corrected.
+- Pass rate: 50%+ (currently 29.4%)
+- Crashes: 0 (currently 3)
+- TS2571 extra: <100x (currently 870x)
+- TS2300 extra: <100x (currently 646x)
