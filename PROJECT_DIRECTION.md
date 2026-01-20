@@ -6,10 +6,10 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 | Metric | Value |
 |--------|-------|
-| Conformance (12,053 tests) | **24.7%** (2,983/12,053) |
+| Conformance (2,000 tests) | **29.4%** (588/2,000) |
 | Driver Tests | 113/113 passing |
-| Test Speed | **106 tests/sec** |
-| Crashes | 865 | OOM: 37 | Timeout: 57 |
+| Test Speed | **73 tests/sec** |
+| Crashes | 3 | OOM: 0 | Timeout: 2 |
 
 ---
 
@@ -22,21 +22,21 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 #### Top Missing Errors (we should emit but don't)
 | Error | Count | Description |
 |-------|-------|-------------|
-| TS2304 | 4,764x | Cannot find name |
-| TS7053 | 2,458x | Element implicitly has 'any' type |
-| TS2792 | 2,377x | Cannot find module |
-| TS2339 | 2,147x | Property does not exist |
-| TS2583 | 1,882x | Cannot find name (need ES2015+ lib) |
-| TS2488 | 1,571x | Type must have Symbol.iterator |
+| TS2318 | 1,974x | Cannot find global type (expected with @noLib) |
+| TS2583 | 536x | Cannot find name (need ES2015+ lib) |
+| TS2711 | 232x | Cannot assign to 'exports' (CommonJS) |
+| TS2304 | 228x | Cannot find name |
+| TS2792 | 226x | Cannot find module |
+| TS2488 | 178x | Type must have Symbol.iterator |
 
 #### Top Extra Errors (we emit but shouldn't)
 | Error | Count | Description |
 |-------|-------|-------------|
-| TS2304 | 393,322x | Cannot find name (symbol resolution bug!) |
-| TS2322 | 11,939x | Type not assignable |
-| TS1005 | 3,473x | Expected token (parser) |
-| TS2571 | 3,137x | Object is of type 'unknown' |
-| TS2694 | 3,105x | Namespace has no exported member |
+| TS2571 | 870x | Object is of type 'unknown' |
+| TS2300 | 646x | Duplicate identifier |
+| TS2322 | 282x | Type not assignable |
+| TS2304 | 278x | Cannot find name |
+| TS1005 | 219x | Expected token (parser) |
 
 ### 2. Make Flow Analysis Iterative
 
