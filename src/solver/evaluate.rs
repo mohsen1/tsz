@@ -602,6 +602,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(constraint) = info.constraint {
                 let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
                 checker.enforce_weak_types = true;
+                // For plain infer types (not in structured patterns), use old behavior
+                // where constraint failures cause the match to fail
                 let Some(filtered) =
                     self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                 else {
@@ -696,8 +698,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                    // For infer patterns in conditional types, convert constraint failures to undefined
+                    // to support distributive conditional type semantics where non-matching members
+                    // contribute undefined rather than causing the entire branch to fail
+                    let Some(filtered) = self.filter_inferred_by_constraint_impl(
+                        inferred,
+                        constraint,
+                        &mut checker,
+                        true, // convert_failure_to_undefined
+                    )
                     else {
                         let false_inst =
                             instantiate_type_with_infer(self.interner, cond.false_type, &subst);
@@ -942,8 +951,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                    // For infer patterns in conditional types, convert constraint failures to undefined
+                    // to support distributive conditional type semantics where non-matching members
+                    // contribute undefined rather than causing the entire branch to fail
+                    let Some(filtered) = self.filter_inferred_by_constraint_impl(
+                        inferred,
+                        constraint,
+                        &mut checker,
+                        true, // convert_failure_to_undefined
+                    )
                     else {
                         let false_inst =
                             instantiate_type_with_infer(self.interner, cond.false_type, &subst);
@@ -1053,8 +1069,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let Some(filtered) =
-                        self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
+                    // For infer patterns in conditional types, convert constraint failures to undefined
+                    // to support distributive conditional type semantics where non-matching members
+                    // contribute undefined rather than causing the entire branch to fail
+                    let Some(filtered) = self.filter_inferred_by_constraint_impl(
+                        inferred,
+                        constraint,
+                        &mut checker,
+                        true, // convert_failure_to_undefined
+                    )
                     else {
                         let false_inst =
                             instantiate_type_with_infer(self.interner, cond.false_type, &subst);
@@ -2416,6 +2439,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         constraint: TypeId,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> Option<TypeId> {
+        self.filter_inferred_by_constraint_impl(inferred, constraint, checker, false)
+    }
+
+    fn filter_inferred_by_constraint_impl(
+        &self,
+        inferred: TypeId,
+        constraint: TypeId,
+        checker: &mut SubtypeChecker<'_, R>,
+        convert_failure_to_undefined: bool,
+    ) -> Option<TypeId> {
         if inferred == constraint {
             return Some(inferred);
         }
@@ -2426,17 +2459,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             for &member in members.iter() {
                 if checker.is_subtype_of(member, constraint) {
                     filtered.push(member);
+                } else if convert_failure_to_undefined {
+                    // Non-matching union members contribute undefined
+                    filtered.push(TypeId::UNDEFINED);
                 }
             }
-            return match filtered.len() {
-                0 => None,
-                1 => Some(filtered[0]),
-                _ => Some(self.interner.union(filtered)),
-            };
+            if filtered.is_empty() {
+                return None;
+            } else if filtered.len() == 1 {
+                return Some(filtered[0]);
+            } else {
+                return Some(self.interner.union(filtered));
+            }
         }
 
         if checker.is_subtype_of(inferred, constraint) {
             Some(inferred)
+        } else if convert_failure_to_undefined {
+            // Single type that doesn't satisfy constraint becomes undefined
+            Some(TypeId::UNDEFINED)
         } else {
             None
         }
