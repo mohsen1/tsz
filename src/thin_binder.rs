@@ -2154,6 +2154,22 @@ impl ThinBinderState {
         false
     }
 
+    /// Check if modifiers list contains the 'const' keyword (for const enums).
+    fn has_const_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = arena.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::ConstKeyword as u16 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Check if a node is exported.
     /// Handles walking up the tree for VariableDeclaration -> VariableStatement.
     fn is_node_exported(&self, arena: &ThinNodeArena, idx: NodeIndex) -> bool {
@@ -2281,6 +2297,20 @@ impl ThinBinderState {
     /// Check if two symbol flag sets can be merged.
     /// Made public for use in checker to detect duplicate identifiers (TS2300).
     pub fn can_merge_flags(existing_flags: u32, new_flags: u32) -> bool {
+        // Static and instance members with the same name don't conflict
+        // They can coexist in the same class/namespace scope
+        let existing_is_static = (existing_flags & symbol_flags::STATIC) != 0;
+        let new_is_static = (new_flags & symbol_flags::STATIC) != 0;
+        if existing_is_static != new_is_static {
+            // One is static, one is instance - they can coexist
+            // However, only allow this for value members (properties, methods, etc.)
+            let both_are_value_members = (existing_flags & symbol_flags::VALUE) != 0
+                && (new_flags & symbol_flags::VALUE) != 0;
+            if both_are_value_members {
+                return true; // Static and instance members can coexist
+            }
+        }
+
         if (existing_flags & symbol_flags::INTERFACE) != 0
             && (new_flags & symbol_flags::INTERFACE) != 0
         {
@@ -2842,11 +2872,18 @@ impl ThinBinderState {
     fn bind_enum_declaration(&mut self, arena: &ThinNodeArena, node: &ThinNode, idx: NodeIndex) {
         if let Some(enum_decl) = arena.get_enum(node) {
             if let Some(name) = self.get_identifier_name(arena, enum_decl.name) {
-                // Check if exported BEFORE allocating symbol
+                // Check if exported and const modifiers BEFORE allocating symbol
                 let is_exported = self.has_export_modifier(arena, &enum_decl.modifiers);
+                let is_const = self.has_const_modifier(arena, &enum_decl.modifiers);
+
+                let enum_flags = if is_const {
+                    symbol_flags::CONST_ENUM
+                } else {
+                    symbol_flags::REGULAR_ENUM
+                };
 
                 let enum_sym_id =
-                    self.declare_symbol(name, symbol_flags::REGULAR_ENUM, idx, is_exported);
+                    self.declare_symbol(name, enum_flags, idx, is_exported);
 
                 // Get existing exports (for namespace merging)
                 let mut exports = SymbolTable::new();
@@ -2859,22 +2896,39 @@ impl ThinBinderState {
                 // Bind enum members and add them to exports
                 // This allows enum members to be accessed as Enum.MemberName
                 // and enables enum + namespace merging
+                //
+                // NOTE: We track ALL enum member declarations (including duplicates)
+                // in a single symbol. The checker will detect duplicates by
+                // checking if a symbol has multiple enum member declarations.
                 self.enter_scope(ContainerKind::Block, idx);
                 for &member_idx in &enum_decl.members.nodes {
                     if let Some(member_node) = arena.get(member_idx) {
                         if let Some(member) = arena.get_enum_member(member_node) {
                             if let Some(member_name) = self.get_identifier_name(arena, member.name)
                             {
-                                let sym_id = self
-                                    .symbols
-                                    .alloc(symbol_flags::ENUM_MEMBER, member_name.to_string());
-                                // Set value_declaration for enum members so the checker can find the parent enum
-                                if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                    sym.value_declaration = member_idx;
-                                    sym.declarations.push(member_idx);
-                                }
-                                self.current_scope.set(member_name.to_string(), sym_id);
-                                self.node_symbols.insert(member_idx.0, sym_id);
+                                let sym_id = if let Some(existing_id) = self.current_scope.get(member_name) {
+                                    // Duplicate enum member name - add declaration to existing symbol
+                                    // The checker will detect the duplicate and emit TS2300
+                                    if let Some(existing_sym) = self.symbols.get_mut(existing_id) {
+                                        if !existing_sym.declarations.contains(&member_idx) {
+                                            existing_sym.declarations.push(member_idx);
+                                        }
+                                    }
+                                    self.node_symbols.insert(member_idx.0, existing_id);
+                                    existing_id
+                                } else {
+                                    // First occurrence - create new symbol
+                                    let sym_id = self
+                                        .symbols
+                                        .alloc(symbol_flags::ENUM_MEMBER, member_name.to_string());
+                                    if let Some(sym) = self.symbols.get_mut(sym_id) {
+                                        sym.value_declaration = member_idx;
+                                        sym.declarations.push(member_idx);
+                                    }
+                                    self.current_scope.set(member_name.to_string(), sym_id);
+                                    self.node_symbols.insert(member_idx.0, sym_id);
+                                    sym_id
+                                };
                                 // Add to exports for namespace merging
                                 exports.set(member_name.to_string(), sym_id);
                             }
