@@ -877,7 +877,14 @@ impl TypeInterner {
         };
 
         let shape_id = self.intern_object_shape(shape);
-        Some(self.intern(TypeKey::Object(shape_id)))
+        // Preserve index signatures when present.
+        if self.object_shape(shape_id).string_index.is_some()
+            || self.object_shape(shape_id).number_index.is_some()
+        {
+            Some(self.intern(TypeKey::ObjectWithIndex(shape_id)))
+        } else {
+            Some(self.intern(TypeKey::Object(shape_id)))
+        }
     }
 
     fn intersection_has_disjoint_primitives(&self, members: &[TypeId]) -> bool {
@@ -887,9 +894,30 @@ impl TypeInterner {
         let mut literals: smallvec::SmallVec<[TypeId; 4]> = SmallVec::new();
 
         for &member in members {
+            // If the member is an empty object type (no props or indexes), it does not conflict
+            // with primitives. In TypeScript, `string & {}` is just `string`, so we must not
+            // mark this as disjoint.
+            let mut mark_non_primitive = false;
+            match self.lookup(member) {
+                Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                    let shape = self.object_shape(shape_id);
+                    if !(shape.properties.is_empty()
+                        && shape.string_index.is_none()
+                        && shape.number_index.is_none())
+                    {
+                        mark_non_primitive = true;
+                    }
+                }
+                Some(TypeKey::Function(_))
+                | Some(TypeKey::Callable(_))
+                | Some(TypeKey::Array(_))
+                | Some(TypeKey::Tuple(_)) => {
+                    mark_non_primitive = true;
+                }
+                _ => {}
+            }
             let Some(member_class) = self.primitive_class_for(member) else {
-                // Not a primitive - check if it's an object-like type
-                has_non_primitive = self.is_object_like_type(member);
+                has_non_primitive = has_non_primitive || mark_non_primitive;
                 continue;
             };
             has_primitive = true;

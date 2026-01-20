@@ -114,9 +114,6 @@ Before merging changes:
 - **src/lib.rs**: `CompilerOptions` struct, `setCompilerOptions()`, `markAsLibFile()`
 - **PROJECT_DIRECTION.md**: Project priorities and architecture rules
 
-## Search for Anti-Patterns
+## When work is done?
 
-```bash
-rg "file_name\.contains" src/
-rg "path\.contains.*test" src/
-```
+All unit tests should pass. There should be zero clippy warnings. It's okay if conformance goes down after some work but a huge drop in conformance is not acceptables

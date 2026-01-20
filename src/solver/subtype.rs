@@ -2084,9 +2084,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // No predicates in either function - compatible
             (None, None) => true,
 
-            // Source has predicate, target doesn't - source is MORE specific, not assignable
-            // Example: (x: string) => x is string cannot be assigned to (x: string) => boolean
-            (Some(_), None) => false,
+            // Source has predicate, target doesn't - allow assignment.
+            // Type predicates are implemented as runtime boolean returns, so a function with
+            // a predicate is still callable where a plain boolean-returning function is
+            // expected (as in ReturnType<T>).
+            (Some(_), None) => true,
 
             // Source has no predicate, target has one - still compatible.
             // This mirrors TypeScript's behavior: a less specific function (no predicate)
