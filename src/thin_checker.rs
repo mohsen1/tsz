@@ -22289,6 +22289,7 @@ impl<'a> ThinCheckerState<'a> {
     /// Check that parameter default values (initializers) are assignable to declared parameter types.
     /// This emits TS2322 when the default value type doesn't match the parameter type annotation.
     /// Also checks for undefined identifiers in default expressions (TS2304) regardless of type annotations.
+    /// Also checks for self-referential parameter defaults (TS2372).
     fn check_parameter_initializers(&mut self, parameters: &[NodeIndex]) {
         for &param_idx in parameters {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -22308,6 +22309,19 @@ impl<'a> ThinCheckerState<'a> {
                 continue;
             }
 
+            // TS2372: Check if the initializer references the parameter itself
+            // e.g., function f(x = x) { } or function f(await = await) { }
+            if let Some(param_name) = self.get_parameter_name(param.name) {
+                if self.initializer_references_name(param.initializer, &param_name) {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        param.initializer,
+                        &format!("Parameter '{}' cannot reference itself.", param_name),
+                        diagnostic_codes::PARAMETER_CANNOT_REFERENCE_ITSELF,
+                    );
+                }
+            }
+
             // IMPORTANT: Always resolve the initializer expression to check for undefined identifiers (TS2304)
             // This must happen regardless of whether there's a type annotation.
             let init_type = self.get_type_of_node(param.initializer);
@@ -22325,6 +22339,33 @@ impl<'a> ThinCheckerState<'a> {
                 self.error_type_not_assignable_with_reason_at(init_type, declared_type, param_idx);
             }
         }
+    }
+
+    /// Get the name of a parameter from its binding name node.
+    /// Returns None for destructuring patterns.
+    fn get_parameter_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(ident.escaped_text.clone());
+        }
+        None
+    }
+
+    /// Check if an initializer expression directly references a name.
+    /// Used for TS2372: parameter cannot reference itself.
+    fn initializer_references_name(&self, init_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        
+        // Check if this is a direct identifier reference
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return ident.escaped_text == name;
+        }
+        
+        // For more complex cases, we'd need to recursively check
+        // but for the simple case of `function f(x = x)`, this suffices
+        false
     }
 
     /// Recursively check for TS7006 in nested function/arrow expressions within a node.
