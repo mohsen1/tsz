@@ -99,8 +99,6 @@ class WorkerPool {
         this.workersSpawned++;
         const worker = new Worker(this.workerPath, {
             workerData: { ...this.workerDataBase, id },
-            // Enable GC exposure for memory management
-            execArgv: ['--expose-gc'],
         });
         const info = {
             worker,
