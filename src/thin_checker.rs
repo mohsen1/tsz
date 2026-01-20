@@ -14135,7 +14135,18 @@ impl<'a> ThinCheckerState<'a> {
     }
 
     /// Report a cannot find name error using solver diagnostics with source tracking.
+    /// Enhanced to provide suggestions for similar names and import suggestions.
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
+        // Try to find similar identifiers in scope for better error messages
+        if let Some(suggestions) = self.find_similar_identifiers(name, idx) {
+            if !suggestions.is_empty() {
+                // Use the first suggestion for "Did you mean?" error
+                self.error_cannot_find_name_with_suggestions(name, &suggestions, idx);
+                return;
+            }
+        }
+
+        // Fall back to standard error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -14146,6 +14157,189 @@ impl<'a> ThinCheckerState<'a> {
                 .diagnostics
                 .push(diag.to_checker_diagnostic(&self.ctx.file_name));
         }
+    }
+
+    /// Report error 2304/2552: Cannot find name 'X' with suggestions.
+    /// Provides a list of similar names that might be what the user intended.
+    pub fn error_cannot_find_name_with_suggestions(
+        &mut self,
+        name: &str,
+        suggestions: &[String],
+        idx: NodeIndex,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        if let Some(loc) = self.get_source_location(idx) {
+            // Format the suggestions list
+            let suggestions_text = if suggestions.len() == 1 {
+                format!("'{}'", suggestions[0])
+            } else {
+                let formatted: Vec<String> = suggestions.iter().map(|s| format!("'{}", s)).collect();
+                formatted.join(", ")
+            };
+
+            let message = if suggestions.len() == 1 {
+                format!(
+                    "Cannot find name '{}'. Did you mean {}?",
+                    name, suggestions_text
+                )
+            } else {
+                format!(
+                    "Cannot find name '{}'. Did you mean one of: {}?",
+                    name, suggestions_text
+                )
+            };
+
+            self.ctx.diagnostics.push(Diagnostic {
+                code: if suggestions.len() == 1 {
+                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
+                } else {
+                    diagnostic_codes::CANNOT_FIND_NAME
+                },
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Find identifiers in scope that are similar to the given name.
+    /// Returns a list of suggestions sorted by similarity (empty if none found).
+    fn find_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Option<Vec<String>> {
+        let mut suggestions = Vec::new();
+
+        // Collect all visible symbols in the current scope chain
+        if let Some(scope_id) = self.find_enclosing_scope(idx) {
+            let mut current_scope = scope_id;
+            let mut visited_scopes = std::collections::HashSet::new();
+
+            while !current_scope.is_none() {
+                if visited_scopes.contains(&current_scope) {
+                    break; // Prevent infinite loops
+                }
+                visited_scopes.insert(current_scope);
+
+                if let Some(scope) = self.ctx.binder.scopes.get(current_scope.0 as usize) {
+                    // Check all symbols in this scope
+                    for (symbol_name, _sym_id) in scope.table.iter() {
+                        if symbol_name != name {
+                            let similarity = self.calculate_string_similarity(name, symbol_name);
+                            if similarity > 0.6 {
+                                // Threshold for "similar enough"
+                                suggestions.push((symbol_name.clone(), similarity));
+                            }
+                        }
+                    }
+                }
+
+                // Move to parent scope
+                if let Some(scope) = self.ctx.binder.scopes.get(current_scope.0 as usize) {
+                    current_scope = scope.parent;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Also check file-level symbols
+        for (symbol_name, _sym_id) in self.ctx.binder.file_locals.iter() {
+            if symbol_name != name {
+                let similarity = self.calculate_string_similarity(name, symbol_name);
+                if similarity > 0.6 {
+                    // Avoid duplicates
+                    if !suggestions.iter().any(|(n, _)| n == symbol_name) {
+                        suggestions.push((symbol_name.clone(), similarity));
+                    }
+                }
+            }
+        }
+
+        // Sort by similarity (descending) and take top 3
+        suggestions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        suggestions.truncate(3);
+
+        if suggestions.is_empty() {
+            None
+        } else {
+            Some(suggestions.into_iter().map(|(n, _)| n).collect())
+        }
+    }
+
+    /// Calculate string similarity using a simple edit distance algorithm.
+    /// Returns a value between 0.0 (no similarity) and 1.0 (exact match).
+    fn calculate_string_similarity(&self, a: &str, b: &str) -> f64 {
+        if a == b {
+            return 1.0;
+        }
+
+        let a_lower = a.to_lowercase();
+        let b_lower = b.to_lowercase();
+
+        if a_lower == b_lower {
+            return 0.95; // Very similar, just different case
+        }
+
+        // Check for prefix/suffix similarity
+        if a_lower.starts_with(&b_lower) || b_lower.starts_with(&a_lower) {
+            return 0.8;
+        }
+
+        // Simple Levenshtein distance
+        let max_len = a_lower.len().max(b_lower.len());
+        if max_len == 0 {
+            return 1.0;
+        }
+
+        let distance = self.levenshtein_distance(&a_lower, &b_lower);
+        let similarity = 1.0 - (distance as f64 / max_len as f64);
+
+        similarity
+    }
+
+    /// Calculate Levenshtein distance between two strings.
+    fn levenshtein_distance(&self, a: &str, b: &str) -> usize {
+        let a_chars: Vec<char> = a.chars().collect();
+        let b_chars: Vec<char> = b.chars().collect();
+        let a_len = a_chars.len();
+        let b_len = b_chars.len();
+
+        if a_len == 0 {
+            return b_len;
+        }
+        if b_len == 0 {
+            return a_len;
+        }
+
+        let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+
+        // Initialize first row and column
+        for i in 0..=a_len {
+            matrix[i][0] = i;
+        }
+        for j in 0..=b_len {
+            matrix[0][j] = j;
+        }
+
+        // Fill the matrix
+        for i in 1..=a_len {
+            for j in 1..=b_len {
+                let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+                matrix[i][j] = [
+                    matrix[i - 1][j] + 1,      // deletion
+                    matrix[i][j - 1] + 1,      // insertion
+                    matrix[i - 1][j - 1] + cost, // substitution
+                ]
+                .iter()
+                .min()
+                .copied()
+                .unwrap();
+            }
+        }
+
+        matrix[a_len][b_len]
     }
 
     /// Report error 2552: Cannot find name 'X'. Did you mean 'Y'?
@@ -22637,13 +22831,17 @@ impl<'a> ThinCheckerState<'a> {
             return;
         }
 
-        // Skip destructuring parameters (object/array binding patterns)
-        // TypeScript doesn't emit TS7006 for destructuring parameters
+        // Enhanced destructuring parameter detection
+        // Check if the parameter name is a destructuring pattern (object/array binding)
         if let Some(name_node) = self.ctx.arena.get(param.name) {
             let kind = name_node.kind;
+
+            // Direct destructuring patterns
             if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
             {
+                // For destructuring parameters, recursively check nested binding elements
+                self.emit_implicit_any_parameter_for_pattern(param.name, param.dot_dot_dot_token);
                 return;
             }
         }
@@ -22664,6 +22862,127 @@ impl<'a> ThinCheckerState<'a> {
             &message,
             diagnostic_codes::IMPLICIT_ANY_PARAMETER,
         );
+    }
+
+    /// Emit TS7006 errors for nested binding elements in destructuring parameters.
+    /// TypeScript reports implicit 'any' for individual bindings in patterns like:
+    ///   function foo({ x, y }: any) {}  // no error on x, y with type annotation
+    ///   function bar({ x, y }) {}        // errors on x and y
+    fn emit_implicit_any_parameter_for_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+        is_rest_parameter: bool,
+    ) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+
+        let pattern_kind = pattern_node.kind;
+
+        // Handle object binding patterns: { x, y, z }
+        if pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            if let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
+                for &element_idx in &pattern.elements.nodes {
+                    if let Some(element_node) = self.ctx.arena.get(element_idx) {
+                        // Skip omitted expressions
+                        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                            continue;
+                        }
+
+                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
+                            // Check if this binding element has an initializer
+                            let has_initializer = !binding_elem.initializer.is_none();
+
+                            // If no initializer, report error for implicit any
+                            if !has_initializer {
+                                // Get the property name (could be identifier or string literal)
+                                let binding_name = if !binding_elem.property_name.is_none() {
+                                    self.parameter_name_for_error(binding_elem.property_name)
+                                } else {
+                                    self.parameter_name_for_error(binding_elem.name)
+                                };
+
+                                let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
+                                let message = format_message(
+                                    diagnostic_messages::PARAMETER_IMPLICIT_ANY,
+                                    &[&binding_name, implicit_type],
+                                );
+                                self.error_at_node(
+                                    binding_elem.name,
+                                    &message,
+                                    diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                                );
+                            }
+
+                            // Recursively check nested patterns
+                            if let Some(name_node) = self.ctx.arena.get(binding_elem.name) {
+                                let name_kind = name_node.kind;
+                                if name_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || name_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                {
+                                    self.emit_implicit_any_parameter_for_pattern(
+                                        binding_elem.name,
+                                        is_rest_parameter,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Handle array binding patterns: [ x, y, z ]
+        else if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            if let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
+                for &element_idx in &pattern.elements.nodes {
+                    if let Some(element_node) = self.ctx.arena.get(element_idx) {
+                        let element_kind = element_node.kind;
+
+                        // Skip omitted expressions (holes in array patterns)
+                        if element_kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                            continue;
+                        }
+
+                        // Check if this element is a binding element with initializer
+                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
+                            let has_initializer = !binding_elem.initializer.is_none();
+
+                            if !has_initializer {
+                                let binding_name = self.parameter_name_for_error(binding_elem.name);
+
+                                let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
+                                let message = format_message(
+                                    diagnostic_messages::PARAMETER_IMPLICIT_ANY,
+                                    &[&binding_name, implicit_type],
+                                );
+                                self.error_at_node(
+                                    binding_elem.name,
+                                    &message,
+                                    diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                                );
+                            }
+
+                            // Recursively check nested patterns
+                            if let Some(name_node) = self.ctx.arena.get(binding_elem.name) {
+                                let name_kind = name_node.kind;
+                                if name_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || name_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                {
+                                    self.emit_implicit_any_parameter_for_pattern(
+                                        binding_elem.name,
+                                        is_rest_parameter,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Report an error at a specific node.
