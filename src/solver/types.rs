@@ -29,6 +29,9 @@ impl TypeId {
     pub const BOOLEAN_TRUE: TypeId = TypeId(14);
     pub const BOOLEAN_FALSE: TypeId = TypeId(15);
     pub const FUNCTION: TypeId = TypeId(16);
+    /// Synthetic Promise base type for Promise<T> when Promise symbol is not resolved.
+    /// Used to allow promise_like_return_type_argument to extract T from await expressions.
+    pub const PROMISE_BASE: TypeId = TypeId(17);
 
     /// First user-defined type ID (after built-in intrinsics)
     pub const FIRST_USER: u32 = 100;

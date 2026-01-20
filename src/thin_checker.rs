@@ -1089,6 +1089,23 @@ impl<'a> ThinCheckerState<'a> {
                             return type_id;
                         }
                         if self.is_known_global_type_name(name) {
+                            // For Promise-like types with type arguments, create a proper TypeApplication
+                            // so that promise_like_return_type_argument can extract T from Promise<T>
+                            if self.is_promise_like_name(name) {
+                                if let Some(args) = &type_ref.type_arguments {
+                                    let type_args: Vec<TypeId> = args
+                                        .nodes
+                                        .iter()
+                                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                        .collect();
+                                    if !type_args.is_empty() {
+                                        // Create a Promise application with the type args
+                                        // We use PROMISE_BASE which is recognized as Promise-like
+                                        return self.ctx.types.application(TypeId::PROMISE_BASE, type_args);
+                                    }
+                                }
+                            }
+                            // For other known global types, just process args and return UNKNOWN
                             if let Some(args) = &type_ref.type_arguments {
                                 for &arg_idx in &args.nodes {
                                     let _ = self.get_type_from_type_node(arg_idx);
@@ -23568,6 +23585,14 @@ impl<'a> ThinCheckerState<'a> {
 
         if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(return_type) {
             let app = self.ctx.types.type_application(app_id);
+
+            // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
+            // This allows us to extract T from Promise<T> even without full lib files
+            if app.base == TypeId::PROMISE_BASE {
+                if let Some(&first_arg) = app.args.first() {
+                    return Some(first_arg);
+                }
+            }
 
             // Try to get the type argument from the base symbol
             if let Some(result) =
