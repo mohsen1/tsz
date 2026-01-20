@@ -1,13 +1,8 @@
 #!/usr/bin/env node
 /**
- * Unified Conformance Test Runner
+ * Parallel Conformance Test Runner
  *
- * Supports running tests from:
- * - compiler/ tests
- * - conformance/ tests
- * - projects/ tests
- *
- * Compares output with TypeScript (tsc) and tracks pass rates.
+ * Runs TypeScript conformance tests using worker threads for high parallelism.
  */
 interface RunnerConfig {
     wasmPkgPath: string;
@@ -16,7 +11,7 @@ interface RunnerConfig {
     maxTests: number;
     verbose: boolean;
     categories: string[];
-    timeout: number;
+    workers: number;
 }
 interface TestStats {
     total: number;
@@ -24,29 +19,13 @@ interface TestStats {
     failed: number;
     crashed: number;
     skipped: number;
-    exactMatch: number;
-    sameErrorCount: number;
-    missingErrors: number;
-    extraErrors: number;
-    baselineMatches: number;
-    baselineTotal: number;
-    byCategory: Record<string, CategoryStats>;
-    byErrorCode: Record<number, ErrorCodeStats>;
+    byCategory: Record<string, {
+        total: number;
+        passed: number;
+    }>;
+    missingCodes: Map<number, number>;
+    extraCodes: Map<number, number>;
 }
-interface CategoryStats {
-    total: number;
-    passed: number;
-    failed: number;
-    exactMatch: number;
-}
-interface ErrorCodeStats {
-    missingCount: number;
-    extraCount: number;
-    testFiles: string[];
-}
-/**
- * Main entry point
- */
 export declare function runConformanceTests(config?: Partial<RunnerConfig>): Promise<TestStats>;
 export {};
 //# sourceMappingURL=runner.d.ts.map
