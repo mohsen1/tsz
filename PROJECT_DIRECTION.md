@@ -6,10 +6,10 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 | Metric | Value |
 |--------|-------|
-| Conformance (100 tests) | **53.5%** |
-| Conformance (500 tests) | **40.8%** |
+| Conformance (500 tests) | **23.2%** (116/500) |
 | Driver Tests | 113/113 passing |
-| Crashes | 0 |
+| Test Speed | **87 tests/sec** |
+| Crashes | 27 (handled gracefully) |
 
 ---
 
@@ -22,19 +22,21 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 #### Top Missing Errors (we should emit but don't)
 | Error | Count | Description |
 |-------|-------|-------------|
-| TS1109 | 17 | Expression expected (parser) |
-| TS2304 | 8 | Cannot find name |
-| TS1359 | 8 | Identifier expected (parser) |
-| TS2403 | 7 | Subsequent variable declarations must have same type |
-| TS2345 | 6 | Argument type not assignable |
-| TS2703 | 4 | Delete operand must be optional |
+| TS2583 | 296x | Cannot find name (need ES2015+ lib) |
+| TS2304 | 95x | Cannot find name |
+| TS2792 | 75x | Cannot find module |
+| TS2339 | 62x | Property does not exist |
+| TS7006 | 52x | Parameter implicitly has 'any' type |
+| TS1202 | 48x | Import assignment in ESM |
 
 #### Top Extra Errors (we emit but shouldn't)
 | Error | Count | Description |
 |-------|-------|-------------|
-| TS2571 | 4 | Object is of type 'unknown' |
-| TS2322 | 4 | Type not assignable |
-| TS2349 | 2 | Cannot invoke expression |
+| TS2300 | 70x | Duplicate identifier |
+| TS2571 | 66x | Object is of type 'unknown' |
+| TS2322 | 63x | Type not assignable |
+| TS1005 | 58x | Expected token (parser) |
+| TS2339 | 27x | Property does not exist |
 
 ### 2. Make Flow Analysis Iterative
 
