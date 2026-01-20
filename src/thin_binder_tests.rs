@@ -2007,13 +2007,43 @@ function test() {
     let mut binder = ThinBinderState::new();
     binder.bind_source_file(arena, root);
 
-    assert!(binder.file_locals.has("x"));
+    // x should NOT be in file_locals (it's a function-local variable)
+    assert!(
+        !binder.file_locals.has("x"),
+        "x should NOT be in file_locals - it's a function-local variable"
+    );
 
-    let x_sym_id = binder.file_locals.get("x").expect("x should exist");
-    let x_symbol = binder.get_symbol(x_sym_id).expect("x symbol should exist");
+    // x should be in the function's scope (via persistent scopes)
+    // Find the function's scope and verify x is there
+    let mut found_x_in_function_scope = false;
+    for (scope_idx, scope) in binder.scopes.iter().enumerate() {
+        if scope.table.has("x") {
+            found_x_in_function_scope = true;
+            // Verify the symbol has correct flags
+            let x_sym_id = scope.table.get("x").expect("x exists");
+            let x_symbol = binder.get_symbol(x_sym_id).expect("x symbol");
 
-    assert!(x_symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0);
-    assert!(x_symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0);
+            assert!(
+                x_symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0,
+                "x should be a function-scoped variable (var)"
+            );
+            assert!(
+                x_symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0,
+                "x should NOT be block-scoped"
+            );
+
+            // Verify this is not the root scope
+            assert!(
+                scope_idx > 0,
+                "x should be in a nested scope, not the root scope"
+            );
+            break;
+        }
+    }
+    assert!(
+        found_x_in_function_scope,
+        "x should be found in a function scope"
+    );
 }
 
 #[test]

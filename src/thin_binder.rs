@@ -2165,6 +2165,22 @@ impl ThinBinderState {
         false
     }
 
+    /// Check if modifiers list contains the 'const' keyword.
+    fn has_const_modifier(&self, arena: &ThinNodeArena, modifiers: &Option<NodeList>) -> bool {
+        use crate::scanner::SyntaxKind;
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = arena.get(mod_idx) {
+                    if mod_node.kind == SyntaxKind::ConstKeyword as u16 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Check if a node is exported.
     /// Handles walking up the tree for VariableDeclaration -> VariableStatement.
     fn is_node_exported(&self, arena: &ThinNodeArena, idx: NodeIndex) -> bool {
@@ -2866,8 +2882,16 @@ impl ThinBinderState {
                 // Check if exported BEFORE allocating symbol
                 let is_exported = self.has_export_modifier(arena, &enum_decl.modifiers);
 
+                // Check if this is a const enum
+                let is_const = self.has_const_modifier(arena, &enum_decl.modifiers);
+                let enum_flags = if is_const {
+                    symbol_flags::CONST_ENUM
+                } else {
+                    symbol_flags::REGULAR_ENUM
+                };
+
                 let enum_sym_id =
-                    self.declare_symbol(name, symbol_flags::REGULAR_ENUM, idx, is_exported);
+                    self.declare_symbol(name, enum_flags, idx, is_exported);
 
                 // Get existing exports (for namespace merging)
                 let mut exports = SymbolTable::new();
@@ -3335,9 +3359,13 @@ impl ThinBinderState {
                                 // Create symbols for re-export specifiers so they can be tracked
                                 // in the compilation cache for incremental invalidation
                                 for (exported, _, spec_idx) in &export_mappings {
-                                    let sym_id = self
-                                        .symbols
-                                        .alloc(symbol_flags::EXPORT_VALUE, exported.clone());
+                                    // Use declare_symbol to add to file_locals
+                                    let sym_id = self.declare_symbol(
+                                        exported,
+                                        symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
+                                        *spec_idx,
+                                        true, // re-exports are always "exported"
+                                    );
                                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                                         sym.is_exported = true;
                                         sym.is_type_only = export_type_only;
