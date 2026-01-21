@@ -532,6 +532,55 @@ impl IRNode {
     pub fn expr_stmt(expr: IRNode) -> Self {
         IRNode::ExpressionStatement(Box::new(expr))
     }
+
+    /// Create an object literal
+    pub fn object(props: Vec<IRProperty>) -> Self {
+        IRNode::ObjectLiteral(props)
+    }
+
+    /// Create an empty object literal
+    pub fn empty_object() -> Self {
+        IRNode::ObjectLiteral(Vec::new())
+    }
+
+    /// Create an array literal
+    pub fn array(elements: Vec<IRNode>) -> Self {
+        IRNode::ArrayLiteral(elements)
+    }
+
+    /// Create an empty array literal
+    pub fn empty_array() -> Self {
+        IRNode::ArrayLiteral(Vec::new())
+    }
+
+    /// Create a logical OR expression: `left || right`
+    pub fn logical_or(left: IRNode, right: IRNode) -> Self {
+        IRNode::LogicalOr {
+            left: Box::new(left),
+            right: Box::new(right),
+        }
+    }
+
+    /// Create a logical AND expression: `left && right`
+    pub fn logical_and(left: IRNode, right: IRNode) -> Self {
+        IRNode::LogicalAnd {
+            left: Box::new(left),
+            right: Box::new(right),
+        }
+    }
+
+    /// Create a sequence of statements
+    pub fn sequence(nodes: Vec<IRNode>) -> Self {
+        IRNode::Sequence(nodes)
+    }
+
+    /// Create a new expression: `new Constructor(args)`
+    pub fn new_expr(callee: IRNode, args: Vec<IRNode>) -> Self {
+        IRNode::NewExpr {
+            callee: Box::new(callee),
+            arguments: args,
+        }
+    }
 }
 
 impl IRParam {
@@ -554,5 +603,43 @@ impl IRParam {
     pub fn with_default(mut self, default: IRNode) -> Self {
         self.default_value = Some(Box::new(default));
         self
+    }
+}
+
+impl IRProperty {
+    /// Create a simple property with identifier key: `{ key: value }`
+    pub fn init(key: impl Into<String>, value: IRNode) -> Self {
+        IRProperty {
+            key: IRPropertyKey::Identifier(key.into()),
+            value,
+            kind: IRPropertyKind::Init,
+        }
+    }
+
+    /// Create a property with string literal key: `{ "key": value }`
+    pub fn init_string(key: impl Into<String>, value: IRNode) -> Self {
+        IRProperty {
+            key: IRPropertyKey::StringLiteral(key.into()),
+            value,
+            kind: IRPropertyKind::Init,
+        }
+    }
+
+    /// Create a getter property
+    pub fn getter(key: impl Into<String>, get: IRNode) -> Self {
+        IRProperty {
+            key: IRPropertyKey::Identifier(key.into()),
+            value: get,
+            kind: IRPropertyKind::Get,
+        }
+    }
+
+    /// Create a setter property
+    pub fn setter(key: impl Into<String>, set: IRNode) -> Self {
+        IRProperty {
+            key: IRPropertyKey::Identifier(key.into()),
+            value: set,
+            kind: IRPropertyKind::Set,
+        }
     }
 }
