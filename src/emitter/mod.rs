@@ -586,6 +586,9 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Namespace { namespace_node } => {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                if let Some(source_text) = self.source_text {
+                    ns_emitter.set_source_text(source_text);
+                }
                 let output = ns_emitter.emit_namespace(namespace_node);
                 self.write(&output);
             }

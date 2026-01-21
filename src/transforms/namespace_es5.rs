@@ -49,6 +49,7 @@ use crate::transforms::emit_utils;
 /// Namespace ES5 emitter
 pub struct NamespaceES5Emitter<'a> {
     arena: &'a NodeArena,
+    source_text: Option<&'a str>,
     output: String,
     indent_level: u32,
     is_commonjs: bool,
@@ -58,6 +59,7 @@ impl<'a> NamespaceES5Emitter<'a> {
     pub fn new(arena: &'a NodeArena) -> Self {
         NamespaceES5Emitter {
             arena,
+            source_text: None,
             output: String::with_capacity(4096),
             indent_level: 0,
             is_commonjs: false,
@@ -68,10 +70,16 @@ impl<'a> NamespaceES5Emitter<'a> {
     pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
         NamespaceES5Emitter {
             arena,
+            source_text: None,
             output: String::with_capacity(4096),
             indent_level: 0,
             is_commonjs,
         }
+    }
+
+    /// Set the source text for ASTRef emission
+    pub fn set_source_text(&mut self, text: &'a str) {
+        self.source_text = Some(text);
     }
 
     /// Emit a namespace declaration
@@ -266,6 +274,7 @@ impl<'a> NamespaceES5Emitter<'a> {
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                eprintln!("DEBUG: Found FUNCTION_DECLARATION (non-exported)");
                 self.emit_function_in_namespace(ns_name, member_idx);
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -299,6 +308,7 @@ impl<'a> NamespaceES5Emitter<'a> {
 
         match decl_node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                eprintln!("DEBUG: Found FUNCTION_DECLARATION (non-exported)");
                 self.emit_function_in_namespace_exported(ns_name, decl_idx);
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -382,6 +392,9 @@ impl<'a> NamespaceES5Emitter<'a> {
         let mut output = String::new();
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_indent_level(self.indent_level);
+        if let Some(source_text) = self.source_text {
+            printer.set_source_text(source_text);
+        }
         let mut push_ir = |ir: IRNode| {
             output.push_str(printer.emit(&ir));
             output.push('\n');
@@ -1005,6 +1018,7 @@ mod tests {
             if let Some(source_file) = parser.arena.get_source_file(root_node) {
                 if let Some(&ns_idx) = source_file.statements.nodes.first() {
                     let mut emitter = NamespaceES5Emitter::new(&parser.arena);
+                    emitter.set_source_text(source);
                     return emitter.emit_namespace(ns_idx);
                 }
             }
@@ -1026,6 +1040,9 @@ mod tests {
     #[test]
     fn test_namespace_with_function() {
         let output = emit_namespace("namespace M { export function foo() { return 1; } }");
+        eprintln!("=== Namespace output ===");
+        eprintln!("{}", output);
+        eprintln!("=== End output ===");
         assert!(output.contains("var M;"), "Should declare var M");
         assert!(
             output.contains("function foo()"),
