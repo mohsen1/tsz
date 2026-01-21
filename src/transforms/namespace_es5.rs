@@ -140,11 +140,10 @@ impl<'a> NamespaceES5Emitter<'a> {
                 self.collect_name_parts(qn_data.left, parts);
                 self.collect_name_parts(qn_data.right, parts);
             }
-        } else if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.arena.get_identifier(node) {
+        } else if node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(node) {
                 parts.push(ident.escaped_text.clone());
             }
-        }
     }
 
     /// Emit nested IIFEs for qualified namespace names
@@ -482,14 +481,13 @@ impl<'a> NamespaceES5Emitter<'a> {
                 let mut var_names = Vec::new();
                 let decl_list = &var_data.declarations;
                 for &decl_idx in &decl_list.nodes {
-                    if let Some(decl_node) = self.arena.get(decl_idx) {
-                        if let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
                             let name = self.get_identifier_text(var_decl.name);
                             if !name.is_empty() {
                                 var_names.push(name);
                             }
                         }
-                    }
                 }
 
                 if is_exported {
@@ -810,8 +808,8 @@ impl<'a> NamespaceES5Emitter<'a> {
         // Emit enum members
         let mut value = 0i64;
         for &member_idx in &enum_data.members.nodes {
-            if let Some(member_node) = self.arena.get(member_idx) {
-                if let Some(member_data) = self.arena.get_enum_member(member_node) {
+            if let Some(member_node) = self.arena.get(member_idx)
+                && let Some(member_data) = self.arena.get_enum_member(member_node) {
                     let member_name = self.get_identifier_text(member_data.name);
 
                     // Check for initializer
@@ -845,7 +843,6 @@ impl<'a> NamespaceES5Emitter<'a> {
                         value += 1;
                     }
                 }
-            }
         }
 
         self.decrease_indent();
@@ -940,12 +937,11 @@ impl<'a> NamespaceES5Emitter<'a> {
             }
             first = false;
 
-            if let Some(param_node) = self.arena.get(param_idx) {
-                if let Some(param) = self.arena.get_parameter(param_node) {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node) {
                     let name = self.get_identifier_text(param.name);
                     self.write(&name);
                 }
-            }
         }
     }
 
@@ -1036,22 +1032,20 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            if let Some(ident) = self.arena.get_identifier(node) {
+        if let Some(node) = self.arena.get(idx)
+            && let Some(ident) = self.arena.get_identifier(node) {
                 return ident.escaped_text.clone();
             }
-        }
         String::new()
     }
 
     fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ExportKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -1117,15 +1111,13 @@ mod tests {
         let root = parser.parse_source_file();
 
         // Find the namespace declaration
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&ns_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&ns_idx) = source_file.statements.nodes.first() {
                     let mut emitter = NamespaceES5Emitter::new(&parser.arena);
                     emitter.set_source_text(source);
                     return emitter.emit_namespace(ns_idx);
                 }
-            }
-        }
         String::new()
     }
 

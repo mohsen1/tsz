@@ -537,11 +537,10 @@ impl<'a> TypeFormatter<'a> {
             TypeKey::TypeParameter(info) => self.atom(info.name).to_string(),
             TypeKey::Ref(sym) => {
                 // Try to look up the symbol name
-                if let Some(arena) = self.symbol_arena {
-                    if let Some(symbol) = arena.get(SymbolId(sym.0)) {
+                if let Some(arena) = self.symbol_arena
+                    && let Some(symbol) = arena.get(SymbolId(sym.0)) {
                         return symbol.escaped_name.to_string();
                     }
-                }
                 format!("Ref({})", sym.0)
             }
             TypeKey::Application(app) => {

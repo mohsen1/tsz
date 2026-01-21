@@ -180,14 +180,12 @@ mod tests {
         );
 
         // Get the block statement
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = StatementChecker::new(&mut ctx);
                     checker.check(stmt_idx);
                     // Test passes if no panic
                 }
-            }
-        }
     }
 }

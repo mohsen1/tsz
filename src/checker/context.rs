@@ -536,11 +536,10 @@ impl<'a> CheckerContext<'a> {
         if file_idx == u32::MAX {
             return self.arena;
         }
-        if let Some(ref arenas) = self.all_arenas {
-            if let Some(arena) = arenas.get(file_idx as usize) {
+        if let Some(ref arenas) = self.all_arenas
+            && let Some(arena) = arenas.get(file_idx as usize) {
                 return arena.as_ref();
             }
-        }
         self.arena
     }
 
@@ -635,11 +634,10 @@ impl<'a> CheckerContext<'a> {
     pub fn has_modifier(&self, modifiers: &Option<crate::parser::NodeList>, kind: u16) -> bool {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx) {
-                    if node.kind == kind {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == kind {
                         return true;
                     }
-                }
             }
         }
         false

@@ -79,7 +79,7 @@ fn test_extract_variable_property_access() {
     assert!(actions[0].is_preferred);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.tsx").unwrap();
+    let edits = &edit.changes["test.tsx"];
     assert_eq!(edits.len(), 2);
 
     assert!(edits[0].new_text.contains("const extracted = foo.bar.baz;"));
@@ -115,7 +115,7 @@ fn test_extract_variable_avoids_name_collision() {
     assert_eq!(actions[0].title, "Extract to constant 'extracted2'");
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(edits[0].new_text.contains("const extracted2 = foo.bar;"));
@@ -150,7 +150,7 @@ fn test_extract_variable_parenthesizes_comma_expression() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(
@@ -189,7 +189,7 @@ fn test_extract_variable_parenthesizes_comma_expression_with_parens() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(
@@ -228,7 +228,7 @@ fn test_extract_variable_preserves_parenthesized_replacement() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(edits[0].new_text.contains("const extracted = (foo + bar);"));
@@ -263,7 +263,7 @@ fn test_extract_variable_preserves_parenthesized_conditional_replacement() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(
@@ -302,7 +302,7 @@ fn test_extract_variable_call_expression_span() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(edits[0].new_text.contains("const extracted = foo();"));
@@ -337,7 +337,7 @@ fn test_extract_variable_array_literal_span() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(edits[0].new_text.contains("const extracted = [foo];"));
@@ -372,7 +372,7 @@ fn test_extract_variable_object_literal_span() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 2);
 
     assert!(edits[0].new_text.contains("const extracted = { foo: 1 };"));
@@ -407,7 +407,7 @@ fn test_extract_variable_jsx_child_wraps_expression() {
     assert_eq!(actions.len(), 1);
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.tsx").unwrap();
+    let edits = &edit.changes["test.tsx"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -650,7 +650,7 @@ fn test_organize_imports_sort_only() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
 
     let new_text = &edits[0].new_text;
@@ -699,7 +699,7 @@ fn test_quickfix_remove_unused_named_import() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "import { bar } from \"mod\";\n");
 }
@@ -741,7 +741,7 @@ fn test_quickfix_remove_unused_named_import_entire_decl() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "");
 }
@@ -783,7 +783,7 @@ fn test_quickfix_remove_unused_default_import() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "import { bar } from \"mod\";\n");
 }
@@ -825,7 +825,7 @@ fn test_quickfix_preserves_type_only_named_import() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "import { type Foo } from \"mod\";\n");
 }
@@ -870,7 +870,7 @@ fn test_quickfix_add_missing_property_object_literal_single_line() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "const foo = { a: 1, b: undefined }; foo.b;\n");
 }
@@ -915,7 +915,7 @@ fn test_quickfix_add_missing_property_object_literal_single_line_trailing_comma(
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "const foo = { a: 1, b: undefined, }; foo.b;\n");
 }
@@ -958,7 +958,7 @@ fn test_quickfix_add_missing_property_object_literal_element_access() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1006,7 +1006,7 @@ fn test_quickfix_add_missing_property_object_literal_multiline() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1054,7 +1054,7 @@ fn test_quickfix_add_missing_property_to_class() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1100,7 +1100,7 @@ fn test_quickfix_add_missing_property_to_class_element_access() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1150,7 +1150,7 @@ fn test_quickfix_add_missing_import_named() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "import { foo } from \"./foo\";\nfoo();\n");
 }
@@ -1197,7 +1197,7 @@ fn test_quickfix_add_missing_import_after_existing_import() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1247,7 +1247,7 @@ fn test_quickfix_add_missing_import_merge_named_same_module() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "import { bar, foo } from \"./foo\";\nfoo();\n");
 }
@@ -1294,7 +1294,7 @@ fn test_quickfix_add_missing_import_merge_named_multiline() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1344,7 +1344,7 @@ fn test_quickfix_add_missing_import_merge_named_with_default() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "import Foo, { bar } from \"./foo\";\nbar();\n");
 }
@@ -1390,7 +1390,7 @@ fn test_quickfix_add_missing_import_merge_default_with_named() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "import Foo, { bar } from \"./foo\";\nFoo();\n");
 }
@@ -1436,7 +1436,7 @@ fn test_quickfix_add_missing_import_merge_default_with_namespace() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "import Foo, * as ns from \"./foo\";\nFoo();\n");
 }
@@ -1482,7 +1482,7 @@ fn test_quickfix_add_missing_import_default() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "import Foo from \"./foo\";\nFoo();\n");
 }
@@ -1528,7 +1528,7 @@ fn test_quickfix_add_missing_import_namespace() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(updated, "import * as ns from \"./foo\";\nns.foo;\n");
 }
@@ -1575,7 +1575,7 @@ fn test_quickfix_add_missing_import_type_position_uses_import_type() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1668,7 +1668,7 @@ fn test_quickfix_add_missing_import_type_query_uses_value_import() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1718,7 +1718,7 @@ fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1768,7 +1768,7 @@ fn test_quickfix_add_missing_import_class_implements_uses_import_type() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
@@ -1813,7 +1813,7 @@ fn test_quickfix_remove_unused_variable_let() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "");
 }
@@ -1855,7 +1855,7 @@ fn test_quickfix_remove_unused_variable_const() {
 
     assert_eq!(actions.len(), 1);
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "");
 }
@@ -1898,7 +1898,7 @@ fn test_quickfix_remove_unused_function() {
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].title, "Remove unused declaration 'unused'");
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "");
 }
@@ -1941,7 +1941,7 @@ fn test_quickfix_remove_unused_class() {
     assert_eq!(actions.len(), 1);
     assert_eq!(actions[0].title, "Remove unused declaration 'Unused'");
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("test.ts").unwrap();
+    let edits = &edit.changes["test.ts"];
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "");
 }

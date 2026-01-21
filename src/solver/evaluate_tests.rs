@@ -30529,29 +30529,29 @@ fn test_uppercase_union_distributive() {
 
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
-    let lit_A = interner.literal_string("A");
-    let lit_B = interner.literal_string("B");
+    let lit_a_upper = interner.literal_string("A");
+    let lit_b_upper = interner.literal_string("B");
 
     // Process each union member separately (simulating distributive behavior)
     let cond_a = ConditionalType {
         check_type: lit_a,
         extends_type: lit_a,
-        true_type: lit_A,
+        true_type: lit_a_upper,
         false_type: lit_a,
         is_distributive: false,
     };
     let result_a = evaluate_conditional(&interner, &cond_a);
-    assert_eq!(result_a, lit_A);
+    assert_eq!(result_a, lit_a_upper);
 
     let cond_b = ConditionalType {
         check_type: lit_b,
         extends_type: lit_b,
-        true_type: lit_B,
+        true_type: lit_b_upper,
         false_type: lit_b,
         is_distributive: false,
     };
     let result_b = evaluate_conditional(&interner, &cond_b);
-    assert_eq!(result_b, lit_B);
+    assert_eq!(result_b, lit_b_upper);
 
     // Combined result is "A" | "B"
     let result_union = interner.union(vec![result_a, result_b]);
@@ -30589,27 +30589,27 @@ fn test_lowercase_single_literal() {
 fn test_lowercase_union_distributive() {
     let interner = TypeInterner::new();
 
-    let lit_ABC = interner.literal_string("ABC");
-    let lit_DEF = interner.literal_string("DEF");
+    let lit_abc_upper = interner.literal_string("ABC");
+    let lit_def_upper = interner.literal_string("DEF");
     let lit_abc = interner.literal_string("abc");
     let lit_def = interner.literal_string("def");
 
     // Process each member
     let cond_abc = ConditionalType {
-        check_type: lit_ABC,
-        extends_type: lit_ABC,
+        check_type: lit_abc_upper,
+        extends_type: lit_abc_upper,
         true_type: lit_abc,
-        false_type: lit_ABC,
+        false_type: lit_abc_upper,
         is_distributive: false,
     };
     let result_abc = evaluate_conditional(&interner, &cond_abc);
     assert_eq!(result_abc, lit_abc);
 
     let cond_def = ConditionalType {
-        check_type: lit_DEF,
-        extends_type: lit_DEF,
+        check_type: lit_def_upper,
+        extends_type: lit_def_upper,
         true_type: lit_def,
-        false_type: lit_DEF,
+        false_type: lit_def_upper,
         is_distributive: false,
     };
     let result_def = evaluate_conditional(&interner, &cond_def);
@@ -30652,28 +30652,28 @@ fn test_capitalize_union_distributive() {
 
     let lit_name = interner.literal_string("name");
     let lit_value = interner.literal_string("value");
-    let lit_Name = interner.literal_string("Name");
-    let lit_Value = interner.literal_string("Value");
+    let lit_name_upper = interner.literal_string("Name");
+    let lit_value_upper = interner.literal_string("Value");
 
     let cond_name = ConditionalType {
         check_type: lit_name,
         extends_type: lit_name,
-        true_type: lit_Name,
+        true_type: lit_name_upper,
         false_type: lit_name,
         is_distributive: false,
     };
     let result_name = evaluate_conditional(&interner, &cond_name);
-    assert_eq!(result_name, lit_Name);
+    assert_eq!(result_name, lit_name_upper);
 
     let cond_value = ConditionalType {
         check_type: lit_value,
         extends_type: lit_value,
-        true_type: lit_Value,
+        true_type: lit_value_upper,
         false_type: lit_value,
         is_distributive: false,
     };
     let result_value = evaluate_conditional(&interner, &cond_value);
-    assert_eq!(result_value, lit_Value);
+    assert_eq!(result_value, lit_value_upper);
 
     let result_union = interner.union(vec![result_name, result_value]);
     match interner.lookup(result_union) {
@@ -30710,26 +30710,26 @@ fn test_uncapitalize_single_literal() {
 fn test_uncapitalize_union_distributive() {
     let interner = TypeInterner::new();
 
-    let lit_Name = interner.literal_string("Name");
-    let lit_Value = interner.literal_string("Value");
+    let lit_name_upper = interner.literal_string("Name");
+    let lit_value_upper = interner.literal_string("Value");
     let lit_name = interner.literal_string("name");
     let lit_value = interner.literal_string("value");
 
     let cond_name = ConditionalType {
-        check_type: lit_Name,
-        extends_type: lit_Name,
+        check_type: lit_name_upper,
+        extends_type: lit_name_upper,
         true_type: lit_name,
-        false_type: lit_Name,
+        false_type: lit_name_upper,
         is_distributive: false,
     };
     let result_name = evaluate_conditional(&interner, &cond_name);
     assert_eq!(result_name, lit_name);
 
     let cond_value = ConditionalType {
-        check_type: lit_Value,
-        extends_type: lit_Value,
+        check_type: lit_value_upper,
+        extends_type: lit_value_upper,
         true_type: lit_value,
-        false_type: lit_Value,
+        false_type: lit_value_upper,
         is_distributive: false,
     };
     let result_value = evaluate_conditional(&interner, &cond_value);

@@ -623,19 +623,18 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
             } => {
-                if let Some(arrow_node) = self.arena.get(arrow_node) {
-                    if let Some(func) = self.arena.get_function(arrow_node) {
+                if let Some(arrow_node) = self.arena.get(arrow_node)
+                    && let Some(func) = self.arena.get_function(arrow_node) {
                         self.emit_arrow_function_es5(arrow_node, func, captures_this);
                         return;
                     }
-                }
 
                 self.emit_node_default(node, idx);
             }
 
             EmitDirective::ES5AsyncFunction { function_node } => {
-                if let Some(func_node) = self.arena.get(function_node) {
-                    if let Some(func) = self.arena.get_function(func_node) {
+                if let Some(func_node) = self.arena.get(function_node)
+                    && let Some(func) = self.arena.get_function(func_node) {
                         let func_name = if !func.name.is_none() {
                             self.get_identifier_text_idx(func.name)
                         } else {
@@ -645,31 +644,27 @@ impl<'a> Printer<'a> {
                         self.emit_async_function_es5(func, &func_name, "this");
                         return;
                     }
-                }
 
                 self.emit_node_default(node, idx);
             }
 
             EmitDirective::ES5ForOf { for_of_node } => {
-                if let Some(for_of_node) = self.arena.get(for_of_node) {
-                    if let Some(for_in_of) = self.arena.get_for_in_of(for_of_node) {
-                        if !for_in_of.await_modifier {
+                if let Some(for_of_node) = self.arena.get(for_of_node)
+                    && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node)
+                        && !for_in_of.await_modifier {
                             self.emit_for_of_statement_es5(for_in_of);
                             return;
                         }
-                    }
-                }
 
                 self.emit_node_default(node, idx);
             }
 
             EmitDirective::ES5ObjectLiteral { object_literal } => {
-                if let Some(literal_node) = self.arena.get(object_literal) {
-                    if let Some(literal) = self.arena.get_literal_expr(literal_node) {
+                if let Some(literal_node) = self.arena.get(object_literal)
+                    && let Some(literal) = self.arena.get_literal_expr(literal_node) {
                         self.emit_object_literal_es5(&literal.elements.nodes);
                         return;
                     }
-                }
 
                 self.emit_node_default(node, idx);
             }
@@ -776,8 +771,8 @@ impl<'a> Printer<'a> {
                 self.write(&output);
             }
             EmitDirective::ES5AsyncFunction { function_node } => {
-                if let Some(func_node) = self.arena.get(*function_node) {
-                    if let Some(func) = self.arena.get_function(func_node) {
+                if let Some(func_node) = self.arena.get(*function_node)
+                    && let Some(func) = self.arena.get_function(func_node) {
                         if !func.name.is_none() {
                             let func_name = self.get_identifier_text_idx(func.name);
                             self.emit_async_function_es5(func, &func_name, "this");
@@ -791,17 +786,15 @@ impl<'a> Printer<'a> {
                             self.emit_async_function_es5(func, "", "this");
                         }
                     }
-                }
             }
             EmitDirective::ES5ArrowFunction {
                 arrow_node,
                 captures_this,
             } => {
-                if let Some(arrow_node) = self.arena.get(*arrow_node) {
-                    if let Some(func) = self.arena.get_function(arrow_node) {
+                if let Some(arrow_node) = self.arena.get(*arrow_node)
+                    && let Some(func) = self.arena.get_function(arrow_node) {
                         self.emit_arrow_function_es5(arrow_node, func, *captures_this);
                     }
-                }
             }
             EmitDirective::ES5FunctionParameters { function_node } => {
                 if let Some(func_node) = self.arena.get(*function_node) {
@@ -927,18 +920,17 @@ impl<'a> Printer<'a> {
                 arrow_node,
                 captures_this,
             } => {
-                if let Some(arrow_node) = self.arena.get(*arrow_node) {
-                    if let Some(func) = self.arena.get_function(arrow_node) {
+                if let Some(arrow_node) = self.arena.get(*arrow_node)
+                    && let Some(func) = self.arena.get_function(arrow_node) {
                         self.emit_arrow_function_es5(arrow_node, func, *captures_this);
                         return;
                     }
-                }
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5AsyncFunction { function_node } => {
-                if let Some(func_node) = self.arena.get(*function_node) {
-                    if let Some(func) = self.arena.get_function(func_node) {
+                if let Some(func_node) = self.arena.get(*function_node)
+                    && let Some(func) = self.arena.get_function(func_node) {
                         let func_name = if !func.name.is_none() {
                             self.get_identifier_text_idx(func.name)
                         } else {
@@ -948,29 +940,25 @@ impl<'a> Printer<'a> {
                         self.emit_async_function_es5(func, &func_name, "this");
                         return;
                     }
-                }
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5ForOf { for_of_node } => {
-                if let Some(for_of_node) = self.arena.get(*for_of_node) {
-                    if let Some(for_in_of) = self.arena.get_for_in_of(for_of_node) {
-                        if !for_in_of.await_modifier {
+                if let Some(for_of_node) = self.arena.get(*for_of_node)
+                    && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node)
+                        && !for_in_of.await_modifier {
                             self.emit_for_of_statement_es5(for_in_of);
                             return;
                         }
-                    }
-                }
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5ObjectLiteral { object_literal } => {
-                if let Some(literal_node) = self.arena.get(*object_literal) {
-                    if let Some(literal) = self.arena.get_literal_expr(literal_node) {
+                if let Some(literal_node) = self.arena.get(*object_literal)
+                    && let Some(literal) = self.arena.get_literal_expr(literal_node) {
                         self.emit_object_literal_es5(&literal.elements.nodes);
                         return;
                     }
-                }
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
@@ -1059,24 +1047,22 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if let Some(source) = self.arena.get_source_file(node) {
-            if self.transforms.is_empty() {
+        if let Some(source) = self.arena.get_source_file(node)
+            && self.transforms.is_empty() {
                 let format = match self.ctx.options.module {
                     ModuleKind::AMD => Some(crate::transform_context::ModuleFormat::AMD),
                     ModuleKind::UMD => Some(crate::transform_context::ModuleFormat::UMD),
                     ModuleKind::System => Some(crate::transform_context::ModuleFormat::System),
                     _ => None,
                 };
-                if let Some(format) = format {
-                    if self.file_is_module(&source.statements) {
+                if let Some(format) = format
+                    && self.file_is_module(&source.statements) {
                         let dependencies =
                             self.collect_module_dependencies(&source.statements.nodes);
                         self.emit_module_wrapper(&format, &dependencies, node, source);
                         return;
                     }
-                }
             }
-        }
 
         self.emit_node(node, idx);
     }
@@ -1795,12 +1781,11 @@ impl<'a> Printer<'a> {
                     helpers.class_private_field_set = true;
                 }
             }
-        } else if self.ctx.target_es5 {
-            if self.needs_async_helpers() {
+        } else if self.ctx.target_es5
+            && self.needs_async_helpers() {
                 helpers.awaiter = true;
                 helpers.generator = true;
             }
-        }
 
         // Emit all needed helpers
         let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);

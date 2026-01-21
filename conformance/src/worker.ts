@@ -48,6 +48,9 @@ let wasmModule: any = null;
 let libSource = '';
 let libPath = '';
 let workerId = -1;
+let useWasm = true;
+let nativeBinaryPath = '';
+let nativeBinary: any = null;
 
 // Memory monitoring
 const getMemoryUsage = () => process.memoryUsage().heapUsed;
@@ -361,71 +364,146 @@ function runTsc(testCase: ParsedTestCase): number[] {
   return diags;
 }
 
-function runWasm(testCase: ParsedTestCase): { codes: number[]; crashed: boolean; oom: boolean; error?: string } {
+async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed: boolean; oom: boolean; error?: string }> {
   const memBefore = getMemoryUsage();
-  
-  try {
-    if (testCase.isMultiFile || testCase.files.length > 1) {
-      const program = new wasmModule.WasmProgram();
-      
-      // Add lib.d.ts unless noLib
-      if (!testCase.options.nolib && libSource) {
-        program.addFile('lib.d.ts', libSource);
+
+  if (useWasm) {
+    // WASM mode - use the loaded WASM module
+    try {
+      if (testCase.isMultiFile || testCase.files.length > 1) {
+        const program = new wasmModule.WasmProgram();
+
+        // Add lib.d.ts unless noLib
+        if (!testCase.options.nolib && libSource) {
+          program.addFile('lib.d.ts', libSource);
+        }
+
+        for (const file of testCase.files) {
+          program.addFile(file.name, file.content);
+        }
+
+        const codes = Array.from(program.getAllDiagnosticCodes()) as number[];
+        program.free();
+        return { codes, crashed: false, oom: false };
+      } else {
+        const file = testCase.files[0];
+        const parser = new wasmModule.Parser(file.name, file.content);
+
+        // Add lib.d.ts unless noLib
+        if (!testCase.options.nolib && libSource) {
+          parser.addLibFile('lib.d.ts', libSource);
+        }
+
+        // Pass compiler options to WASM
+        if (parser.setCompilerOptions) {
+          parser.setCompilerOptions(JSON.stringify(toWasmOptions(testCase.options)));
+        }
+
+        parser.parseSourceFile();
+        const parseDiags = JSON.parse(parser.getDiagnosticsJson());
+        const checkResult = JSON.parse(parser.checkSourceFile());
+        const codes = [
+          ...parseDiags.map((d: any) => d.code),
+          ...(checkResult.diagnostics || []).map((d: any) => d.code),
+        ];
+        parser.free();
+        return { codes, crashed: false, oom: false };
       }
-      
-      for (const file of testCase.files) {
-        program.addFile(file.name, file.content);
-      }
-      
-      const codes = Array.from(program.getAllDiagnosticCodes()) as number[];
-      program.free();
-      return { codes, crashed: false, oom: false };
-    } else {
-      const file = testCase.files[0];
-      const parser = new wasmModule.Parser(file.name, file.content);
-      
-      // Add lib.d.ts unless noLib
-      if (!testCase.options.nolib && libSource) {
-        parser.addLibFile('lib.d.ts', libSource);
-      }
-      
-      // Pass compiler options to WASM
-      if (parser.setCompilerOptions) {
-        parser.setCompilerOptions(JSON.stringify(toWasmOptions(testCase.options)));
-      }
-      
-      parser.parseSourceFile();
-      const parseDiags = JSON.parse(parser.getDiagnosticsJson());
-      const checkResult = JSON.parse(parser.checkSourceFile());
-      const codes = [
-        ...parseDiags.map((d: any) => d.code),
-        ...(checkResult.diagnostics || []).map((d: any) => d.code),
-      ];
-      parser.free();
-      return { codes, crashed: false, oom: false };
+    } catch (e) {
+      const memAfter = getMemoryUsage();
+      const memGrowth = memAfter - memBefore;
+      const isOom = memGrowth > 100 * 1024 * 1024 ||
+                    (e instanceof Error && (
+                      e.message.includes('memory') ||
+                      e.message.includes('allocation') ||
+                      e.message.includes('heap') ||
+                      e.message.includes('out of') ||
+                      e.message.includes('RuntimeError')
+                    ));
+
+      return {
+        codes: [],
+        crashed: true,
+        oom: isOom,
+        error: e instanceof Error ? e.message : String(e)
+      };
     }
-  } catch (e) {
-    const memAfter = getMemoryUsage();
-    const memGrowth = memAfter - memBefore;
-    const isOom = memGrowth > 100 * 1024 * 1024 ||
-                  (e instanceof Error && (
-                    e.message.includes('memory') ||
-                    e.message.includes('allocation') ||
-                    e.message.includes('heap') ||
-                    e.message.includes('out of') ||
-                    e.message.includes('RuntimeError')
-                  ));
-    
-    return { 
-      codes: [], 
-      crashed: true, 
-      oom: isOom,
-      error: e instanceof Error ? e.message : String(e) 
-    };
+  } else {
+    // Native mode - spawn the binary as a child process
+    return new Promise((resolve) => {
+      const tmpDir = fs.mkdtempSync('/tmp/tsz-test-');
+      const cleanup = () => {
+        try {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      };
+
+      try {
+        // Write test files to temp directory
+        const filesToCheck: string[] = [];
+
+        // Add lib.d.ts unless noLib
+        if (!testCase.options.nolib) {
+          fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libSource);
+          filesToCheck.push('lib.d.ts');
+        }
+
+        // Write test files
+        for (const file of testCase.files) {
+          fs.writeFileSync(path.join(tmpDir, file.name), file.content);
+          filesToCheck.push(file.name);
+        }
+
+        // Spawn native binary
+        const { spawn } = require('child_process');
+        const args = filesToCheck.map(f => path.join(tmpDir, f));
+        const child = spawn(nativeBinaryPath, args, {
+          cwd: tmpDir,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let stderr = '';
+        const codes: number[] = [];
+
+        child.stderr?.on('data', (data: Buffer) => {
+          stderr += data.toString();
+        });
+
+        child.on('close', (code: number | null) => {
+          // Parse error codes from stderr (tsz outputs to stderr)
+          const errorMatches = stderr.match(/TS(\d+)/g);
+          if (errorMatches) {
+            for (const match of errorMatches) {
+              codes.push(parseInt(match.substring(2), 10));
+            }
+          }
+
+          cleanup();
+          resolve({ codes, crashed: false, oom: false });
+        });
+
+        child.on('error', (err: Error) => {
+          cleanup();
+          resolve({ codes: [], crashed: true, oom: false, error: err.message });
+        });
+
+        // Timeout after 10 seconds
+        setTimeout(() => {
+          child.kill();
+          cleanup();
+          resolve({ codes: [], crashed: true, oom: false, error: 'Timeout' });
+        }, 10000);
+      } catch (err) {
+        cleanup();
+        resolve({ codes: [], crashed: true, oom: false, error: String(err) });
+      }
+    });
   }
 }
 
-function processTest(job: TestJob): WorkerResult {
+async function processTest(job: TestJob): Promise<WorkerResult> {
   lastActivity = Date.now();
   const memBefore = getMemoryUsage();
 
@@ -437,8 +515,8 @@ function processTest(job: TestJob): WorkerResult {
     const tscCodes = runTsc(testCase);
     lastActivity = Date.now();
 
-    // Run WASM (may crash)
-    const wasmResult = runWasm(testCase);
+    // Run compiler (WASM or native, may crash)
+    const compilerResult = await runCompiler(testCase);
     lastActivity = Date.now();
 
     const memAfter = getMemoryUsage();
@@ -456,11 +534,11 @@ function processTest(job: TestJob): WorkerResult {
       type: 'result',
       id: job.id,
       tscCodes,
-      wasmCodes: wasmResult.codes,
-      crashed: wasmResult.crashed,
-      oom: wasmResult.oom,
+      wasmCodes: compilerResult.codes,
+      crashed: compilerResult.crashed,
+      oom: compilerResult.oom,
       category: testCase.category,
-      error: wasmResult.error,
+      error: compilerResult.error,
       memoryUsed: memAfter - memBefore,
     };
   } catch (e) {
@@ -520,23 +598,37 @@ process.on('unhandledRejection', (reason) => {
 
 // Initialize worker
 (async () => {
-  const data = workerData as { wasmPkgPath: string; libPath: string; id: number };
+  const data = workerData as { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; id: number };
   workerId = data.id;
   libPath = data.libPath;
+  useWasm = data.useWasm;
+  nativeBinaryPath = data.nativeBinaryPath || '';
 
-  // Load WASM module once
-  try {
-    const wasmPath = path.join(data.wasmPkgPath, 'wasm.js');
-    // For --target nodejs, we use require() instead of dynamic import
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    wasmModule = require(wasmPath);
-  } catch (e) {
-    parentPort?.postMessage({
-      type: 'error',
-      workerId,
-      error: `Failed to load WASM: ${e instanceof Error ? e.message : e}`,
-    });
-    process.exit(1);
+  // Load WASM module once (if using WASM)
+  if (useWasm) {
+    try {
+      const wasmPath = path.join(data.wasmPkgPath, 'wasm.js');
+      // For --target nodejs, we use require() instead of dynamic import
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      wasmModule = require(wasmPath);
+    } catch (e) {
+      parentPort?.postMessage({
+        type: 'error',
+        workerId,
+        error: `Failed to load WASM: ${e instanceof Error ? e.message : e}`,
+      });
+      process.exit(1);
+    }
+  } else {
+    // Verify native binary exists
+    if (!fs.existsSync(nativeBinaryPath)) {
+      parentPort?.postMessage({
+        type: 'error',
+        workerId,
+        error: `Native binary not found: ${nativeBinaryPath}`,
+      });
+      process.exit(1);
+    }
   }
 
   // Load lib.d.ts once
@@ -545,15 +637,15 @@ process.on('unhandledRejection', (reason) => {
   } catch {}
 
   // Signal ready with memory info
-  parentPort!.postMessage({ 
-    type: 'ready', 
+  parentPort!.postMessage({
+    type: 'ready',
     workerId,
     memoryUsed: getMemoryUsage(),
   });
 
   // Process jobs
-  parentPort!.on('message', (job: TestJob) => {
-    const result = processTest(job);
+  parentPort!.on('message', async (job: TestJob) => {
+    const result = await processTest(job);
     parentPort!.postMessage(result);
   });
 

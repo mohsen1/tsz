@@ -32,37 +32,30 @@ pub fn jsdoc_for_node(
     };
     let mut target_pos = node.pos;
 
-    if arena.get_variable_declaration(node).is_some() {
-        if let Some(ext) = arena.get_extended(node_idx) {
+    if arena.get_variable_declaration(node).is_some()
+        && let Some(ext) = arena.get_extended(node_idx) {
             let list_idx = ext.parent;
-            if let Some(list_node) = arena.get(list_idx) {
-                if list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                    if let Some(list_data) = arena.get_variable(list_node) {
-                        if list_data.declarations.nodes.len() == 1 {
-                            if let Some(list_ext) = arena.get_extended(list_idx) {
+            if let Some(list_node) = arena.get(list_idx)
+                && list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && let Some(list_data) = arena.get_variable(list_node)
+                        && list_data.declarations.nodes.len() == 1
+                            && let Some(list_ext) = arena.get_extended(list_idx) {
                                 let stmt_idx = list_ext.parent;
-                                if let Some(stmt_node) = arena.get(stmt_idx) {
-                                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                                if let Some(stmt_node) = arena.get(stmt_idx)
+                                    && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                                         target_pos = stmt_node.pos;
                                         if let Some(stmt_ext) = arena.get_extended(stmt_idx) {
                                             let export_idx = stmt_ext.parent;
-                                            if let Some(export_node) = arena.get(export_idx) {
-                                                if export_node.kind
+                                            if let Some(export_node) = arena.get(export_idx)
+                                                && export_node.kind
                                                     == syntax_kind_ext::EXPORT_DECLARATION
                                                 {
                                                     target_pos = export_node.pos;
                                                 }
-                                            }
                                         }
                                     }
-                                }
                             }
-                        }
-                    }
-                }
-            }
         }
-    }
 
     let comments = if let Some(root_node) = arena.get(root) {
         if let Some(sf_data) = arena.get_source_file(root_node) {
@@ -77,11 +70,9 @@ pub fn jsdoc_for_node(
     if let Some(comment) = comments
         .iter()
         .find(|comment| comment.pos <= node.pos && node.pos < comment.end)
-    {
-        if is_jsdoc_comment(comment, source_text) {
+        && is_jsdoc_comment(comment, source_text) {
             return get_jsdoc_content(comment, source_text);
         }
-    }
 
     let leading_comments = get_leading_comments_from_cache(comments, target_pos, source_text);
     if let Some(comment) = leading_comments.last() {

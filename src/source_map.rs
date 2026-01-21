@@ -527,7 +527,7 @@ pub fn escape_js_string(s: &str, quote: char) -> String {
 /// Base64 encode a byte slice
 pub fn base64_encode(input: &[u8]) -> String {
     let bytes = input;
-    let mut result = String::with_capacity(((bytes.len() + 2) / 3) * 4);
+    let mut result = String::with_capacity(bytes.len().div_ceil(3) * 4);
 
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;

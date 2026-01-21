@@ -4485,11 +4485,10 @@ impl ParserState {
             },
         );
 
-        if is_global {
-            if let Some(node) = self.arena.get_mut(module_idx) {
+        if is_global
+            && let Some(node) = self.arena.get_mut(module_idx) {
                 node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
             }
-        }
 
         module_idx
     }
@@ -4568,11 +4567,10 @@ impl ParserState {
             },
         );
 
-        if is_global {
-            if let Some(node) = self.arena.get_mut(module_idx) {
+        if is_global
+            && let Some(node) = self.arena.get_mut(module_idx) {
                 node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
             }
-        }
 
         module_idx
     }
@@ -5617,7 +5615,7 @@ impl ParserState {
         let end_pos = self.token_end();
 
         self.arena.add_jump(
-            syntax_kind_ext::BREAK_STATEMENT as u16,
+            syntax_kind_ext::BREAK_STATEMENT,
             start_pos,
             end_pos,
             crate::parser::node::JumpData { label },
@@ -5644,7 +5642,7 @@ impl ParserState {
         let end_pos = self.token_end();
 
         self.arena.add_jump(
-            syntax_kind_ext::CONTINUE_STATEMENT as u16,
+            syntax_kind_ext::CONTINUE_STATEMENT,
             start_pos,
             end_pos,
             crate::parser::node::JumpData { label },
@@ -5888,15 +5886,14 @@ impl ParserState {
         };
 
         // Error recovery: try without catch or finally is invalid
-        if catch_clause.is_none() && finally_block.is_none() {
-            if self.token_pos() != self.last_error_pos {
+        if catch_clause.is_none() && finally_block.is_none()
+            && self.token_pos() != self.last_error_pos {
                 use crate::checker::types::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "catch or finally expected.",
                     diagnostic_codes::CATCH_OR_FINALLY_EXPECTED,
                 );
             }
-        }
 
         let end_pos = self.token_end();
         self.arena.add_try(
@@ -5951,7 +5948,7 @@ impl ParserState {
         let end_pos = self.token_end();
 
         self.arena.add_token(
-            syntax_kind_ext::DEBUGGER_STATEMENT as u16,
+            syntax_kind_ext::DEBUGGER_STATEMENT,
             start_pos,
             end_pos,
         )
@@ -6761,9 +6758,9 @@ impl ParserState {
         let mut expr = self.parse_left_hand_side_expression();
 
         // Handle postfix operators
-        if !self.scanner.has_preceding_line_break() {
-            if self.is_token(SyntaxKind::PlusPlusToken)
-                || self.is_token(SyntaxKind::MinusMinusToken)
+        if !self.scanner.has_preceding_line_break()
+            && (self.is_token(SyntaxKind::PlusPlusToken)
+                || self.is_token(SyntaxKind::MinusMinusToken))
             {
                 let operator = self.token() as u16;
                 self.next_token();
@@ -6779,7 +6776,6 @@ impl ParserState {
                     },
                 );
             }
-        }
 
         expr
     }
@@ -6858,11 +6854,10 @@ impl ParserState {
                             arguments: Some(arguments),
                         },
                     );
-                    if is_optional_chain {
-                        if let Some(call_node) = self.arena.get_mut(call_expr) {
+                    if is_optional_chain
+                        && let Some(call_node) = self.arena.get_mut(call_expr) {
                             call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
                         }
-                    }
                     expr = call_expr;
                 }
                 // Tagged template literals: tag`template` or tag`head${expr}tail`
@@ -6884,8 +6879,8 @@ impl ParserState {
                 // Optional chaining: expr?.prop, expr?.[index], expr?.()
                 SyntaxKind::QuestionDotToken => {
                     self.next_token();
-                    if self.is_token(SyntaxKind::LessThanToken) {
-                        if let Some(type_args) = self.try_parse_type_arguments_for_call() {
+                    if self.is_token(SyntaxKind::LessThanToken)
+                        && let Some(type_args) = self.try_parse_type_arguments_for_call() {
                             if self.is_token(SyntaxKind::OpenParenToken) {
                                 // expr?.<T>()
                                 self.next_token();
@@ -6927,7 +6922,6 @@ impl ParserState {
                                 continue;
                             }
                         }
-                    }
                     if self.is_token(SyntaxKind::OpenBracketToken) {
                         // expr?.[index]
                         self.next_token();
@@ -8492,13 +8486,11 @@ impl ParserState {
         } else {
             None
         };
-        if let Some(type_args) = type_arguments.as_ref() {
-            if let Some(last) = type_args.nodes.last() {
-                if let Some(node) = self.arena.get(*last) {
+        if let Some(type_args) = type_arguments.as_ref()
+            && let Some(last) = type_args.nodes.last()
+                && let Some(node) = self.arena.get(*last) {
                     end_pos = end_pos.max(node.end);
                 }
-            }
-        }
 
         let arguments = if self.is_token(SyntaxKind::OpenParenToken) {
             self.next_token();

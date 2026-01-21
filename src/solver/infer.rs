@@ -231,11 +231,10 @@ impl<'a> InferenceContext<'a> {
 
         let value_a = self.table.probe_value(root_a).0;
         let value_b = self.table.probe_value(root_b).0;
-        if let (Some(a_ty), Some(b_ty)) = (value_a, value_b) {
-            if !self.types_compatible(a_ty, b_ty) {
+        if let (Some(a_ty), Some(b_ty)) = (value_a, value_b)
+            && !self.types_compatible(a_ty, b_ty) {
                 return Err(InferenceError::Conflict(a_ty, b_ty));
             }
-        }
 
         self.table
             .unify_var_var(root_a, root_b)
@@ -288,11 +287,10 @@ impl<'a> InferenceContext<'a> {
 
         let mut visited = FxHashSet::default();
         for &(atom, param_var) in &self.type_params {
-            if self.table.find(param_var) == root {
-                if self.type_contains_param(ty, atom, &mut visited) {
+            if self.table.find(param_var) == root
+                && self.type_contains_param(ty, atom, &mut visited) {
                     return true;
                 }
-            }
         }
         false
     }
@@ -532,11 +530,10 @@ impl<'a> InferenceContext<'a> {
                     return true;
                 }
             }
-            if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(bound) {
-                if self.param_depends_on_targets(info.name, targets, visited) {
+            if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(bound)
+                && self.param_depends_on_targets(info.name, targets, visited) {
                     return true;
                 }
-            }
         }
 
         false
@@ -1398,8 +1395,8 @@ impl<'a> InferenceContext<'a> {
             return false;
         }
 
-        if let Some(t_string_idx) = &target.string_index {
-            if let Some(s_string_idx) = &source.string_index {
+        if let Some(t_string_idx) = &target.string_index
+            && let Some(s_string_idx) = &source.string_index {
                 if s_string_idx.readonly && !t_string_idx.readonly {
                     return false;
                 }
@@ -1407,29 +1404,22 @@ impl<'a> InferenceContext<'a> {
                     return false;
                 }
             }
-        }
 
-        if let Some(t_number_idx) = &target.number_index {
-            match &source.number_index {
-                Some(s_number_idx) => {
-                    if s_number_idx.readonly && !t_number_idx.readonly {
-                        return false;
-                    }
-                    if !self.is_subtype(s_number_idx.value_type, t_number_idx.value_type) {
-                        return false;
-                    }
+        if let Some(t_number_idx) = &target.number_index
+            && let Some(s_number_idx) = &source.number_index {
+                if s_number_idx.readonly && !t_number_idx.readonly {
+                    return false;
                 }
-                None => {}
+                if !self.is_subtype(s_number_idx.value_type, t_number_idx.value_type) {
+                    return false;
+                }
             }
-        }
 
         if let (Some(s_string_idx), Some(s_number_idx)) =
             (&source.string_index, &source.number_index)
-        {
-            if !self.is_subtype(s_number_idx.value_type, s_string_idx.value_type) {
+            && !self.is_subtype(s_number_idx.value_type, s_string_idx.value_type) {
                 return false;
             }
-        }
 
         self.check_properties_against_index_signatures(&source.properties, target)
     }
@@ -1449,8 +1439,8 @@ impl<'a> InferenceContext<'a> {
         for prop in source {
             let prop_type = self.optional_property_type(prop);
 
-            if let Some(number_idx) = number_index {
-                if self.is_numeric_property_name(prop.name) {
+            if let Some(number_idx) = number_index
+                && self.is_numeric_property_name(prop.name) {
                     if !number_idx.readonly && prop.readonly {
                         return false;
                     }
@@ -1458,7 +1448,6 @@ impl<'a> InferenceContext<'a> {
                         return false;
                     }
                 }
-            }
 
             if let Some(string_idx) = string_index {
                 if !string_idx.readonly && prop.readonly {
@@ -1544,7 +1533,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         let abs = value.abs();
-        if abs >= 1e21 || abs < 1e-6 {
+        if !(1e-6..1e21).contains(&abs) {
             let mut formatted = format!("{:e}", value);
             if let Some(split) = formatted.find('e') {
                 let (mantissa, exp) = formatted.split_at(split);
@@ -1782,11 +1771,10 @@ impl<'a> InferenceContext<'a> {
                         return false;
                     }
                 }
-                if let Some(variadic) = expansion.variadic {
-                    if !self.is_subtype(variadic, target_elem) {
+                if let Some(variadic) = expansion.variadic
+                    && !self.is_subtype(variadic, target_elem) {
                         return false;
                     }
-                }
             } else if !self.is_subtype(elem.type_id, target_elem) {
                 return false;
             }
@@ -1916,15 +1904,13 @@ impl<'a> InferenceContext<'a> {
         false_type: TypeId,
     ) {
         // If check_type is an inference variable, try to infer from extends_type
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(check_type) {
-            if let Some(check_var) = self.find_type_param(info.name) {
-                if check_var == self.table.find(var) {
+        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(check_type)
+            && let Some(check_var) = self.find_type_param(info.name)
+                && check_var == self.table.find(var) {
                     // check_type is this variable
                     // Try to infer from extends_type as an upper bound
                     self.add_upper_bound(var, extends_type);
                 }
-            }
-        }
 
         // Recursively infer from true/false branches
         self.infer_from_type(var, true_type);
@@ -1942,15 +1928,14 @@ impl<'a> InferenceContext<'a> {
 
         match self.interner.lookup(ty) {
             Some(TypeKey::TypeParameter(info)) => {
-                if let Some(param_var) = self.find_type_param(info.name) {
-                    if self.table.find(param_var) == root {
+                if let Some(param_var) = self.find_type_param(info.name)
+                    && self.table.find(param_var) == root {
                         // This type is the inference variable itself
                         // Extract bounds from constraint if present
                         if let Some(constraint) = info.constraint {
                             self.add_upper_bound(var, constraint);
                         }
                     }
-                }
             }
             Some(TypeKey::Array(elem)) => {
                 self.infer_from_type(var, elem);
@@ -2424,9 +2409,9 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn propagate_lower_bound(&mut self, var: InferenceVar, lower: TypeId, exclude_param: Atom) {
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(lower) {
-            if info.name != exclude_param {
-                if let Some(lower_var) = self.find_type_param(info.name) {
+        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(lower)
+            && info.name != exclude_param
+                && let Some(lower_var) = self.find_type_param(info.name) {
                     let lower_root = self.table.find(lower_var);
                     let lower_constraints = self.constraints[lower_root.0 as usize].clone();
 
@@ -2435,14 +2420,12 @@ impl<'a> InferenceContext<'a> {
                         self.add_upper_bound(var, upper);
                     }
                 }
-            }
-        }
     }
 
     fn propagate_upper_bound(&mut self, var: InferenceVar, upper: TypeId, exclude_param: Atom) {
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(upper) {
-            if info.name != exclude_param {
-                if let Some(upper_var) = self.find_type_param(info.name) {
+        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(upper)
+            && info.name != exclude_param
+                && let Some(upper_var) = self.find_type_param(info.name) {
                     let upper_root = self.table.find(upper_var);
                     let upper_constraints = self.constraints[upper_root.0 as usize].clone();
 
@@ -2451,8 +2434,6 @@ impl<'a> InferenceContext<'a> {
                         self.add_lower_bound(var, lower);
                     }
                 }
-            }
-        }
     }
 
     /// Validate that resolved types respect variance constraints.

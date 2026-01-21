@@ -108,13 +108,11 @@ impl<'a> ReachabilityAnalyzer<'a> {
             return None;
         }
 
-        let node_data = self.arena.get(node)?;
+        let _node_data = self.arena.get(node)?;
 
         // Check what kind of node precedes this one to determine the reason
         // For now, return a generic message
-        Some(match node_data.kind {
-            _ => "Unreachable code",
-        })
+        Some("Unreachable code")
     }
 
     /// Find all unreachable statements in a block of statements.
@@ -152,8 +150,8 @@ mod tests {
 
         let arena = parser.get_arena();
 
-        if let Some(source_file) = arena.get(root) {
-            if let Some(sf) = arena.get_source_file(source_file) {
+        if let Some(source_file) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(source_file) {
                 let mut builder = FlowGraphBuilder::new(arena);
                 let graph = builder.build_source_file(&sf.statements);
 
@@ -163,7 +161,6 @@ mod tests {
                 assert!(analyzer.has_unreachable_code());
                 assert!(analyzer.unreachable_count() > 0);
             }
-        }
     }
 
     #[test]
@@ -180,8 +177,8 @@ mod tests {
 
         let arena = parser.get_arena();
 
-        if let Some(source_file) = arena.get(root) {
-            if let Some(sf) = arena.get_source_file(source_file) {
+        if let Some(source_file) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(source_file) {
                 let mut builder = FlowGraphBuilder::new(arena);
                 let graph = builder.build_source_file(&sf.statements);
 
@@ -190,7 +187,6 @@ mod tests {
                 // Should have unreachable code
                 assert!(analyzer.has_unreachable_code());
             }
-        }
     }
 
     #[test]
@@ -207,8 +203,8 @@ while (true) {
 
         let arena = parser.get_arena();
 
-        if let Some(source_file) = arena.get(root) {
-            if let Some(sf) = arena.get_source_file(source_file) {
+        if let Some(source_file) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(source_file) {
                 let mut builder = FlowGraphBuilder::new(arena);
                 let graph = builder.build_source_file(&sf.statements);
 
@@ -217,7 +213,6 @@ while (true) {
                 // Should have unreachable code
                 assert!(analyzer.has_unreachable_code());
             }
-        }
     }
 
     #[test]
@@ -234,8 +229,8 @@ while (true) {
 
         let arena = parser.get_arena();
 
-        if let Some(source_file) = arena.get(root) {
-            if let Some(sf) = arena.get_source_file(source_file) {
+        if let Some(source_file) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(source_file) {
                 let mut builder = FlowGraphBuilder::new(arena);
                 let graph = builder.build_source_file(&sf.statements);
 
@@ -244,7 +239,6 @@ while (true) {
                 // Should have unreachable code
                 assert!(analyzer.has_unreachable_code());
             }
-        }
     }
 
     #[test]
@@ -262,8 +256,8 @@ while (true) {
 
         let arena = parser.get_arena();
 
-        if let Some(source_file) = arena.get(root) {
-            if let Some(sf) = arena.get_source_file(source_file) {
+        if let Some(source_file) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(source_file) {
                 let mut builder = FlowGraphBuilder::new(arena);
                 let graph = builder.build_source_file(&sf.statements);
 
@@ -274,7 +268,6 @@ while (true) {
                 // No code after return, so no unreachable code
                 assert!(!analyzer.has_unreachable_code() || analyzer.unreachable_count() == 0);
             }
-        }
     }
 
     #[test]
@@ -292,8 +285,8 @@ while (true) {
 
         let arena = parser.get_arena();
 
-        if let Some(source_file) = arena.get(root) {
-            if let Some(sf) = arena.get_source_file(source_file) {
+        if let Some(source_file) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(source_file) {
                 let mut builder = FlowGraphBuilder::new(arena);
                 let graph = builder.build_source_file(&sf.statements);
 
@@ -302,6 +295,5 @@ while (true) {
                 // Should have multiple unreachable nodes
                 assert!(analyzer.unreachable_count() >= 2);
             }
-        }
     }
 }

@@ -67,7 +67,7 @@ impl<'a> GoToDefinition<'a> {
         root: NodeIndex,
         position: Position,
         scope_cache: Option<&mut ScopeCache>,
-        mut scope_stats: Option<&mut ScopeCacheStats>,
+        scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<Vec<Location>> {
         // 1. Convert position to byte offset
         let offset = self
@@ -83,7 +83,7 @@ impl<'a> GoToDefinition<'a> {
         // 3. Resolve the node to a symbol
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats.as_deref_mut())?
+            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)?
         } else {
             walker.resolve_node(root, node_idx)?
         };
@@ -144,7 +144,7 @@ impl<'a> GoToDefinition<'a> {
         root: NodeIndex,
         node_idx: NodeIndex,
         scope_cache: Option<&mut ScopeCache>,
-        mut scope_stats: Option<&mut ScopeCacheStats>,
+        scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<Vec<Location>> {
         if node_idx.is_none() {
             return None;
@@ -153,7 +153,7 @@ impl<'a> GoToDefinition<'a> {
         // Resolve the node to a symbol
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats.as_deref_mut())?
+            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)?
         } else {
             walker.resolve_node(root, node_idx)?
         };

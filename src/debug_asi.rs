@@ -19,6 +19,6 @@ mod tests {
         }
 
         // For now, just check that we get some diagnostic
-        assert!(diagnostics.len() > 0, "Expected at least one diagnostic");
+        assert!(!diagnostics.is_empty(), "Expected at least one diagnostic");
     }
 }

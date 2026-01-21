@@ -11,10 +11,6 @@ This guide covers the testing infrastructure for the Rust/WASM TypeScript compil
 # 2. Run conformance tests (compare against TypeScript)
 ./conformance/run-conformance.sh --max=500
 
-# 3. Test a specific file
-node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/2dArrays.ts
-```
-
 ## Test Types
 
 ### 🦀 Rust Unit Tests
@@ -73,18 +69,6 @@ Configuration is in `.cargo/nextest.toml`.
 # Specific category
 ./conformance/run-conformance.sh --category=compiler
 ./conformance/run-conformance.sh --category=conformance
-```
-
-### 🔍 Single Test Script
-**Location**: `./scripts/run-single-test.mjs`  
-**Purpose**: Debug specific test files
-
-```bash
-# Test single file
-node scripts/run-single-test.mjs TypeScript/tests/cases/compiler/arrayLiterals.ts
-
-# Validate WASM module
-node scripts/validate-wasm.mjs
 ```
 
 ## Workflow

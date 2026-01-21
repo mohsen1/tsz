@@ -107,13 +107,13 @@ impl Reporter {
         let mut underline = String::new();
         for (i, ch) in line_text.chars().enumerate() {
             let offset = i as u32;
-            if offset < column as u32 - 1 {
+            if offset < column - 1 {
                 if ch == '\t' {
                     underline.push_str("    "); // Tabs expand to 4 spaces
                 } else {
                     underline.push(' ');
                 }
-            } else if offset >= column as u32 - 1 && offset < end {
+            } else if offset >= column - 1 && offset < end {
                 // Within the error span - use tildes (or ~ for single char)
                 if ch == '\t' {
                     underline.push_str("~~~~");

@@ -95,7 +95,7 @@ fn test_ir_namespace_qualified() {
 
 #[test]
 fn test_ir_commonjs_preamble() {
-    let nodes = vec![IRNode::UseStrict, IRNode::EsesModuleMarker];
+    let nodes = [IRNode::UseStrict, IRNode::EsesModuleMarker];
 
     let output1 = IRPrinter::emit_to_string(&nodes[0]);
     assert_eq!(output1, "\"use strict\";");

@@ -110,31 +110,42 @@ function parseTestDirectives(source: string, filePath: string): ParsedTestCase {
  */
 function runTsc(testCase: ParsedTestCase): number[] {
   const codes: number[] = [];
+  const tmpDir = fs.mkdtempSync('/tmp/tsz-tsc-');
 
   try {
+    // Write test files to temp directory
+    for (const file of testCase.files) {
+      fs.writeFileSync(path.join(tmpDir, file.name), file.content);
+    }
+
+    // Create compiler options
     const compilerOptions: ts.CompilerOptions = {
       noEmit: true,
       ...testCase.options,
     };
 
-    for (const file of testCase.files) {
-      const sourceFile = ts.createSourceFile(
-        file.name,
-        file.content,
-        ts.ScriptTarget.Latest,
-        true
-      );
+    // Create program from files
+    const program = ts.createProgram(
+      testCase.files.map(f => path.join(tmpDir, f.name)),
+      compilerOptions
+    );
 
-      const diagnostics = ts.getPreEmitDiagnostics(sourceFile);
+    const diagnostics = ts.getPreEmitDiagnostics(program);
 
-      for (const diag of diagnostics) {
-        if (diag.code) {
-          codes.push(diag.code);
-        }
+    for (const diag of diagnostics) {
+      if (diag.code) {
+        codes.push(diag.code);
       }
     }
   } catch {
     // TSC parsing errors - ignore
+  } finally {
+    // Cleanup
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // Ignore
+    }
   }
 
   return codes;
@@ -143,47 +154,50 @@ function runTsc(testCase: ParsedTestCase): number[] {
 /**
  * Run native tsz binary on a test case
  */
-function runNative(testCase: ParsedTestCase): { codes: number[]; crashed: boolean; error?: string } {
+function runNative(testCase: ParsedTestCase): Promise<{ codes: number[]; crashed: boolean; error?: string }> {
   const tmpDir = fs.mkdtempSync('/tmp/tsz-test-');
 
-  try {
-    // Write test files to temp directory
-    const filesToCheck: string[] = [];
+  return new Promise((resolve) => {
+    const cleanup = () => {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    };
 
-    // Add lib.d.ts unless noLib
-    if (!testCase.options.nolib) {
-      const libContent = fs.readFileSync(CONFIG.libPath, 'utf8');
-      fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libContent);
-      filesToCheck.push('lib.d.ts');
-    }
+    try {
+      // Write test files to temp directory
+      const filesToCheck: string[] = [];
 
-    // Write test files
-    for (const file of testCase.files) {
-      fs.writeFileSync(path.join(tmpDir, file.name), file.content);
-      filesToCheck.push(file.name);
-    }
+      // Add lib.d.ts unless noLib
+      if (!testCase.options.nolib) {
+        const libContent = fs.readFileSync(CONFIG.libPath, 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'lib.d.ts'), libContent);
+        filesToCheck.push('lib.d.ts');
+      }
 
-    // Run tsz binary
-    const codes: number[] = [];
-    const args = filesToCheck.map(f => path.join(tmpDir, f));
+      // Write test files
+      for (const file of testCase.files) {
+        fs.writeFileSync(path.join(tmpDir, file.name), file.content);
+        filesToCheck.push(file.name);
+      }
 
-    const child = spawn(CONFIG.tszBinary, args, {
-      cwd: tmpDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+      // Run tsz binary
+      const codes: number[] = [];
+      const args = filesToCheck.map(f => path.join(tmpDir, f));
 
-    let stderr = '';
-    let stdout = '';
+      const child = spawn(CONFIG.tszBinary, args, {
+        cwd: tmpDir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
 
-    child.stdout?.on('data', (data) => {
-      stdout += data.toString();
-    });
+      let stderr = '';
 
-    child.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
+      child.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
 
-    return new Promise((resolve) => {
       child.on('close', (code) => {
         // Parse error codes from stderr (tsz outputs to stderr)
         const errorMatches = stderr.match(/TS(\d+)/g);
@@ -193,27 +207,26 @@ function runNative(testCase: ParsedTestCase): { codes: number[]; crashed: boolea
           }
         }
 
+        cleanup();
         resolve({ codes, crashed: false });
       });
 
       child.on('error', (err) => {
+        cleanup();
         resolve({ codes: [], crashed: true, error: err.message });
       });
 
       // Timeout after 10 seconds
       setTimeout(() => {
         child.kill();
+        cleanup();
         resolve({ codes: [], crashed: true, error: 'Timeout' });
       }, 10000);
-    });
-  } finally {
-    // Cleanup temp directory
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
+    } catch (err) {
+      cleanup();
+      resolve({ codes: [], crashed: true, error: String(err) });
     }
-  }
+  });
 }
 
 /**

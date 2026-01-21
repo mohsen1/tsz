@@ -222,11 +222,10 @@ pub fn find_test_files(dir: &Path, max_files: usize) -> Vec<PathBuf> {
                 let path = entry.path();
                 if path.is_dir() {
                     walk(&path, files, max_files);
-                } else if let Some(ext) = path.extension() {
-                    if ext == "ts" && !path.to_string_lossy().ends_with(".d.ts") {
+                } else if let Some(ext) = path.extension()
+                    && ext == "ts" && !path.to_string_lossy().ends_with(".d.ts") {
                         files.push(path);
                     }
-                }
             }
         }
     }

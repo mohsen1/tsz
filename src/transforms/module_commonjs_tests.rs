@@ -83,8 +83,8 @@ fn test_collect_export_names_with_parsed_ast() {
                 syntax_kind_ext::CLASS_DECLARATION
             );
 
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                if let Some(class) = parser.arena.get_class(node) {
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class) = parser.arena.get_class(node) {
                     eprintln!("  Found class, modifiers: {:?}", class.modifiers);
                     if let Some(modifiers) = &class.modifiers {
                         eprintln!("  Modifiers count: {}", modifiers.nodes.len());
@@ -98,13 +98,11 @@ fn test_collect_export_names_with_parsed_ast() {
                             }
                         }
                     }
-                    if let Some(name_node) = parser.arena.get(class.name) {
-                        if let Some(ident) = parser.arena.get_identifier(name_node) {
+                    if let Some(name_node) = parser.arena.get(class.name)
+                        && let Some(ident) = parser.arena.get_identifier(name_node) {
                             eprintln!("  Class name: {}", ident.escaped_text);
                         }
-                    }
                 }
-            }
         }
     }
 

@@ -4,16 +4,19 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 ## Current Test Status
 
-**Note**: Conformance tests use **WASM build** (`pkg/`), not native binary. Build first:
+**Note**: Conformance tests default to **native binary** (fast). Use `--wasm` for WASM+Docker:
 ```bash
-wasm-pack build --target nodejs --out-dir pkg
+# Native (default, faster)
 ./conformance/run-conformance.sh --all
+
+# WASM (Docker-isolated, slower)
+./conformance/run-conformance.sh --wasm --all
 ```
 
 ## Gaps / Risks
 
-* **Conformance gap**: Target is 50%+. Run tests to get current metrics. Latest full run (12,053 tests): **30.7% pass rate**.
-* **WASM-specific issues**: 121 worker crashes during test run - may indicate memory/stability issues in WASM build.
+* **Conformance gap**: Target is 50%+. Run tests to get current metrics.
+* **WASM stability**: Previous runs showed 121 worker crashes in WASM mode - use native for faster, more stable testing.
 
 * **Transform pipeline debt**: `src/transforms/` mixes AST manipulation with string emission. Should produce lowered AST, then printer emits strings.
 

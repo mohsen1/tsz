@@ -60,12 +60,11 @@ pub fn find_node_at_or_before_offset(arena: &NodeArena, offset: u32, source: &st
             idx -= 1;
             continue;
         }
-        if prev == b'?' {
-            if bytes.get(idx as usize) == Some(&b'.') {
+        if prev == b'?'
+            && bytes.get(idx as usize) == Some(&b'.') {
                 idx -= 1;
                 continue;
             }
-        }
         break;
     }
 

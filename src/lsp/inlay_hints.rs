@@ -256,13 +256,11 @@ impl<'a> InlayHintsProvider<'a> {
         };
 
         // Skip if the argument is an identifier with the same name as the parameter
-        if arg_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(text) = self.arena.get_identifier_text(arg_idx) {
-                if text == param_name {
+        if arg_node.kind == SyntaxKind::Identifier as u16
+            && let Some(text) = self.arena.get_identifier_text(arg_idx)
+                && text == param_name {
                     return true;
                 }
-            }
-        }
 
         false
     }

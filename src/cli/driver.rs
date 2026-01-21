@@ -269,7 +269,7 @@ pub(crate) fn compile_with_cache_and_changes(
     }
 
     let dependents = cache.collect_dependents(canonical_paths.iter().cloned());
-    cache.invalidate_paths_with_dependents_symbols(canonical_paths.into_iter());
+    cache.invalidate_paths_with_dependents_symbols(canonical_paths);
     compile_inner(
         args,
         cwd,
@@ -325,12 +325,12 @@ fn compile_inner(
             base_dir.join("tests/lib/lib.dom.d.ts"),
         ]
     } else {
-        resolved.lib_files.iter().cloned().collect()
+        resolved.lib_files.to_vec()
     };
 
     if !lib_files_to_bind.is_empty() || !type_files.is_empty() {
         let mut merged = std::collections::BTreeSet::new();
-        merged.extend(file_paths.into_iter());
+        merged.extend(file_paths);
 
         // Only add lib files that actually exist
         for lib_path in lib_files_to_bind {
@@ -860,11 +860,10 @@ fn type_package_candidates(name: &str) -> Vec<String> {
     let normalized = trimmed.replace('\\', "/");
     let mut candidates = Vec::new();
 
-    if let Some(stripped) = normalized.strip_prefix("@types/") {
-        if !stripped.is_empty() {
+    if let Some(stripped) = normalized.strip_prefix("@types/")
+        && !stripped.is_empty() {
             candidates.push(stripped.to_string());
         }
-    }
 
     if !candidates.iter().any(|value| value == &normalized) {
         candidates.push(normalized);
@@ -953,10 +952,10 @@ fn read_source_files(
     }
 
     while let Some(path) = pending.pop_front() {
-        if use_cache {
-            if let (Some(cache), Some(changed_paths)) = (cache, changed_paths) {
-                if !changed_paths.contains(&path) {
-                    if let (Some(_), Some(cached_deps)) =
+        if use_cache
+            && let (Some(cache), Some(changed_paths)) = (cache, changed_paths)
+                && !changed_paths.contains(&path)
+                    && let (Some(_), Some(cached_deps)) =
                         (cache.bind_cache.get(&path), cache.dependencies.get(&path))
                     {
                         dependencies.insert(path.clone(), cached_deps.clone());
@@ -968,9 +967,6 @@ fn read_source_files(
                         }
                         continue;
                     }
-                }
-            }
-        }
 
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
@@ -1043,23 +1039,19 @@ fn collect_module_specifiers(
         let Some(stmt) = arena.get(stmt_idx) else {
             continue;
         };
-        if let Some(import_decl) = arena.get_import_decl(stmt) {
-            if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
+        if let Some(import_decl) = arena.get_import_decl(stmt)
+            && let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
                 specifiers.push((text.to_string(), import_decl.module_specifier));
             }
-        }
         if let Some(export_decl) = arena.get_export_decl(stmt) {
             if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
                 specifiers.push((text.to_string(), export_decl.module_specifier));
-            } else if !export_decl.export_clause.is_none() {
-                if let Some(clause_node) = arena.get(export_decl.export_clause) {
-                    if let Some(import_decl) = arena.get_import_decl(clause_node) {
-                        if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
+            } else if !export_decl.export_clause.is_none()
+                && let Some(clause_node) = arena.get(export_decl.export_clause)
+                    && let Some(import_decl) = arena.get_import_decl(clause_node)
+                        && let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
                             specifiers.push((text.to_string(), import_decl.module_specifier));
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -1134,13 +1126,11 @@ fn collect_export_binding_nodes(
         let mut specifier = arena
             .get_literal_text(export_decl.module_specifier)
             .map(|text| text.to_string());
-        if specifier.is_none() {
-            if let Some(import_decl) = import_decl {
-                if let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
+        if specifier.is_none()
+            && let Some(import_decl) = import_decl
+                && let Some(text) = arena.get_literal_text(import_decl.module_specifier) {
                     specifier = Some(text.to_string());
                 }
-            }
-        }
         let Some(specifier) = specifier else {
             continue;
         };
@@ -1208,24 +1198,22 @@ fn collect_import_local_names(
     let clause_idx = import_decl.import_clause;
     if let Some(clause_node) = arena.get(clause_idx) {
         if let Some(clause) = arena.get_import_clause(clause_node) {
-            if !clause.name.is_none() {
-                if let Some(name) = arena.get_identifier_text(clause.name) {
+            if !clause.name.is_none()
+                && let Some(name) = arena.get_identifier_text(clause.name) {
                     names.push(name.to_string());
                 }
-            }
 
-            if !clause.named_bindings.is_none() {
-                if let Some(bindings_node) = arena.get(clause.named_bindings) {
+            if !clause.named_bindings.is_none()
+                && let Some(bindings_node) = arena.get(clause.named_bindings) {
                     if bindings_node.kind == SyntaxKind::Identifier as u16 {
                         if let Some(name) = arena.get_identifier_text(clause.named_bindings) {
                             names.push(name.to_string());
                         }
                     } else if let Some(named) = arena.get_named_imports(bindings_node) {
-                        if !named.name.is_none() {
-                            if let Some(name) = arena.get_identifier_text(named.name) {
+                        if !named.name.is_none()
+                            && let Some(name) = arena.get_identifier_text(named.name) {
                                 names.push(name.to_string());
                             }
-                        }
                         for &spec_idx in &named.elements.nodes {
                             let Some(spec_node) = arena.get(spec_idx) else {
                                 continue;
@@ -1244,7 +1232,6 @@ fn collect_import_local_names(
                         }
                     }
                 }
-            }
         } else if let Some(name) = arena.get_identifier_text(clause_idx) {
             names.push(name.to_string());
         }
@@ -1298,8 +1285,8 @@ fn resolve_module_specifier(
         ));
     } else if let Some(base_url) = options.base_url.as_ref() {
         allow_node_modules = true;
-        if let Some(paths) = options.paths.as_ref() {
-            if let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier) {
+        if let Some(paths) = options.paths.as_ref()
+            && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier) {
                 for target in &mapping.targets {
                     let substituted = substitute_path_target(target, &wildcard);
                     let path = if Path::new(&substituted).is_absolute() {
@@ -1310,7 +1297,6 @@ fn resolve_module_specifier(
                     candidates.extend(expand_module_path_candidates(&path, options, package_type));
                 }
             }
-        }
 
         if candidates.is_empty() {
             candidates.extend(expand_module_path_candidates(
@@ -1391,11 +1377,10 @@ fn expand_module_path_candidates(
         if matches!(
             resolution,
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-        ) {
-            if let Some(rewritten) = node16_extension_substitution(&base, extension) {
+        )
+            && let Some(rewritten) = node16_extension_substitution(&base, extension) {
                 return rewritten;
             }
-        }
         return vec![base];
     }
 
@@ -1609,10 +1594,9 @@ fn resolve_node_module_specifier(
         // 2. Look for @types package (if not already looking for one)
         // TypeScript looks up @types/foo for 'foo', and @types/scope__pkg for '@scope/pkg'
         if !package_name.starts_with("@types/") {
-            let types_package_name = if package_name.starts_with('@') {
+            let types_package_name = if let Some(scope_pkg) = package_name.strip_prefix('@') {
                 // Scoped package: @scope/pkg -> @types/scope__pkg
                 // Skip the '@' (1 char) and replace '/' with '__'
-                let scope_pkg = &package_name[1..];
                 format!("@types/{}", scope_pkg.replace('/', "__"))
             } else {
                 format!("@types/{}", package_name)
@@ -1657,10 +1641,10 @@ fn resolve_package_imports_specifier(
 
     loop {
         let package_json_path = current.join("package.json");
-        if package_json_path.is_file() {
-            if let Some(package_json) = read_package_json(&package_json_path) {
-                if let Some(imports) = package_json.imports.as_ref() {
-                    if let Some(target) =
+        if package_json_path.is_file()
+            && let Some(package_json) = read_package_json(&package_json_path)
+                && let Some(imports) = package_json.imports.as_ref()
+                    && let Some(target) =
                         resolve_imports_subpath(imports, module_specifier, &conditions)
                     {
                         let package_type = package_type_from_json(Some(&package_json));
@@ -1670,9 +1654,6 @@ fn resolve_package_imports_specifier(
                             return Some(resolved);
                         }
                     }
-                }
-            }
-        }
 
         if current == base_dir {
             break;
@@ -1700,13 +1681,12 @@ fn resolve_package_specifier(
                 Some(value) => format!("./{}", value),
                 None => ".".to_string(),
             };
-            if let Some(target) = resolve_exports_subpath(exports, &subpath_key, conditions) {
-                if let Some(resolved) =
+            if let Some(target) = resolve_exports_subpath(exports, &subpath_key, conditions)
+                && let Some(resolved) =
                     resolve_package_entry(package_root, &target, options, package_type)
                 {
                     return Some(resolved);
                 }
-            }
         }
 
         if let Some(types_versions) = package_json.types_versions.as_ref() {
@@ -2142,11 +2122,10 @@ fn resolve_exports_subpath(
         serde_json::Value::Object(map) => {
             let has_subpath_keys = map.keys().any(|key| key.starts_with('.'));
             if has_subpath_keys {
-                if let Some(value) = map.get(subpath_key) {
-                    if let Some(target) = resolve_exports_target(value, conditions) {
+                if let Some(value) = map.get(subpath_key)
+                    && let Some(target) = resolve_exports_target(value, conditions) {
                         return Some(target);
                     }
-                }
 
                 let mut best_match: Option<(usize, String, &serde_json::Value)> = None;
                 for (key, value) in map {
@@ -2163,11 +2142,10 @@ fn resolve_exports_subpath(
                     }
                 }
 
-                if let Some((_, wildcard, value)) = best_match {
-                    if let Some(target) = resolve_exports_target(value, conditions) {
+                if let Some((_, wildcard, value)) = best_match
+                    && let Some(target) = resolve_exports_target(value, conditions) {
                         return Some(apply_exports_subpath(&target, &wildcard));
                     }
-                }
 
                 None
             } else if subpath_key == "." {
@@ -2193,11 +2171,10 @@ fn resolve_exports_target(target: &serde_json::Value, conditions: &[&str]) -> Op
         }
         serde_json::Value::Object(map) => {
             for condition in conditions {
-                if let Some(value) = map.get(*condition) {
-                    if let Some(resolved) = resolve_exports_target(value, conditions) {
+                if let Some(value) = map.get(*condition)
+                    && let Some(resolved) = resolve_exports_target(value, conditions) {
                         return Some(resolved);
                     }
-                }
             }
             None
         }
@@ -2238,11 +2215,10 @@ fn resolve_imports_subpath(
         }
     }
 
-    if let Some((_, wildcard, value)) = best_match {
-        if let Some(target) = resolve_exports_target(value, conditions) {
+    if let Some((_, wildcard, value)) = best_match
+        && let Some(target) = resolve_exports_target(value, conditions) {
             return Some(apply_exports_subpath(&target, &wildcard));
         }
-    }
 
     None
 }
@@ -2417,11 +2393,10 @@ fn collect_diagnostics(
                 &mut resolution_cache,
             ) {
                 let canonical = canonicalize_or_owned(&resolved);
-                if let Some(target_file_name) = canonical_to_file_name.get(&canonical) {
-                    if let Some(exports) = binder.module_exports.get(target_file_name).cloned() {
+                if let Some(target_file_name) = canonical_to_file_name.get(&canonical)
+                    && let Some(exports) = binder.module_exports.get(target_file_name).cloned() {
                         binder.module_exports.insert(specifier.clone(), exports);
                     }
-                }
             }
         }
         let cached = cache
@@ -2697,13 +2672,12 @@ fn collect_export_signatures(
             continue;
         }
 
-        if let Some(export_assignment) = arena.get_export_assignment(stmt) {
-            if !export_assignment.expression.is_none() {
+        if let Some(export_assignment) = arena.get_export_assignment(stmt)
+            && !export_assignment.expression.is_none() {
                 let type_id = checker.get_type_of_node(export_assignment.expression);
                 let type_str = formatter.format(type_id);
                 signatures.push(format!("export=:{type_str}"));
             }
-        }
     }
 }
 
@@ -2911,11 +2885,10 @@ fn find_local_declaration_in_node(
     };
 
     if let Some(var_decl) = arena.get_variable_declaration(node) {
-        if let Some(decl_name) = arena.get_identifier_text(var_decl.name) {
-            if decl_name == name {
+        if let Some(decl_name) = arena.get_identifier_text(var_decl.name)
+            && decl_name == name {
                 return Some(node_idx);
             }
-        }
         return None;
     }
 
@@ -2942,47 +2915,42 @@ fn find_local_declaration_in_node(
     }
 
     if let Some(func) = arena.get_function(node) {
-        if let Some(decl_name) = arena.get_identifier_text(func.name) {
-            if decl_name == name {
+        if let Some(decl_name) = arena.get_identifier_text(func.name)
+            && decl_name == name {
                 return Some(node_idx);
             }
-        }
         return None;
     }
 
     if let Some(class) = arena.get_class(node) {
-        if let Some(decl_name) = arena.get_identifier_text(class.name) {
-            if decl_name == name {
+        if let Some(decl_name) = arena.get_identifier_text(class.name)
+            && decl_name == name {
                 return Some(node_idx);
             }
-        }
         return None;
     }
 
     if let Some(interface) = arena.get_interface(node) {
-        if let Some(decl_name) = arena.get_identifier_text(interface.name) {
-            if decl_name == name {
+        if let Some(decl_name) = arena.get_identifier_text(interface.name)
+            && decl_name == name {
                 return Some(node_idx);
             }
-        }
         return None;
     }
 
     if let Some(type_alias) = arena.get_type_alias(node) {
-        if let Some(decl_name) = arena.get_identifier_text(type_alias.name) {
-            if decl_name == name {
+        if let Some(decl_name) = arena.get_identifier_text(type_alias.name)
+            && decl_name == name {
                 return Some(node_idx);
             }
-        }
         return None;
     }
 
     if let Some(enum_decl) = arena.get_enum(node) {
-        if let Some(decl_name) = arena.get_identifier_text(enum_decl.name) {
-            if decl_name == name {
+        if let Some(decl_name) = arena.get_identifier_text(enum_decl.name)
+            && decl_name == name {
                 return Some(node_idx);
             }
-        }
         return None;
     }
 
@@ -2990,11 +2958,10 @@ fn find_local_declaration_in_node(
         let decl_name = arena
             .get_identifier_text(module_decl.name)
             .or_else(|| arena.get_literal_text(module_decl.name));
-        if let Some(decl_name) = decl_name {
-            if decl_name == name {
+        if let Some(decl_name) = decl_name
+            && decl_name == name {
                 return Some(node_idx);
             }
-        }
     }
 
     None
@@ -3083,11 +3050,10 @@ fn emit_outputs(
 
     for file in &program.files {
         let input_path = PathBuf::from(&file.file_name);
-        if let Some(dirty_paths) = dirty_paths {
-            if !dirty_paths.contains(&input_path) {
+        if let Some(dirty_paths) = dirty_paths
+            && !dirty_paths.contains(&input_path) {
                 continue;
             }
-        }
 
         if let Some(js_path) = js_output_path(base_dir, root_dir, out_dir, options.jsx, &input_path)
         {
@@ -3117,15 +3083,14 @@ fn emit_outputs(
             let mut contents = printer.take_output();
             let mut map_output = None;
 
-            if let Some((map_path, map_name, _)) = map_info {
-                if let Some(map_json) = map_json {
+            if let Some((map_path, map_name, _)) = map_info
+                && let Some(map_json) = map_json {
                     append_source_mapping_url(&mut contents, &map_name, new_line);
                     map_output = Some(OutputFile {
                         path: map_path,
                         contents: map_json,
                     });
                 }
-            }
 
             outputs.push(OutputFile {
                 path: js_path,
@@ -3166,15 +3131,14 @@ fn emit_outputs(
                     .and_then(|_| emitter.generate_source_map_json());
                 let mut map_output = None;
 
-                if let Some((map_path, map_name, _)) = map_info {
-                    if let Some(map_json) = map_json {
+                if let Some((map_path, map_name, _)) = map_info
+                    && let Some(map_json) = map_json {
                         append_source_mapping_url(&mut contents, &map_name, new_line);
                         map_output = Some(OutputFile {
                             path: map_path,
                             contents: map_json,
                         });
                     }
-                }
 
                 outputs.push(OutputFile {
                     path: dts_path,
@@ -3270,11 +3234,10 @@ fn declaration_output_path(
 }
 
 fn output_relative_path(base_dir: &Path, root_dir: Option<&Path>, input_path: &Path) -> PathBuf {
-    if let Some(root_dir) = root_dir {
-        if let Ok(relative) = input_path.strip_prefix(root_dir) {
+    if let Some(root_dir) = root_dir
+        && let Ok(relative) = input_path.strip_prefix(root_dir) {
             return relative.to_path_buf();
         }
-    }
 
     input_path
         .strip_prefix(base_dir)
@@ -3359,10 +3322,7 @@ pub(crate) fn normalize_root_dir(base_dir: &Path, dir: Option<PathBuf>) -> Optio
 }
 
 fn normalize_type_roots(base_dir: &Path, roots: Option<Vec<PathBuf>>) -> Option<Vec<PathBuf>> {
-    let roots = match roots {
-        Some(roots) => roots,
-        None => return None,
-    };
+    let roots = roots?;
     let mut normalized = Vec::new();
     for root in roots {
         let resolved = if root.is_absolute() {

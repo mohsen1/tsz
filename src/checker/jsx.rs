@@ -316,14 +316,14 @@ impl<'a> JsxChecker<'a> {
         };
 
         // Get opening element tag name
-        if let Some(opening_node) = self.arena.get(jsx.opening_element) {
-            if let Some(opening) = self.arena.get_jsx_opening(opening_node) {
+        if let Some(opening_node) = self.arena.get(jsx.opening_element)
+            && let Some(opening) = self.arena.get_jsx_opening(opening_node) {
                 let opening_tag = self.get_tag_name(opening.tag_name);
                 let opening_tag_clone = opening_tag.clone();
 
                 // Check closing element tag matches
-                if let Some(closing_node) = self.arena.get(jsx.closing_element) {
-                    if let Some(closing) = self.arena.get_jsx_closing(closing_node) {
+                if let Some(closing_node) = self.arena.get(jsx.closing_element)
+                    && let Some(closing) = self.arena.get_jsx_closing(closing_node) {
                         let closing_tag = self.get_tag_name(closing.tag_name);
 
                         if opening_tag != closing_tag {
@@ -334,7 +334,6 @@ impl<'a> JsxChecker<'a> {
                             });
                         }
                     }
-                }
 
                 // Check attributes
                 self.check_jsx_attributes(
@@ -343,7 +342,6 @@ impl<'a> JsxChecker<'a> {
                     errors,
                 );
             }
-        }
 
         // Check children
         for &child_idx in &jsx.children.nodes {
@@ -399,9 +397,9 @@ impl<'a> JsxChecker<'a> {
                 continue;
             };
 
-            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
-                if let Some(attr) = self.arena.get_jsx_attribute(attr_node) {
-                    if let Some(name) = self.get_tag_name(attr.name) {
+            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+                && let Some(attr) = self.arena.get_jsx_attribute(attr_node)
+                    && let Some(name) = self.get_tag_name(attr.name) {
                         // Check for duplicate attributes
                         if seen_keys.contains(&name) {
                             errors.push(JsxError::DuplicateAttribute {
@@ -411,8 +409,6 @@ impl<'a> JsxChecker<'a> {
                         }
                         seen_keys.insert(name);
                     }
-                }
-            }
         }
     }
 

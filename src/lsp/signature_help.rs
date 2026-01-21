@@ -160,7 +160,7 @@ impl<'a> SignatureHelpProvider<'a> {
         position: Position,
         type_cache: &mut Option<crate::checker::TypeCache>,
         scope_cache: Option<&mut ScopeCache>,
-        mut scope_stats: Option<&mut ScopeCacheStats>,
+        scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<SignatureHelp> {
         let offset = self
             .line_map
@@ -182,7 +182,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 root,
                 call_expr.expression,
                 scope_cache,
-                scope_stats.as_deref_mut(),
+                scope_stats,
             )
         } else {
             walker.resolve_node(root, call_expr.expression)
@@ -277,10 +277,9 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut depth = 0;
         while !current.is_none() && depth < 100 {
             if let Some(node) = self.arena.get(current) {
-                if node.kind == syntax_kind_ext::CALL_EXPRESSION
-                    || node.kind == syntax_kind_ext::NEW_EXPRESSION
-                {
-                    if let Some(data) = self.arena.get_call_expr(node) {
+                if (node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    || node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                    && let Some(data) = self.arena.get_call_expr(node) {
                         let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
                             CallKind::New
                         } else {
@@ -288,7 +287,6 @@ impl<'a> SignatureHelpProvider<'a> {
                         };
                         return Some((current, data, kind));
                     }
-                }
 
                 // Move up to parent
                 if let Some(extended) = self.arena.get_extended(current) {
@@ -346,8 +344,8 @@ impl<'a> SignatureHelpProvider<'a> {
             }
         }
 
-        if let Some(&last_arg_idx) = args.nodes.last() {
-            if let Some(last_arg_node) = self.arena.get(last_arg_idx) {
+        if let Some(&last_arg_idx) = args.nodes.last()
+            && let Some(last_arg_node) = self.arena.get(last_arg_idx) {
                 let call_end = self
                     .arena
                     .get(call_idx)
@@ -360,7 +358,6 @@ impl<'a> SignatureHelpProvider<'a> {
                     return args.nodes.len() as u32;
                 }
             }
-        }
 
         // Cursor is after all arguments - return the last argument index.
         (args.nodes.len().saturating_sub(1)) as u32
@@ -666,11 +663,10 @@ impl<'a> SignatureHelpProvider<'a> {
             let Some(param_doc) = parsed.params.get(name) else {
                 continue;
             };
-            if let Some(param_info) = sig.info.parameters.get_mut(idx) {
-                if overwrite || param_info.documentation.is_none() {
+            if let Some(param_info) = sig.info.parameters.get_mut(idx)
+                && (overwrite || param_info.documentation.is_none()) {
                     param_info.documentation = Some(param_doc.clone());
                 }
-            }
         }
     }
 
@@ -1118,11 +1114,10 @@ impl<'a> SignatureHelpProvider<'a> {
                 if name_node.kind == SyntaxKind::ThisKeyword as u16 {
                     continue;
                 }
-                if let Some(ident) = self.arena.get_identifier(name_node) {
-                    if ident.escaped_text == "this" {
+                if let Some(ident) = self.arena.get_identifier(name_node)
+                    && ident.escaped_text == "this" {
                         continue;
                     }
-                }
             }
 
             total_params += 1;

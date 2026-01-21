@@ -175,8 +175,8 @@ impl<'a> Printer<'a> {
             }
             first = false;
 
-            if let Some(param_node) = self.arena.get(param_idx) {
-                if let Some(param) = self.arena.get_parameter(param_node) {
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node) {
                     if param.dot_dot_dot_token {
                         self.write("...");
                     }
@@ -187,7 +187,6 @@ impl<'a> Printer<'a> {
                         self.emit(param.initializer);
                     }
                 }
-            }
         }
     }
 

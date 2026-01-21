@@ -269,13 +269,12 @@ impl<'a> Printer<'a> {
                     self.emit_es5_binding_element(elem_idx, temp_name);
                 }
             }
-        } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            if let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
+        } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            && let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
                 for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
                     self.emit_es5_array_binding_element(elem_idx, temp_name, i);
                 }
             }
-        }
     }
 
     pub(super) fn emit_param_prologue(&mut self, transforms: &ParamTransformPlan) {
@@ -703,13 +702,12 @@ impl<'a> Printer<'a> {
             } else {
                 elem.name
             };
-            if let Some(key_node) = self.arena.get(key_idx) {
-                if key_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || key_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            if let Some(key_node) = self.arena.get(key_idx)
+                && (key_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || key_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                 {
                     continue;
                 }
-            }
             props.push(key_idx);
         }
         props

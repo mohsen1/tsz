@@ -328,10 +328,10 @@ impl<'a> FoldingRangeProvider<'a> {
         // Get line positions
         let start_pos = self
             .line_map
-            .offset_to_position(lo as u32, self.source_text);
+            .offset_to_position(lo, self.source_text);
         let end_pos = self
             .line_map
-            .offset_to_position(hi.saturating_sub(1) as u32, self.source_text);
+            .offset_to_position(hi.saturating_sub(1), self.source_text);
 
         (start_pos.line, end_pos.line)
     }

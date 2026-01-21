@@ -128,11 +128,10 @@ impl<'a> EnumEvaluator<'a> {
         };
 
         // Get enum name
-        if let Some(name_node) = self.arena.get(enum_data.name) {
-            if let Some(ident) = self.arena.get_identifier(name_node) {
+        if let Some(name_node) = self.arena.get(enum_data.name)
+            && let Some(ident) = self.arena.get_identifier(name_node) {
                 self.set_current_enum(&ident.escaped_text);
             }
-        }
 
         // Track the last numeric value for auto-increment
         // None means we haven't seen any numeric value yet (start at 0)
@@ -297,11 +296,10 @@ impl<'a> EnumEvaluator<'a> {
             }
         }
         // Handle legacy octal (starting with 0)
-        else if text.starts_with('0') && text.len() > 1 && !text.contains('.') {
-            if let Ok(val) = i64::from_str_radix(&text[1..], 8) {
+        else if text.starts_with('0') && text.len() > 1 && !text.contains('.')
+            && let Ok(val) = i64::from_str_radix(&text[1..], 8) {
                 return EnumValue::Number(val);
             }
-        }
 
         // Try parsing as decimal integer
         if let Ok(val) = text.parse::<i64>() {
@@ -408,13 +406,11 @@ impl<'a> EnumEvaluator<'a> {
         };
 
         // Check if this is a self-reference (E.A within enum E)
-        if let Some(ref current_enum) = self.current_enum_name {
-            if &obj_name == current_enum {
-                if let Some(value) = self.member_values.get(&prop_name) {
+        if let Some(ref current_enum) = self.current_enum_name
+            && &obj_name == current_enum
+                && let Some(value) = self.member_values.get(&prop_name) {
                     return value.clone();
                 }
-            }
-        }
 
         EnumValue::Computed
     }
@@ -442,14 +438,12 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&enum_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut evaluator = EnumEvaluator::new(&parser.arena);
                     return evaluator.evaluate_enum(enum_idx);
                 }
-            }
-        }
         FxHashMap::default()
     }
 

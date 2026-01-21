@@ -86,11 +86,10 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
                 continue;
             }
 
-            if let Some(exclude) = exclude_set.as_ref() {
-                if exclude.is_match(rel_path) {
+            if let Some(exclude) = exclude_set.as_ref()
+                && exclude.is_match(rel_path) {
                     continue;
                 }
-            }
 
             // Avoid canonicalizing unless following links; canonicalizing can change
             // the base prefix (e.g., /var -> /private/var on macOS) which breaks
@@ -134,13 +133,11 @@ fn build_exclude_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
         ),
     };
 
-    if options.exclude.is_none() {
-        if let Some(out_dir) = options.out_dir.as_ref() {
-            if let Some(out_pattern) = path_to_pattern(&options.base_dir, out_dir) {
+    if options.exclude.is_none()
+        && let Some(out_dir) = options.out_dir.as_ref()
+            && let Some(out_pattern) = path_to_pattern(&options.base_dir, out_dir) {
                 patterns.push(out_pattern);
             }
-        }
-    }
 
     expand_exclude_patterns(&patterns)
 }
