@@ -25,6 +25,7 @@ pub mod async_es5;
 pub mod block_scoping_es5;
 pub mod class_es5;
 pub mod destructuring_es5;
+pub mod enum_es5_ir;
 mod emit_utils;
 pub mod enum_es5;
 pub mod es5;
@@ -32,6 +33,8 @@ pub mod helpers;
 pub mod ir;
 pub mod ir_printer;
 pub mod module_commonjs;
+pub mod module_commonjs_ir;
+pub mod namespace_es5_ir;
 pub mod namespace_es5;
 pub mod private_fields_es5;
 pub mod spread_es5;
@@ -41,3 +44,6 @@ mod module_commonjs_tests;
 
 #[cfg(test)]
 mod ir_tests;
+
+#[cfg(test)]
+mod ir_transforms_tests;

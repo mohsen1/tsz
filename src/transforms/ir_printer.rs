@@ -697,7 +697,244 @@ impl<'a> IRPrinter<'a> {
                 }
                 self.write("/* ASTRef */");
             }
+
+            // CommonJS Module Transform Specific
+            IRNode::UseStrict => {
+                self.write("\"use strict\";");
+            }
+            IRNode::EsesModuleMarker => {
+                self.write("Object.defineProperty(exports, \"__esModule\", { value: true });");
+            }
+            IRNode::ExportInit { name } => {
+                self.write("exports.");
+                self.write(name);
+                self.write(" = void 0;");
+            }
+            IRNode::RequireStatement {
+                var_name,
+                module_spec,
+            } => {
+                self.write("var ");
+                self.write(var_name);
+                self.write(" = require(\"");
+                self.write(module_spec);
+                self.write("\");");
+            }
+            IRNode::DefaultImport {
+                var_name,
+                module_var,
+            } => {
+                self.write("var ");
+                self.write(var_name);
+                self.write(" = ");
+                self.write(module_var);
+                self.write(".default;");
+            }
+            IRNode::NamespaceImport {
+                var_name,
+                module_var,
+            } => {
+                self.write("var ");
+                self.write(var_name);
+                self.write(" = __importStar(");
+                self.write(module_var);
+                self.write(");");
+            }
+            IRNode::NamedImport {
+                var_name,
+                module_var,
+                import_name,
+            } => {
+                self.write("var ");
+                self.write(var_name);
+                self.write(" = ");
+                self.write(module_var);
+                self.write(".");
+                self.write(import_name);
+                self.write(";");
+            }
+            IRNode::ExportAssignment { name } => {
+                self.write("exports.");
+                self.write(name);
+                self.write(" = ");
+                self.write(name);
+                self.write(";");
+            }
+            IRNode::ReExportProperty {
+                export_name,
+                module_var,
+                import_name,
+            } => {
+                self.write("Object.defineProperty(exports, \"");
+                self.write(export_name);
+                self.write("\", { enumerable: true, get: function () { return ");
+                self.write(module_var);
+                self.write(".");
+                self.write(import_name);
+                self.write("; } });");
+            }
+
+            // Enum Transform Specific
+            IRNode::EnumIIFE { name, members } => {
+                // var E;
+                self.write("var ");
+                self.write(name);
+                self.write(";");
+                self.write_line();
+                self.write("(function (");
+                self.write(name);
+                self.write(") {");
+                self.write_line();
+                self.increase_indent();
+
+                // Emit members
+                for member in members {
+                    self.emit_enum_member(name, member);
+                    self.write_line();
+                }
+
+                self.decrease_indent();
+                self.write("}(");
+                self.write(name);
+                self.write(" || (");
+                self.write(name);
+                self.write(" = {})));");
+            }
+
+            // Namespace Transform Specific
+            IRNode::NamespaceIIFE {
+                name_parts,
+                body,
+                is_exported,
+                attach_to_exports,
+            } => {
+                self.emit_namespace_iife(&name_parts, 0, body, *is_exported, *attach_to_exports);
+            }
+            IRNode::NamespaceExport { namespace, name } => {
+                self.write(namespace);
+                self.write(".");
+                self.write(name);
+                self.write(" = ");
+                self.write(name);
+                self.write(";");
+            }
         }
+    }
+
+    fn emit_enum_member(&mut self, enum_name: &str, member: &EnumMember) {
+        self.write(enum_name);
+
+        match &member.value {
+            EnumMemberValue::Auto(value) | EnumMemberValue::Numeric(value) => {
+                // Numeric enum with reverse mapping: E[E["A"] = 0] = "A";
+                self.write("[");
+                self.write(enum_name);
+                self.write("[\"");
+                self.write(&member.name);
+                self.write("\"] = ");
+                self.write(&value.to_string());
+                self.write("] = \"");
+                self.write(&member.name);
+                self.write("\";");
+            }
+            EnumMemberValue::String(s) => {
+                // String enum, no reverse mapping: E["A"] = "val";
+                self.write("[\"");
+                self.write(&member.name);
+                self.write("\"] = \"");
+                self.write_escaped(s);
+                self.write("\";");
+            }
+            EnumMemberValue::Computed(expr) => {
+                // Computed enum with reverse mapping
+                self.write("[");
+                self.write(enum_name);
+                self.write("[\"");
+                self.write(&member.name);
+                self.write("\"] = ");
+                self.emit_node(expr);
+                self.write("] = \"");
+                self.write(&member.name);
+                self.write("\";");
+            }
+        }
+    }
+
+    fn emit_namespace_iife(
+        &mut self,
+        name_parts: &[String],
+        index: usize,
+        body: &[IRNode],
+        is_exported: bool,
+        attach_to_exports: bool,
+    ) {
+        let current_name = &name_parts[index];
+        let is_last = index == name_parts.len() - 1;
+
+        // var name;
+        self.write("var ");
+        self.write(current_name);
+        self.write(";");
+        self.write_line();
+
+        // Open IIFE
+        self.write("(function (");
+        self.write(current_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        if is_last {
+            // Emit body
+            for stmt in body {
+                self.write_indent();
+                self.emit_node(stmt);
+                self.write_line();
+            }
+        } else {
+            // var next_name;
+            let next_name = &name_parts[index + 1];
+            self.write_indent();
+            self.write("var ");
+            self.write(next_name);
+            self.write(";");
+            self.write_line();
+            // Recurse
+            self.emit_namespace_iife(name_parts, index + 1, body, is_exported, attach_to_exports);
+        }
+
+        self.decrease_indent();
+        self.write("}(");
+
+        // Argument
+        if index == 0 {
+            self.write(current_name);
+            if is_exported && attach_to_exports {
+                self.write(" = exports.");
+                self.write(current_name);
+                self.write(" || (exports.");
+                self.write(current_name);
+                self.write(" = {})");
+            } else {
+                self.write(" || (");
+                self.write(current_name);
+                self.write(" = {})");
+            }
+        } else {
+            let parent_name = &name_parts[index - 1];
+            self.write(current_name);
+            self.write(" = ");
+            self.write(parent_name);
+            self.write(".");
+            self.write(current_name);
+            self.write(" || (");
+            self.write(parent_name);
+            self.write(".");
+            self.write(current_name);
+            self.write(" = {})");
+        }
+
+        self.write(");");
     }
 
     fn emit_block(&mut self, stmts: &[IRNode]) {

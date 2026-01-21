@@ -335,6 +335,69 @@ pub enum IRNode {
 
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
+
+    // =========================================================================
+    // CommonJS Module Transform Specific
+    // =========================================================================
+    /// "use strict";
+    UseStrict,
+
+    /// Object.defineProperty(exports, "__esModule", { value: true });
+    EsesModuleMarker,
+
+    /// exports.name = void 0; (export initialization)
+    ExportInit { name: String },
+
+    /// var name = require("module");
+    RequireStatement {
+        var_name: String,
+        module_spec: String,
+    },
+
+    /// var name = module.default;
+    DefaultImport { var_name: String, module_var: String },
+
+    /// var name = __importStar(module);
+    NamespaceImport { var_name: String, module_var: String },
+
+    /// var name = module.prop;
+    NamedImport { var_name: String, module_var: String, import_name: String },
+
+    /// exports.name = name;
+    ExportAssignment { name: String },
+
+    /// Object.defineProperty(exports, "name", { enumerable: true, get: function() { return module.prop; } });
+    ReExportProperty {
+        export_name: String,
+        module_var: String,
+        import_name: String,
+    },
+
+    // =========================================================================
+    // Enum Transform Specific
+    // =========================================================================
+    /// ES5 Enum IIFE: var E; (function(E) { ... })(E || (E = {}));
+    EnumIIFE {
+        name: String,
+        members: Vec<EnumMember>,
+    },
+
+    // =========================================================================
+    // Namespace Transform Specific
+    // =========================================================================
+    /// ES5 Namespace IIFE
+    NamespaceIIFE {
+        name_parts: Vec<String>,
+        body: Vec<IRNode>,
+        is_exported: bool,
+        attach_to_exports: bool,
+    },
+
+    /// namespace.export = value;
+    NamespaceExport {
+        namespace: String,
+        name: String,
+    },
 }
 
 /// Property in an object literal
@@ -407,6 +470,26 @@ pub struct IRPropertyDescriptor {
 pub struct IRGeneratorCase {
     pub label: u32,
     pub statements: Vec<IRNode>,
+}
+
+/// Enum member (for enum transform)
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    pub name: String,
+    pub value: EnumMemberValue,
+}
+
+/// Enum member value
+#[derive(Debug, Clone)]
+pub enum EnumMemberValue {
+    /// Auto-incremented numeric value
+    Auto(i64),
+    /// Explicit numeric value
+    Numeric(i64),
+    /// String value
+    String(String),
+    /// Computed value (IR expression)
+    Computed(IRNode),
 }
 
 // =========================================================================
@@ -531,6 +614,23 @@ impl IRNode {
     /// Create an expression statement
     pub fn expr_stmt(expr: IRNode) -> Self {
         IRNode::ExpressionStatement(Box::new(expr))
+    }
+
+    /// Create a "use strict" directive
+    pub fn use_strict() -> Self {
+        IRNode::UseStrict
+    }
+
+    /// Create an ES module marker
+    pub fn es_module_marker() -> Self {
+        IRNode::EsesModuleMarker
+    }
+
+    /// Create an export assignment
+    pub fn export_assign(name: impl Into<String>) -> Self {
+        IRNode::ExportAssignment {
+            name: name.into(),
+        }
     }
 }
 
