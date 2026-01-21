@@ -208,7 +208,7 @@ impl SourceWriter {
     }
 
     /// Write an unsigned integer without allocating.
-    pub fn write_usize(&mut self, mut value: usize) {
+    pub fn write_usize(&mut self, value: usize) {
         self.ensure_indent();
 
         self.raw_write_usize_digits(value);

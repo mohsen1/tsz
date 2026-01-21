@@ -379,7 +379,7 @@ impl<'a> FlowAnalyzer<'a> {
             };
 
             // Store the result
-            let changed = if let Some(&existing) = results.get(&current_flow) {
+            let _changed = if let Some(&existing) = results.get(&current_flow) {
                 existing != result_type
             } else {
                 true
@@ -501,9 +501,9 @@ impl<'a> FlowAnalyzer<'a> {
         current_type: TypeId,
         flow: &FlowNode,
         results: &FxHashMap<FlowNodeId, TypeId>,
-        worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
-        in_worklist: &mut FxHashSet<FlowNodeId>,
-        visited: &FxHashSet<FlowNodeId>,
+        _worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
+        _in_worklist: &mut FxHashSet<FlowNodeId>,
+        _visited: &FxHashSet<FlowNodeId>,
     ) -> TypeId {
         let pre_type = if let Some(&ant) = flow.antecedent.first() {
             *results.get(&ant).unwrap_or(&current_type)

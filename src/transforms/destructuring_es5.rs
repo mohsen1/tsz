@@ -200,8 +200,6 @@ impl<'a> ES5DestructuringTransformer<'a> {
             // Handle binding element
             if element_node.kind == syntax_kind_ext::BINDING_ELEMENT {
                 if let Some(binding_elem) = self.arena.get_binding_element(element_node) {
-                    let element_source = format!("{}[{}]", source, index);
-
                     // Check for rest pattern
                     if binding_elem.dot_dot_dot_token {
                         // Rest: ...rest -> rest = source.slice(index)
