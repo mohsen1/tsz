@@ -3388,7 +3388,6 @@ class SpreadBuilder<T extends object> {
 /// NOTE: Currently ignored - ES5 array spread downleveling is not fully implemented.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread() {
     let source = "const combined = [...arr1, ...arr2, 42];";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4333,7 +4332,6 @@ fn test_parity_es5_rest_params_function() {
 /// NOTE: Currently ignored - see `test_parity_es5_array_spread`.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_mixed() {
     let source = "const arr = [1, ...middle, 2, ...end, 3];";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4374,7 +4372,6 @@ fn test_parity_es5_array_spread_mixed() {
 /// NOTE: Currently ignored - see `test_parity_es5_array_spread`.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_literal_typed() {
     let source = r#"
 const numbers: number[] = [1, 2, 3];
@@ -4648,7 +4645,6 @@ function createWithDefaults<T>(factory: Factory<T>): T {
 /// NOTE: Currently ignored - see `test_parity_es5_array_spread`.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_mixed_complex() {
     let source = r#"
 type Item = { id: number; name: string };

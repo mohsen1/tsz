@@ -1,6 +1,6 @@
 use super::*;
 use crate::solver::{
-    AssignabilityChecker, CompatChecker, ConditionalType, evaluate_conditional,
+    AssignabilityChecker, CompatChecker, ConditionalType,
     infer_generic_function,
 };
 
@@ -5808,7 +5808,7 @@ fn test_generic_multiple_params_with_defaults() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let var_t = ctx.fresh_type_param(t_name);
+    let _var_t = ctx.fresh_type_param(t_name);
     let var_u = ctx.fresh_type_param(u_name);
 
     // Only U has a lower bound
@@ -7508,7 +7508,7 @@ fn test_named_tuple_with_optional() {
     // Create named tuple with optional element
     let x_name = interner.intern_string("x");
     let y_name = interner.intern_string("y");
-    let named_tuple = interner.tuple(vec![
+    let _named_tuple = interner.tuple(vec![
         TupleElement {
             type_id: TypeId::STRING,
             name: Some(x_name),
@@ -7593,7 +7593,7 @@ fn test_named_tuple_mixed_named_unnamed() {
 
     // Create mixed tuple
     let x_name = interner.intern_string("x");
-    let mixed_tuple = interner.tuple(vec![
+    let _mixed_tuple = interner.tuple(vec![
         TupleElement {
             type_id: TypeId::STRING,
             name: Some(x_name),
@@ -14458,7 +14458,7 @@ fn test_conditional_type_inference_basic() {
         is_method: false,
     }]);
 
-    let cond = interner.conditional(ConditionalType {
+    let _cond = interner.conditional(ConditionalType {
         check_type: t_type,
         extends_type: TypeId::STRING,
         true_type: object_t,
@@ -14602,7 +14602,7 @@ fn test_variance_computation_invariant() {
         },
     ]);
 
-    let (covariant, contravariant, invariant, bivariant) = ctx.compute_variance(rw_type, t_name);
+    let (covariant, contravariant, _invariant, _bivariant) = ctx.compute_variance(rw_type, t_name);
 
     // Should be marked as invariant since it appears in both positions
     assert!(covariant > 0);
@@ -14664,7 +14664,7 @@ fn test_strengthen_constraints() {
         constraint: None,
         default: None,
     }));
-    let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let _u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -14812,7 +14812,7 @@ fn test_complex_generic_inference() {
     ctx.add_lower_bound(var_u, TypeId::NUMBER);
 
     // Also U is constrained by T through the function parameter
-    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let _t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,

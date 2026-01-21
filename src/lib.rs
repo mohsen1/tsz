@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use wasm_bindgen::prelude::*;
 
 // String interning for identifier deduplication (Performance optimization)

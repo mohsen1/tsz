@@ -6170,7 +6170,7 @@ fn test_array_element_type_non_array_returns_error() {
     let interner = TypeInterner::new();
 
     // Create a property access evaluator (needed to call array_element_type)
-    let mut evaluator = PropertyAccessEvaluator::new(&interner);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
 
     // Try to get element type of a non-array type (e.g., a number)
     let number_type = TypeId::NUMBER;

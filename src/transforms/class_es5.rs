@@ -1413,12 +1413,12 @@ impl<'a> ClassES5Emitter<'a> {
         // Check if accessor body is empty
         let (body_is_empty, body_is_single_line) = if !accessor_data.body.is_none() {
             let body_node = self.arena.get(accessor_data.body);
-            let is_empty = body_node.map_or(true, |n| {
+            let is_empty = body_node.is_none_or(|n| {
                 self.arena
                     .get_block(n)
-                    .map_or(true, |b| b.statements.nodes.is_empty())
+                    .is_none_or(|b| b.statements.nodes.is_empty())
             });
-            let is_single_line = body_node.map_or(false, |n| self.is_single_line_block(n));
+            let is_single_line = body_node.is_some_and(|n| self.is_single_line_block(n));
             (is_empty, is_single_line)
         } else {
             (true, false)
@@ -3547,7 +3547,7 @@ impl<'a> ClassES5Emitter<'a> {
                     let has_spread = arr.elements.nodes.iter().any(|&elem_idx| {
                         self.arena
                             .get(elem_idx)
-                            .map_or(false, |n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT)
                     });
 
                     if has_spread {
@@ -3820,7 +3820,7 @@ impl<'a> ClassES5Emitter<'a> {
             let is_spread = self
                 .arena
                 .get(elem_idx)
-                .map_or(false, |n| n.kind == syntax_kind_ext::SPREAD_ELEMENT);
+                .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ELEMENT);
 
             if is_spread {
                 // Flush current group first

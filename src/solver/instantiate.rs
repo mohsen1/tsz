@@ -114,7 +114,7 @@ impl<'a> TypeInstantiator<'a> {
     }
 
     fn is_shadowed(&self, name: Atom) -> bool {
-        self.shadowed.iter().any(|&shadowed| shadowed == name)
+        self.shadowed.contains(&name)
     }
 
     /// Apply the substitution to a type, returning the instantiated type.

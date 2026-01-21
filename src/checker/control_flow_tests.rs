@@ -1387,7 +1387,7 @@ x = "assigned";
 
     // The IIFE call expression statement should be at index 2
     let iife_stmt_idx = *source_file.statements.nodes.get(2).expect("IIFE statement");
-    let iife_stmt = arena.get(iife_stmt_idx).expect("IIFE statement node");
+    let _iife_stmt = arena.get(iife_stmt_idx).expect("IIFE statement node");
 
     // Verify the IIFE statement exists and has flow recorded
     assert!(!iife_stmt_idx.is_none(), "IIFE statement should exist");
@@ -2572,7 +2572,7 @@ class Foo {
 fn test_ts2454_variable_used_before_assigned() {
     use crate::binder::BinderState;
     use crate::checker::CheckerState;
-    use crate::interner::Atom;
+    
     use crate::parser::ParserState;
 
     let source = r#"

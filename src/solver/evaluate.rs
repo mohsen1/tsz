@@ -143,7 +143,7 @@ const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
 const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
 
 fn is_member(name: &str, list: &[&str]) -> bool {
-    list.iter().any(|&item| item == name)
+    list.contains(&name)
 }
 
 impl<'a> TypeEvaluator<'a, NoopResolver> {
@@ -1666,9 +1666,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn tuple_index_literal(&self, elements: &[TupleElement], idx: usize) -> Option<TypeId> {
-        let mut logical_idx = 0usize;
-
-        for element in elements {
+        for (logical_idx, element) in elements.iter().enumerate() {
             if element.rest {
                 match self.interner.lookup(element.type_id) {
                     Some(TypeKey::Tuple(rest_elements)) => {
@@ -1685,7 +1683,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if logical_idx == idx {
                 return Some(self.tuple_element_type(element));
             }
-            logical_idx += 1;
         }
 
         None

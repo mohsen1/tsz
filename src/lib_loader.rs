@@ -254,7 +254,7 @@ mod tests {
         lib_file_locals.set("Function".to_string(), function_id);
         lib_file_locals.set("console".to_string(), console_id);
 
-        let mut lib_binder =
+        let lib_binder =
             BinderState::from_bound_state(arena, lib_file_locals, Default::default());
 
         let lib = Arc::new(LibFile::new(

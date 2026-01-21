@@ -229,6 +229,7 @@ impl SyntaxKind {
             // 1. SyntaxKind is #[repr(u16)] (checked at compile time above)
             // 2. The value is in the valid enum range (0..=LAST_TOKEN)
             // 3. SyntaxKind has contiguous values starting from 0
+            #[allow(unsafe_code)]
             Some(unsafe { std::mem::transmute::<u16, SyntaxKind>(value) })
         } else {
             None

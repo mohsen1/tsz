@@ -16904,7 +16904,7 @@ fn test_source_map_namespace_with_interface_only() {
     printer.enable_source_map("test.js", "test.ts");
     printer.emit(root);
 
-    let output = printer.get_output().to_string();
+    let _output = printer.get_output().to_string();
     let map_json = printer.generate_source_map_json().expect("source map");
     let map_value: Value = serde_json::from_str(&map_json).expect("parse source map");
 

@@ -101,7 +101,7 @@ mod utils_tests {
     fn test_find_node_at_offset_simple() {
         // const x = 1;
         let mut parser = ParserState::new("test.ts".to_string(), "const x = 1;".to_string());
-        let root = parser.parse_source_file();
+        let _root = parser.parse_source_file();
         let arena = parser.get_arena();
 
         // Offset 6 should be at 'x'

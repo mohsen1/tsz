@@ -2257,7 +2257,7 @@ fn test_symbol_table_validation_detects_orphans() {
     let mut binder = BinderState::new();
     binder.bind_source_file(arena, root);
 
-    let orphan_id = binder.symbols.alloc(
+    let _orphan_id = binder.symbols.alloc(
         crate::binder::symbol_flags::BLOCK_SCOPED_VARIABLE,
         "orphan".to_string(),
     );

@@ -34,6 +34,7 @@ use crate::transforms::private_fields_es5::{
 };
 
 /// ES5 Class Transformer - produces IR nodes for ES5 class lowering
+#[allow(dead_code)]
 pub struct ES5ClassTransformer<'a> {
     arena: &'a NodeArena,
     /// Current class name (for WeakMap naming)

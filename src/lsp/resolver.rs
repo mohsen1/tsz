@@ -1968,7 +1968,7 @@ impl<'a> ScopeWalker<'a> {
 
 #[cfg(test)]
 mod resolver_tests {
-    use super::*;
+    
     use crate::binder::BinderState;
     use crate::parser::ParserState;
 

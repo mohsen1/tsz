@@ -24,7 +24,7 @@ fn test_checker_creation() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
+    let checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -62,7 +62,7 @@ fn test_checker_type_interner() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
+    let checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -82,7 +82,7 @@ fn test_checker_structural_equality() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
+    let checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -105,7 +105,7 @@ fn test_checker_union_normalization() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
     let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
+    let checker = CheckerState::new(
         &arena,
         &binder,
         &types,
@@ -4431,7 +4431,7 @@ fn test_contextual_typing_for_function_parameters() {
 
     // Create a function type: (x: string, y: number) => boolean
     use crate::solver::{FunctionShape, ParamInfo};
-    use std::sync::Arc;
+    
 
     let func_shape = FunctionShape {
         type_params: vec![],
@@ -4625,7 +4625,7 @@ fn test_contextual_typing_for_object_properties() {
 
     // Create an object type: { name: string, age: number }
     use crate::solver::PropertyInfo;
-    use std::sync::Arc;
+    
 
     let obj_type = types.object(vec![
         PropertyInfo {
@@ -5254,7 +5254,7 @@ c.y;
 #[test]
 fn test_strict_null_checks_property_access() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
-    use std::sync::Arc;
+    
 
     // Test property access on nullable types
     let types = TypeInterner::new();
@@ -5293,7 +5293,7 @@ fn test_strict_null_checks_property_access() {
 #[test]
 fn test_strict_null_checks_undefined_type() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
-    use std::sync::Arc;
+    
 
     // Test property access on possibly undefined types
     let types = TypeInterner::new();
@@ -5330,7 +5330,7 @@ fn test_strict_null_checks_undefined_type() {
 #[test]
 fn test_strict_null_checks_both_null_and_undefined() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, TypeKey};
-    use std::sync::Arc;
+    
 
     // Test property access on type that is both null and undefined
     let types = TypeInterner::new();
@@ -5379,7 +5379,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
 #[test]
 fn test_strict_null_checks_non_nullable_success() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
-    use std::sync::Arc;
+    
 
     // Test that non-nullable types succeed normally
     let types = TypeInterner::new();
@@ -5599,7 +5599,7 @@ fn test_variable_self_reference_no_2403() {
 #[test]
 fn test_symbol_property_access_description() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, TypeKey};
-    use std::sync::Arc;
+    
 
     // Test accessing .description on symbol type
     let types = TypeInterner::new();
@@ -6729,7 +6729,7 @@ type AliasB = Outer.B;
 #[test]
 fn test_checker_lower_generic_type_reference_applies_args() {
     use crate::parser::ParserState;
-    use crate::solver::{SymbolRef, TypeKey};
+    use crate::solver::TypeKey;
 
     let source = r#"
 type Box<T> = { value: T };
@@ -10216,7 +10216,7 @@ fn test_index_signature_at_solver_level() {
     use crate::solver::{
         IndexSignature, ObjectShape, PropertyAccessEvaluator, PropertyAccessResult,
     };
-    use std::sync::Arc;
+    
 
     // Test that index signature resolution is tracked at solver level
     let types = TypeInterner::new();
@@ -25212,7 +25212,7 @@ const arrowPromise = async (): Promise<string> => "test";
 
 #[test]
 fn test_duplicate_class_members() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    
     use crate::parser::ParserState;
 
     // Simplified test - just duplicate properties
@@ -25259,7 +25259,7 @@ class DuplicateProperties {
 
 #[test]
 fn test_duplicate_object_literal_properties() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    
     use crate::parser::ParserState;
 
     // Test duplicate properties in object literal
@@ -25304,7 +25304,7 @@ const obj = {
 
 #[test]
 fn test_duplicate_object_literal_mixed_properties() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    
     use crate::parser::ParserState;
 
     // Test duplicate properties with different syntax (shorthand, method)
@@ -26507,7 +26507,7 @@ class Foo {
     );
     checker.check_source_file(root);
 
-    let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
+    let _has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
     // Note: Static properties currently skip TS2564 check in our implementation
     // This test documents current behavior
 }

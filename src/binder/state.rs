@@ -963,7 +963,7 @@ impl BinderState {
         let keep_node = |node_id: &u32| {
             arena
                 .get(NodeIndex(*node_id))
-                .map_or(false, |node| node.pos < reparse_start)
+                .is_some_and(|node| node.pos < reparse_start)
         };
 
         self.node_flow.retain(|node_id, _| keep_node(node_id));
@@ -3599,31 +3599,31 @@ impl BinderState {
                     syntax_kind_ext::VARIABLE_STATEMENT => arena
                         .get_variable(stmt_node)
                         .and_then(|v| v.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::FUNCTION_DECLARATION => arena
                         .get_function(stmt_node)
                         .and_then(|f| f.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::CLASS_DECLARATION => arena
                         .get_class(stmt_node)
                         .and_then(|c| c.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::INTERFACE_DECLARATION => arena
                         .get_interface(stmt_node)
                         .and_then(|i| i.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
                         .get_type_alias(stmt_node)
                         .and_then(|t| t.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::ENUM_DECLARATION => arena
                         .get_enum(stmt_node)
                         .and_then(|e| e.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::MODULE_DECLARATION => arena
                         .get_module(stmt_node)
                         .and_then(|m| m.modifiers.as_ref())
-                        .map_or(false, |mods| self.has_export_modifier_any(arena, mods)),
+                        .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::EXPORT_DECLARATION => true, // export { x }
                     _ => false,
                 };

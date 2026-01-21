@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn test_merge_assignment_states() {
         let mut state1 = AssignmentStateMap::new();
-        let mut state2 = AssignmentStateMap::new();
+        let state2 = AssignmentStateMap::new();
         let var1 = NodeIndex(1);
 
         state1.mark_assigned(var1);

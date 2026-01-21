@@ -101,9 +101,9 @@ struct TypeShard {
 impl TypeShard {
     fn new() -> Self {
         TypeShard {
-            key_to_index: DashMap::with_hasher(FxBuildHasher::default()),
+            key_to_index: DashMap::with_hasher(FxBuildHasher),
             next_index: AtomicU32::new(0),
-            index_to_key: DashMap::with_hasher(FxBuildHasher::default()),
+            index_to_key: DashMap::with_hasher(FxBuildHasher),
         }
     }
 }
@@ -119,7 +119,7 @@ where
     T: Eq + Hash + Clone + Send + Sync + 'static,
 {
     fn new() -> Self {
-        let items = DashMap::with_hasher(FxBuildHasher::default());
+        let items = DashMap::with_hasher(FxBuildHasher);
         let empty: Arc<[T]> = Arc::from(Vec::new());
         items.insert(0, empty);
         ConcurrentSliceInterner {
@@ -174,8 +174,8 @@ where
 {
     fn new() -> Self {
         ConcurrentValueInterner {
-            items: DashMap::with_hasher(FxBuildHasher::default()),
-            map: DashMap::with_hasher(FxBuildHasher::default()),
+            items: DashMap::with_hasher(FxBuildHasher),
+            map: DashMap::with_hasher(FxBuildHasher),
             next_id: AtomicU32::new(0),
         }
     }
@@ -246,7 +246,7 @@ impl TypeInterner {
             tuple_lists: ConcurrentSliceInterner::new(),
             template_lists: ConcurrentSliceInterner::new(),
             object_shapes: ConcurrentValueInterner::new(),
-            object_property_maps: DashMap::with_hasher(FxBuildHasher::default()),
+            object_property_maps: DashMap::with_hasher(FxBuildHasher),
             function_shapes: ConcurrentValueInterner::new(),
             callable_shapes: ConcurrentValueInterner::new(),
             conditional_types: ConcurrentValueInterner::new(),

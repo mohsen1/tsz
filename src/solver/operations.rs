@@ -372,7 +372,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let has_constraints = infer_ctx
                 .get_constraints(var)
-                .map_or(false, |c| !c.is_empty());
+                .is_some_and(|c| !c.is_empty());
 
             let ty = if has_constraints {
                 match infer_ctx.resolve_with_constraints_by(var, |source, target| {
@@ -701,6 +701,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let elements = self.interner.tuple_list(elements);
                 let mut prefix_len = 0usize;
                 let mut target = None;
+                #[allow(clippy::explicit_counter_loop)]
                 for (i, elem) in elements.iter().enumerate() {
                     if elem.rest {
                         if var_map.contains_key(&elem.type_id) {

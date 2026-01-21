@@ -42,6 +42,7 @@ struct EnvVarGuard {
 }
 
 impl EnvVarGuard {
+    #[allow(unsafe_code)]
     fn set(key: &'static str, value: Option<&str>) -> Self {
         let previous = std::env::var(key).ok();
         match value {
@@ -59,6 +60,7 @@ impl EnvVarGuard {
 }
 
 impl Drop for EnvVarGuard {
+    #[allow(unsafe_code)]
     fn drop(&mut self) {
         match self.previous.as_deref() {
             Some(value) => {

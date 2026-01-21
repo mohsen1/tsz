@@ -1,7 +1,10 @@
 use super::*;
 use crate::solver::subtype::SubtypeFailureReason;
-use crate::solver::types::*;
-use crate::solver::{TypeEnvironment, TypeSubstitution, instantiate_type};
+use crate::solver::{
+    CallableShape, CallSignature, ConditionalType, FunctionShape, IndexSignature, MappedType,
+    ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement, TypeEnvironment,
+    TypeParamInfo, TypeSubstitution, instantiate_type,
+};
 
 fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     let name = interner.intern_string("name");

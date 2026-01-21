@@ -661,7 +661,7 @@ fn test_check_large_program_parallel() {
         .collect();
 
     let program = compile_files(files);
-    let (result, stats) = check_functions_with_stats(&program);
+    let (_result, stats) = check_functions_with_stats(&program);
 
     assert_eq!(stats.file_count, 50);
     // Each file has 1 function declaration
@@ -824,7 +824,7 @@ fn test_parallel_type_checking_with_shared_interner() {
     assert_eq!(program.files.len(), 4);
 
     // Check all files in parallel
-    let (result, stats) = check_functions_with_stats(&program);
+    let (_result, stats) = check_functions_with_stats(&program);
 
     assert_eq!(stats.file_count, 4);
     // Each file has 3 functions

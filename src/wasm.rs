@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(resolved, "hello");
 
         // Intern a literal type - this should make it non-empty
-        let str_type = interner.literal_string("test");
+        let _str_type = interner.literal_string("test");
         assert!(!interner.is_empty());
         assert!(interner.len() > initial_count);
     }
@@ -370,7 +370,7 @@ mod tests {
         let program = crate::parallel::compile_files(files);
         assert_eq!(program.files.len(), 2);
 
-        let (result, stats) = crate::parallel::check_functions_with_stats(&program);
+        let (_result, stats) = crate::parallel::check_functions_with_stats(&program);
         assert_eq!(stats.file_count, 2);
         assert!(stats.function_count >= 2);
     }
