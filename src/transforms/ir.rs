@@ -337,46 +337,36 @@ pub enum IRNode {
     ASTRef(NodeIndex),
 
     // =========================================================================
-    // Module Transform Specific (CommonJS)
+    // CommonJS Module Transform Specific
     // =========================================================================
-    /// Use strict directive: `"use strict";`
+    /// "use strict";
     UseStrict,
 
-    /// ES6 module marker comment: `/// <reference types="node" />` style marker
+    /// Object.defineProperty(exports, "__esModule", { value: true });
     EsesModuleMarker,
 
-    /// Export initialization: Object.create for exports
+    /// exports.name = void 0; (export initialization)
     ExportInit { name: String },
 
-    /// Require statement: `var_name = require("module_spec")`
+    /// var name = require("module");
     RequireStatement {
         var_name: String,
         module_spec: String,
     },
 
-    /// Default import: `var_name = module_var.default;`
-    DefaultImport {
-        var_name: String,
-        module_var: String,
-    },
+    /// var name = module.default;
+    DefaultImport { var_name: String, module_var: String },
 
-    /// Namespace import: `var_name = module_var;`
-    NamespaceImport {
-        var_name: String,
-        module_var: String,
-    },
+    /// var name = __importStar(module);
+    NamespaceImport { var_name: String, module_var: String },
 
-    /// Named import: `var_name = module_var.import_name;`
-    NamedImport {
-        var_name: String,
-        module_var: String,
-        import_name: String,
-    },
+    /// var name = module.prop;
+    NamedImport { var_name: String, module_var: String, import_name: String },
 
-    /// Export assignment: `exports.name = value;` or `module.exports = value;`
+    /// exports.name = name;
     ExportAssignment { name: String },
 
-    /// Re-export property: `exports.export_name = module_var.import_name;`
+    /// Object.defineProperty(exports, "name", { enumerable: true, get: function() { return module.prop; } });
     ReExportProperty {
         export_name: String,
         module_var: String,
@@ -384,9 +374,18 @@ pub enum IRNode {
     },
 
     // =========================================================================
-    // Namespace Transform Specific (IIFE)
+    // Enum Transform Specific
     // =========================================================================
-    /// Namespace IIFE: `(function (Name1) { ... })(Name1 || (Name1 = {}));`
+    /// ES5 Enum IIFE: var E; (function(E) { ... })(E || (E = {}));
+    EnumIIFE {
+        name: String,
+        members: Vec<EnumMember>,
+    },
+
+    // =========================================================================
+    // Namespace Transform Specific
+    // =========================================================================
+    /// ES5 Namespace IIFE
     NamespaceIIFE {
         name_parts: Vec<String>,
         body: Vec<IRNode>,
@@ -394,40 +393,11 @@ pub enum IRNode {
         attach_to_exports: bool,
     },
 
-    /// Namespace export: `Namespace.name = value;`
+    /// namespace.export = value;
     NamespaceExport {
         namespace: String,
         name: String,
     },
-
-    // =========================================================================
-    // Enum Transform Specific
-    // =========================================================================
-    /// Enum IIFE: `var EnumName; (function (EnumName) { ... })(EnumName || (EnumName = {}));`
-    EnumIIFE {
-        name: String,
-        members: Vec<EnumMember>,
-    },
-}
-
-/// Enum member for EnumIIFE transform
-#[derive(Debug, Clone)]
-pub struct EnumMember {
-    pub name: String,
-    pub value: EnumMemberValue,
-}
-
-/// Enum member value
-#[derive(Debug, Clone)]
-pub enum EnumMemberValue {
-    /// Auto-incremented numeric value
-    Auto(i64),
-    /// Explicit numeric value
-    Numeric(i64),
-    /// String value
-    String(String),
-    /// Computed expression
-    Computed(IRNode),
 }
 
 /// Property in an object literal
@@ -500,6 +470,26 @@ pub struct IRPropertyDescriptor {
 pub struct IRGeneratorCase {
     pub label: u32,
     pub statements: Vec<IRNode>,
+}
+
+/// Enum member (for enum transform)
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    pub name: String,
+    pub value: EnumMemberValue,
+}
+
+/// Enum member value
+#[derive(Debug, Clone)]
+pub enum EnumMemberValue {
+    /// Auto-incremented numeric value
+    Auto(i64),
+    /// Explicit numeric value
+    Numeric(i64),
+    /// String value
+    String(String),
+    /// Computed value (IR expression)
+    Computed(IRNode),
 }
 
 // =========================================================================
@@ -626,52 +616,20 @@ impl IRNode {
         IRNode::ExpressionStatement(Box::new(expr))
     }
 
-    /// Create an object literal
-    pub fn object(props: Vec<IRProperty>) -> Self {
-        IRNode::ObjectLiteral(props)
+    /// Create a "use strict" directive
+    pub fn use_strict() -> Self {
+        IRNode::UseStrict
     }
 
-    /// Create an empty object literal
-    pub fn empty_object() -> Self {
-        IRNode::ObjectLiteral(Vec::new())
+    /// Create an ES module marker
+    pub fn es_module_marker() -> Self {
+        IRNode::EsesModuleMarker
     }
 
-    /// Create an array literal
-    pub fn array(elements: Vec<IRNode>) -> Self {
-        IRNode::ArrayLiteral(elements)
-    }
-
-    /// Create an empty array literal
-    pub fn empty_array() -> Self {
-        IRNode::ArrayLiteral(Vec::new())
-    }
-
-    /// Create a logical OR expression: `left || right`
-    pub fn logical_or(left: IRNode, right: IRNode) -> Self {
-        IRNode::LogicalOr {
-            left: Box::new(left),
-            right: Box::new(right),
-        }
-    }
-
-    /// Create a logical AND expression: `left && right`
-    pub fn logical_and(left: IRNode, right: IRNode) -> Self {
-        IRNode::LogicalAnd {
-            left: Box::new(left),
-            right: Box::new(right),
-        }
-    }
-
-    /// Create a sequence of statements
-    pub fn sequence(nodes: Vec<IRNode>) -> Self {
-        IRNode::Sequence(nodes)
-    }
-
-    /// Create a new expression: `new Constructor(args)`
-    pub fn new_expr(callee: IRNode, args: Vec<IRNode>) -> Self {
-        IRNode::NewExpr {
-            callee: Box::new(callee),
-            arguments: args,
+    /// Create an export assignment
+    pub fn export_assign(name: impl Into<String>) -> Self {
+        IRNode::ExportAssignment {
+            name: name.into(),
         }
     }
 }
@@ -696,43 +654,5 @@ impl IRParam {
     pub fn with_default(mut self, default: IRNode) -> Self {
         self.default_value = Some(Box::new(default));
         self
-    }
-}
-
-impl IRProperty {
-    /// Create a simple property with identifier key: `{ key: value }`
-    pub fn init(key: impl Into<String>, value: IRNode) -> Self {
-        IRProperty {
-            key: IRPropertyKey::Identifier(key.into()),
-            value,
-            kind: IRPropertyKind::Init,
-        }
-    }
-
-    /// Create a property with string literal key: `{ "key": value }`
-    pub fn init_string(key: impl Into<String>, value: IRNode) -> Self {
-        IRProperty {
-            key: IRPropertyKey::StringLiteral(key.into()),
-            value,
-            kind: IRPropertyKind::Init,
-        }
-    }
-
-    /// Create a getter property
-    pub fn getter(key: impl Into<String>, get: IRNode) -> Self {
-        IRProperty {
-            key: IRPropertyKey::Identifier(key.into()),
-            value: get,
-            kind: IRPropertyKind::Get,
-        }
-    }
-
-    /// Create a setter property
-    pub fn setter(key: impl Into<String>, set: IRNode) -> Self {
-        IRProperty {
-            key: IRPropertyKey::Identifier(key.into()),
-            value: set,
-            kind: IRPropertyKind::Set,
-        }
     }
 }
