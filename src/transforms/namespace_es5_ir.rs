@@ -205,8 +205,8 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
         if is_exported {
-            // Return AST ref + export assignment
-            Some(IRNode::Block(vec![
+            // Return AST ref + export assignment (without block braces)
+            Some(IRNode::Sequence(vec![
                 IRNode::ASTRef(func_idx),
                 IRNode::ExportAssignment { name: func_name },
             ]))
@@ -225,7 +225,7 @@ impl<'a> NamespaceTransformContext<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
-        Some(IRNode::Block(vec![
+        Some(IRNode::Sequence(vec![
             IRNode::ASTRef(func_idx),
             IRNode::ExportAssignment { name: func_name },
         ]))
@@ -240,7 +240,7 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = has_export_modifier(self.arena, &class_data.modifiers);
 
         if is_exported {
-            Some(IRNode::Block(vec![
+            Some(IRNode::Sequence(vec![
                 IRNode::ASTRef(class_idx),
                 IRNode::ExportAssignment { name: class_name },
             ]))
@@ -278,7 +278,7 @@ impl<'a> NamespaceTransformContext<'a> {
             }
         }
 
-        Some(IRNode::Block(result))
+        Some(IRNode::Sequence(result))
     }
 
     /// Transform an exported variable statement in namespace
@@ -294,7 +294,7 @@ impl<'a> NamespaceTransformContext<'a> {
             result.push(IRNode::ExportAssignment { name });
         }
 
-        Some(IRNode::Block(result))
+        Some(IRNode::Sequence(result))
     }
 
     /// Transform an enum in namespace
@@ -311,7 +311,7 @@ impl<'a> NamespaceTransformContext<'a> {
             result.push(IRNode::ExportAssignment { name: enum_name });
         }
 
-        Some(IRNode::Block(result))
+        Some(IRNode::Sequence(result))
     }
 
     /// Transform an exported enum in namespace
@@ -320,7 +320,7 @@ impl<'a> NamespaceTransformContext<'a> {
         let enum_data = self.arena.get_enum(enum_node)?;
 
         let enum_name = get_identifier_text(self.arena, enum_data.name)?;
-        Some(IRNode::Block(vec![
+        Some(IRNode::Sequence(vec![
             IRNode::ASTRef(enum_idx),
             IRNode::ExportAssignment { name: enum_name },
         ]))
