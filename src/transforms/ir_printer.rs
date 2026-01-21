@@ -802,6 +802,7 @@ impl<'a> IRPrinter<'a> {
 
             // Namespace Transform Specific
             IRNode::NamespaceIIFE {
+                name,
                 name_parts,
                 body,
                 is_exported,
@@ -809,12 +810,12 @@ impl<'a> IRPrinter<'a> {
             } => {
                 self.emit_namespace_iife(&name_parts, 0, body, *is_exported, *attach_to_exports);
             }
-            IRNode::NamespaceExport { namespace, name } => {
+            IRNode::NamespaceExport { namespace, name, value } => {
                 self.write(namespace);
                 self.write(".");
                 self.write(name);
                 self.write(" = ");
-                self.write(name);
+                self.emit_node(value);
                 self.write(";");
             }
         }
