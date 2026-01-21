@@ -8,7 +8,8 @@
 # Usage:
 #   ./scripts/test.sh                          # Run all Rust unit tests (in Docker)
 #   ./scripts/test.sh --no-sandbox             # Run tests directly without Docker
-#   ./scripts/test.sh test_name                # Run specific test
+#   ./scripts/test.sh test_name                # Run specific test (pattern match)
+#   ./scripts/test.sh namespace               # Run all tests matching "namespace"
 #   ./scripts/test.sh --ignored test_name      # Run ignored tests too (nextest: --run-ignored all)
 #   ./scripts/test.sh --timeout=60 test_name   # Kill the test run after N seconds (inside container)
 #   ./scripts/test.sh --rebuild                # Force rebuild Docker image
