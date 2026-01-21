@@ -39,8 +39,7 @@
 //! ```
 
 use crate::parallel::{
-    BindResult, BindStats, CheckResult, CheckStats, MergedProgram, ParallelStats, ParseResult,
-    check_functions_parallel, compile_files, parse_and_bind_parallel, parse_files_parallel,
+    BindStats, CheckStats, ParallelStats, compile_files,
 };
 use crate::solver::TypeInterner;
 use serde::{Deserialize, Serialize};
@@ -187,7 +186,7 @@ impl WasmParallelParser {
     #[wasm_bindgen(js_name = parseAll)]
     pub fn parse_all(&mut self) -> JsValue {
         let files = std::mem::take(&mut self.files);
-        let (results, stats) = crate::parallel::parse_files_with_stats(files);
+        let (_results, stats) = crate::parallel::parse_files_with_stats(files);
 
         let wasm_stats = WasmParseStats::from(stats);
         serde_wasm_bindgen::to_value(&wasm_stats).unwrap_or(JsValue::NULL)
