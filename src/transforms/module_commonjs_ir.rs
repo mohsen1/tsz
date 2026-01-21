@@ -22,7 +22,7 @@
 
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
-use crate::parser::node::{Node, NodeArena};
+use crate::parser::node::NodeArena;
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
 
@@ -204,7 +204,7 @@ impl<'a> CommonJsTransformContext<'a> {
         // Default export
         if export_data.is_default_export {
             // export default expr;
-            let inner_idx = export_data.export_clause;
+            let _inner_idx = export_data.export_clause;
             // For now, emit as AST reference
             return Some(IRNode::ASTRef(export_idx));
         }
@@ -215,7 +215,7 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         // Regular export - get inner declaration
-        let Some(inner_node) = self.arena.get(export_data.export_clause) else {
+        let Some(_inner_node) = self.arena.get(export_data.export_clause) else {
             return None;
         };
 

@@ -63,7 +63,7 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
 }
 
 /// Transform enum members to IR
-fn transform_enum_members(arena: &NodeArena, members: &NodeList, enum_name: &str) -> Vec<EnumMember> {
+fn transform_enum_members(arena: &NodeArena, members: &NodeList, _enum_name: &str) -> Vec<EnumMember> {
     let mut result = Vec::new();
     let mut last_value: Option<i64> = None;
 

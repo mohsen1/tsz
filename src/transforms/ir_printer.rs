@@ -802,7 +802,7 @@ impl<'a> IRPrinter<'a> {
 
             // Namespace Transform Specific
             IRNode::NamespaceIIFE {
-                name,
+                name: _name,
                 name_parts,
                 body,
                 is_exported,
