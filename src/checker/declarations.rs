@@ -988,10 +988,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::checker::types::diagnostics::diagnostic_codes;
-    use crate::solver::TypeInterner;
     use crate::binder::BinderState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
 
     #[test]
     fn test_declaration_checker_variable() {

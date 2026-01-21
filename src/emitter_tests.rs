@@ -1,14 +1,14 @@
 //! Tests for Emitter
 
-use crate::emit_context::EmitContext;
-use crate::lowering_pass::LoweringPass;
-use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
-use crate::solver::TypeInterner;
 use crate::binder::BinderState;
 use crate::checker::CheckerState;
-use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget, Printer};
+use crate::emit_context::EmitContext;
+use crate::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
+use crate::lowering_pass::LoweringPass;
+use crate::parser::NodeIndex;
 use crate::parser::ParserState;
+use crate::parser::syntax_kind_ext;
+use crate::solver::TypeInterner;
 use serde_json::Value;
 
 fn make_printer_with_transforms<'a>(

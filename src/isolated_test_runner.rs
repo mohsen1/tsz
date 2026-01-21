@@ -8,8 +8,8 @@
 //! - Fall back to thread-based execution when process isolation isn't available
 
 use std::any::Any;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -241,7 +241,9 @@ where
 
     // Wait for test completion
     // Wait for monitor outcome first so we can short-circuit on timeouts without blocking on join.
-    let monitor_outcome = monitor_handle.join().unwrap_or(MonitorOutcome::MonitorCrashed);
+    let monitor_outcome = monitor_handle
+        .join()
+        .unwrap_or(MonitorOutcome::MonitorCrashed);
 
     match monitor_outcome {
         MonitorOutcome::Completed { peak_memory } => {
@@ -320,9 +322,16 @@ where
 }
 
 enum MonitorOutcome {
-    Completed { peak_memory: usize },
-    TimedOut { peak_memory: usize },
-    MemoryLimitExceeded { peak_memory: usize, limit_bytes: usize },
+    Completed {
+        peak_memory: usize,
+    },
+    TimedOut {
+        peak_memory: usize,
+    },
+    MemoryLimitExceeded {
+        peak_memory: usize,
+        limit_bytes: usize,
+    },
     MonitorCrashed,
 }
 
@@ -392,7 +401,11 @@ pub struct MemoryInfo {
 
 impl EnhancedTestResult {
     /// Create enhanced result from monitored result
-    pub fn from_monitored(test_name: String, monitored: MonitoredTestResult, was_isolated: bool) -> Self {
+    pub fn from_monitored(
+        test_name: String,
+        monitored: MonitoredTestResult,
+        was_isolated: bool,
+    ) -> Self {
         let memory_info = monitored.peak_memory_bytes.map(|peak| MemoryInfo {
             peak_bytes: peak,
             limit_bytes: None, // TODO: extract from config

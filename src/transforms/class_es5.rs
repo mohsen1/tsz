@@ -23,10 +23,10 @@
 //! }());
 //! ```
 
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::{
-    ClassData, FunctionData, TaggedTemplateData, TemplateExprData, Node, NodeArena,
+    ClassData, FunctionData, Node, NodeArena, TaggedTemplateData, TemplateExprData,
 };
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::source_map::Mapping;

@@ -7,8 +7,8 @@
 //! - Helper emission ordering
 
 use crate::emit_context::EmitContext;
+use crate::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 use crate::lowering_pass::LoweringPass;
-use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget, Printer};
 use crate::parser::ParserState;
 
 #[test]

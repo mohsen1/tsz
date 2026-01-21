@@ -1,7 +1,7 @@
 use super::is_valid_identifier_name;
-use super::{ParamTransform, ParamTransformPlan, RestParamTransform, Printer};
-use crate::parser::syntax_kind_ext;
+use super::{ParamTransform, ParamTransformPlan, Printer, RestParamTransform};
 use crate::parser::node::{MethodDeclData, Node};
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transform_context::TransformDirective;

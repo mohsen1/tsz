@@ -6,12 +6,12 @@
 //! - Type checking
 //! - Emitting JavaScript output
 
+use wasm::binder::BinderState;
 use wasm::checker::context::CheckerOptions;
 use wasm::checker::state::CheckerState;
+use wasm::parser::ParserState;
 use wasm::parser::node::NodeArena;
 use wasm::solver::TypeInterner;
-use wasm::binder::BinderState;
-use wasm::parser::ParserState;
 
 /// Helper to parse TypeScript code
 fn parse(source: &str) -> ParserState {

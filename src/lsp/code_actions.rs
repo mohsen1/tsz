@@ -16,6 +16,7 @@
 //! Future features:
 //! - Remove Unused Declarations (diagnostic-based quick fix)
 
+use crate::binder::BinderState;
 use crate::binder::{ScopeId, SymbolId, symbol_flags};
 use crate::comments::get_leading_comments_from_cache;
 use crate::lsp::diagnostics::LspDiagnostic;
@@ -23,10 +24,9 @@ use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::rename::{TextEdit, WorkspaceEdit};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
+use crate::parser::node::{Node, NodeAccess, NodeArena};
 use crate::parser::syntax_kind_ext;
-use crate::parser::node::{NodeAccess, Node, NodeArena};
 use crate::scanner::SyntaxKind;
-use crate::binder::BinderState;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 
@@ -344,10 +344,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Get the range for removing a declaration, including handling for multi-line declarations.
-    fn declaration_removal_range(
-        &self,
-        node: &crate::parser::node::Node,
-    ) -> (Range, String) {
+    fn declaration_removal_range(&self, node: &crate::parser::node::Node) -> (Range, String) {
         let mut end = node.end;
 
         // Include trailing whitespace and newlines

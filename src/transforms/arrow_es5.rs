@@ -30,8 +30,8 @@
 //! ```
 
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 
 /// Checks if a node or its descendants contain `this` references
 pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
@@ -326,8 +326,8 @@ impl ArrowTransformContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scanner::SyntaxKind;
     use crate::parser::ParserState;
+    use crate::scanner::SyntaxKind;
 
     #[test]
     fn test_detect_this_in_arrow() {

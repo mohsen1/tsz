@@ -4,8 +4,8 @@
 //! Focus on TS1005 (token expected) and TS1109 (expression expected) error codes.
 
 use crate::checker::types::diagnostics::diagnostic_codes;
-use crate::scanner::SyntaxKind;
 use crate::parser::ParserState;
+use crate::scanner::SyntaxKind;
 
 /// Test that throw with line break reports TS1109
 #[test]
@@ -283,8 +283,7 @@ fn test_async_arrow_await_computed_property() {
   var v = { [await]: foo }
 }"#;
 
-    let mut parser =
-        ParserState::new("asyncArrowFunction8_es6.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("asyncArrowFunction8_es6.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
     let diagnostics = parser.get_diagnostics();
@@ -441,8 +440,7 @@ x
 ++;
 console.log(x);"#;
 
-    let mut parser =
-        ParserState::new("postfix_test.ts".to_string(), postfix_source.to_string());
+    let mut parser = ParserState::new("postfix_test.ts".to_string(), postfix_source.to_string());
     parser.parse_source_file();
     let postfix_diagnostics = parser.get_diagnostics();
 
@@ -548,8 +546,7 @@ fn test_incomplete_expressions_ts1109() {
 fn test_new_missing_identifier_ts1109() {
     let source = r#"var x = new ();"#;
 
-    let mut parser =
-        ParserState::new("newMissingIdentifier.ts".to_string(), source.to_string());
+    let mut parser = ParserState::new("newMissingIdentifier.ts".to_string(), source.to_string());
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
@@ -583,8 +580,7 @@ fn test_await_yield_missing_value_ts1109() {
     await;
 }"#;
 
-    let mut parser =
-        ParserState::new("awaitMissingValue.ts".to_string(), await_source.to_string());
+    let mut parser = ParserState::new("awaitMissingValue.ts".to_string(), await_source.to_string());
     parser.parse_source_file();
     let await_diagnostics = parser.get_diagnostics();
 

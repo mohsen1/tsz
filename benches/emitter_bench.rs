@@ -125,8 +125,7 @@ fn generate_large_source(functions: usize, statements_per_fn: usize) -> String {
 fn bench_emit_simple(c: &mut Criterion) {
     c.bench_function("emit_simple", |b| {
         b.iter(|| {
-            let mut parser =
-                ParserState::new("bench.ts".to_string(), SIMPLE_SOURCE.to_string());
+            let mut parser = ParserState::new("bench.ts".to_string(), SIMPLE_SOURCE.to_string());
             let root = parser.parse_source_file();
 
             let mut printer = Printer::new(&parser.arena);
@@ -140,8 +139,7 @@ fn bench_emit_simple(c: &mut Criterion) {
 fn bench_emit_medium(c: &mut Criterion) {
     c.bench_function("emit_medium", |b| {
         b.iter(|| {
-            let mut parser =
-                ParserState::new("bench.ts".to_string(), MEDIUM_SOURCE.to_string());
+            let mut parser = ParserState::new("bench.ts".to_string(), MEDIUM_SOURCE.to_string());
             let root = parser.parse_source_file();
 
             let mut printer = Printer::new(&parser.arena);
@@ -155,8 +153,7 @@ fn bench_emit_medium(c: &mut Criterion) {
 fn bench_emit_complex(c: &mut Criterion) {
     c.bench_function("emit_complex", |b| {
         b.iter(|| {
-            let mut parser =
-                ParserState::new("bench.ts".to_string(), COMPLEX_SOURCE.to_string());
+            let mut parser = ParserState::new("bench.ts".to_string(), COMPLEX_SOURCE.to_string());
             let root = parser.parse_source_file();
 
             let mut printer = Printer::new(&parser.arena);
@@ -176,20 +173,16 @@ fn bench_emit_throughput(c: &mut Criterion) {
         let label = format!("{}fn_{}stmt", functions, statements);
 
         group.throughput(Throughput::Bytes(bytes));
-        group.bench_with_input(
-            BenchmarkId::new("emit", &label),
-            &source,
-            |b, source| {
-                b.iter(|| {
-                    let mut parser = ParserState::new("bench.ts".to_string(), source.clone());
-                    let root = parser.parse_source_file();
+        group.bench_with_input(BenchmarkId::new("emit", &label), &source, |b, source| {
+            b.iter(|| {
+                let mut parser = ParserState::new("bench.ts".to_string(), source.clone());
+                let root = parser.parse_source_file();
 
-                    let mut printer = Printer::new(&parser.arena);
-                    printer.emit(root);
-                    black_box(printer.take_output())
-                })
-            },
-        );
+                let mut printer = Printer::new(&parser.arena);
+                printer.emit(root);
+                black_box(printer.take_output())
+            })
+        });
     }
 
     group.finish();

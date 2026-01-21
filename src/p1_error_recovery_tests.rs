@@ -7,7 +7,7 @@
 //! 4. Object destructuring patterns with missing commas
 
 use crate::parser::ParserState;
-use crate::test_harness::{run_with_timeout, TestResult};
+use crate::test_harness::{TestResult, run_with_timeout};
 use std::time::Duration;
 
 // ===========================================================================

@@ -1,11 +1,11 @@
 use super::*;
+use crate::binder::BinderState;
 use crate::lsp::jsdoc::jsdoc_for_node;
 use crate::lsp::position::LineMap;
 use crate::lsp::utils::find_node_at_offset;
+use crate::parser::ParserState;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeInterner;
-use crate::binder::BinderState;
-use crate::parser::ParserState;
 
 #[test]
 fn test_signature_help_simple() {

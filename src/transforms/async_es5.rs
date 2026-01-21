@@ -56,12 +56,12 @@
 //! }); };
 //! ```
 
+use crate::emitter::Printer;
 use crate::parser::node::{Node, NodeArena};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::source_map::Mapping;
 use crate::source_writer::source_position_from_offset;
-use crate::emitter::Printer;
 use crate::transform_context::{TransformContext, TransformDirective};
 use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::emit_utils;

@@ -3,6 +3,7 @@
 //! Handles renaming symbols across the codebase, including validation
 //! and workspace edit generation.
 
+use crate::binder::BinderState;
 use crate::binder::SymbolId;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::references::FindReferences;
@@ -11,7 +12,6 @@ use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::scanner::{self, SyntaxKind};
-use crate::binder::BinderState;
 use std::collections::HashMap;
 
 /// A single text edit.
@@ -337,9 +337,9 @@ fn is_valid_private_identifier(name: &str) -> bool {
 #[cfg(test)]
 mod rename_tests {
     use super::*;
+    use crate::binder::BinderState;
     use crate::lsp::position::LineMap;
     use crate::lsp::resolver::ScopeCache;
-    use crate::binder::BinderState;
     use crate::parser::ParserState;
 
     #[test]

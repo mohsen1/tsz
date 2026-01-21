@@ -5,9 +5,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use crate::binder::BinderState;
 use crate::binder::{SymbolId, SymbolTable, symbol_flags};
 use crate::checker::TypeCache;
 use crate::checker::context::LibContext;
+use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::{
     Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
 };
@@ -18,17 +20,15 @@ use crate::cli::config::{
 };
 use crate::cli::fs::{FileDiscoveryOptions, discover_ts_files, is_valid_module_file};
 use crate::declaration_emitter::DeclarationEmitter;
+use crate::emitter::{ModuleKind, NewLineKind, Printer};
 use crate::parallel::{self, BindResult, BoundFile, MergedProgram};
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
-use crate::parser::node::{NodeAccess, NodeArena};
-use crate::scanner::SyntaxKind;
-use crate::solver::{TypeFormatter, TypeId};
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
-use crate::emitter::{ModuleKind, NewLineKind, Printer};
 use crate::parser::ParseDiagnostic;
 use crate::parser::ParserState;
+use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::syntax_kind_ext;
+use crate::scanner::SyntaxKind;
+use crate::solver::{TypeFormatter, TypeId};
 use rustc_hash::FxHasher;
 
 #[derive(Debug, Clone)]

@@ -1,8 +1,8 @@
 use super::Printer;
 use crate::parser::{NodeIndex, NodeList};
+use crate::printer::safe_slice;
 use crate::scanner::SyntaxKind;
 use crate::source_writer::SourcePosition;
-use crate::printer::safe_slice;
 
 impl<'a> Printer<'a> {
     fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {

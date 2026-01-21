@@ -4,11 +4,11 @@
 //! (like lib.d.ts) and merging their global symbols into the binder's root scope.
 //! This enables proper resolution of built-in types like `Object`, `Function`, `console`, etc.
 
+use crate::binder::BinderState;
 use crate::binder::SymbolTable;
 use crate::checker::types::diagnostics::Diagnostic;
-use crate::parser::node::NodeArena;
-use crate::binder::BinderState;
 use crate::parser::ParserState;
+use crate::parser::node::NodeArena;
 use std::sync::Arc;
 
 // =============================================================================
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_merge_lib_symbols() {
-        use crate::binder::{Symbol, SymbolArena, symbol_flags};
+        use crate::binder::{symbol_flags, SymbolArena};
 
         let mut target = SymbolTable::new();
         let mut arena = SymbolArena::new();

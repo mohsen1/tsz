@@ -35,16 +35,16 @@
 //! })(A || (A = {}));
 //! ```
 
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::class_es5::ClassES5Emitter;
+use crate::transforms::emit_utils;
 use crate::transforms::enum_es5::EnumES5Emitter;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::namespace_es5_ir::NamespaceTransformContext;
-use crate::transforms::emit_utils;
 
 /// Namespace ES5 emitter
 pub struct NamespaceES5Emitter<'a> {
@@ -386,7 +386,11 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
     }
 
-    fn transform_namespace_member_ir(&self, ns_name: &str, member_idx: NodeIndex) -> Option<String> {
+    fn transform_namespace_member_ir(
+        &self,
+        ns_name: &str,
+        member_idx: NodeIndex,
+    ) -> Option<String> {
         let transform_context =
             NamespaceTransformContext::with_commonjs(self.arena, self.is_commonjs);
         let mut output = String::new();
@@ -407,8 +411,8 @@ impl<'a> NamespaceES5Emitter<'a> {
                 let export_node = self.arena.get(export_data.export_clause)?;
                 match export_node.kind {
                     k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                        if let Some(class_output) =
-                            self.transform_namespace_class_string(ns_name, export_data.export_clause)
+                        if let Some(class_output) = self
+                            .transform_namespace_class_string(ns_name, export_data.export_clause)
                         {
                             output.push_str(&class_output);
                         }
@@ -421,8 +425,10 @@ impl<'a> NamespaceES5Emitter<'a> {
                         }
                     }
                     _ => {
-                        let inner_ir = transform_context
-                            .transform_namespace_member_exported(ns_name, export_data.export_clause)?;
+                        let inner_ir = transform_context.transform_namespace_member_exported(
+                            ns_name,
+                            export_data.export_clause,
+                        )?;
                         push_ir(inner_ir);
                     }
                 }
@@ -432,17 +438,20 @@ impl<'a> NamespaceES5Emitter<'a> {
                 if func_data.body.is_none() {
                     return None;
                 }
-                let inner_ir = transform_context.transform_function_in_namespace(ns_name, member_idx)?;
+                let inner_ir =
+                    transform_context.transform_function_in_namespace(ns_name, member_idx)?;
                 push_ir(inner_ir);
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class_output) = self.transform_namespace_class_string(ns_name, member_idx)
+                if let Some(class_output) =
+                    self.transform_namespace_class_string(ns_name, member_idx)
                 {
                     output.push_str(&class_output);
                 }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                let inner_ir = transform_context.transform_variable_in_namespace(ns_name, member_idx)?;
+                let inner_ir =
+                    transform_context.transform_variable_in_namespace(ns_name, member_idx)?;
                 push_ir(inner_ir);
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
@@ -472,7 +481,11 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
     }
 
-    fn transform_namespace_class_string(&self, ns_name: &str, class_idx: NodeIndex) -> Option<String> {
+    fn transform_namespace_class_string(
+        &self,
+        ns_name: &str,
+        class_idx: NodeIndex,
+    ) -> Option<String> {
         let class_node = self.arena.get(class_idx)?;
         let class_data = self.arena.get_class(class_node)?;
         let class_name = self.get_identifier_text(class_data.name);

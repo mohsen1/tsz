@@ -5,11 +5,11 @@
 //! 2. Printer consults TransformContext and applies transforms during emission
 
 use crate::emit_context::EmitContext;
+use crate::emitter::Printer;
 use crate::lowering_pass::LoweringPass;
+use crate::parser::ParserState;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::emitter::Printer;
-use crate::parser::ParserState;
 use crate::transform_context::{TransformContext, TransformDirective};
 use std::sync::Arc;
 

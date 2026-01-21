@@ -153,9 +153,9 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::TypeInterner;
     use crate::binder::BinderState;
     use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
 
     #[test]
     fn test_expression_checker_numeric_literal() {

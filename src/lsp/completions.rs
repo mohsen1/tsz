@@ -6,20 +6,20 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
+use crate::binder::BinderState;
 use crate::binder::SymbolId;
 use crate::checker::TypeCache;
+use crate::checker::state::CheckerState;
 use crate::lsp::jsdoc::jsdoc_for_node;
 use crate::lsp::position::{LineMap, Position};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::syntax_kind_ext;
 use crate::solver::{
     ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, TypeKey, apparent_primitive_members,
 };
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
 
 /// The kind of completion item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -938,10 +938,10 @@ struct PropertyCompletion {
 #[cfg(test)]
 mod completions_tests {
     use super::*;
-    use crate::lsp::position::LineMap;
-    use crate::solver::TypeInterner;
     use crate::binder::BinderState;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
 
     #[test]
     fn test_completions_simple() {

@@ -20,8 +20,8 @@
 //! ```
 
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::{Node, NodeArena};
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 
 /// Emit the CommonJS module preamble
@@ -306,11 +306,7 @@ pub fn transform_import_to_require(
 /// ```javascript
 /// var myDefault = module_1.default;
 /// ```
-pub fn get_import_bindings(
-    arena: &NodeArena,
-    node: &Node,
-    module_var: &str,
-) -> Vec<String> {
+pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> Vec<String> {
     let mut bindings = Vec::new();
 
     let Some(import) = arena.get_import_decl(node) else {
@@ -410,11 +406,7 @@ pub fn emit_reexport_property(export_name: &str, module_var: &str, import_name: 
 // =============================================================================
 
 /// Check if modifiers contain a specific modifier kind
-fn has_modifier(
-    arena: &NodeArena,
-    modifiers: &Option<crate::parser::NodeList>,
-    kind: u16,
-) -> bool {
+fn has_modifier(arena: &NodeArena, modifiers: &Option<crate::parser::NodeList>, kind: u16) -> bool {
     if let Some(mods) = modifiers {
         for &mod_idx in &mods.nodes {
             if let Some(mod_node) = arena.get(mod_idx) {
@@ -460,11 +452,7 @@ pub fn has_default_modifier_from_list(
 }
 
 /// Collect exported names from a variable declaration (identifier or binding pattern).
-fn collect_declaration_names(
-    arena: &NodeArena,
-    decl_idx: NodeIndex,
-    exports: &mut Vec<String>,
-) {
+fn collect_declaration_names(arena: &NodeArena, decl_idx: NodeIndex, exports: &mut Vec<String>) {
     let Some(decl_node) = arena.get(decl_idx) else {
         return;
     };

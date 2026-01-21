@@ -7,12 +7,12 @@
 //! - Type hints for variables with implicit types
 //! - Generic parameter hints where inferred
 
+use crate::binder::BinderState;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::{NodeAccess, NodeArena};
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::binder::BinderState;
 use serde::{Deserialize, Serialize};
 
 /// Kind of inlay hint.

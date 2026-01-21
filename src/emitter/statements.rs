@@ -1,9 +1,9 @@
 use super::{Printer, get_trailing_comment_ranges};
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::Node;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
-use crate::scanner::SyntaxKind;
 use crate::printer::safe_slice;
+use crate::scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================

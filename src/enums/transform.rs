@@ -22,8 +22,8 @@
 //! ```
 
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;

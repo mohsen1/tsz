@@ -4,11 +4,11 @@
 //! identifier *usages* to symbols as well. This module provides a lightweight
 //! scope walker that reconstructs scope chains on demand.
 
+use crate::binder::BinderState;
 use crate::binder::{SymbolId, SymbolTable};
-use crate::parser::node::{NodeAccess, Node, NodeArena};
+use crate::parser::node::{Node, NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::binder::BinderState;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 

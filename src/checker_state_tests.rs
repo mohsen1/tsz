@@ -9,11 +9,11 @@
 //! - Control flow analysis
 //! - Error diagnostics
 
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
+use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::solver::{TypeId, TypeInterner};
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState as CheckerState;
-use crate::parser::ParserState;
 
 // =============================================================================
 // Basic Type Checker Tests
@@ -813,8 +813,8 @@ takesFoo(obj);
 
 #[test]
 fn test_array_literal_best_common_type() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 const numbers = [1, 2];
@@ -884,8 +884,8 @@ mixed;
 
 #[test]
 fn test_index_access_union_key_cross_product() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 type A = { kind: "a"; val: 1 } | { kind: "b"; val: 2 };
@@ -1909,8 +1909,8 @@ c.foo("ok");
 
 #[test]
 fn test_new_expression_infers_class_instance_type() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 class Foo {
@@ -1995,8 +1995,8 @@ const f = new Foo();
 
 #[test]
 fn test_new_expression_infers_parameter_properties() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 class Foo {
@@ -2062,8 +2062,8 @@ const f = new Foo(1, "x", 2);
 
 #[test]
 fn test_new_expression_infers_base_class_properties() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 class Base<T> {
@@ -2130,8 +2130,8 @@ const d = new Derived();
 
 #[test]
 fn test_new_expression_infers_generic_class_type_params() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 class Box<T> {
@@ -4472,9 +4472,9 @@ fn test_contextual_typing_for_function_parameters() {
 
 #[test]
 fn test_contextual_typing_skips_this_parameter() {
+    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
     use crate::solver::TypeKey;
-    use crate::parser::ParserState;
 
     let source = r#"
 function takesHandler(fn: (this: { value: number }, x: string) => void) {}
@@ -5796,8 +5796,8 @@ const val = obj.x;
 
 #[test]
 fn test_checker_lowers_full_source_file() {
-    use crate::solver::{SymbolRef, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{SymbolRef, TypeKey};
 
     let source = r#"
 interface Foo { x: number; }
@@ -6385,8 +6385,8 @@ interface Derived extends Base {
 
 #[test]
 fn test_checker_cross_namespace_type_reference() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 namespace Outer {
@@ -6640,8 +6640,8 @@ namespace Models {
 
 #[test]
 fn test_checker_module_augmentation_merges_exports() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 namespace Outer {
@@ -6728,8 +6728,8 @@ type AliasB = Outer.B;
 
 #[test]
 fn test_checker_lower_generic_type_reference_applies_args() {
-    use crate::solver::{SymbolRef, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{SymbolRef, TypeKey};
 
     let source = r#"
 type Box<T> = { value: T };
@@ -6792,8 +6792,8 @@ type Alias = Box<string>;
 
 #[test]
 fn test_checker_lowers_generic_function_type_annotation_uses_type_params() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 const f: <T>(value: T) => T = (value) => value;
@@ -6862,8 +6862,8 @@ const f: <T>(value: T) => T = (value) => value;
 
 #[test]
 fn test_interface_generic_call_signature_uses_type_params() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 interface Callable {
@@ -6944,8 +6944,8 @@ interface Callable {
 
 #[test]
 fn test_interface_generic_construct_signature_uses_type_params() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 interface Factory {
@@ -7026,8 +7026,8 @@ interface Factory {
 
 #[test]
 fn test_checker_lowers_generic_function_declaration_uses_type_params() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 function id<T>(value: T): T {
@@ -7098,8 +7098,8 @@ function id<T>(value: T): T {
 
 #[test]
 fn test_function_return_type_inferred_from_body() {
-    use crate::solver::{TypeId, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{TypeId, TypeKey};
 
     let source = r#"
 function id(x: string) {
@@ -7142,8 +7142,8 @@ function id(x: string) {
 
 #[test]
 fn test_arrow_function_return_type_inferred_union() {
-    use crate::solver::{TypeId, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{TypeId, TypeKey};
 
     let source = r#"
 const f = (flag: boolean) => {
@@ -8371,8 +8371,8 @@ const value = arr[0];
 
 #[test]
 fn test_array_literal_best_common_type_prefers_supertype_element() {
-    use crate::solver::{PropertyInfo, TypeId, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{PropertyInfo, TypeId, TypeKey};
 
     let source = r#"
 const arr = [{ a: "x" }, { a: "y", b: 1 }];
@@ -8499,8 +8499,8 @@ const value = arr[0];
 
 #[test]
 fn test_checker_tuple_optional_element_access_includes_undefined() {
-    use crate::solver::{TypeId, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{TypeId, TypeKey};
 
     let source = r#"
 const tup: [string?] = ["a"];
@@ -8843,8 +8843,8 @@ const value = obj[key];
 
 #[test]
 fn test_checker_lowers_element_access_literal_key_union() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 interface Foo { a: number; b: string; }
@@ -8889,8 +8889,8 @@ const value = obj[key];
 
 #[test]
 fn test_checker_element_access_union_key_cross_product() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 type A = { kind: "a"; val: 1 } | { kind: "b"; val: 2 };
@@ -8978,8 +8978,8 @@ const value = obj[key];
 
 #[test]
 fn test_checker_lowers_element_access_numeric_literal_union() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 const tup: [string, number, boolean] = ["a", 1, true];
@@ -9024,8 +9024,8 @@ const value = tup[idx];
 
 #[test]
 fn test_checker_lowers_element_access_mixed_literal_key_union() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 const arr: string[] = ["a"];
@@ -9108,8 +9108,8 @@ const value = obj["a"];
 
 #[test]
 fn test_checker_element_access_optional_chain_nullable_object() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 type Foo = { a: number };
@@ -9153,8 +9153,8 @@ const value = obj?.["a"];
 
 #[test]
 fn test_checker_property_access_optional_chain_nullable_object() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 type Foo = { a: number };
@@ -9198,8 +9198,8 @@ const value = obj?.a;
 
 #[test]
 fn test_checker_property_access_union_type() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 type U = { a: number } | { a: string };
@@ -9243,8 +9243,8 @@ const value = obj.a;
 
 #[test]
 fn test_checker_namespace_merges_with_class_exports() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 class Foo {}
@@ -9297,8 +9297,8 @@ type Alias = Foo.Bar;
 
 #[test]
 fn test_checker_namespace_merges_with_class_exports_reverse_order() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 namespace Foo {
@@ -9484,8 +9484,8 @@ const sum = Merge.a + Merge.b;
 
 #[test]
 fn test_checker_namespace_merges_across_decls_type_access() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 namespace Merge {
@@ -9630,8 +9630,8 @@ const direct = Merge.extra;
 
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 function Merge() {}
@@ -9684,8 +9684,8 @@ type Alias = Merge.Extra;
 
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports_reverse_order() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 namespace Merge {
@@ -9831,8 +9831,8 @@ const direct = Merge.extra;
 
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 enum Merge {
@@ -9887,8 +9887,8 @@ type Alias = Merge.Extra;
 
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports_reverse_order() {
-    use crate::solver::TypeKey;
     use crate::parser::ParserState;
+    use crate::solver::TypeKey;
 
     let source = r#"
 namespace Merge {
@@ -9989,8 +9989,8 @@ const direct = Foo["value"];
 
 #[test]
 fn test_checker_interface_typeof_value_reference() {
-    use crate::solver::{SymbolRef, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{SymbolRef, TypeKey};
 
     let source = r#"
 const Foo = 1;
@@ -10077,8 +10077,8 @@ interface Bar {
 #[test]
 #[ignore = "Import assignment syntax triggers ES module error (TS1202)"]
 fn test_checker_typeof_namespace_alias_member() {
-    use crate::solver::{SymbolRef, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{SymbolRef, TypeKey};
 
     let source = r#"
 namespace Ns {
@@ -10127,8 +10127,8 @@ type T = typeof Alias.value;
 
 #[test]
 fn test_checker_typeof_with_type_arguments() {
-    use crate::solver::{SymbolRef, TypeKey};
     use crate::parser::ParserState;
+    use crate::solver::{SymbolRef, TypeKey};
 
     let source = r#"
 const Foo = <T>(value: T) => value;
@@ -12228,8 +12228,8 @@ fn test_deep_binary_expression_type_check() {
 
 #[test]
 fn test_scoped_identifier_resolution_uses_binder_scopes() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x = 1;
@@ -12319,8 +12319,8 @@ x;
 #[test]
 #[ignore = "Flow narrowing in conditional branches not fully implemented"]
 fn test_flow_narrowing_applies_in_if_branch() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number;
@@ -12425,8 +12425,8 @@ if (typeof x === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_in_while() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number = Math.random() > 0.5 ? "hello" : 42;
@@ -12496,8 +12496,8 @@ while (typeof x === "string") {
 #[test]
 #[ignore = "Flow narrowing in conditional branches not fully implemented"]
 fn test_flow_narrowing_applies_in_for() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number;
@@ -12567,8 +12567,8 @@ for (; typeof x === "string"; ) {
 #[test]
 #[ignore = "Flow narrowing in for-of loops not fully implemented"]
 fn test_flow_narrowing_not_applied_in_for_of_body() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number;
@@ -12642,8 +12642,8 @@ for (const value of [x]) {
 #[test]
 #[ignore = "Flow narrowing in for-in loops not fully implemented"]
 fn test_flow_narrowing_not_applied_in_for_in_body() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number;
@@ -12756,8 +12756,8 @@ do {
 #[test]
 #[ignore = "Flow narrowing after loop exit not fully implemented"]
 fn test_flow_narrowing_not_applied_after_while_exit() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number;
@@ -12819,8 +12819,8 @@ x;
 #[test]
 #[ignore = "Flow narrowing after loop exit not fully implemented"]
 fn test_flow_narrowing_not_applied_after_for_exit() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number;
@@ -12880,8 +12880,8 @@ x;
 #[test]
 #[ignore = "Flow narrowing after loop exit not fully implemented"]
 fn test_flow_narrowing_not_applied_after_do_while_exit() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let x: string | number;
@@ -12937,8 +12937,8 @@ x;
 
 #[test]
 fn test_flow_narrowing_applies_for_namespace_alias_member() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 namespace Ns {
@@ -13007,8 +13007,8 @@ if (typeof Alias.value === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_namespace_element_access() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 namespace Ns {
@@ -13337,8 +13337,8 @@ if (typeof obj.prop === "string") {
 
 #[test]
 fn test_flow_narrowing_not_applied_for_computed_element_access() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let obj: { [key: string]: string | number } = { prop: "ok" };
@@ -13413,8 +13413,8 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_literal_key() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13525,8 +13525,8 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_numeric_literal_key() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let arr: (string | number)[] = ["ok", 1];
@@ -13637,8 +13637,8 @@ if (typeof arr[idx] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_const_literal_key() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -13710,8 +13710,8 @@ if (typeof obj[key] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_const_numeric_key() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let arr: (string | number)[] = ["ok", 1];
@@ -13783,8 +13783,8 @@ if (typeof arr[idx] === "string") {
 
 #[test]
 fn test_flow_narrowing_applies_for_computed_element_access_literal_discriminant() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 type U = { kind: "a"; value: string } | { kind: "b"; value: number };
@@ -13857,8 +13857,8 @@ if (obj[key] === "a") {
 
 #[test]
 fn test_flow_narrowing_applies_for_literal_element_access() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 let obj: { prop: string | number } = { prop: "ok" };
@@ -14005,8 +14005,8 @@ if (typeof obj["prop"] === "string") {
 
 #[test]
 fn test_parameter_identifier_type_from_symbol_cache() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     let source = r#"
 function f(x: number) { return x; }
@@ -27062,8 +27062,8 @@ fn test_tier_2_type_checker_accuracy_fixes() {
 #[test]
 #[ignore = "Namespace context detection through AST traversal not fully implemented"]
 fn test_is_in_namespace_context_ast_traversal() {
-    use crate::parser::syntax_kind_ext;
     use crate::parser::ParserState;
+    use crate::parser::syntax_kind_ext;
 
     // Test 1: Function inside a namespace should be detected
     let source_with_namespace = r#"

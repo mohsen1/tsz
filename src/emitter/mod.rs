@@ -27,8 +27,8 @@
 
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::{Node, NodeArena};
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};

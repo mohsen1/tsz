@@ -3,7 +3,9 @@
 //! Provides function signature information and active parameter highlighting
 //! when typing arguments in a call expression.
 
+use crate::binder::BinderState;
 use crate::binder::symbol_flags;
+use crate::checker::state::CheckerState;
 use crate::lsp::jsdoc::{ParsedJsdoc, jsdoc_for_node, parse_jsdoc};
 use crate::lsp::position::{LineMap, Position};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
@@ -12,8 +14,6 @@ use crate::parser::node::{CallExprData, NodeAccess, NodeArena};
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::{FunctionShape, TypeId, TypeInterner, TypeKey};
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

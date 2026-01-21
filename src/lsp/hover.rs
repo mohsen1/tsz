@@ -2,6 +2,8 @@
 //!
 //! Displays type information and documentation for the symbol at the cursor.
 
+use crate::binder::BinderState;
+use crate::checker::state::CheckerState;
 use crate::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
@@ -9,8 +11,6 @@ use crate::lsp::utils::find_node_at_or_before_offset;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::solver::TypeInterner;
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
 
 /// Information returned for a hover request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -286,10 +286,10 @@ impl<'a> HoverProvider<'a> {
 #[cfg(test)]
 mod hover_tests {
     use super::*;
-    use crate::lsp::position::LineMap;
-    use crate::solver::TypeInterner;
     use crate::binder::BinderState;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
 
     #[test]
     fn test_hover_variable_type() {

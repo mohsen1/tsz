@@ -1,9 +1,9 @@
 use super::*;
+use crate::binder::BinderState;
 use crate::checker::types::diagnostics::diagnostic_codes::{
     CANNOT_FIND_NAME, PROPERTY_DOES_NOT_EXIST_ON_TYPE, UNUSED_IMPORT, UNUSED_VARIABLE,
 };
 use crate::lsp::position::LineMap;
-use crate::binder::BinderState;
 use crate::parser::ParserState;
 
 fn range_for_substring(source: &str, line_map: &LineMap, needle: &str) -> Range {

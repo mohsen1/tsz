@@ -262,8 +262,7 @@ fn bench_parse_throughput(c: &mut Criterion) {
 fn bench_node_allocation(c: &mut Criterion) {
     c.bench_function("node_allocation", |b| {
         b.iter(|| {
-            let mut parser =
-                ParserState::new("bench.ts".to_string(), MEDIUM_SOURCE.to_string());
+            let mut parser = ParserState::new("bench.ts".to_string(), MEDIUM_SOURCE.to_string());
             let root = parser.parse_source_file();
             let count = parser.get_node_count();
             black_box((root, count))

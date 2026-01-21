@@ -54,9 +54,9 @@ fn test_emit_reexport_property_alias() {
 
 #[test]
 fn test_collect_export_names_with_parsed_ast() {
+    use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
     use crate::scanner::SyntaxKind;
-    use crate::parser::ParserState;
 
     let source = "export class C {}";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

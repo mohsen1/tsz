@@ -1,5 +1,5 @@
 use super::{Printer, get_operator_text};
-use crate::parser::{syntax_kind_ext, node::Node};
+use crate::parser::{node::Node, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {

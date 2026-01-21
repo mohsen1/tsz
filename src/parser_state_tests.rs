@@ -7,9 +7,9 @@
 //! - Edge cases and performance
 
 use crate::checker::types::diagnostics::diagnostic_codes;
+use crate::parser::ParserState;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::parser::ParserState;
 use std::mem::size_of;
 
 // =============================================================================
@@ -145,8 +145,7 @@ fn test_parser_if_statement() {
 
 #[test]
 fn test_parser_while_loop() {
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "while (x < 10) { x++; }".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "while (x < 10) { x++; }".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -183,8 +182,7 @@ fn test_parser_object_literal() {
 
 #[test]
 fn test_parser_array_literal() {
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "let arr = [1, 2, 3];".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "let arr = [1, 2, 3];".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -807,8 +805,7 @@ fn test_parser_class_extends_property_access() {
 
 #[test]
 fn test_parser_decorator_class() {
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "@Component class Foo {}".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "@Component class Foo {}".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -1380,8 +1377,7 @@ fn test_parser_intersection_type() {
 #[test]
 fn test_parser_union_intersection_mixed() {
     // Intersection binds tighter than union: A & B | C means (A & B) | C
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "let x: A & B | C & D;".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "let x: A & B | C & D;".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -1407,8 +1403,7 @@ fn test_parser_array_type() {
 
 #[test]
 fn test_parser_nested_array_type() {
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "let matrix: number[][];".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "let matrix: number[][];".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -2678,8 +2673,7 @@ fn test_parser_export_function() {
 
 #[test]
 fn test_parser_export_const() {
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "export const x = 42;".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "export const x = 42;".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -2740,8 +2734,7 @@ fn test_parser_default_re_export_specifiers() {
 
 #[test]
 fn test_parser_export_star() {
-    let mut parser =
-        ParserState::new("test.ts".to_string(), r#"export * from "foo";"#.to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), r#"export * from "foo";"#.to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -2814,8 +2807,7 @@ fn test_parser_optional_chaining() {
 
 #[test]
 fn test_parser_optional_chain_call_with_type_arguments() {
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "let x = obj?.<T>(value)".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "let x = obj?.<T>(value)".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -3495,8 +3487,7 @@ fn test_parser_await_as_type_name() {
 #[test]
 fn test_parser_await_as_parameter_name() {
     // 'await' should be valid as parameter name outside async functions
-    let mut parser =
-        ParserState::new("test.ts".to_string(), "function f(await) { }".to_string());
+    let mut parser = ParserState::new("test.ts".to_string(), "function f(await) { }".to_string());
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
@@ -3980,8 +3971,6 @@ for (let i = 0; i < 10; i++) {
 
 #[test]
 fn test_parser_continue_without_label_has_none() {
-    use crate::parser::node::JumpData;
-
     let source = r#"
 for (let i = 0; i < 10; i++) {
     if (i > 5) continue;
@@ -4039,8 +4028,6 @@ myLabel: while (true) {
 
 #[test]
 fn test_parser_break_with_asi_before_label() {
-    use crate::parser::node::JumpData;
-
     // ASI applies before label on new line
     let source = r#"
 outer: for (;;) {

@@ -2,12 +2,12 @@
 //!
 //! Given a position in the source, finds where the symbol at that position is defined.
 
+use crate::binder::BinderState;
 use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::lsp::utils::find_node_at_offset;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
-use crate::binder::BinderState;
 
 /// Go-to-Definition provider.
 ///
@@ -192,8 +192,8 @@ impl<'a> GoToDefinition<'a> {
 #[cfg(test)]
 mod definition_tests {
     use super::*;
-    use crate::lsp::position::LineMap;
     use crate::binder::BinderState;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
 
     #[test]

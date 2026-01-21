@@ -45,8 +45,8 @@ pub use crate::isolated_test_runner::{
     EnhancedTestResult, IsolatedTestConfig, MemoryInfo, MonitoredTestResult, ResourceLimits,
     run_enhanced_test, run_isolated_test,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -272,20 +272,16 @@ impl ParserTestFixture {
 
     /// Parse the source and return the parser state
     pub fn parse(&self) -> crate::parser::ParserState {
-        let mut parser = crate::parser::ParserState::new(
-            self.file_name.clone(),
-            self.source.clone(),
-        );
+        let mut parser =
+            crate::parser::ParserState::new(self.file_name.clone(), self.source.clone());
         parser.parse_source_file();
         parser
     }
 
     /// Parse and bind the source, returning both parser and binder states
     pub fn parse_and_bind(&self) -> (crate::parser::ParserState, crate::binder::BinderState) {
-        let mut parser = crate::parser::ParserState::new(
-            self.file_name.clone(),
-            self.source.clone(),
-        );
+        let mut parser =
+            crate::parser::ParserState::new(self.file_name.clone(), self.source.clone());
         let root = parser.parse_source_file();
 
         let mut binder = crate::binder::BinderState::new();
@@ -439,11 +435,19 @@ mod tests {
     #[test]
     fn test_report() {
         let mut report = TestReport::default();
-        report.add("test1", TestResult::Passed { duration: Duration::from_millis(100) });
-        report.add("test2", TestResult::Failed {
-            message: "assertion failed".into(),
-            duration: Duration::from_millis(50)
-        });
+        report.add(
+            "test1",
+            TestResult::Passed {
+                duration: Duration::from_millis(100),
+            },
+        );
+        report.add(
+            "test2",
+            TestResult::Failed {
+                message: "assertion failed".into(),
+                duration: Duration::from_millis(50),
+            },
+        );
 
         assert_eq!(report.total(), 2);
         assert_eq!(report.passed, 1);

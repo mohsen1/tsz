@@ -8,8 +8,8 @@
 //! The emitter (Printer) delegates all text output to SourceWriter,
 //! allowing for accurate source map generation and cleaner separation of concerns.
 
-use crate::source_map::{Mapping, SourceMapGenerator};
 use crate::emitter::NewLineKind;
+use crate::source_map::{Mapping, SourceMapGenerator};
 
 /// A source position from the original AST
 #[derive(Debug, Clone, Copy, Default)]

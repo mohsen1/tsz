@@ -1,7 +1,7 @@
 use super::{ParamTransformPlan, Printer};
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::{BindingElementData, BindingPatternData, ForInOfData, Node};
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {

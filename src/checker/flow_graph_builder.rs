@@ -173,10 +173,7 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Returns
     /// Reference to the built flow graph
-    pub fn build_function_body(
-        &mut self,
-        body: &crate::parser::node::BlockData,
-    ) -> &FlowGraph {
+    pub fn build_function_body(&mut self, body: &crate::parser::node::BlockData) -> &FlowGraph {
         // Reset the builder state for a new function
         self.graph = FlowGraph::new();
         self.current_flow = self.graph.nodes.alloc(flow_flags::START);

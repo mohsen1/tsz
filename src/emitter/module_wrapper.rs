@@ -127,10 +127,7 @@ impl<'a> Printer<'a> {
         self.write("});");
     }
 
-    pub(super) fn emit_module_wrapper_body(
-        &mut self,
-        source_node: &crate::parser::node::Node,
-    ) {
+    pub(super) fn emit_module_wrapper_body(&mut self, source_node: &crate::parser::node::Node) {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
 

@@ -721,8 +721,8 @@ namespace foo {
 
 #[test]
 fn test_import_alias_binding() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1482,8 +1482,8 @@ const c = Status.Done;
 
 #[test]
 fn test_const_enum_declaration() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1667,8 +1667,8 @@ const msg2 = ErrorCode.getMessage(ErrorCode.ServerError);
 
 #[test]
 fn test_scope_chain_traversal() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     // Test that identifier resolution walks the scope chain correctly.
@@ -1780,8 +1780,8 @@ function test() {
 /// This verifies scope chain traversal works correctly through multiple levels.
 #[test]
 fn test_deeply_nested_scope_chain() {
-    use crate::binder::ContainerKind;
     use crate::binder::BinderState;
+    use crate::binder::ContainerKind;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1943,8 +1943,8 @@ class MyClass {
 
 #[test]
 fn test_block_scope_let_const() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1987,8 +1987,8 @@ fn test_block_scope_let_const() {
 
 #[test]
 fn test_var_hoisting() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -2048,8 +2048,8 @@ function test() {
 
 #[test]
 fn test_imported_symbol_visibility() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -2080,8 +2080,8 @@ function test() {
 
 #[test]
 fn test_default_import_visibility() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -2108,8 +2108,8 @@ const value = defaultExport;
 
 #[test]
 fn test_namespace_import_visibility() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -2161,8 +2161,8 @@ import type Type3 from 'module';
 
 #[test]
 fn test_re_export_from_module() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -2267,12 +2267,7 @@ fn test_symbol_table_validation_detects_orphans() {
 
     let orphan_errors: Vec<_> = errors
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                crate::binder::ValidationError::OrphanedSymbol { .. }
-            )
-        })
+        .filter(|e| matches!(e, crate::binder::ValidationError::OrphanedSymbol { .. }))
         .collect();
     assert_eq!(orphan_errors.len(), 1);
 }
@@ -2299,12 +2294,7 @@ fn test_symbol_table_validation_broken_links() {
 
     let link_errors: Vec<_> = errors
         .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                crate::binder::ValidationError::BrokenSymbolLink { .. }
-            )
-        })
+        .filter(|e| matches!(e, crate::binder::ValidationError::BrokenSymbolLink { .. }))
         .collect();
     assert_eq!(link_errors.len(), 1);
 }
@@ -2393,8 +2383,8 @@ const functionExpr = function() {
 
 #[test]
 fn test_module_import_resolution_basic_named_import() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     // Simulate file1.ts which exports symbols
@@ -2403,8 +2393,7 @@ export const foo = 42;
 export const bar = "hello";
 "#;
 
-    let mut exporter_parser =
-        ParserState::new("file1.ts".to_string(), exporter_source.to_string());
+    let mut exporter_parser = ParserState::new("file1.ts".to_string(), exporter_source.to_string());
     let exporter_root = exporter_parser.parse_source_file();
     let exporter_arena = exporter_parser.get_arena();
 
@@ -2428,8 +2417,7 @@ const x = foo;
 const y = bar;
 "#;
 
-    let mut importer_parser =
-        ParserState::new("file2.ts".to_string(), importer_source.to_string());
+    let mut importer_parser = ParserState::new("file2.ts".to_string(), importer_source.to_string());
     let importer_root = importer_parser.parse_source_file();
     let importer_arena = importer_parser.get_arena();
 
@@ -2499,8 +2487,8 @@ const y = bar;
 
 #[test]
 fn test_module_import_resolution_renamed_import() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     // Simulate file1.ts which exports a symbol
@@ -2508,8 +2496,7 @@ fn test_module_import_resolution_renamed_import() {
 export const originalValue = 42;
 "#;
 
-    let mut exporter_parser =
-        ParserState::new("file1.ts".to_string(), exporter_source.to_string());
+    let mut exporter_parser = ParserState::new("file1.ts".to_string(), exporter_source.to_string());
     let exporter_root = exporter_parser.parse_source_file();
     let exporter_arena = exporter_parser.get_arena();
 
@@ -2528,8 +2515,7 @@ import { originalValue as aliasedValue } from './file1';
 const x = aliasedValue;
 "#;
 
-    let mut importer_parser =
-        ParserState::new("file2.ts".to_string(), importer_source.to_string());
+    let mut importer_parser = ParserState::new("file2.ts".to_string(), importer_source.to_string());
     let importer_root = importer_parser.parse_source_file();
     let importer_arena = importer_parser.get_arena();
 
@@ -2586,8 +2572,8 @@ const x = aliasedValue;
 
 #[test]
 fn test_module_import_resolution_non_import_symbol_unchanged() {
-    use crate::binder::symbol_flags;
     use crate::binder::BinderState;
+    use crate::binder::symbol_flags;
     use crate::parser::ParserState;
 
     // Test that regular (non-import) symbols are not affected by import resolution

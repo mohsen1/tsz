@@ -81,13 +81,7 @@ impl Node {
 
     /// Create a new thin node with data index and flags
     #[inline]
-    pub fn with_data_and_flags(
-        kind: u16,
-        pos: u32,
-        end: u32,
-        data_index: u32,
-        flags: u16,
-    ) -> Node {
+    pub fn with_data_and_flags(kind: u16, pos: u32, end: u32, data_index: u32, flags: u16) -> Node {
         Node {
             kind,
             flags,
@@ -1242,8 +1236,7 @@ impl NodeArena {
         let data_index = self.identifiers.len() as u32;
         self.identifiers.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -1253,8 +1246,7 @@ impl NodeArena {
         let data_index = self.literals.len() as u32;
         self.literals.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -1273,8 +1265,7 @@ impl NodeArena {
         let data_index = self.binary_exprs.len() as u32;
         self.binary_exprs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1299,8 +1290,7 @@ impl NodeArena {
         let data_index = self.call_exprs.len() as u32;
         self.call_exprs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1323,8 +1313,7 @@ impl NodeArena {
         let data_index = self.functions.len() as u32;
         self.functions.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1349,8 +1338,7 @@ impl NodeArena {
         let data_index = self.classes.len() as u32;
         self.classes.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1370,8 +1358,7 @@ impl NodeArena {
         let data_index = self.blocks.len() as u32;
         self.blocks.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1418,8 +1405,7 @@ impl NodeArena {
         let data_index = self.qualified_names.len() as u32;
         self.qualified_names.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1442,8 +1428,7 @@ impl NodeArena {
         let data_index = self.computed_properties.len() as u32;
         self.computed_properties.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -1463,8 +1448,7 @@ impl NodeArena {
         let data_index = self.unary_exprs.len() as u32;
         self.unary_exprs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1487,8 +1471,7 @@ impl NodeArena {
         let data_index = self.access_exprs.len() as u32;
         self.access_exprs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1513,8 +1496,7 @@ impl NodeArena {
         let data_index = self.conditional_exprs.len() as u32;
         self.conditional_exprs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(condition, parent);
@@ -1536,8 +1518,7 @@ impl NodeArena {
         let data_index = self.literal_exprs.len() as u32;
         self.literal_exprs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_list(&elements, parent);
@@ -1556,8 +1537,7 @@ impl NodeArena {
         let data_index = self.parenthesized.len() as u32;
         self.parenthesized.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -1576,8 +1556,7 @@ impl NodeArena {
         let data_index = self.unary_exprs_ex.len() as u32;
         self.unary_exprs_ex.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -1595,8 +1574,7 @@ impl NodeArena {
         let data_index = self.type_assertions.len() as u32;
         self.type_assertions.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -1615,8 +1593,7 @@ impl NodeArena {
         let data_index = self.template_exprs.len() as u32;
         self.template_exprs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1640,8 +1617,7 @@ impl NodeArena {
         let data_index = self.template_spans.len() as u32;
         self.template_spans.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1666,8 +1642,7 @@ impl NodeArena {
         let data_index = self.tagged_templates.len() as u32;
         self.tagged_templates.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1695,8 +1670,7 @@ impl NodeArena {
         let data_index = self.interfaces.len() as u32;
         self.interfaces.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1725,8 +1699,7 @@ impl NodeArena {
         let data_index = self.type_aliases.len() as u32;
         self.type_aliases.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1747,8 +1720,7 @@ impl NodeArena {
         let data_index = self.enums.len() as u32;
         self.enums.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1773,8 +1745,7 @@ impl NodeArena {
         let data_index = self.enum_members.len() as u32;
         self.enum_members.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1793,8 +1764,7 @@ impl NodeArena {
         let data_index = self.modules.len() as u32;
         self.modules.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1818,8 +1788,7 @@ impl NodeArena {
         let data_index = self.module_blocks.len() as u32;
         self.module_blocks.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1845,8 +1814,7 @@ impl NodeArena {
         let data_index = self.signatures.len() as u32;
         self.signatures.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1874,8 +1842,7 @@ impl NodeArena {
         let data_index = self.index_signatures.len() as u32;
         self.index_signatures.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -1902,8 +1869,7 @@ impl NodeArena {
         let data_index = self.property_decls.len() as u32;
         self.property_decls.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -1931,8 +1897,7 @@ impl NodeArena {
         let data_index = self.method_decls.len() as u32;
         self.method_decls.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -1960,8 +1925,7 @@ impl NodeArena {
         let data_index = self.constructors.len() as u32;
         self.constructors.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -1983,8 +1947,7 @@ impl NodeArena {
         let data_index = self.accessors.len() as u32;
         self.accessors.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2013,8 +1976,7 @@ impl NodeArena {
         let data_index = self.parameters.len() as u32;
         self.parameters.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         // Set parent pointers for children
@@ -2041,8 +2003,7 @@ impl NodeArena {
         let data_index = self.type_parameters.len() as u32;
         self.type_parameters.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2065,8 +2026,7 @@ impl NodeArena {
         let data_index = self.decorators.len() as u32;
         self.decorators.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -2077,8 +2037,7 @@ impl NodeArena {
         let data_index = self.heritage_clauses.len() as u32;
         self.heritage_clauses.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_list(&types, parent);
@@ -2098,8 +2057,7 @@ impl NodeArena {
         let data_index = self.expr_with_type_args.len() as u32;
         self.expr_with_type_args.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -2122,8 +2080,7 @@ impl NodeArena {
         let data_index = self.if_statements.len() as u32;
         self.if_statements.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2143,8 +2100,7 @@ impl NodeArena {
         let data_index = self.loops.len() as u32;
         self.loops.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(initializer, parent);
@@ -2174,9 +2130,8 @@ impl NodeArena {
         let data_index = self.variables.len() as u32;
         self.variables.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes.push(Node::with_data_and_flags(
-            kind, pos, end, data_index, flags,
-        ));
+        self.nodes
+            .push(Node::with_data_and_flags(kind, pos, end, data_index, flags));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2193,8 +2148,7 @@ impl NodeArena {
         let data_index = self.return_data.len() as u32;
         self.return_data.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2215,8 +2169,7 @@ impl NodeArena {
         let data_index = self.expr_statements.len() as u32;
         self.expr_statements.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -2230,8 +2183,7 @@ impl NodeArena {
         let data_index = self.switch_data.len() as u32;
         self.switch_data.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -2252,8 +2204,7 @@ impl NodeArena {
         let data_index = self.case_clauses.len() as u32;
         self.case_clauses.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -2266,8 +2217,7 @@ impl NodeArena {
         let data_index = self.try_data.len() as u32;
         self.try_data.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -2285,8 +2235,7 @@ impl NodeArena {
         let data_index = self.catch_clauses.len() as u32;
         self.catch_clauses.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2301,8 +2250,7 @@ impl NodeArena {
         let data_index = self.labeled_data.len() as u32;
         self.labeled_data.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -2312,8 +2260,7 @@ impl NodeArena {
         let data_index = self.jump_data.len() as u32;
         self.jump_data.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -2323,8 +2270,7 @@ impl NodeArena {
         let data_index = self.with_data.len() as u32;
         self.with_data.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -2336,8 +2282,7 @@ impl NodeArena {
         let data_index = self.type_refs.len() as u32;
         self.type_refs.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(type_name, parent);
@@ -2358,8 +2303,7 @@ impl NodeArena {
         let data_index = self.composite_types.len() as u32;
         self.composite_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2383,8 +2327,7 @@ impl NodeArena {
         let data_index = self.function_types.len() as u32;
         self.function_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -2408,8 +2351,7 @@ impl NodeArena {
         let data_index = self.type_queries.len() as u32;
         self.type_queries.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expr_name, parent);
@@ -2429,8 +2371,7 @@ impl NodeArena {
         let data_index = self.type_literals.len() as u32;
         self.type_literals.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_list(&members, parent);
@@ -2449,8 +2390,7 @@ impl NodeArena {
         let data_index = self.array_types.len() as u32;
         self.array_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(element_type, parent);
@@ -2469,8 +2409,7 @@ impl NodeArena {
         let data_index = self.tuple_types.len() as u32;
         self.tuple_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_list(&elements, parent);
@@ -2489,8 +2428,7 @@ impl NodeArena {
         let data_index = self.wrapped_types.len() as u32;
         self.wrapped_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(type_node, parent);
@@ -2512,8 +2450,7 @@ impl NodeArena {
         let data_index = self.conditional_types.len() as u32;
         self.conditional_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(check_type, parent);
@@ -2535,8 +2472,7 @@ impl NodeArena {
         let data_index = self.infer_types.len() as u32;
         self.infer_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(type_parameter, parent);
@@ -2555,8 +2491,7 @@ impl NodeArena {
         let data_index = self.type_operators.len() as u32;
         self.type_operators.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(type_node, parent);
@@ -2576,8 +2511,7 @@ impl NodeArena {
         let data_index = self.indexed_access_types.len() as u32;
         self.indexed_access_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(object_type, parent);
@@ -2602,8 +2536,7 @@ impl NodeArena {
         let data_index = self.mapped_types.len() as u32;
         self.mapped_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(readonly_token, parent);
@@ -2627,8 +2560,7 @@ impl NodeArena {
         let data_index = self.literal_types.len() as u32;
         self.literal_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(literal, parent);
@@ -2648,8 +2580,7 @@ impl NodeArena {
         let data_index = self.template_literal_types.len() as u32;
         self.template_literal_types.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(head, parent);
@@ -2671,8 +2602,7 @@ impl NodeArena {
         let data_index = self.named_tuple_members.len() as u32;
         self.named_tuple_members.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(name, parent);
@@ -2694,8 +2624,7 @@ impl NodeArena {
         let data_index = self.type_predicates.len() as u32;
         self.type_predicates.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(parameter_name, parent);
@@ -2719,8 +2648,7 @@ impl NodeArena {
         let data_index = self.import_decls.len() as u32;
         self.import_decls.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -2744,8 +2672,7 @@ impl NodeArena {
         let data_index = self.import_clauses.len() as u32;
         self.import_clauses.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(name, parent);
@@ -2767,8 +2694,7 @@ impl NodeArena {
         let data_index = self.named_imports.len() as u32;
         self.named_imports.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(name, parent);
@@ -2790,8 +2716,7 @@ impl NodeArena {
         let data_index = self.specifiers.len() as u32;
         self.specifiers.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(property_name, parent);
@@ -2815,8 +2740,7 @@ impl NodeArena {
         let data_index = self.export_decls.len() as u32;
         self.export_decls.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -2839,8 +2763,7 @@ impl NodeArena {
         let data_index = self.export_assignments.len() as u32;
         self.export_assignments.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -2861,8 +2784,7 @@ impl NodeArena {
         let data_index = self.import_attributes.len() as u32;
         self.import_attributes.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_list(&elements, parent);
@@ -2883,8 +2805,7 @@ impl NodeArena {
         let data_index = self.import_attribute.len() as u32;
         self.import_attribute.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(name, parent);
@@ -2905,8 +2826,7 @@ impl NodeArena {
         let data_index = self.binding_patterns.len() as u32;
         self.binding_patterns.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_list(&elements, parent);
@@ -2928,8 +2848,7 @@ impl NodeArena {
         let data_index = self.binding_elements.len() as u32;
         self.binding_elements.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(property_name, parent);
@@ -2953,8 +2872,7 @@ impl NodeArena {
         let data_index = self.property_assignments.len() as u32;
         self.property_assignments.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -2978,8 +2896,7 @@ impl NodeArena {
         let data_index = self.shorthand_properties.len() as u32;
         self.shorthand_properties.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent_opt_list(&modifiers, parent);
@@ -2995,8 +2912,7 @@ impl NodeArena {
         let data_index = self.spread_data.len() as u32;
         self.spread_data.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(expression, parent);
@@ -3018,8 +2934,7 @@ impl NodeArena {
         let data_index = self.jsx_elements.len() as u32;
         self.jsx_elements.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3044,8 +2959,7 @@ impl NodeArena {
         let data_index = self.jsx_opening.len() as u32;
         self.jsx_opening.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3068,8 +2982,7 @@ impl NodeArena {
         let data_index = self.jsx_closing.len() as u32;
         self.jsx_closing.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3092,8 +3005,7 @@ impl NodeArena {
         let data_index = self.jsx_fragments.len() as u32;
         self.jsx_fragments.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3116,8 +3028,7 @@ impl NodeArena {
         let data_index = self.jsx_attributes.len() as u32;
         self.jsx_attributes.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3139,8 +3050,7 @@ impl NodeArena {
         let data_index = self.jsx_attribute.len() as u32;
         self.jsx_attribute.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3162,8 +3072,7 @@ impl NodeArena {
         let data_index = self.jsx_spread_attributes.len() as u32;
         self.jsx_spread_attributes.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3184,8 +3093,7 @@ impl NodeArena {
         let data_index = self.jsx_expressions.len() as u32;
         self.jsx_expressions.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3198,8 +3106,7 @@ impl NodeArena {
         let data_index = self.jsx_text.len() as u32;
         self.jsx_text.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         NodeIndex(index)
     }
@@ -3218,8 +3125,7 @@ impl NodeArena {
         let data_index = self.jsx_namespaced_names.len() as u32;
         self.jsx_namespaced_names.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3243,8 +3149,7 @@ impl NodeArena {
         let data_index = self.variable_declarations.len() as u32;
         self.variable_declarations.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
 
         let parent = NodeIndex(index);
@@ -3263,8 +3168,7 @@ impl NodeArena {
         let data_index = self.for_in_of.len() as u32;
         self.for_in_of.push(data);
         let index = self.nodes.len() as u32;
-        self.nodes
-            .push(Node::with_data(kind, pos, end, data_index));
+        self.nodes.push(Node::with_data(kind, pos, end, data_index));
         self.extended_info.push(ExtendedNodeInfo::default());
         let parent = NodeIndex(index);
         self.set_parent(initializer, parent);
