@@ -195,6 +195,39 @@ wasm-pack build --target nodejs          # Build WASM
 
 ***
 
+## Git Hooks
+
+Pre-commit hooks are available to enforce code quality before committing:
+
+```bash
+# Install hooks (run once after cloning)
+./scripts/install-hooks.sh
+
+# Now hooks will run automatically before each commit
+```
+
+**Pre-commit hook checks:**
+1. `cargo fmt --check` - Ensures code is formatted
+2. `cargo clippy --all-targets -- -D warnings` - Catches linter warnings
+3. `cargo test --lib` - Runs unit tests
+
+**Fix formatting issues:**
+```bash
+# Format code
+cargo fmt
+
+# Then commit again
+git commit -m "your message"
+```
+
+**Fix clippy issues:**
+```bash
+# Auto-fix clippy warnings
+cargo clippy --all-targets --fix --allow-dirty --allow-staged
+```
+
+***
+
 ## Rules
 
 * All commits must pass unit tests
