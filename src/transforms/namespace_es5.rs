@@ -390,18 +390,27 @@ impl<'a> NamespaceES5Emitter<'a> {
         match member_node.kind {
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 let export_data = self.arena.get_export_decl(member_node)?;
-                let inner_ir =
-                    transform_context.transform_namespace_member_exported(ns_name, export_data.export_clause)?;
-                if matches!(
-                    self.arena.get(export_data.export_clause).map(|node| node.kind),
-                    Some(k) if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::ENUM_DECLARATION
-                ) {
-                    push_ir(IRNode::ASTRef(export_data.export_clause));
-                    if let Some(class_ir) = self.transform_namespace_class_ir(ns_name, export_data.export_clause) {
-                        push_ir(class_ir);
+                let export_node = self.arena.get(export_data.export_clause)?;
+                match export_node.kind {
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        if let Some(class_output) =
+                            self.transform_namespace_class_string(ns_name, export_data.export_clause)
+                        {
+                            output.push_str(&class_output);
+                        }
                     }
-                } else {
-                    push_ir(inner_ir);
+                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                        if let Some(enum_output) =
+                            self.transform_namespace_enum_ir(ns_name, export_data.export_clause)
+                        {
+                            output.push_str(&enum_output);
+                        }
+                    }
+                    _ => {
+                        let inner_ir = transform_context
+                            .transform_namespace_member_exported(ns_name, export_data.export_clause)?;
+                        push_ir(inner_ir);
+                    }
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
@@ -413,9 +422,9 @@ impl<'a> NamespaceES5Emitter<'a> {
                 push_ir(inner_ir);
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                push_ir(IRNode::ASTRef(member_idx));
-                if let Some(inner_ir) = self.transform_namespace_class_ir(ns_name, member_idx) {
-                    push_ir(inner_ir);
+                if let Some(class_output) = self.transform_namespace_class_string(ns_name, member_idx)
+                {
+                    output.push_str(&class_output);
                 }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
@@ -427,10 +436,8 @@ impl<'a> NamespaceES5Emitter<'a> {
                 push_ir(inner_ir);
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_ir) =
-                    self.transform_namespace_enum_ir(ns_name, member_idx, &mut output)
-                {
-                    push_ir(enum_ir);
+                if let Some(enum_ir) = self.transform_namespace_enum_ir(ns_name, member_idx) {
+                    output.push_str(&enum_ir);
                 }
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
@@ -451,27 +458,44 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
     }
 
-    fn transform_namespace_class_ir(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_namespace_class_string(&self, ns_name: &str, class_idx: NodeIndex) -> Option<String> {
         let class_node = self.arena.get(class_idx)?;
         let class_data = self.arena.get_class(class_node)?;
         let class_name = self.get_identifier_text(class_data.name);
-        let is_exported = self.has_export_modifier(&class_data.modifiers);
-        if class_name.is_empty() || !is_exported {
+        if class_name.is_empty() {
             return None;
         }
-        Some(IRNode::NamespaceExport {
-            namespace: ns_name.to_string(),
-            name: class_name.clone(),
-            value: Box::new(IRNode::id(class_name)),
-        })
+        let mut output = String::new();
+
+        let mut class_emitter = ClassES5Emitter::new(self.arena);
+        class_emitter.set_indent_level(self.indent_level);
+        let class_output = class_emitter.emit_class(class_idx);
+        if !class_output.is_empty() {
+            output.push_str(&class_output);
+            if !class_output.ends_with('\n') {
+                output.push('\n');
+            }
+        }
+
+        if self.has_export_modifier(&class_data.modifiers) {
+            let mut printer = IRPrinter::new();
+            printer.set_indent_level(self.indent_level);
+            output.push_str(printer.emit(&IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: class_name.clone(),
+                value: Box::new(IRNode::id(class_name)),
+            }));
+            output.push('\n');
+        }
+
+        if output.trim().is_empty() {
+            None
+        } else {
+            Some(output)
+        }
     }
 
-    fn transform_namespace_enum_ir(
-        &self,
-        ns_name: &str,
-        enum_idx: NodeIndex,
-        output: &mut String,
-    ) -> Option<IRNode> {
+    fn transform_namespace_enum_ir(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<String> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
         let enum_name = self.get_identifier_text(enum_data.name);
@@ -482,6 +506,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         let mut enum_emitter = EnumES5Emitter::new(self.arena);
         enum_emitter.set_indent_level(self.indent_level);
         let enum_output = enum_emitter.emit_enum(enum_idx);
+        let mut output = String::new();
         if !enum_output.is_empty() {
             output.push_str(&enum_output);
             if !enum_output.ends_with('\n') {
@@ -490,13 +515,20 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
 
         if self.has_export_modifier(&enum_data.modifiers) {
-            Some(IRNode::NamespaceExport {
+            let mut printer = IRPrinter::new();
+            printer.set_indent_level(self.indent_level);
+            output.push_str(printer.emit(&IRNode::NamespaceExport {
                 namespace: ns_name.to_string(),
                 name: enum_name.clone(),
                 value: Box::new(IRNode::id(enum_name)),
-            })
-        } else {
+            }));
+            output.push('\n');
+        }
+
+        if output.trim().is_empty() {
             None
+        } else {
+            Some(output)
         }
     }
 
