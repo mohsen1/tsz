@@ -15,7 +15,7 @@ use rustc_hash::FxHashMap;
 use serde::Serialize;
 
 pub mod state;
-pub use state::{BinderState, LibContext};
+pub use state::{BinderState, LibContext, ValidationError};
 
 // =============================================================================
 // Symbol Flags

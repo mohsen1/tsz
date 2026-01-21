@@ -8,7 +8,7 @@
 
 use wasm::checker::context::CheckerOptions;
 use wasm::checker::state::CheckerState;
-use wasm::parser::node::ThinNodeArena;
+use wasm::parser::node::NodeArena;
 use wasm::solver::TypeInterner;
 use wasm::binder::BinderState;
 use wasm::parser::ParserState;
@@ -340,7 +340,7 @@ fn test_binding_creates_symbols() {
 #[test]
 fn test_type_checking_basic() {
     // Simple type check test using the existing pattern from checker state tests
-    let arena = ThinNodeArena::new();
+    let arena = NodeArena::new();
     let binder = BinderState::new();
     let types = TypeInterner::new();
     let checker = CheckerState::new(
