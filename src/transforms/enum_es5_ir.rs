@@ -134,29 +134,29 @@ fn extract_enum_value(arena: &NodeArena, idx: NodeIndex) -> EnumMemberValue {
         }
         k if k == SyntaxKind::Identifier as u16 => {
             // Reference to another enum member - treat as computed
-            EnumMemberValue::Computed(IRNode::id(get_identifier_text(arena, idx).unwrap_or_default()))
+            EnumMemberValue::Computed(Box::new(IRNode::id(get_identifier_text(arena, idx).unwrap_or_default())))
         }
         k if k == syntax_kind_ext::BINARY_EXPRESSION => {
             // Complex expression - treat as computed
-            EnumMemberValue::Computed(IRNode::ASTRef(idx))
+            EnumMemberValue::Computed(Box::new(IRNode::ASTRef(idx)))
         }
         k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
             // Unary expression - treat as computed
-            EnumMemberValue::Computed(IRNode::ASTRef(idx))
+            EnumMemberValue::Computed(Box::new(IRNode::ASTRef(idx)))
         }
         k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
             // Parenthesized expression - unwrap
             if let Some(paren) = arena.get_parenthesized(node) {
                 extract_enum_value(arena, paren.expression)
             } else {
-                EnumMemberValue::Computed(IRNode::ASTRef(idx))
+                EnumMemberValue::Computed(Box::new(IRNode::ASTRef(idx)))
             }
         }
         k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
             // E.A reference - treat as computed
-            EnumMemberValue::Computed(IRNode::ASTRef(idx))
+            EnumMemberValue::Computed(Box::new(IRNode::ASTRef(idx)))
         }
-        _ => EnumMemberValue::Computed(IRNode::ASTRef(idx)),
+        _ => EnumMemberValue::Computed(Box::new(IRNode::ASTRef(idx))),
     }
 }
 

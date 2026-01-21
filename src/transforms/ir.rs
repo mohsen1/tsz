@@ -426,7 +426,7 @@ pub enum EnumMemberValue {
     /// String value
     String(String),
     /// Computed expression (not a simple literal)
-    Computed(IRNode),
+    Computed(Box<IRNode>),
 }
 
 /// Property in an object literal
