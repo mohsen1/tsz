@@ -337,56 +337,36 @@ pub enum IRNode {
     ASTRef(NodeIndex),
 
     // =========================================================================
-    // Enum Transform Specific
+    // CommonJS Module Transform Specific
     // =========================================================================
-    /// Enum IIFE pattern for ES5:
-    /// `var EnumName = /** @class */ (function () { ... })();`
-    EnumIIFE {
-        name: String,
-        members: Vec<EnumMember>,
-    },
-
-    // =========================================================================
-    // Module Transform Specific (CommonJS)
-    // =========================================================================
-    /// "use strict" directive
+    /// "use strict";
     UseStrict,
 
-    /// __esModule marker: `Object.defineProperty(exports, "__esModule", { value: true });`
+    /// Object.defineProperty(exports, "__esModule", { value: true });
     EsesModuleMarker,
 
-    /// Export initialization: `exports.name = void 0;`
+    /// exports.name = void 0; (export initialization)
     ExportInit { name: String },
 
-    /// Require statement: `var var_name = require("module_spec");`
+    /// var name = require("module");
     RequireStatement {
         var_name: String,
         module_spec: String,
     },
 
-    /// Default import: `var var_name = module_var.default;`
-    DefaultImport {
-        var_name: String,
-        module_var: String,
-    },
+    /// var name = module.default;
+    DefaultImport { var_name: String, module_var: String },
 
-    /// Namespace import: `var var_name = __importStar(module_var);`
-    NamespaceImport {
-        var_name: String,
-        module_var: String,
-    },
+    /// var name = __importStar(module);
+    NamespaceImport { var_name: String, module_var: String },
 
-    /// Named import: `var var_name = module_var.import_name;`
-    NamedImport {
-        var_name: String,
-        module_var: String,
-        import_name: String,
-    },
+    /// var name = module.prop;
+    NamedImport { var_name: String, module_var: String, import_name: String },
 
-    /// Export assignment: `exports.name = name;`
+    /// exports.name = name;
     ExportAssignment { name: String },
 
-    /// Re-export property: `Object.defineProperty(exports, "name", { enumerable: true, get: function () { return module_var.import_name; } });`
+    /// Object.defineProperty(exports, "name", { enumerable: true, get: function() { return module.prop; } });
     ReExportProperty {
         export_name: String,
         module_var: String,
@@ -394,9 +374,18 @@ pub enum IRNode {
     },
 
     // =========================================================================
+    // Enum Transform Specific
+    // =========================================================================
+    /// ES5 Enum IIFE: var E; (function(E) { ... })(E || (E = {}));
+    EnumIIFE {
+        name: String,
+        members: Vec<EnumMember>,
+    },
+
+    // =========================================================================
     // Namespace Transform Specific
     // =========================================================================
-    /// Namespace IIFE for ES5
+    /// ES5 Namespace IIFE
     NamespaceIIFE {
         name_parts: Vec<String>,
         body: Vec<IRNode>,
@@ -404,31 +393,11 @@ pub enum IRNode {
         attach_to_exports: bool,
     },
 
-    /// Namespace export: `namespace.name = name;`
+    /// namespace.export = value;
     NamespaceExport {
         namespace: String,
         name: String,
     },
-}
-
-/// Enum member for transform IR
-#[derive(Debug, Clone)]
-pub struct EnumMember {
-    pub name: String,
-    pub value: EnumMemberValue,
-}
-
-/// Enum member value
-#[derive(Debug, Clone)]
-pub enum EnumMemberValue {
-    /// Auto-incremented value (starting from 0 or previous + 1)
-    Auto(i64),
-    /// Explicit numeric value
-    Numeric(i64),
-    /// String enum value
-    String(String),
-    /// Computed value (expression)
-    Computed(IRNode),
 }
 
 /// Property in an object literal
@@ -446,6 +415,26 @@ pub enum IRPropertyKey {
     StringLiteral(String),
     NumericLiteral(String),
     Computed(Box<IRNode>),
+}
+
+/// Enum member (for enum transform)
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    pub name: String,
+    pub value: EnumMemberValue,
+}
+
+/// Enum member value
+#[derive(Debug, Clone)]
+pub enum EnumMemberValue {
+    /// Auto-incremented numeric value
+    Auto(i64),
+    /// Explicit numeric value
+    Numeric(i64),
+    /// String value
+    String(String),
+    /// Computed value (IR expression)
+    Computed(IRNode),
 }
 
 /// Object property kind
