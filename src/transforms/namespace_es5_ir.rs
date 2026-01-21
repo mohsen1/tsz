@@ -168,7 +168,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Transform an exported namespace member
-    fn transform_namespace_member_exported(&self, ns_name: &str, decl_idx: NodeIndex) -> Option<IRNode> {
+    pub fn transform_namespace_member_exported(&self, ns_name: &str, decl_idx: NodeIndex) -> Option<IRNode> {
         let decl_node = self.arena.get(decl_idx)?;
 
         match decl_node.kind {
@@ -192,7 +192,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Transform a function in namespace context
-    fn transform_function_in_namespace(&self, _ns_name: &str, func_idx: NodeIndex) -> Option<IRNode> {
+    pub fn transform_function_in_namespace(&self, _ns_name: &str, func_idx: NodeIndex) -> Option<IRNode> {
         let func_node = self.arena.get(func_idx)?;
         let func_data = self.arena.get_function(func_node)?;
 
@@ -262,7 +262,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Transform a variable statement in namespace
-    fn transform_variable_in_namespace(&self, _ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
+    pub fn transform_variable_in_namespace(&self, _ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
         let var_node = self.arena.get(var_idx)?;
         let var_data = self.arena.get_variable(var_node)?;
 
@@ -327,7 +327,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Transform a nested namespace
-    fn transform_nested_namespace(&self, _parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
+    pub fn transform_nested_namespace(&self, _parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
         let ns_node = self.arena.get(ns_idx)?;
         let ns_data = self.arena.get_module(ns_node)?;
 
