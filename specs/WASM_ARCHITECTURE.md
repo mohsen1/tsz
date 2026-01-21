@@ -1,5 +1,10 @@
 # WASM Compiler Architecture (Updated 2026)
 
+**Status Legend:**
+- ✅ **Implemented** - Verified in codebase
+- ⚠️ **Partial** - Partially implemented, needs completion
+- ❌ **Aspirational** - Planned but not yet implemented
+
 Codename Zang (Persian for rust) is the working name for this Rust/WASM compiler effort. The CLI binary is `tsz`.
 
 ## Foundation & parsing
@@ -47,9 +52,11 @@ graph LR
 
 The core innovation is the **Node** representation. Benchmarks confirm the Emitter achieves **500 MB/s** throughput due to this layout.
 
-#### 3.1. The 16-Byte Header
+#### 3.1. The 16-Byte Header ✅ **IMPLEMENTED**
 
 Every AST node is a fixed-size, 16-byte header stored in `Vec<Node>`.
+
+**Verified**: `src/parser/node.rs:32-53` matches this specification exactly.
 
 ```rust
 #[repr(C)]
@@ -62,28 +69,33 @@ pub struct Node {
 }
 ```
 
-#### 3.2. Typed Data Pools (SoA)
+#### 3.2. Typed Data Pools (SoA) ✅ **IMPLEMENTED**
 
 Node-specific data is stripped from the header and stored in typed pools.
+**Verified**: `src/parser/node.rs` implements typed pools with Atom-based identifiers.
+
 **Critical Update:** To solve the "String Bloat" performance issue (50 MB/s parse speed), data pools **must not** store heap-allocated `String`s.
 
-| Node Category   | Storage Pool         | Data Layout (Updated)                                        |
-| :-------------- | :------------------- | :----------------------------------------------------------- |
-| `Identifier`    | `arena.identifiers`  | `{ name: Atom }` (u32 index, no String)                      |
-| `StringLiteral` | `arena.literals`     | `{ text: Atom }` (u32 index)                                 |
-| `BinaryExpr`    | `arena.binary_exprs` | `{ left: NodeIndex, op: u16, right: NodeIndex }`             |
-| `Function`      | `arena.functions`    | `{ name: NodeIndex, params: NodeList, body: NodeIndex ... }` |
+| Node Category   | Storage Pool         | Data Layout (Updated)                                        | Status |
+| :-------------- | :------------------- | :----------------------------------------------------------- | :------ |
+| `Identifier`    | `arena.identifiers`  | `{ name: Atom }` (u32 index, no String)                      | ✅      |
+| `StringLiteral` | `arena.literals`     | `{ text: Atom }` (u32 index)                                 | ✅      |
+| `BinaryExpr`    | `arena.binary_exprs` | `{ left: NodeIndex, op: u16, right: NodeIndex }`             | ✅      |
+| `Function`      | `arena.functions`    | `{ name: NodeIndex, params: NodeList, body: NodeIndex ... }` | ✅      |
 
-### 4. String Handling: The Zero-Copy Mandate
+### 4. String Handling: The Zero-Copy Mandate ✅ **IMPLEMENTED**
 
 Benchmarks revealed that eager string allocation in the Scanner/Parser destroys performance. We enforce a **View-Based** approach.
 
-#### 4.1. The Interner (Atoms)
+**Verified**: `src/interner.rs` implements Atom-based string storage with sharding.
+
+#### 4.1. The Interner (Atoms) ✅ **IMPLEMENTED**
 
 - **Role:** Deduplicates identifiers and literals.
 - **Type:** `Atom` (u32).
 - **Mechanism:** `HashMap<&str, Atom>`.
-- **Concurrency:** The global interner must be **sharded** (e.g., `DashMap` or multiple `RwLock` buckets) to allow parallel parsing without serialization bottlenecks.
+- **Concurrency:** ✅ **Implemented** - The global interner uses **64 shards** with `DashMap` to allow parallel parsing without serialization bottlenecks.
+- **Implementation:** `ShardedInterner` in `src/interner.rs:276`
 
 #### 4.2. Scanning Strategy
 
@@ -151,13 +163,14 @@ pub enum TypeKey {
 }
 ```
 
-#### 2.2. The Interner (Sharded)
+#### 2.2. The Interner (Sharded) ✅ **IMPLEMENTED**
 
 Type checking is a "Write-Heavy" operation (instantiating generics creates new types).
 
 - **Problem:** A global `RwLock<HashMap>` serializes all threads.
-- **Solution:** **Sharded Interning**.
-  - Use `DashMap` or a fixed array of `RwLock<HashMap>` (e.g., 64 shards based on `hash(key) % 64`).
+- **Solution:** ✅ **Implemented** - **Sharded Interning**.
+  - Uses `DashMap` with lock-free concurrent access.
+  - **Verified**: `src/solver/intern.rs:92-106` implements `TypeInterner` with `DashMap<TypeKey, u32>`.
   - This allows multiple threads to intern different types like `Array<string>` and `Promise<number>` simultaneously.
 
 #### 2.3. Inference (Unification)
@@ -174,9 +187,13 @@ We use the **`ena`** crate (Union-Find) to solve generic constraints.
 
 The Checker (`checker/state.rs`) implements the TypeScript "Business Logic". It answers questions like "Is A a subtype of B?".
 
-#### 3.1. The "Tracer" Pattern (Zero-Cost Abstraction)
+#### 3.1. The "Tracer" Pattern (Zero-Cost Abstraction) ❌ **ASPIRATIONAL / NOT IMPLEMENTED**
 
 To prevent logic drift between "Checking" (Fast/Bool) and "Explaining" (Slow/Diagnostic), we must **not** write duplicate algorithms.
+
+**Status**: This pattern is documented here but **not found in the current implementation**. The checker currently uses direct error collection.
+
+**Planned Design:**
 
 We use a generic **Tracer** trait to abstract the side effects.
 
@@ -240,9 +257,11 @@ fn is_subtype(&mut self, a, b) {
 
 ## Emission, Transforms & Tools
 
-### 1. The Emitter: A Dumb Printer
+### 1. The Emitter: A Dumb Printer ⚠️ **PARTIAL / DEBT NOTED**
 
 The Emitter (`emitter/`) must be stripped of all business logic. Its sole responsibility is **Code Generation** (writing strings and source maps), not **Transformation** (restructuring code).
+
+**Status**: ⚠️ **Known Architectural Debt** - As noted in `PROJECT_DIRECTION.md`, the "Transform pipeline still mixes lowering/printing per PROJECT_DIRECTION—architectural debt not yet addressed."
 
 #### 1.1. Separation of Concerns
 
@@ -344,10 +363,11 @@ The Parser produces "Error Nodes" or "Missing Nodes" when syntax is invalid. The
 
 ### 4. Implementation Roadmap (Summary)
 
-1.  **Refactor Memory:** Switch `IdentifierData` to use `Atom`. Remove heap strings from hot paths.
-2.  **Shard Interner:** Make `TypeInterner` concurrent-safe (sharded `RwLock`).
-3.  **Refactor Logic:**
-    - Merge `check_subtype` / `explain_failure` using the **Tracer Pattern**.
-    - Remove manual scope stacks from `Checker`.
-4.  **Refactor Emitter:** Extract ES5/CommonJS logic into `transforms/` modules implementing a standard `Transformer` trait.
-5.  **Benchmark:** Verify parser throughput exceeds **200 MB/s** on real-world inputs (e.g., `three.js`).
+| Task | Status | Notes |
+|------|--------|-------|
+| 1. **Refactor Memory**: Switch `IdentifierData` to use `Atom` | ✅ **COMPLETE** | Verified in `src/parser/node.rs` and `src/interner.rs` |
+| 2. **Shard Interner**: Make `TypeInterner` concurrent-safe | ✅ **COMPLETE** | `TypeInterner` uses `DashMap` in `src/solver/intern.rs` |
+| 3. **Refactor Logic**: Tracer Pattern for subtype checking | ❌ **TODO** | Documented in section 3.1 but not implemented |
+| 3. **Refactor Logic**: Remove manual scope stacks from `Checker` | ⚠️ **PARTIAL** | Binder produces persistent scopes, but verify full removal |
+| 4. **Refactor Emitter**: Extract transform logic to `transforms/` | ❌ **TODO** | Known debt per `PROJECT_DIRECTION.md:86` |
+| 5. **Benchmark**: Verify parser > 200 MB/s | ⚠️ **UNKNOWN** | No current benchmark data found |

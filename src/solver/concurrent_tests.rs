@@ -3,6 +3,7 @@
 //! These tests verify that the TypeInterner's lock-free DashMap architecture
 //! enables true parallel type checking without lock contention or deadlocks.
 
+use crate::interner::Atom;
 use crate::solver::{
     CallableShape, FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeInterner,
     TypeParamInfo,
