@@ -1350,6 +1350,9 @@ fn test_emit_enum_declaration() {
         "Expected 'var Color;' in ES5 output: {}",
         output
     );
+    eprintln!("=== Actual enum output ===");
+    eprintln!("{}", output);
+    eprintln!("=== End output ===");
     assert!(
         output.contains("(function (Color)"),
         "Expected IIFE pattern in ES5 output: {}",

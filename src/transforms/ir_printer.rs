@@ -1179,10 +1179,10 @@ mod tests {
     #[test]
     fn test_emit_var_decl() {
         let decl = IRNode::var_decl("x", None);
-        assert_eq!(IRPrinter::emit_to_string(&decl), "var x");
+        assert_eq!(IRPrinter::emit_to_string(&decl), "var x;");
 
         let decl_init = IRNode::var_decl("y", Some(IRNode::number("42")));
-        assert_eq!(IRPrinter::emit_to_string(&decl_init), "var y = 42");
+        assert_eq!(IRPrinter::emit_to_string(&decl_init), "var y = 42;");
     }
 
     #[test]

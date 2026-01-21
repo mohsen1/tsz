@@ -105,7 +105,7 @@ impl<'a> EnumES5Transformer<'a> {
         // (function (E) { body })(arg)
         let iife = IRNode::CallExpr {
             callee: Box::new(IRNode::FunctionExpr {
-                name: Some(name.clone()),
+                name: None, // IIFEs are anonymous functions
                 parameters: vec![IRParam::new(&name)],
                 body,
                 is_expression_body: false,
@@ -171,6 +171,12 @@ impl<'a> EnumES5Transformer<'a> {
                     IRNode::ExpressionStatement(Box::new(assign))
                 } else {
                     // Numeric/Computed: E[E["A"] = val] = "A";
+                    // Try to evaluate the constant expression for auto-increment tracking
+                    if let Some(evaluated) = self.evaluate_constant_expression(member_data.initializer) {
+                        self.last_value = Some(evaluated);
+                    } else {
+                        self.last_value = None; // Can't evaluate, reset auto-increment
+                    }
                     let inner_value = self.transform_expression(member_data.initializer);
                     let inner_assign = IRNode::BinaryExpr {
                         left: Box::new(IRNode::ElementAccess {
@@ -346,6 +352,69 @@ impl<'a> EnumES5Transformer<'a> {
             }
         }
         false
+    }
+
+    /// Try to evaluate a constant expression to its numeric value
+    /// Returns None if the expression can't be statically evaluated
+    fn evaluate_constant_expression(&self, idx: NodeIndex) -> Option<i64> {
+        let node = self.arena.get(idx)?;
+
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.arena.get_literal(node)?;
+                lit.text.parse().ok()
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let bin = self.arena.get_binary_expr(node)?;
+                let left = self.evaluate_constant_expression(bin.left)?;
+                let right = self.evaluate_constant_expression(bin.right)?;
+                let op = bin.operator_token;
+                let result = match op {
+                    o if o == SyntaxKind::PlusToken as u16 => left.checked_add(right),
+                    o if o == SyntaxKind::MinusToken as u16 => left.checked_sub(right),
+                    o if o == SyntaxKind::AsteriskToken as u16 => left.checked_mul(right),
+                    o if o == SyntaxKind::SlashToken as u16 => {
+                        if right != 0 { Some(left / right) } else { None }
+                    }
+                    o if o == SyntaxKind::PercentToken as u16 => {
+                        if right != 0 { Some(left % right) } else { None }
+                    }
+                    o if o == SyntaxKind::LessThanLessThanToken as u16 => {
+                        Some(left.wrapping_shl(right as u32))
+                    }
+                    o if o == SyntaxKind::GreaterThanGreaterThanToken as u16 => {
+                        Some(left.wrapping_shr(right as u32))
+                    }
+                    o if o == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
+                        Some((left as u64).wrapping_shr(right as u32) as i64)
+                    }
+                    o if o == SyntaxKind::AmpersandToken as u16 => Some(left & right),
+                    o if o == SyntaxKind::BarToken as u16 => Some(left | right),
+                    o if o == SyntaxKind::CaretToken as u16 => Some(left ^ right),
+                    _ => return None,
+                };
+                result
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(node)?;
+                let operand = self.evaluate_constant_expression(unary.operand)?;
+                let op = unary.operator;
+                match op {
+                    o if o == SyntaxKind::MinusToken as u16 => Some(operand.checked_neg()?),
+                    o if o == SyntaxKind::TildeToken as u16 => Some(!operand),
+                    o if o == SyntaxKind::ExclamationToken as u16 => {
+                        Some(if operand == 0 { 1 } else { 0 })
+                    }
+                    o if o == SyntaxKind::PlusToken as u16 => Some(operand),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.arena.get_parenthesized(node)?;
+                self.evaluate_constant_expression(paren.expression)
+            }
+            _ => None,
+        }
     }
 
     fn is_string_literal(&self, idx: NodeIndex) -> bool {
@@ -548,8 +617,8 @@ mod tests {
             "Should handle binary expression"
         );
         assert!(
-            output.contains("E[E[\"B\"] = 3] = \"B\""),
-            "Should auto-increment after computed value"
+            output.contains("E[E[\"B\"] = 4] = \"B\""),
+            "Should auto-increment after computed value (A=3, so B=4)"
         );
     }
 
