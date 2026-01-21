@@ -335,6 +335,100 @@ pub enum IRNode {
 
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
+
+    // =========================================================================
+    // Enum Transform Specific
+    // =========================================================================
+    /// Enum IIFE pattern for ES5:
+    /// `var EnumName = /** @class */ (function () { ... })();`
+    EnumIIFE {
+        name: String,
+        members: Vec<EnumMember>,
+    },
+
+    // =========================================================================
+    // Module Transform Specific (CommonJS)
+    // =========================================================================
+    /// "use strict" directive
+    UseStrict,
+
+    /// __esModule marker: `Object.defineProperty(exports, "__esModule", { value: true });`
+    EsesModuleMarker,
+
+    /// Export initialization: `exports.name = void 0;`
+    ExportInit { name: String },
+
+    /// Require statement: `var var_name = require("module_spec");`
+    RequireStatement {
+        var_name: String,
+        module_spec: String,
+    },
+
+    /// Default import: `var var_name = module_var.default;`
+    DefaultImport {
+        var_name: String,
+        module_var: String,
+    },
+
+    /// Namespace import: `var var_name = __importStar(module_var);`
+    NamespaceImport {
+        var_name: String,
+        module_var: String,
+    },
+
+    /// Named import: `var var_name = module_var.import_name;`
+    NamedImport {
+        var_name: String,
+        module_var: String,
+        import_name: String,
+    },
+
+    /// Export assignment: `exports.name = name;`
+    ExportAssignment { name: String },
+
+    /// Re-export property: `Object.defineProperty(exports, "name", { enumerable: true, get: function () { return module_var.import_name; } });`
+    ReExportProperty {
+        export_name: String,
+        module_var: String,
+        import_name: String,
+    },
+
+    // =========================================================================
+    // Namespace Transform Specific
+    // =========================================================================
+    /// Namespace IIFE for ES5
+    NamespaceIIFE {
+        name_parts: Vec<String>,
+        body: Vec<IRNode>,
+        is_exported: bool,
+        attach_to_exports: bool,
+    },
+
+    /// Namespace export: `namespace.name = name;`
+    NamespaceExport {
+        namespace: String,
+        name: String,
+    },
+}
+
+/// Enum member for transform IR
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    pub name: String,
+    pub value: EnumMemberValue,
+}
+
+/// Enum member value
+#[derive(Debug, Clone)]
+pub enum EnumMemberValue {
+    /// Auto-incremented value (starting from 0 or previous + 1)
+    Auto(i64),
+    /// Explicit numeric value
+    Numeric(i64),
+    /// String enum value
+    String(String),
+    /// Computed value (expression)
+    Computed(IRNode),
 }
 
 /// Property in an object literal
