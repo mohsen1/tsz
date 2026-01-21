@@ -18,7 +18,6 @@
 //! // output: "function foo() {\n    return 42;\n}"
 //! ```
 
-use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::transforms::ir::*;
 

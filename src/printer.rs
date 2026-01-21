@@ -285,7 +285,7 @@ pub fn lower_and_print(
     options: PrintOptions,
 ) -> PrintResult {
     // Create emit context for lowering
-    let mut emit_ctx = EmitContext::with_options(options.to_printer_options());
+    let emit_ctx = EmitContext::with_options(options.to_printer_options());
 
     // Run lowering pass
     let transforms = LoweringPass::new(arena, &emit_ctx).run(root);

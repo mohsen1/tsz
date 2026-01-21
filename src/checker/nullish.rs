@@ -46,8 +46,6 @@ pub fn get_nullish_coalescing_type(
     left_type: SolverTypeId,
     right_type: SolverTypeId,
 ) -> SolverTypeId {
-    use crate::solver::{IntrinsicKind, TypeKey};
-
     // If left is ANY, result is ANY
     if left_type == SolverTypeId::ANY {
         return SolverTypeId::ANY;

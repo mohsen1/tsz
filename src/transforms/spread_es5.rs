@@ -237,7 +237,7 @@ impl<'a> ES5SpreadTransformer<'a> {
         }
 
         // Start with the first segment
-        let mut result = match segments.into_iter().next()? {
+        let result = match segments.into_iter().next()? {
             ArraySegment::Literal(elems) => IRNode::ArrayLiteral(elems),
             ArraySegment::Spread(expr) => {
                 // Spread at start - wrap in Array.prototype.slice.call or use directly

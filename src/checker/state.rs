@@ -12955,13 +12955,6 @@ impl<'a> CheckerState<'a> {
             TypeKey::ReadonlyType(inner) => {
                 self.resolve_type_for_property_access_inner(inner, visited)
             }
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
-                if let Some(constraint) = info.constraint {
-                    self.resolve_type_for_property_access_inner(constraint, visited)
-                } else {
-                    type_id
-                }
-            }
             TypeKey::Function(_) | TypeKey::Callable(_) => {
                 let expanded = self.apply_function_interface_for_property_access(type_id);
                 if expanded == type_id {
@@ -14849,7 +14842,6 @@ impl<'a> CheckerState<'a> {
                 | "navigator"
                 | "location"
                 | "history"
-                | "exports"
         )
     }
 
