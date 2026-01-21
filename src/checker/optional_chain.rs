@@ -30,7 +30,6 @@
 
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
-use crate::scanner::SyntaxKind;
 use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 
 /// Information about an optional chain expression
@@ -130,7 +129,7 @@ pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
 /// the result is T | undefined
 pub fn get_optional_chain_type(
     types: &mut impl TypeDatabase,
-    base_type: SolverTypeId,
+    _base_type: SolverTypeId,
     access_type: SolverTypeId,
     is_optional: bool,
 ) -> SolverTypeId {
@@ -227,7 +226,7 @@ pub fn is_nullish_type(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool
 
 /// Checks if a type can be nullish (contains null or undefined)
 pub fn can_be_nullish(types: &impl TypeDatabase, type_id: SolverTypeId) -> bool {
-    use crate::solver::{IntrinsicKind, TypeKey};
+    use crate::solver::TypeKey;
 
     if is_nullish_type(types, type_id) {
         return true;

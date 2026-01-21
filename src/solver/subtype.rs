@@ -1312,8 +1312,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         literal: Atom,
         template_spans: TemplateLiteralId,
     ) -> SubtypeResult {
-        use crate::interner::Atom;
-
         // Get the literal string value
         let literal_str = self.interner.resolve_atom(literal);
 

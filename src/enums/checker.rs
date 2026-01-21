@@ -326,7 +326,7 @@ impl<'a> EnumChecker<'a> {
     /// Const enum members can only be accessed with string literal keys
     pub fn check_const_enum_access(
         &mut self,
-        access_node: NodeIndex,
+        _access_node: NodeIndex,
         is_element_access: bool,
         argument_idx: NodeIndex,
     ) {
