@@ -798,6 +798,129 @@ fn test_weak_type_detection_requires_overlap() {
 }
 
 #[test]
+fn test_weak_type_detection_empty_object_allowed() {
+    // Empty objects should be assignable to weak types (per TypeScript behavior)
+    // Only objects with non-overlapping properties should fail
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.enforce_weak_types = true;
+
+    let a = interner.intern_string("a");
+
+    let weak_target = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let empty_object = interner.object(vec![]);
+
+    // Empty object should be assignable to weak type
+    assert!(checker.is_subtype_of(empty_object, weak_target));
+}
+
+#[test]
+fn test_weak_type_detection_multiple_optional_properties() {
+    // Test weak type detection with multiple optional properties
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.enforce_weak_types = true;
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+
+    let weak_target = interner.object(vec![
+        PropertyInfo {
+            name: a,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: b,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // No overlap at all - should fail
+    let no_overlap = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    assert!(!checker.is_subtype_of(no_overlap, weak_target));
+
+    // Partial overlap (shares 'a' property) - should pass
+    let partial_overlap = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    assert!(checker.is_subtype_of(partial_overlap, weak_target));
+}
+
+#[test]
+fn test_weak_type_detection_not_weak_if_has_required() {
+    // Types with at least one required property are NOT weak
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.enforce_weak_types = true;
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    // Not weak - has a required property
+    let not_weak_target = interner.object(vec![
+        PropertyInfo {
+            name: a,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: b,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false, // Required!
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    let c = interner.intern_string("c");
+    let unrelated_source = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Should pass because target is NOT weak (has a required property)
+    // Even though properties don't overlap, structural typing applies
+    assert!(!checker.is_subtype_of(unrelated_source, not_weak_target));
+}
+
+#[test]
 fn test_split_accessor_variance() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
