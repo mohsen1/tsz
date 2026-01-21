@@ -14355,7 +14355,6 @@ impl<'a> CheckerState<'a> {
     /// - TS2318: Cannot find global type (for @noLib tests)
     /// - TS2583: Cannot find name - suggests changing target library (for ES2015+ types)
     fn error_cannot_find_global_type(&mut self, name: &str, idx: NodeIndex) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
         use crate::lib_loader;
 
         // Check if this is an ES2015+ type that would require a specific lib

@@ -327,7 +327,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Transform a nested namespace
-    fn transform_nested_namespace(&self, parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_nested_namespace(&self, _parent_ns: &str, ns_idx: NodeIndex) -> Option<IRNode> {
         let ns_node = self.arena.get(ns_idx)?;
         let ns_data = self.arena.get_module(ns_node)?;
 
