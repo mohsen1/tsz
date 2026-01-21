@@ -438,28 +438,95 @@ impl<'a> NamespaceES5Emitter<'a> {
                 if func_data.body.is_none() {
                     return None;
                 }
-                let inner_ir =
-                    transform_context.transform_function_in_namespace(ns_name, member_idx)?;
-                push_ir(inner_ir);
+                let is_exported = self.get_export_status(&func_data.modifiers, member_node);
+                let func_name = self.get_identifier_text(func_data.name);
+
+                if is_exported {
+                    // Emit the function via IR
+                    let func_ir = IRNode::ASTRef(member_idx);
+                    output.push_str(printer.emit(&func_ir));
+                    // Emit namespace-style export directly
+                    for _ in 0..self.indent_level {
+                        output.push_str("    ");
+                    }
+                    output.push_str(&format!("{}.{} = {};", ns_name, func_name, func_name));
+                    output.push('\n');
+                } else {
+                    let inner_ir = transform_context.transform_function_in_namespace(ns_name, member_idx)?;
+                    push_ir(inner_ir);
+                }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class_output) =
-                    self.transform_namespace_class_string(ns_name, member_idx)
-                {
+                let class_data = self.arena.get_class(member_node)?;
+                let is_exported = self.get_export_status(&class_data.modifiers, member_node);
+                let class_name = self.get_identifier_text(class_data.name);
+
+                if is_exported {
+                    // For exported classes, emit via IR and add namespace export
+                    let class_ir = IRNode::ASTRef(member_idx);
+                    output.push_str(printer.emit(&class_ir));
+                    for _ in 0..self.indent_level {
+                        output.push_str("    ");
+                    }
+                    output.push_str(&format!("{}.{} = {};", ns_name, class_name, class_name));
+                    output.push('\n');
+                } else if let Some(class_output) = self.transform_namespace_class_string(ns_name, member_idx) {
                     output.push_str(&class_output);
                 }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                let inner_ir =
-                    transform_context.transform_variable_in_namespace(ns_name, member_idx)?;
-                push_ir(inner_ir);
+                let var_data = self.arena.get_variable(member_node)?;
+                let is_exported = self.get_export_status(&var_data.modifiers, member_node);
+
+                // Collect variable names
+                let mut var_names = Vec::new();
+                let decl_list = &var_data.declarations;
+                for &decl_idx in &decl_list.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx) {
+                        if let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
+                            let name = self.get_identifier_text(var_decl.name);
+                            if !name.is_empty() {
+                                var_names.push(name);
+                            }
+                        }
+                    }
+                }
+
+                if is_exported {
+                    // For exported variables, emit via IR and add namespace exports
+                    let var_ir = IRNode::ASTRef(member_idx);
+                    output.push_str(printer.emit(&var_ir));
+                    for name in var_names {
+                        for _ in 0..self.indent_level {
+                            output.push_str("    ");
+                        }
+                        output.push_str(&format!("{}.{} = {};", ns_name, name, name));
+                        output.push('\n');
+                    }
+                } else {
+                    let inner_ir = transform_context.transform_variable_in_namespace(ns_name, member_idx)?;
+                    push_ir(inner_ir);
+                }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 let inner_ir = transform_context.transform_nested_namespace(ns_name, member_idx)?;
                 push_ir(inner_ir);
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_ir) = self.transform_namespace_enum_ir(ns_name, member_idx) {
+                let enum_data = self.arena.get_enum(member_node)?;
+                let is_exported = self.get_export_status(&enum_data.modifiers, member_node);
+                let enum_name = self.get_identifier_text(enum_data.name);
+
+                if is_exported {
+                    // For exported enums, emit via IR and add namespace export
+                    let enum_ir = IRNode::ASTRef(member_idx);
+                    output.push_str(printer.emit(&enum_ir));
+                    for _ in 0..self.indent_level {
+                        output.push_str("    ");
+                    }
+                    output.push_str(&format!("{}.{} = {};", ns_name, enum_name, enum_name));
+                    output.push('\n');
+                } else if let Some(enum_ir) = self.transform_namespace_enum_ir(ns_name, member_idx) {
                     output.push_str(&enum_ir);
                 }
             }
@@ -986,6 +1053,27 @@ impl<'a> NamespaceES5Emitter<'a> {
             }
         }
         false
+    }
+
+    /// Check if a node has export keyword by examining source text
+    /// This is a workaround for parser not setting export modifier correctly
+    fn has_export_in_source(&self, node: &crate::parser::node::Node) -> bool {
+        if let Some(source_text) = self.source_text {
+            let start = node.pos as usize;
+            // Look for "export" keyword before the node (with possible whitespace)
+            if start > 0 && start <= source_text.len() {
+                let before = &source_text[..start];
+                // Check if "export" appears right before this node
+                let trimmed = before.trim_end();
+                return trimmed.ends_with("export");
+            }
+        }
+        false
+    }
+
+    /// Get the export modifier status, either from modifiers or source text
+    fn get_export_status(&self, modifiers: &Option<NodeList>, node: &crate::parser::node::Node) -> bool {
+        self.has_export_modifier(modifiers) || self.has_export_in_source(node)
     }
 
     fn write(&mut self, s: &str) {
