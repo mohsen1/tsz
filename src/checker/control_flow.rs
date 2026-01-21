@@ -505,6 +505,8 @@ impl<'a> FlowAnalyzer<'a> {
         _in_worklist: &mut FxHashSet<FlowNodeId>,
         _visited: &FxHashSet<FlowNodeId>,
     ) -> TypeId {
+        // Note: worklist/in_worklist/visited parameters are reserved for future use
+        // in more sophisticated iterative algorithms that need to defer processing
         let pre_type = if let Some(&ant) = flow.antecedent.first() {
             *results.get(&ant).unwrap_or(&current_type)
         } else {
@@ -549,69 +551,59 @@ impl<'a> FlowAnalyzer<'a> {
     /// Iterative flow graph traversal for definite assignment checks.
     ///
     /// This replaces the recursive implementation to prevent stack overflow
-    /// on deeply nested control flow structures. Uses a worklist algorithm
-    /// with memoization to process flow nodes iteratively.
+    /// on deeply nested control flow structures. Uses a worklist algorithm with
+    /// fixed-point iteration to determine if a variable is definitely assigned.
     fn check_definite_assignment(
         &self,
         reference: NodeIndex,
-        entry_id: FlowNodeId,
+        flow_id: FlowNodeId,
         _visited: &mut Vec<FlowNodeId>,
-        _cache: &mut FxHashMap<FlowNodeId, bool>,
+        cache: &mut FxHashMap<FlowNodeId, bool>,
     ) -> bool {
+        // Use a worklist-based iterative algorithm with fixed-point computation
+
         // Result cache: flow_id -> is_assigned
-        let mut results: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
-        // Worklist for processing
-        let mut worklist: Vec<FlowNodeId> = vec![entry_id];
-        // Track nodes currently in worklist
+        // We use a local cache that we'll merge into the provided cache
+        let mut local_cache: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
+
+        // Worklist for processing nodes
+        let mut worklist: Vec<FlowNodeId> = vec![flow_id];
         let mut in_worklist: FxHashSet<FlowNodeId> = FxHashSet::default();
-        in_worklist.insert(entry_id);
+        in_worklist.insert(flow_id);
 
-        while let Some(flow_id) = worklist.pop() {
-            in_worklist.remove(&flow_id);
+        while let Some(current_flow) = worklist.pop() {
+            in_worklist.remove(&current_flow);
 
-            // Skip if already computed
-            if results.contains_key(&flow_id) {
+            // Skip if we already have a result
+            if local_cache.contains_key(&current_flow) {
                 continue;
             }
 
-            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
-                // Flow node doesn't exist - treat as assigned (conservative)
-                results.insert(flow_id, true);
+            let Some(flow) = self.binder.flow_nodes.get(current_flow) else {
+                // Flow node doesn't exist - mark as assigned
+                local_cache.insert(current_flow, true);
                 continue;
             };
 
-            // Check if we need to process antecedents first
-            let mut has_uncomputed_antecedent = false;
-
-            for &ant in &flow.antecedent {
-                if !results.contains_key(&ant) && !ant.is_none() {
-                    // Add antecedent to worklist
-                    if !in_worklist.contains(&ant) {
-                        worklist.push(ant);
-                        in_worklist.insert(ant);
-                    }
-                    has_uncomputed_antecedent = true;
-                }
-            }
-
-            // If we have uncomputed antecedents, defer this node
-            if has_uncomputed_antecedent {
-                // Add back to worklist for later processing
-                if !in_worklist.contains(&flow_id) {
-                    worklist.push(flow_id);
-                    in_worklist.insert(flow_id);
-                }
-                continue;
-            }
-
-            // Compute the result for this flow node
+            // Compute the result based on flow node type
             let result = if flow.has_any_flags(flow_flags::UNREACHABLE) {
                 false
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
                 if self.assignment_targets_reference(flow.node, reference) {
                     true
                 } else if let Some(&ant) = flow.antecedent.first() {
-                    *results.get(&ant).unwrap_or(&false)
+                    // Need result from antecedent
+                    if let Some(&ant_result) = local_cache.get(&ant) {
+                        ant_result
+                    } else {
+                        // Add antecedent to worklist and defer
+                        if !in_worklist.contains(&ant) {
+                            worklist.push(ant);
+                            in_worklist.insert(ant);
+                        }
+                        // Can't compute yet, skip for now
+                        continue;
+                    }
                 } else {
                     false
                 }
@@ -619,29 +611,63 @@ impl<'a> FlowAnalyzer<'a> {
                 if flow.antecedent.is_empty() {
                     false
                 } else {
-                    // All branches must have the reference definitely assigned
-                    // Unreachable branches satisfy this condition vacuously
-                    flow.antecedent.iter().all(|&ant| {
-                        if ant.is_none() {
-                            return true;
-                        }
-                        if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
-                            if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
-                                return true;
+                    // Check if all antecedents have results
+                    let ant_results: Vec<bool> = flow
+                        .antecedent
+                        .iter()
+                        .filter_map(|&ant| {
+                            if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
+                                if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
+                                    // Unreachable branches satisfy the condition vacuously
+                                    return Some(true);
+                                }
+                            }
+                            local_cache.get(&ant).copied()
+                        })
+                        .collect();
+
+                    if ant_results.len() < flow.antecedent.len() {
+                        // Not all antecedents processed yet
+                        // Add missing ones to worklist
+                        for &ant in &flow.antecedent {
+                            if !local_cache.contains_key(&ant) && !in_worklist.contains(&ant) {
+                                worklist.push(ant);
+                                in_worklist.insert(ant);
                             }
                         }
-                        *results.get(&ant).unwrap_or(&false)
-                    })
+                        continue;
+                    }
+
+                    // All antecedents processed - compute result (all must be true)
+                    ant_results.iter().all(|&r| r)
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
                 if let Some(&ant) = flow.antecedent.first() {
-                    *results.get(&ant).unwrap_or(&false)
+                    if let Some(&ant_result) = local_cache.get(&ant) {
+                        ant_result
+                    } else {
+                        // Add antecedent to worklist and defer
+                        if !in_worklist.contains(&ant) {
+                            worklist.push(ant);
+                            in_worklist.insert(ant);
+                        }
+                        continue;
+                    }
                 } else {
                     false
                 }
             } else if flow.has_any_flags(flow_flags::CONDITION) {
                 if let Some(&ant) = flow.antecedent.first() {
-                    *results.get(&ant).unwrap_or(&false)
+                    if let Some(&ant_result) = local_cache.get(&ant) {
+                        ant_result
+                    } else {
+                        // Add antecedent to worklist and defer
+                        if !in_worklist.contains(&ant) {
+                            worklist.push(ant);
+                            in_worklist.insert(ant);
+                        }
+                        continue;
+                    }
                 } else {
                     false
                 }
@@ -649,31 +675,61 @@ impl<'a> FlowAnalyzer<'a> {
                 if flow.antecedent.is_empty() {
                     false
                 } else {
-                    // All clauses must have the reference definitely assigned
-                    flow.antecedent.iter().all(|&ant| {
-                        if ant.is_none() {
-                            return true;
-                        }
-                        if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
-                            if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
-                                return true;
+                    // Similar to BRANCH_LABEL - check all antecedents
+                    let ant_results: Vec<bool> = flow
+                        .antecedent
+                        .iter()
+                        .filter_map(|&ant| {
+                            if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
+                                if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
+                                    return Some(true);
+                                }
+                            }
+                            local_cache.get(&ant).copied()
+                        })
+                        .collect();
+
+                    if ant_results.len() < flow.antecedent.len() {
+                        // Not all antecedents processed yet
+                        for &ant in &flow.antecedent {
+                            if !local_cache.contains_key(&ant) && !in_worklist.contains(&ant) {
+                                worklist.push(ant);
+                                in_worklist.insert(ant);
                             }
                         }
-                        *results.get(&ant).unwrap_or(&false)
-                    })
+                        continue;
+                    }
+
+                    ant_results.iter().all(|&r| r)
                 }
             } else if flow.has_any_flags(flow_flags::START) {
                 false
             } else if let Some(&ant) = flow.antecedent.first() {
-                *results.get(&ant).unwrap_or(&false)
+                if let Some(&ant_result) = local_cache.get(&ant) {
+                    ant_result
+                } else {
+                    // Add antecedent to worklist and defer
+                    if !in_worklist.contains(&ant) {
+                        worklist.push(ant);
+                        in_worklist.insert(ant);
+                    }
+                    continue;
+                }
             } else {
                 false
             };
 
-            results.insert(flow_id, result);
+            // Store the result
+            local_cache.insert(current_flow, result);
         }
 
-        results.get(&entry_id).copied().unwrap_or(false)
+        // Get the final result
+        let final_result = *local_cache.get(&flow_id).unwrap_or(&false);
+
+        // Merge local cache into the provided cache
+        cache.extend(local_cache);
+
+        final_result
     }
 
     /// Check if this is a direct assignment to a reference (e.g., `x = value`)
