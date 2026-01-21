@@ -125,7 +125,7 @@ impl<'a> NarrowingContext<'a> {
 
             if is_discriminant && !variants.is_empty() {
                 discriminants.push(DiscriminantInfo {
-                    property_name: prop_name.clone(),
+                    property_name: *prop_name,
                     variants,
                 });
             }
@@ -652,14 +652,13 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        if target == TypeId::STRING {
-            if matches!(
+        if target == TypeId::STRING
+            && matches!(
                 self.interner.lookup(source),
                 Some(TypeKey::TemplateLiteral(_))
             ) {
                 return true;
             }
-        }
 
         false
     }

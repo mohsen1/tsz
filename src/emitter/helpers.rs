@@ -174,11 +174,10 @@ impl<'a> Printer<'a> {
     pub(super) fn has_modifier(&self, modifiers: &Option<NodeList>, kind: u16) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == kind {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == kind {
                         return true;
                     }
-                }
             }
         }
         false

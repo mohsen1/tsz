@@ -440,8 +440,8 @@ impl<'a> FindReferences<'a> {
 
         let tag_idx = self.tagged_template_tag(node_idx)?;
         let mut walker = ScopeWalker::new(self.arena, self.binder);
-        if let Some(scope_cache) = scope_cache.as_deref_mut() {
-            walker.resolve_node_cached(root, tag_idx, scope_cache, scope_stats.as_deref_mut())
+        if let Some(scope_cache) = scope_cache {
+            walker.resolve_node_cached(root, tag_idx, scope_cache, scope_stats)
         } else {
             walker.resolve_node(root, tag_idx)
         }

@@ -36,6 +36,7 @@ use std::fmt;
 /// The severity level of a diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum DiagnosticSeverity {
     /// A hint (lowest severity)
     Hint = 4,
@@ -44,6 +45,7 @@ pub enum DiagnosticSeverity {
     /// A warning
     Warning = 2,
     /// An error (highest severity)
+    #[default]
     Error = 1,
 }
 
@@ -75,11 +77,6 @@ impl fmt::Display for DiagnosticSeverity {
     }
 }
 
-impl Default for DiagnosticSeverity {
-    fn default() -> Self {
-        DiagnosticSeverity::Error
-    }
-}
 
 // =============================================================================
 // Related Information

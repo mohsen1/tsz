@@ -274,7 +274,7 @@ mod formatting_tests {
     fn test_formatting_options_default() {
         let options = FormattingOptions::default();
         assert_eq!(options.tab_size, 4);
-        assert_eq!(options.insert_spaces, true);
+        assert!(options.insert_spaces);
         assert_eq!(options.trim_trailing_whitespace, Some(true));
         assert_eq!(options.insert_final_newline, Some(true));
     }

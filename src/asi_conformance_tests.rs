@@ -61,7 +61,7 @@ function f() {
 
     // ASI applies - return is a complete statement
     // The "x + y" becomes a separate (unreachable) statement
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Test postfix ++ with line break (ASI applies)
@@ -75,7 +75,7 @@ x++;
     parser.parse_source_file();
 
     // Should parse as two statements: let x = 5; x++;
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Test prefix ++ after line break (valid)
@@ -89,7 +89,7 @@ let b = ++a;
     parser.parse_source_file();
 
     // Should parse as: let a = 5; let b = ++a;
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Test yield with line break (ASI applies)
@@ -105,7 +105,7 @@ function* g() {
     parser.parse_source_file();
 
     // ASI applies - yield without expression is valid
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Test break with label after line break (ASI applies)
@@ -121,7 +121,7 @@ outer: while (true) {
     parser.parse_source_file();
 
     // ASI applies - break; outer; (two statements)
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Test arrow function with concise body
@@ -134,7 +134,7 @@ let f = x => x * 2;
     parser.parse_source_file();
 
     // Should parse arrow function correctly
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Test arrow function with object literal (requires parens)
@@ -147,7 +147,7 @@ let f = x => ({ x: 1 });
     parser.parse_source_file();
 
     // Should parse with parentheses
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Test ASI at EOF before closing brace
@@ -162,7 +162,7 @@ function f() {
     parser.parse_source_file();
 
     // ASI applies at EOF before }
-    assert!(parser.arena.len() > 0, "Should parse successfully");
+    assert!(!parser.arena.is_empty(), "Should parse successfully");
 }
 
 /// Comprehensive ASI edge case test suite

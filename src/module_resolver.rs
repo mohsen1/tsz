@@ -282,11 +282,10 @@ impl ModuleResolver {
         specifier_span: Span,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Step 1: Try path mappings first (if configured)
-        if !self.path_mappings.is_empty() {
-            if let Some(resolved) = self.try_path_mappings(specifier, containing_dir) {
+        if !self.path_mappings.is_empty()
+            && let Some(resolved) = self.try_path_mappings(specifier, containing_dir) {
                 return Ok(resolved);
             }
-        }
 
         // Step 2: Handle relative imports
         if specifier.starts_with("./") || specifier.starts_with("../") {
@@ -437,8 +436,8 @@ impl ModuleResolver {
         for type_root in &self.type_roots {
             let types_package =
                 type_root.join(format!("@types/{}", package_name.replace('/', "__")));
-            if types_package.is_dir() {
-                if let Ok(resolved) = self.resolve_package(
+            if types_package.is_dir()
+                && let Ok(resolved) = self.resolve_package(
                     &types_package,
                     subpath.as_deref(),
                     specifier,
@@ -447,7 +446,6 @@ impl ModuleResolver {
                 ) {
                     return Ok(resolved);
                 }
-            }
         }
 
         Err(ResolutionFailure::NotFound {
@@ -482,9 +480,9 @@ impl ModuleResolver {
                 ModuleResolutionKind::Node16
                     | ModuleResolutionKind::NodeNext
                     | ModuleResolutionKind::Bundler
-            ) {
-                if let Some(exports) = &package_json.exports {
-                    if let Some(resolved) =
+            )
+                && let Some(exports) = &package_json.exports
+                    && let Some(resolved) =
                         self.resolve_package_exports(package_dir, exports, subpath)
                     {
                         return Ok(ResolvedModule {
@@ -495,8 +493,6 @@ impl ModuleResolver {
                             extension: ModuleExtension::from_path(&resolved),
                         });
                     }
-                }
-            }
 
             // Fall back to direct file resolution
             let file_path = package_dir.join(subpath);
@@ -525,9 +521,9 @@ impl ModuleResolver {
             ModuleResolutionKind::Node16
                 | ModuleResolutionKind::NodeNext
                 | ModuleResolutionKind::Bundler
-        ) {
-            if let Some(exports) = &package_json.exports {
-                if let Some(resolved) = self.resolve_package_exports(package_dir, exports, ".") {
+        )
+            && let Some(exports) = &package_json.exports
+                && let Some(resolved) = self.resolve_package_exports(package_dir, exports, ".") {
                     return Ok(ResolvedModule {
                         resolved_path: resolved.clone(),
                         is_external: true,
@@ -536,8 +532,6 @@ impl ModuleResolver {
                         extension: ModuleExtension::from_path(&resolved),
                     });
                 }
-            }
-        }
 
         // Try types/typings field
         if let Some(types) = package_json.types.or(package_json.typings) {
@@ -610,8 +604,8 @@ impl ModuleResolver {
 
                 // Try pattern matching (e.g., "./*" or "./lib/*")
                 for (pattern, value) in map {
-                    if let Some(matched) = match_export_pattern(pattern, subpath) {
-                        if let Some(resolved) = self.resolve_export_value(package_dir, value) {
+                    if let Some(matched) = match_export_pattern(pattern, subpath)
+                        && let Some(resolved) = self.resolve_export_value(package_dir, value) {
                             // Substitute wildcard
                             let resolved_str = resolved.to_string_lossy();
                             if resolved_str.contains('*') {
@@ -620,7 +614,6 @@ impl ModuleResolver {
                             }
                             return Some(resolved);
                         }
-                    }
                 }
 
                 None
@@ -638,13 +631,12 @@ impl ModuleResolver {
                 };
 
                 for condition in condition_order {
-                    if let Some(value) = conditions.get(condition) {
-                        if let Some(resolved) =
+                    if let Some(value) = conditions.get(condition)
+                        && let Some(resolved) =
                             self.resolve_package_exports(package_dir, value, subpath)
                         {
                             return Some(resolved);
                         }
-                    }
                 }
 
                 None

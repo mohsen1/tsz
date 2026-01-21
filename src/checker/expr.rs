@@ -107,8 +107,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
                         let index_type = self.check(access_data.name_or_argument);
                         if let Some(crate::solver::TypeKey::Literal(literal_value)) =
                             self.ctx.types.lookup(index_type)
-                        {
-                            if let crate::solver::LiteralValue::Number(num) = literal_value {
+                            && let crate::solver::LiteralValue::Number(num) = literal_value {
                                 // Check if the numeric index is valid for this tuple
                                 let index = num.0 as usize;
                                 let tuple_list = self.ctx.types.tuple_list(tuple_list_id);
@@ -119,7 +118,6 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
                                 // Index out of bounds - in TypeScript this is undefined
                                 return TypeId::UNDEFINED;
                             }
-                        }
                         // For non-literal indices or invalid cases, return union of all tuple elements
                         let tuple_list = self.ctx.types.tuple_list(tuple_list_id);
                         if tuple_list.is_empty() {
@@ -176,20 +174,16 @@ mod tests {
         );
 
         // Get the expression statement and its expression
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    if let Some(stmt_node) = parser.get_arena().get(stmt_idx) {
-                        if let Some(expr_stmt) =
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+                    && let Some(stmt_node) = parser.get_arena().get(stmt_idx)
+                        && let Some(expr_stmt) =
                             parser.get_arena().get_expression_statement(stmt_node)
                         {
                             let mut checker = ExpressionChecker::new(&mut ctx);
                             let ty = checker.check(expr_stmt.expression);
                             assert_eq!(ty, TypeId::NUMBER);
                         }
-                    }
-                }
-            }
-        }
     }
 }

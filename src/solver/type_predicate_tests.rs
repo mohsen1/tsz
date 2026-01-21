@@ -119,7 +119,7 @@ fn test_type_guard_more_specific_than_no_predicate() {
 }
 
 #[test]
-fn test_no_predicate_NOT_compatible_with_type_guard() {
+fn test_no_predicate_not_compatible_with_type_guard() {
     // A function WITHOUT a type guard is NOT compatible with one that has a guard
     // if return types don't match
     // (x: string) => boolean CANNOT be assigned to (x: string) => x is string
@@ -405,7 +405,7 @@ fn test_asserts_more_specific_than_type_guard() {
 }
 
 #[test]
-fn test_type_guard_NOT_compatible_with_asserts() {
+fn test_type_guard_not_compatible_with_asserts() {
     // (x is T) is NOT compatible with (asserts x is T) due to assertion semantics
     // (x: unknown) => x is string cannot be assigned to (x: unknown) => asserts x is string
     let interner = TypeInterner::new();

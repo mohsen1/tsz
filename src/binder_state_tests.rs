@@ -1766,11 +1766,10 @@ function test() {
     let symbols = binder.get_symbols();
     for i in 0..symbols.len() {
         let id = crate::binder::SymbolId(i as u32);
-        if let Some(sym) = symbols.get(id) {
-            if sym.escaped_name == "x" {
+        if let Some(sym) = symbols.get(id)
+            && sym.escaped_name == "x" {
                 x_count += 1;
             }
-        }
     }
 
     assert_eq!(x_count, 2);
@@ -2343,15 +2342,12 @@ const functionExpr = function() {
     let mut function_expr_scope = None;
 
     for (idx, scope) in binder.scopes.iter().enumerate() {
-        match scope.kind {
-            crate::binder::ContainerKind::Function => {
-                if arrow_fn_scope.is_none() {
-                    arrow_fn_scope = Some(idx);
-                } else {
-                    function_expr_scope = Some(idx);
-                }
+        if scope.kind == crate::binder::ContainerKind::Function {
+            if arrow_fn_scope.is_none() {
+                arrow_fn_scope = Some(idx);
+            } else {
+                function_expr_scope = Some(idx);
             }
-            _ => {}
         }
     }
 

@@ -241,12 +241,11 @@ fn test_lowering_pass_es5_class_heritage_clause() {
         let Some(class_data) = arena.get_class(stmt_node) else {
             continue;
         };
-        if let Some(clauses) = &class_data.heritage_clauses {
-            if !clauses.nodes.is_empty() {
+        if let Some(clauses) = &class_data.heritage_clauses
+            && !clauses.nodes.is_empty() {
                 derived_idx = Some(stmt_idx);
                 break;
             }
-        }
     }
 
     let derived_idx = derived_idx.expect("expected derived class declaration");
@@ -4648,7 +4647,7 @@ fn test_two_phase_emission_commonjs_default_anonymous_async_function_export() {
 
     let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_source_text(&source);
+    printer.set_source_text(source);
     printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
@@ -4690,7 +4689,7 @@ fn test_two_phase_emission_commonjs_default_anonymous_class_export() {
 
     let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_source_text(&source);
+    printer.set_source_text(source);
     printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
@@ -4732,7 +4731,7 @@ fn test_two_phase_emission_commonjs_export_enum() {
 
     let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_source_text(&source);
+    printer.set_source_text(source);
     printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
@@ -4769,7 +4768,7 @@ fn test_two_phase_emission_commonjs_export_const_enum_is_erased() {
 
     let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_source_text(&source);
+    printer.set_source_text(source);
     printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
@@ -4806,7 +4805,7 @@ fn test_two_phase_emission_commonjs_export_namespace() {
 
     let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_source_text(&source);
+    printer.set_source_text(source);
     printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 
@@ -4907,7 +4906,7 @@ fn test_two_phase_emission_commonjs_export_default_arrow() {
 
     let mut printer = Printer::with_transforms(&arena, transforms);
     printer.set_target_es5(ctx.target_es5);
-    printer.set_source_text(&source);
+    printer.set_source_text(source);
     printer.set_module_kind(crate::emitter::ModuleKind::CommonJS);
     printer.emit(root);
 

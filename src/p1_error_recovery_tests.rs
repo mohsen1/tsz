@@ -38,7 +38,7 @@ class MyClass {
     assert!(!diags.is_empty(), "Should report error for stray statement");
 
     // Should have parsed getValue method
-    assert!(parser.arena.len() > 0, "Should parse class members");
+    assert!(!parser.arena.is_empty(), "Should parse class members");
 }
 
 /// Test class body with function declaration
@@ -58,7 +58,7 @@ class MyClass {
     parser.parse_source_file();
 
     // Should parse both members
-    assert!(parser.arena.len() > 0, "Should parse class members");
+    assert!(!parser.arena.is_empty(), "Should parse class members");
 }
 
 // ===========================================================================
@@ -81,7 +81,7 @@ interface A extends B C D {
     assert!(!diags.is_empty(), "Should report error for missing comma");
 
     // Should still parse the interface and member
-    assert!(parser.arena.len() > 0, "Should parse interface");
+    assert!(!parser.arena.is_empty(), "Should parse interface");
 }
 
 /// Test interface with trailing comma in extends clause
@@ -96,7 +96,7 @@ interface A extends B, C, {
     parser.parse_source_file();
 
     // Should parse successfully
-    assert!(parser.arena.len() > 0, "Should parse interface");
+    assert!(!parser.arena.is_empty(), "Should parse interface");
 }
 
 /// Test interface with invalid type in extends clause
@@ -115,7 +115,7 @@ interface A extends 123, B {
     assert!(!diags.is_empty(), "Should report error for invalid type");
 
     // Should still parse B and the interface body
-    assert!(parser.arena.len() > 0, "Should parse interface");
+    assert!(!parser.arena.is_empty(), "Should parse interface");
 }
 
 /// Test interface with malformed extends (missing types)
@@ -137,7 +137,7 @@ interface A extends {
     );
 
     // Should still parse the interface body
-    assert!(parser.arena.len() > 0, "Should parse interface body");
+    assert!(!parser.arena.is_empty(), "Should parse interface body");
 }
 
 // ===========================================================================
@@ -161,7 +161,7 @@ const x = `hello ${world`;
     );
 
     // Should still create a template node
-    assert!(parser.arena.len() > 0, "Should parse template");
+    assert!(!parser.arena.is_empty(), "Should parse template");
 }
 
 /// Test template literal with missing closing backtick
@@ -178,7 +178,7 @@ const x = `hello ${name};
     assert!(!diags.is_empty(), "Should report error");
 
     // Should still create a template node
-    assert!(parser.arena.len() > 0, "Should parse template");
+    assert!(!parser.arena.is_empty(), "Should parse template");
 }
 
 // ===========================================================================
@@ -204,7 +204,7 @@ const { x y z } = obj;
     assert!(!diags.is_empty(), "Should report error for missing commas");
 
     // Should still parse the destructuring pattern
-    assert!(parser.arena.len() > 0, "Should parse destructuring");
+    assert!(!parser.arena.is_empty(), "Should parse destructuring");
 }
 
 /// Test object destructuring with trailing comma
@@ -217,7 +217,7 @@ const { x, y, z, } = obj;
     parser.parse_source_file();
 
     // Should parse successfully (trailing comma is valid)
-    assert!(parser.arena.len() > 0, "Should parse destructuring");
+    assert!(!parser.arena.is_empty(), "Should parse destructuring");
 }
 
 /// Test object destructuring with missing colon
@@ -237,7 +237,7 @@ const { x y } = obj;
     assert!(!diags.is_empty(), "Should report error");
 
     // Should still parse the pattern
-    assert!(parser.arena.len() > 0, "Should parse destructuring");
+    assert!(!parser.arena.is_empty(), "Should parse destructuring");
 }
 
 /// Test nested object destructuring with errors
@@ -258,7 +258,7 @@ const { a: { x y }, b } = obj;
         assert!(!diags.is_empty(), "Should report error");
 
         // Should still parse the outer pattern
-        assert!(parser.arena.len() > 0, "Should parse destructuring");
+        assert!(!parser.arena.is_empty(), "Should parse destructuring");
     });
 
     match result {
@@ -294,5 +294,5 @@ const { a b } = obj;
     assert!(!diags.is_empty(), "Should report errors");
 
     // Should parse all declarations
-    assert!(parser.arena.len() > 0, "Should parse all declarations");
+    assert!(!parser.arena.is_empty(), "Should parse all declarations");
 }

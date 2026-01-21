@@ -100,13 +100,11 @@ impl<'a> DecoratorChecker<'a> {
         if let Some(target) = target {
             // Validate the decorator expression
             self.check_decorator_expression(decorator_idx, target, &mut errors);
-        } else {
-            if let Some(node) = self.arena.get(decorator_idx) {
-                errors.push(DecoratorError::InvalidTarget {
-                    target: self.get_kind_name(parent_node.kind),
-                    pos: node.pos,
-                });
-            }
+        } else if let Some(node) = self.arena.get(decorator_idx) {
+            errors.push(DecoratorError::InvalidTarget {
+                target: self.get_kind_name(parent_node.kind),
+                pos: node.pos,
+            });
         }
 
         errors
@@ -202,11 +200,10 @@ impl<'a> DecoratorChecker<'a> {
         // Check class-level decorators
         if let Some(ref modifiers) = class_data.modifiers {
             for &mod_idx in &modifiers.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == syntax_kind_ext::DECORATOR {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == syntax_kind_ext::DECORATOR {
                         errors.extend(self.check_decorator(mod_idx, class_idx));
                     }
-                }
             }
         }
 
@@ -245,22 +242,20 @@ impl<'a> DecoratorChecker<'a> {
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == syntax_kind_ext::DECORATOR {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == syntax_kind_ext::DECORATOR {
                         errors.extend(self.check_decorator(mod_idx, member_idx));
                     }
-                }
             }
         }
 
         // Check parameter decorators for methods
-        if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-            if let Some(method) = self.arena.get_method_decl(member_node) {
+        if member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+            && let Some(method) = self.arena.get_method_decl(member_node) {
                 for &param_idx in &method.parameters.nodes {
                     errors.extend(self.check_parameter_decorators(param_idx));
                 }
             }
-        }
 
         errors
     }
@@ -279,11 +274,10 @@ impl<'a> DecoratorChecker<'a> {
 
         if let Some(ref modifiers) = param.modifiers {
             for &mod_idx in &modifiers.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == syntax_kind_ext::DECORATOR {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == syntax_kind_ext::DECORATOR {
                         errors.extend(self.check_decorator(mod_idx, param_idx));
                     }
-                }
             }
         }
 

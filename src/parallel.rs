@@ -460,18 +460,16 @@ fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
     }
 
     // Namespace can merge with class, function, or enum
-    if (existing_flags & symbol_flags::MODULE) != 0 {
-        if (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM)) != 0 {
+    if (existing_flags & symbol_flags::MODULE) != 0
+        && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM)) != 0 {
             return true;
         }
-    }
-    if (new_flags & symbol_flags::MODULE) != 0 {
-        if (existing_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
+    if (new_flags & symbol_flags::MODULE) != 0
+        && (existing_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
             != 0
         {
             return true;
         }
-    }
 
     // Enum can merge with enum
     if (existing_flags & symbol_flags::ENUM) != 0 && (new_flags & symbol_flags::ENUM) != 0 {
@@ -568,19 +566,17 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         // 1) Named exports collected from file_locals.
         for (name, &sym_id) in result.file_locals.iter() {
-            if let Some(sym) = result.symbols.get(sym_id) {
-                if sym.is_exported {
-                    if let Some(&remapped_id) = id_remap.get(&sym_id) {
+            if let Some(sym) = result.symbols.get(sym_id)
+                && sym.is_exported
+                    && let Some(&remapped_id) = id_remap.get(&sym_id) {
                         exports.set(name.clone(), remapped_id);
                     }
-                }
-            }
         }
 
         // 2) Default export: add `"default"` entry when present.
         let mut default_export_old: Option<SymbolId> = None;
-        if let Some(root_node) = result.arena.get(result.source_file) {
-            if let Some(source) = result.arena.get_source_file(root_node) {
+        if let Some(root_node) = result.arena.get(result.source_file)
+            && let Some(source) = result.arena.get_source_file(root_node) {
                 for &stmt_idx in &source.statements.nodes {
                     let Some(stmt_node) = result.arena.get(stmt_idx) else {
                         continue;
@@ -610,30 +606,25 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             default_export_old = result.file_locals.get(&ident.escaped_text);
                         }
                     } else if let Some(func) = result.arena.get_function(clause_node) {
-                        if let Some(name_node) = result.arena.get(func.name) {
-                            if let Some(ident) = result.arena.get_identifier(name_node) {
+                        if let Some(name_node) = result.arena.get(func.name)
+                            && let Some(ident) = result.arena.get_identifier(name_node) {
                                 default_export_old = result.file_locals.get(&ident.escaped_text);
                             }
-                        }
-                    } else if let Some(class) = result.arena.get_class(clause_node) {
-                        if let Some(name_node) = result.arena.get(class.name) {
-                            if let Some(ident) = result.arena.get_identifier(name_node) {
+                    } else if let Some(class) = result.arena.get_class(clause_node)
+                        && let Some(name_node) = result.arena.get(class.name)
+                            && let Some(ident) = result.arena.get_identifier(name_node) {
                                 default_export_old = result.file_locals.get(&ident.escaped_text);
                             }
-                        }
-                    }
 
                     // Only one default export per module.
                     break;
                 }
             }
-        }
 
-        if let Some(old_sym_id) = default_export_old {
-            if let Some(&remapped_id) = id_remap.get(&old_sym_id) {
+        if let Some(old_sym_id) = default_export_old
+            && let Some(&remapped_id) = id_remap.get(&old_sym_id) {
                 exports.set("default".to_string(), remapped_id);
             }
-        }
 
         if !exports.is_empty() {
             module_exports.insert(result.file_name.clone(), exports);
@@ -881,20 +872,18 @@ fn collect_functions_from_node(
         {
             functions.push(node_idx);
             // Also collect nested functions in the body
-            if let Some(func) = arena.get_function(node) {
-                if !func.body.is_none() {
+            if let Some(func) = arena.get_function(node)
+                && !func.body.is_none() {
                     collect_functions_from_node(arena, func.body, functions);
                 }
-            }
         }
         k if k == syntax_kind_ext::METHOD_DECLARATION => {
             functions.push(node_idx);
             // Also collect nested functions in the body
-            if let Some(method) = arena.get_method_decl(node) {
-                if !method.body.is_none() {
+            if let Some(method) = arena.get_method_decl(node)
+                && !method.body.is_none() {
                     collect_functions_from_node(arena, method.body, functions);
                 }
-            }
         }
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
             if let Some(class) = arena.get_class(node) {
@@ -920,17 +909,15 @@ fn collect_functions_from_node(
                         if let Some(decl_list) = arena.get_variable(decl_list_node) {
                             // Now decl_list.declarations contains the actual VARIABLE_DECLARATION nodes
                             for &decl_idx in &decl_list.declarations.nodes {
-                                if let Some(decl_node) = arena.get(decl_idx) {
-                                    if let Some(decl) = arena.get_variable_declaration(decl_node) {
-                                        if !decl.initializer.is_none() {
+                                if let Some(decl_node) = arena.get(decl_idx)
+                                    && let Some(decl) = arena.get_variable_declaration(decl_node)
+                                        && !decl.initializer.is_none() {
                                             collect_functions_from_node(
                                                 arena,
                                                 decl.initializer,
                                                 functions,
                                             );
                                         }
-                                    }
-                                }
                             }
                         }
                     }
@@ -939,11 +926,10 @@ fn collect_functions_from_node(
         }
         k if k == syntax_kind_ext::EXPORT_DECLARATION => {
             // Export declarations may contain function/class declarations
-            if let Some(export) = arena.get_export_decl(node) {
-                if !export.export_clause.is_none() {
+            if let Some(export) = arena.get_export_decl(node)
+                && !export.export_clause.is_none() {
                     collect_functions_from_node(arena, export.export_clause, functions);
                 }
-            }
         }
         _ => {}
     }

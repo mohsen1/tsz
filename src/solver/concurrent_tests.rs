@@ -32,7 +32,7 @@ fn test_concurrent_string_interning_deduplication() {
     }
 
     // Verify we can resolve all atoms
-    for (_i, atom) in results.iter().enumerate() {
+    for atom in results.iter() {
         let resolved = interner.resolve_atom(*atom);
         assert!(!resolved.is_empty());
     }

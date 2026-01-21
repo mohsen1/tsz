@@ -580,13 +580,11 @@ impl<'a> ClassES5Emitter<'a> {
             if !prop_data.initializer.is_none() {
                 // Check if initializer is an arrow function with `this` in body
                 let init_node = self.arena.get(prop_data.initializer);
-                if let Some(node) = init_node {
-                    if node.kind == syntax_kind_ext::ARROW_FUNCTION {
-                        if contains_this_reference(self.arena, prop_data.initializer) {
+                if let Some(node) = init_node
+                    && node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        && contains_this_reference(self.arena, prop_data.initializer) {
                             return true;
                         }
-                    }
-                }
             }
         }
         false
@@ -629,22 +627,19 @@ impl<'a> ClassES5Emitter<'a> {
                 }
             }
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
-                if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
-                    if self.node_contains_arrow_with_this(expr_stmt.expression) {
+                if let Some(expr_stmt) = self.arena.get_expression_statement(node)
+                    && self.node_contains_arrow_with_this(expr_stmt.expression) {
                         return true;
                     }
-                }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_data) = self.arena.get_variable(node) {
                     for &decl_idx in &var_data.declarations.nodes {
-                        if let Some(decl_node) = self.arena.get(decl_idx) {
-                            if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                if self.node_contains_arrow_with_this(decl.initializer) {
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                && self.node_contains_arrow_with_this(decl.initializer) {
                                     return true;
                                 }
-                            }
-                        }
                     }
                 }
             }
@@ -675,18 +670,16 @@ impl<'a> ClassES5Emitter<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
-                if let Some(access) = self.arena.get_access_expr(node) {
-                    if self.node_contains_arrow_with_this(access.expression) {
+                if let Some(access) = self.arena.get_access_expr(node)
+                    && self.node_contains_arrow_with_this(access.expression) {
                         return true;
                     }
-                }
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                if let Some(paren) = self.arena.get_parenthesized(node) {
-                    if self.node_contains_arrow_with_this(paren.expression) {
+                if let Some(paren) = self.arena.get_parenthesized(node)
+                    && self.node_contains_arrow_with_this(paren.expression) {
                         return true;
                     }
-                }
             }
             _ => {}
         }
@@ -740,13 +733,12 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write(&lit.text);
                 self.write("\"]");
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node) {
                 self.write("[");
                 self.write(&lit.text);
                 self.write("]");
             }
-        }
     }
 
     /// Emit a method name for prototype assignment: .name or [expr]
@@ -770,13 +762,12 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write(&lit.text);
                 self.write("\"]");
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node) {
                 self.write("[");
                 self.write(&lit.text);
                 self.write("]");
             }
-        }
     }
 
     /// Emit private field initializations using WeakMap.set() pattern
@@ -836,8 +827,8 @@ impl<'a> ClassES5Emitter<'a> {
             }
 
             // Emit getter: _ClassName_accessor_get.set(this, function() { ... });
-            if let Some(get_var) = &acc.get_var_name {
-                if let Some(getter_body) = acc.getter_body {
+            if let Some(get_var) = &acc.get_var_name
+                && let Some(getter_body) = acc.getter_body {
                     self.write_indent();
                     self.write(get_var);
                     self.write(".set(");
@@ -851,11 +842,10 @@ impl<'a> ClassES5Emitter<'a> {
                     self.write("});");
                     self.write_line();
                 }
-            }
 
             // Emit setter: _ClassName_accessor_set.set(this, function(param) { ... });
-            if let Some(set_var) = &acc.set_var_name {
-                if let Some(setter_body) = acc.setter_body {
+            if let Some(set_var) = &acc.set_var_name
+                && let Some(setter_body) = acc.setter_body {
                     self.write_indent();
                     self.write(set_var);
                     self.write(".set(");
@@ -876,7 +866,6 @@ impl<'a> ClassES5Emitter<'a> {
                     self.write("});");
                     self.write_line();
                 }
-            }
         }
     }
 
@@ -1236,8 +1225,8 @@ impl<'a> ClassES5Emitter<'a> {
                     let entry = accessor_map.entry(name).or_insert((None, None, is_static));
                     entry.0 = Some(member_idx);
                 }
-            } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
-                if let Some(accessor_data) = self.arena.get_accessor(member_node) {
+            } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(accessor_data) = self.arena.get_accessor(member_node) {
                     let is_static = self.is_static(&accessor_data.modifiers);
                     // Skip static accessors (handled in emit_static_members)
                     if is_static {
@@ -1255,7 +1244,6 @@ impl<'a> ClassES5Emitter<'a> {
                     let entry = accessor_map.entry(name).or_insert((None, None, is_static));
                     entry.1 = Some(member_idx);
                 }
-            }
         }
 
         // Track which accessor names we've already emitted
@@ -1509,12 +1497,11 @@ impl<'a> ClassES5Emitter<'a> {
 
         if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
             self.write("return");
-            if let Some(ret_data) = self.arena.get_return_statement(stmt_node) {
-                if !ret_data.expression.is_none() {
+            if let Some(ret_data) = self.arena.get_return_statement(stmt_node)
+                && !ret_data.expression.is_none() {
                     self.write(" ");
                     self.emit_expression(ret_data.expression);
                 }
-            }
             self.write(";");
         } else {
             // Fallback: emit statement normally but it might not look right
@@ -1554,8 +1541,8 @@ impl<'a> ClassES5Emitter<'a> {
             };
 
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if let Some(accessor_data) = self.arena.get_accessor(member_node) {
-                    if self.is_static(&accessor_data.modifiers) {
+                if let Some(accessor_data) = self.arena.get_accessor(member_node)
+                    && self.is_static(&accessor_data.modifiers) {
                         // Skip private static accessors (they use WeakMap pattern)
                         if is_private_identifier(self.arena, accessor_data.name) {
                             continue;
@@ -1564,10 +1551,9 @@ impl<'a> ClassES5Emitter<'a> {
                         let entry = static_accessor_map.entry(name).or_insert((None, None));
                         entry.0 = Some(member_idx);
                     }
-                }
-            } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
-                if let Some(accessor_data) = self.arena.get_accessor(member_node) {
-                    if self.is_static(&accessor_data.modifiers) {
+            } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(accessor_data) = self.arena.get_accessor(member_node)
+                    && self.is_static(&accessor_data.modifiers) {
                         // Skip private static accessors (they use WeakMap pattern)
                         if is_private_identifier(self.arena, accessor_data.name) {
                             continue;
@@ -1576,8 +1562,6 @@ impl<'a> ClassES5Emitter<'a> {
                         let entry = static_accessor_map.entry(name).or_insert((None, None));
                         entry.1 = Some(member_idx);
                     }
-                }
-            }
         }
 
         // Emit static methods and properties
@@ -1918,13 +1902,12 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write(&lit.text);
                 self.write("\"]");
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node) {
                 self.write("[");
                 self.write(&lit.text);
                 self.write("]");
             }
-        }
     }
 
     fn emit_param_binding_assignments(
@@ -2659,13 +2642,12 @@ impl<'a> ClassES5Emitter<'a> {
                     self.emit_es5_binding_element(elem_idx, temp_name);
                 }
             }
-        } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            if let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
+        } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            && let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
                 for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
                     self.emit_es5_array_binding_element(elem_idx, temp_name, i);
                 }
             }
-        }
     }
 
     fn emit_es5_object_rest_element(
@@ -2759,13 +2741,12 @@ impl<'a> ClassES5Emitter<'a> {
             } else {
                 elem.name
             };
-            if let Some(key_node) = self.arena.get(key_idx) {
-                if key_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || key_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            if let Some(key_node) = self.arena.get(key_idx)
+                && (key_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || key_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                 {
                     continue;
                 }
-            }
             props.push(key_idx);
         }
         props
@@ -3189,8 +3170,8 @@ impl<'a> ClassES5Emitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        if let Some(case_block_node) = self.arena.get(switch_stmt.case_block) {
-            if let Some(case_block) = self.arena.blocks.get(case_block_node.data_index as usize) {
+        if let Some(case_block_node) = self.arena.get(switch_stmt.case_block)
+            && let Some(case_block) = self.arena.blocks.get(case_block_node.data_index as usize) {
                 for &clause_idx in &case_block.statements.nodes {
                     self.write_indent();
                     if let Some(clause_node) = self.arena.get(clause_idx) {
@@ -3202,7 +3183,6 @@ impl<'a> ClassES5Emitter<'a> {
                     }
                 }
             }
-        }
 
         self.decrease_indent();
         self.write_indent();
@@ -3299,24 +3279,20 @@ impl<'a> ClassES5Emitter<'a> {
         if !try_stmt.catch_clause.is_none() {
             self.write_line();
             self.write_indent();
-            if let Some(catch_node) = self.arena.get(try_stmt.catch_clause) {
-                if let Some(catch_data) = self.arena.get_catch_clause(catch_node) {
+            if let Some(catch_node) = self.arena.get(try_stmt.catch_clause)
+                && let Some(catch_data) = self.arena.get_catch_clause(catch_node) {
                     self.write("catch (");
                     // variable_declaration is a VARIABLE_DECLARATION node, need to get its name
-                    if !catch_data.variable_declaration.is_none() {
-                        if let Some(var_decl_node) = self.arena.get(catch_data.variable_declaration)
-                        {
-                            if let Some(var_decl) =
+                    if !catch_data.variable_declaration.is_none()
+                        && let Some(var_decl_node) = self.arena.get(catch_data.variable_declaration)
+                            && let Some(var_decl) =
                                 self.arena.get_variable_declaration(var_decl_node)
                             {
                                 self.emit_binding_name(var_decl.name);
                             }
-                        }
-                    }
                     self.write(") ");
                     self.emit_statement(catch_data.block);
                 }
-            }
         }
 
         if !try_stmt.finally_block.is_none() {
@@ -3486,15 +3462,14 @@ impl<'a> ClassES5Emitter<'a> {
                     if is_assignment && self.is_private_field_assignment(bin.left) {
                         // Transform to __classPrivateFieldSet(this, _field, value, "f")
                         let left_node = self.arena.get(bin.left);
-                        if let Some(left) = left_node {
-                            if let Some(access) = self.arena.get_access_expr(left) {
+                        if let Some(left) = left_node
+                            && let Some(access) = self.arena.get_access_expr(left) {
                                 self.emit_private_field_set(
                                     access.expression,
                                     access.name_or_argument,
                                     bin.right,
                                 );
                             }
-                        }
                     } else {
                         self.emit_expression(bin.left);
                         self.write(" ");
@@ -3691,15 +3666,14 @@ impl<'a> ClassES5Emitter<'a> {
 
                     if is_simple_body && param_transforms.is_empty() {
                         // Single-line: { return expr; }
-                        if let Some(block_node) = body_node {
-                            if let Some(block) = self.arena.get_block(block_node) {
+                        if let Some(block_node) = body_node
+                            && let Some(block) = self.arena.get_block(block_node) {
                                 self.write("{ ");
                                 for &stmt_idx in &block.statements.nodes {
                                     self.emit_statement(stmt_idx);
                                 }
                                 self.write(" }");
                             }
-                        }
                     } else {
                         self.write("{");
                         self.write_line();
@@ -3845,15 +3819,14 @@ impl<'a> ClassES5Emitter<'a> {
                     self.write(", ");
                 }
                 first_part = false;
-                if let Some(spread_node) = self.arena.get(elem_idx) {
-                    if let Some(spread) = self
+                if let Some(spread_node) = self.arena.get(elem_idx)
+                    && let Some(spread) = self
                         .arena
                         .unary_exprs_ex
                         .get(spread_node.data_index as usize)
                     {
                         self.emit_expression(spread.expression);
                     }
-                }
             } else {
                 // Add to current group
                 current_group.push(elem_idx);
@@ -4009,13 +3982,12 @@ impl<'a> ClassES5Emitter<'a> {
             if self.is_computed_property_member(idx) {
                 return true;
             }
-            if let Some(node) = self.arena.get(idx) {
-                if node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
-                    || node.kind == syntax_kind_ext::SPREAD_ELEMENT
+            if let Some(node) = self.arena.get(idx)
+                && (node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+                    || node.kind == syntax_kind_ext::SPREAD_ELEMENT)
                 {
                     return true;
                 }
-            }
         }
         false
     }
@@ -4038,11 +4010,10 @@ impl<'a> ClassES5Emitter<'a> {
             _ => None,
         };
 
-        if let Some(name_idx) = name_idx {
-            if let Some(name_node) = self.arena.get(name_idx) {
+        if let Some(name_idx) = name_idx
+            && let Some(name_node) = self.arena.get(name_idx) {
                 return name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME;
             }
-        }
 
         false
     }
@@ -4233,11 +4204,10 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write(&lit.text);
                 self.write("\"");
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node) {
                 self.write(&lit.text);
             }
-        }
     }
 
     fn emit_binary_operator(&mut self, op: u16) {
@@ -4324,11 +4294,10 @@ impl<'a> ClassES5Emitter<'a> {
     fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -4369,11 +4338,10 @@ impl<'a> ClassES5Emitter<'a> {
     fn get_computed_property_name(&self, idx: NodeIndex) -> String {
         if let Some(node) = self.arena.get(idx) {
             // String literals need quotes in bracket notation
-            if node.kind == SyntaxKind::StringLiteral as u16 {
-                if let Some(lit) = self.arena.get_literal(node) {
+            if node.kind == SyntaxKind::StringLiteral as u16
+                && let Some(lit) = self.arena.get_literal(node) {
                     return format!("\"{}\"", lit.text);
                 }
-            }
             // Other literals (numbers) are used as-is
             if let Some(lit) = self.arena.get_literal(node) {
                 return lit.text.clone();
@@ -4389,11 +4357,10 @@ impl<'a> ClassES5Emitter<'a> {
     fn is_static(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::StaticKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -4402,11 +4369,10 @@ impl<'a> ClassES5Emitter<'a> {
     fn is_async(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -4415,11 +4381,10 @@ impl<'a> ClassES5Emitter<'a> {
     fn is_abstract(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::AbstractKeyword as u16 {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -4656,9 +4621,9 @@ mod tests {
         let root = parser.parse_source_file();
 
         // Find the class declaration
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&class_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&class_idx) = source_file.statements.nodes.first() {
                     let mut emitter = ClassES5Emitter::new(&parser.arena);
                     let output = emitter.emit_class(class_idx);
 
@@ -4678,8 +4643,6 @@ mod tests {
                         output
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -4693,9 +4656,9 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&class_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&class_idx) = source_file.statements.nodes.first() {
                     let mut emitter = ClassES5Emitter::new(&parser.arena);
                     let output = emitter.emit_class(class_idx);
 
@@ -4705,8 +4668,6 @@ mod tests {
                         output
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -4721,9 +4682,9 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&class_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&class_idx) = source_file.statements.nodes.first() {
                     let mut emitter = ClassES5Emitter::new(&parser.arena);
                     let output = emitter.emit_class(class_idx);
 
@@ -4738,8 +4699,6 @@ mod tests {
                         output
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -4757,9 +4716,9 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&class_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&class_idx) = source_file.statements.nodes.first() {
                     let mut emitter = ClassES5Emitter::new(&parser.arena);
                     let output = emitter.emit_class(class_idx);
 
@@ -4791,8 +4750,6 @@ mod tests {
                         output
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -4806,9 +4763,9 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&class_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&class_idx) = source_file.statements.nodes.first() {
                     let mut emitter = ClassES5Emitter::new(&parser.arena);
                     let output = emitter.emit_class(class_idx);
 
@@ -4818,8 +4775,6 @@ mod tests {
                         output
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -4833,9 +4788,9 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&class_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&class_idx) = source_file.statements.nodes.first() {
                     let mut emitter = ClassES5Emitter::new(&parser.arena);
                     let output = emitter.emit_class(class_idx);
 
@@ -4850,8 +4805,6 @@ mod tests {
                         output
                     );
                 }
-            }
-        }
     }
 }
 

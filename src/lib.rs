@@ -862,19 +862,14 @@ impl Parser {
         let mut interface_decls = Vec::new();
         for i in 0..arena.len() {
             let idx = parser::NodeIndex(i as u32);
-            if let Some(node) = arena.get(idx) {
-                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                    if let Some(interface) = arena.get_interface(node) {
-                        if let Some(name_node) = arena.get(interface.name) {
-                            if let Some(ident) = arena.get_identifier(name_node) {
-                                if ident.escaped_text == interface_name {
+            if let Some(node) = arena.get(idx)
+                && node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    && let Some(interface) = arena.get_interface(node)
+                        && let Some(name_node) = arena.get(interface.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                                && ident.escaped_text == interface_name {
                                     interface_decls.push(idx);
                                 }
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         if interface_decls.is_empty() {
@@ -929,12 +924,12 @@ impl Parser {
 
         for i in 0..arena.len() {
             let idx = parser::NodeIndex(i as u32);
-            if let Some(node) = arena.get(idx) {
-                if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                    if let Some(interface) = arena.get_interface(node) {
-                        if let Some(name_node) = arena.get(interface.name) {
-                            if let Some(ident) = arena.get_identifier(name_node) {
-                                if ident.escaped_text == interface_name {
+            if let Some(node) = arena.get(idx)
+                && node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    && let Some(interface) = arena.get_interface(node)
+                        && let Some(name_node) = arena.get(interface.name)
+                            && let Some(ident) = arena.get_identifier(name_node)
+                                && ident.escaped_text == interface_name {
                                     result.push(format!(
                                         "Interface '{}' found at node {}",
                                         interface_name, i
@@ -1002,11 +997,6 @@ impl Parser {
                                         }
                                     }
                                 }
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         if result.is_empty() {
@@ -1090,12 +1080,11 @@ impl Parser {
         let mut target_node = None;
         for i in 0..arena.len() {
             let idx = parser::NodeIndex(i as u32);
-            if let Some(node) = arena.get(idx) {
-                if node.pos <= pos && pos < node.end && node.kind == IDENTIFIER_KIND {
+            if let Some(node) = arena.get(idx)
+                && node.pos <= pos && pos < node.end && node.kind == IDENTIFIER_KIND {
                     target_node = Some(idx);
                     // Don't break - prefer smaller range
                 }
-            }
         }
 
         let start_idx = match target_node {
@@ -2455,7 +2444,7 @@ pub fn is_white_space_single_line(ch: u32) -> bool {
         || ch == CharacterCodes::NON_BREAKING_SPACE
         || ch == CharacterCodes::NEXT_LINE
         || ch == CharacterCodes::OGHAM
-        || (ch >= CharacterCodes::EN_QUAD && ch <= CharacterCodes::ZERO_WIDTH_SPACE)
+        || (CharacterCodes::EN_QUAD..=CharacterCodes::ZERO_WIDTH_SPACE).contains(&ch)
         || ch == CharacterCodes::NARROW_NO_BREAK_SPACE
         || ch == CharacterCodes::MATHEMATICAL_SPACE
         || ch == CharacterCodes::IDEOGRAPHIC_SPACE
@@ -2471,28 +2460,28 @@ pub fn is_white_space_like(ch: u32) -> bool {
 /// Check if character is a decimal digit (0-9).
 #[wasm_bindgen(js_name = isDigit)]
 pub fn is_digit(ch: u32) -> bool {
-    ch >= CharacterCodes::_0 && ch <= CharacterCodes::_9
+    (CharacterCodes::_0..=CharacterCodes::_9).contains(&ch)
 }
 
 /// Check if character is an octal digit (0-7).
 #[wasm_bindgen(js_name = isOctalDigit)]
 pub fn is_octal_digit(ch: u32) -> bool {
-    ch >= CharacterCodes::_0 && ch <= CharacterCodes::_7
+    (CharacterCodes::_0..=CharacterCodes::_7).contains(&ch)
 }
 
 /// Check if character is a hexadecimal digit (0-9, A-F, a-f).
 #[wasm_bindgen(js_name = isHexDigit)]
 pub fn is_hex_digit(ch: u32) -> bool {
     is_digit(ch)
-        || (ch >= CharacterCodes::UPPER_A && ch <= CharacterCodes::UPPER_F)
-        || (ch >= CharacterCodes::LOWER_A && ch <= CharacterCodes::LOWER_F)
+        || (CharacterCodes::UPPER_A..=CharacterCodes::UPPER_F).contains(&ch)
+        || (CharacterCodes::LOWER_A..=CharacterCodes::LOWER_F).contains(&ch)
 }
 
 /// Check if character is an ASCII letter (A-Z, a-z).
 #[wasm_bindgen(js_name = isASCIILetter)]
 pub fn is_ascii_letter(ch: u32) -> bool {
-    (ch >= CharacterCodes::UPPER_A && ch <= CharacterCodes::UPPER_Z)
-        || (ch >= CharacterCodes::LOWER_A && ch <= CharacterCodes::LOWER_Z)
+    (CharacterCodes::UPPER_A..=CharacterCodes::UPPER_Z).contains(&ch)
+        || (CharacterCodes::LOWER_A..=CharacterCodes::LOWER_Z).contains(&ch)
 }
 
 /// Check if character is a word character (A-Z, a-z, 0-9, _).

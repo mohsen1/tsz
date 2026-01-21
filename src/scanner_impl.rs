@@ -1437,7 +1437,7 @@ impl ScannerState {
                     }
                 }
                 self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-                format!("\\x")
+                "\\x".to_string()
             }
             CharacterCodes::LOWER_U => {
                 // Unicode escape \uHHHH or \u{H+}
@@ -1455,11 +1455,10 @@ impl ScannerState {
                     {
                         let hex = self.substring(hex_start, self.pos);
                         self.pos += 1;
-                        if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                            if let Some(c) = char::from_u32(code) {
+                        if let Ok(code) = u32::from_str_radix(&hex, 16)
+                            && let Some(c) = char::from_u32(code) {
                                 return c.to_string();
                             }
-                        }
                     }
                     self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                     String::from("\\u")
@@ -1675,20 +1674,19 @@ impl ScannerState {
     /// Returns LessThanSlashToken if followed by `/`, otherwise LessThanToken.
     #[wasm_bindgen(js_name = reScanLessThanToken)]
     pub fn re_scan_less_than_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::LessThanToken {
-            if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::SLASH {
+        if self.token == SyntaxKind::LessThanToken
+            && self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::SLASH {
                 self.pos += 1;
                 self.token = SyntaxKind::LessThanSlashToken;
             }
-        }
         self.token
     }
 
     /// Re-scan the current `#` token as a hash token or private identifier.
     #[wasm_bindgen(js_name = reScanHashToken)]
     pub fn re_scan_hash_token(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::HashToken {
-            if self.pos < self.end && is_identifier_start(self.char_code_unchecked(self.pos)) {
+        if self.token == SyntaxKind::HashToken
+            && self.pos < self.end && is_identifier_start(self.char_code_unchecked(self.pos)) {
                 self.pos += 1;
                 while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos))
                 {
@@ -1697,7 +1695,6 @@ impl ScannerState {
                 self.token_value = self.substring(self.token_start, self.pos);
                 self.token = SyntaxKind::PrivateIdentifier;
             }
-        }
         self.token
     }
 
@@ -1709,7 +1706,7 @@ impl ScannerState {
             if ch == Some(CharacterCodes::DOT) {
                 // Check it's not ?. followed by a digit
                 let next = self.char_code_at(self.pos + 1);
-                if !next.map(|c| is_digit(c)).unwrap_or(false) {
+                if !next.map(is_digit).unwrap_or(false) {
                     self.pos += 1;
                     self.token = SyntaxKind::QuestionDotToken;
                 }
@@ -2117,7 +2114,7 @@ fn is_white_space_single_line(ch: u32) -> bool {
         || ch == CharacterCodes::FORM_FEED
         || ch == CharacterCodes::NON_BREAKING_SPACE
         || ch == CharacterCodes::OGHAM
-        || (ch >= CharacterCodes::EN_QUAD && ch <= CharacterCodes::ZERO_WIDTH_SPACE)
+        || (CharacterCodes::EN_QUAD..=CharacterCodes::ZERO_WIDTH_SPACE).contains(&ch)
         || ch == CharacterCodes::NARROW_NO_BREAK_SPACE
         || ch == CharacterCodes::MATHEMATICAL_SPACE
         || ch == CharacterCodes::IDEOGRAPHIC_SPACE
@@ -2125,7 +2122,7 @@ fn is_white_space_single_line(ch: u32) -> bool {
 }
 
 fn is_digit(ch: u32) -> bool {
-    ch >= CharacterCodes::_0 && ch <= CharacterCodes::_9
+    (CharacterCodes::_0..=CharacterCodes::_9).contains(&ch)
 }
 
 fn is_binary_digit(ch: u32) -> bool {
@@ -2133,18 +2130,18 @@ fn is_binary_digit(ch: u32) -> bool {
 }
 
 fn is_octal_digit(ch: u32) -> bool {
-    ch >= CharacterCodes::_0 && ch <= CharacterCodes::_7
+    (CharacterCodes::_0..=CharacterCodes::_7).contains(&ch)
 }
 
 fn is_hex_digit(ch: u32) -> bool {
     is_digit(ch)
-        || (ch >= CharacterCodes::UPPER_A && ch <= CharacterCodes::UPPER_F)
-        || (ch >= CharacterCodes::LOWER_A && ch <= CharacterCodes::LOWER_F)
+        || (CharacterCodes::UPPER_A..=CharacterCodes::UPPER_F).contains(&ch)
+        || (CharacterCodes::LOWER_A..=CharacterCodes::LOWER_F).contains(&ch)
 }
 
 fn is_identifier_start(ch: u32) -> bool {
-    (ch >= CharacterCodes::UPPER_A && ch <= CharacterCodes::UPPER_Z)
-        || (ch >= CharacterCodes::LOWER_A && ch <= CharacterCodes::LOWER_Z)
+    (CharacterCodes::UPPER_A..=CharacterCodes::UPPER_Z).contains(&ch)
+        || (CharacterCodes::LOWER_A..=CharacterCodes::LOWER_Z).contains(&ch)
         || ch == CharacterCodes::UNDERSCORE
         || ch == CharacterCodes::DOLLAR
         || ch > 127 // Unicode letter (simplified check)

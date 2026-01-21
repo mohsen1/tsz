@@ -472,7 +472,7 @@ impl TypeInterner {
         let shard = self.shards.get(shard_idx)?;
         shard
             .index_to_key
-            .get(&(local_index as u32))
+            .get(&{ local_index })
             .map(|r| r.value().as_ref().clone())
     }
 

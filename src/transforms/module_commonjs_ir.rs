@@ -132,19 +132,18 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         // Default import
-        if !clause.name.is_none() {
-            if let Some(name) = get_identifier_text(self.arena, clause.name) {
+        if !clause.name.is_none()
+            && let Some(name) = get_identifier_text(self.arena, clause.name) {
                 statements.push(IRNode::DefaultImport {
                     var_name: name,
                     module_var: var_name.clone(),
                 });
             }
-        }
 
         // Named bindings
-        if !clause.named_bindings.is_none() {
-            if let Some(named_node) = self.arena.get(clause.named_bindings) {
-                if let Some(named_imports) = self.arena.get_named_imports(named_node) {
+        if !clause.named_bindings.is_none()
+            && let Some(named_node) = self.arena.get(clause.named_bindings)
+                && let Some(named_imports) = self.arena.get_named_imports(named_node) {
                     // Namespace import: import * as ns from "..."
                     if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
                         if let Some(name) = get_identifier_text(self.arena, named_imports.name) {
@@ -156,8 +155,8 @@ impl<'a> CommonJsTransformContext<'a> {
                     } else {
                         // Named imports: import { a, b } from "..."
                         for &spec_idx in &named_imports.elements.nodes {
-                            if let Some(spec_node) = self.arena.get(spec_idx) {
-                                if let Some(spec) = self.arena.get_specifier(spec_node) {
+                            if let Some(spec_node) = self.arena.get(spec_idx)
+                                && let Some(spec) = self.arena.get_specifier(spec_node) {
                                     if spec.is_type_only {
                                         continue;
                                     }
@@ -175,12 +174,9 @@ impl<'a> CommonJsTransformContext<'a> {
                                         import_name,
                                     });
                                 }
-                            }
                         }
                     }
                 }
-            }
-        }
 
         Some(IRNode::Block(statements))
     }
@@ -242,8 +238,8 @@ impl<'a> CommonJsTransformContext<'a> {
 
         if let Some(named_exports) = self.arena.get_named_imports(clause_node) {
             for &spec_idx in &named_exports.elements.nodes {
-                if let Some(spec_node) = self.arena.get(spec_idx) {
-                    if let Some(spec) = self.arena.get_specifier(spec_node) {
+                if let Some(spec_node) = self.arena.get(spec_idx)
+                    && let Some(spec) = self.arena.get_specifier(spec_node) {
                         if spec.is_type_only {
                             continue;
                         }
@@ -262,7 +258,6 @@ impl<'a> CommonJsTransformContext<'a> {
                             import_name,
                         });
                     }
-                }
             }
         }
 
@@ -285,19 +280,16 @@ impl<'a> CommonJsTransformContext<'a> {
 
             // Export assignments for each declared variable
             for &decl_list_idx in &var_data.declarations.nodes {
-                if let Some(decl_list_node) = self.arena.get(decl_list_idx) {
-                    if let Some(decl_list) = self.arena.get_variable(decl_list_node) {
+                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && let Some(decl_list) = self.arena.get_variable(decl_list_node) {
                         for &decl_idx in &decl_list.declarations.nodes {
-                            if let Some(decl_node) = self.arena.get(decl_idx) {
-                                if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                    if let Some(name) = get_identifier_text(self.arena, decl.name) {
+                            if let Some(decl_node) = self.arena.get(decl_idx)
+                                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                    && let Some(name) = get_identifier_text(self.arena, decl.name) {
                                         result.push(IRNode::ExportAssignment { name });
                                     }
-                                }
-                            }
                         }
                     }
-                }
             }
 
             Some(IRNode::Block(result))
@@ -424,11 +416,10 @@ fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> 
 fn has_modifier(arena: &NodeArena, modifiers: &Option<crate::parser::NodeList>, kind: u16) -> bool {
     if let Some(mods) = modifiers {
         for &mod_idx in &mods.nodes {
-            if let Some(mod_node) = arena.get(mod_idx) {
-                if mod_node.kind == kind {
+            if let Some(mod_node) = arena.get(mod_idx)
+                && mod_node.kind == kind {
                     return true;
                 }
-            }
         }
     }
     false

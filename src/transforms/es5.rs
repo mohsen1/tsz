@@ -492,11 +492,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRParam::new(&name)
             };
 
-            if !param_data.initializer.is_none() {
-                if let Some(default) = self.transform_expression(param_data.initializer) {
+            if !param_data.initializer.is_none()
+                && let Some(default) = self.transform_expression(param_data.initializer) {
                     param = param.with_default(default);
                 }
-            }
 
             result.push(param);
         }
@@ -662,11 +661,10 @@ impl<'a> ES5ClassTransformer<'a> {
         };
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(name_node) {
-                if let Some(expr) = self.transform_expression(computed.expression) {
+            if let Some(computed) = self.arena.get_computed_property(name_node)
+                && let Some(expr) = self.transform_expression(computed.expression) {
                     return IRMethodName::Computed(Box::new(expr));
                 }
-            }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.arena.get_identifier(name_node) {
                 return IRMethodName::Identifier(ident.escaped_text.clone());
@@ -675,11 +673,10 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return IRMethodName::StringLiteral(lit.text.clone());
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node) {
                 return IRMethodName::NumericLiteral(lit.text.clone());
             }
-        }
 
         IRMethodName::Identifier(String::new())
     }
@@ -834,8 +831,8 @@ impl<'a> ES5AsyncTransformer<'a> {
             };
         };
 
-        if body_node.kind == syntax_kind_ext::BLOCK {
-            if let Some(block) = self.arena.get_block(body_node) {
+        if body_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(body_node) {
                 if block.statements.nodes.is_empty() {
                     return IRNode::GeneratorBody {
                         has_await: false,
@@ -853,9 +850,9 @@ impl<'a> ES5AsyncTransformer<'a> {
                 // Check for single return statement
                 if block.statements.nodes.len() == 1 {
                     let stmt_idx = block.statements.nodes[0];
-                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                        if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
-                            if let Some(ret) = self.arena.get_return_statement(stmt_node) {
+                    if let Some(stmt_node) = self.arena.get(stmt_idx)
+                        && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                            && let Some(ret) = self.arena.get_return_statement(stmt_node) {
                                 let value = if ret.expression.is_none() {
                                     None
                                 } else {
@@ -873,11 +870,8 @@ impl<'a> ES5AsyncTransformer<'a> {
                                     }],
                                 };
                             }
-                        }
-                    }
                 }
             }
-        }
 
         // Non-trivial body - emit statements
         let stmts = self.transform_async_statements(body_idx);

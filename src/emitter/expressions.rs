@@ -42,12 +42,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if self.ctx.target_es5 {
-            if let Some(expr_node) = self.arena.get(call.expression) {
-                if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                    if let Some(access) = self.arena.get_access_expr(expr_node) {
-                        if let Some(base) = self.arena.get(access.expression) {
-                            if base.kind == SyntaxKind::SuperKeyword as u16 {
+        if self.ctx.target_es5
+            && let Some(expr_node) = self.arena.get(call.expression) {
+                if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.arena.get_access_expr(expr_node)
+                        && let Some(base) = self.arena.get(access.expression)
+                            && base.kind == SyntaxKind::SuperKeyword as u16 {
                                 self.write("_super.prototype.");
                                 self.emit(access.name_or_argument);
                                 self.write(".call(");
@@ -65,13 +65,10 @@ impl<'a> Printer<'a> {
                                 self.write(")");
                                 return;
                             }
-                        }
-                    }
-                }
-                if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-                    if let Some(access) = self.arena.get_access_expr(expr_node) {
-                        if let Some(base) = self.arena.get(access.expression) {
-                            if base.kind == SyntaxKind::SuperKeyword as u16 {
+                if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    && let Some(access) = self.arena.get_access_expr(expr_node)
+                        && let Some(base) = self.arena.get(access.expression)
+                            && base.kind == SyntaxKind::SuperKeyword as u16 {
                                 self.write("_super.prototype[");
                                 self.emit(access.name_or_argument);
                                 self.write("].call(");
@@ -89,11 +86,7 @@ impl<'a> Printer<'a> {
                                 self.write(")");
                                 return;
                             }
-                        }
-                    }
-                }
             }
-        }
 
         self.emit(call.expression);
         self.write("(");

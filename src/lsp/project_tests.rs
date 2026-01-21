@@ -2260,7 +2260,7 @@ fn test_project_code_actions_missing_import_named() {
         .expect("Expected missing import quick fix");
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("b.ts").unwrap();
+    let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
     assert_eq!(updated, "import { foo } from \"./a\";\nfoo();\n");
 }
@@ -2303,7 +2303,7 @@ fn test_project_code_actions_missing_import_default_export() {
         .expect("Expected missing import quick fix");
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("b.ts").unwrap();
+    let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
     assert_eq!(updated, "import foo from \"./a\";\nfoo();\n");
 }
@@ -2343,7 +2343,7 @@ fn test_project_code_actions_missing_import_tsx() {
         .expect("Expected missing import quick fix");
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("b.ts").unwrap();
+    let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
     assert_eq!(updated, "import { foo } from \"./a\";\nfoo();\n");
 }
@@ -2390,7 +2390,7 @@ fn test_project_code_actions_missing_import_default_reexport() {
         .expect("Expected missing import quick fix");
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("b.ts").unwrap();
+    let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
     assert_eq!(updated, "import foo from \"./index\";\nfoo();\n");
 }
@@ -2434,7 +2434,7 @@ fn test_project_code_actions_missing_import_reexport() {
         .expect("Expected missing import quick fix");
 
     let edit = actions[0].edit.as_ref().unwrap();
-    let edits = edit.changes.get("b.ts").unwrap();
+    let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
     assert_eq!(updated, "import { bar } from \"./index\";\nbar();\n");
 }
@@ -2461,22 +2461,20 @@ fn test_project_load_tsconfig_strict_true() {
     project.set_file("test.ts".to_string(), "const x: number = 1;\n".to_string());
 
     // Verify default is false
-    assert_eq!(project.strict(), false, "Default strict should be false");
-    assert_eq!(project.file("test.ts").unwrap().strict(), false);
+    assert!(!project.strict(), "Default strict should be false");
+    assert!(!project.file("test.ts").unwrap().strict());
 
     // Load tsconfig
     let result = project.load_tsconfig(&temp_dir);
     assert!(result.is_ok(), "load_tsconfig should succeed");
 
     // Verify strict mode is now true
-    assert_eq!(
+    assert!(
         project.strict(),
-        true,
         "Strict should be true after loading tsconfig"
     );
-    assert_eq!(
+    assert!(
         project.file("test.ts").unwrap().strict(),
-        true,
         "Existing files should be updated to strict mode"
     );
 
@@ -2507,21 +2505,19 @@ fn test_project_load_tsconfig_strict_false() {
     project.set_strict(true);
     project.set_file("test.ts".to_string(), "const x: number = 1;\n".to_string());
 
-    assert_eq!(project.strict(), true, "Should start with strict=true");
+    assert!(project.strict(), "Should start with strict=true");
 
     // Load tsconfig with strict: false
     let result = project.load_tsconfig(&temp_dir);
     assert!(result.is_ok(), "load_tsconfig should succeed");
 
     // Verify strict mode is now false
-    assert_eq!(
-        project.strict(),
-        false,
+    assert!(
+        !project.strict(),
         "Strict should be false after loading tsconfig"
     );
-    assert_eq!(
-        project.file("test.ts").unwrap().strict(),
-        false,
+    assert!(
+        !project.file("test.ts").unwrap().strict(),
         "Existing files should be updated to non-strict mode"
     );
 
@@ -2543,7 +2539,7 @@ fn test_project_load_tsconfig_missing_file() {
     project.set_strict(true);
     project.set_file("test.ts".to_string(), "const x: number = 1;\n".to_string());
 
-    assert_eq!(project.strict(), true, "Should start with strict=true");
+    assert!(project.strict(), "Should start with strict=true");
 
     // Try to load tsconfig from non-existent directory
     let result = project.load_tsconfig(&temp_dir);
@@ -2553,9 +2549,8 @@ fn test_project_load_tsconfig_missing_file() {
     );
 
     // Verify strict mode is unchanged (true, as we set it)
-    assert_eq!(
+    assert!(
         project.strict(),
-        true,
         "Strict mode should remain unchanged when tsconfig is missing"
     );
 }
@@ -2584,28 +2579,25 @@ fn test_project_load_tsconfig_updates_all_files() {
     project.set_file("c.ts".to_string(), "const z = 3;\n".to_string());
 
     // Verify all files start with strict=false
-    assert_eq!(project.file("a.ts").unwrap().strict(), false);
-    assert_eq!(project.file("b.ts").unwrap().strict(), false);
-    assert_eq!(project.file("c.ts").unwrap().strict(), false);
+    assert!(!project.file("a.ts").unwrap().strict());
+    assert!(!project.file("b.ts").unwrap().strict());
+    assert!(!project.file("c.ts").unwrap().strict());
 
     // Load tsconfig
     let result = project.load_tsconfig(&temp_dir);
     assert!(result.is_ok(), "load_tsconfig should succeed");
 
     // Verify ALL files have been updated to strict=true
-    assert_eq!(
+    assert!(
         project.file("a.ts").unwrap().strict(),
-        true,
         "File a.ts should be updated to strict mode"
     );
-    assert_eq!(
+    assert!(
         project.file("b.ts").unwrap().strict(),
-        true,
         "File b.ts should be updated to strict mode"
     );
-    assert_eq!(
+    assert!(
         project.file("c.ts").unwrap().strict(),
-        true,
         "File c.ts should be updated to strict mode"
     );
 

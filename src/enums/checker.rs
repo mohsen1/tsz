@@ -275,11 +275,10 @@ impl<'a> EnumChecker<'a> {
     fn is_const_enum(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx) {
-                    if node.kind == SyntaxKind::ConstKeyword as u16 {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == SyntaxKind::ConstKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -289,11 +288,10 @@ impl<'a> EnumChecker<'a> {
     fn is_ambient_enum(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx) {
-                    if node.kind == SyntaxKind::DeclareKeyword as u16 {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == SyntaxKind::DeclareKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -358,15 +356,13 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&enum_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut checker = EnumChecker::new(&parser.arena);
                     checker.check_enum_declaration(enum_idx);
                     return checker.take_diagnostics();
                 }
-            }
-        }
         Vec::new()
     }
 

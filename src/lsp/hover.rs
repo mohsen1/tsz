@@ -106,7 +106,7 @@ impl<'a> HoverProvider<'a> {
         position: Position,
         type_cache: &mut Option<crate::checker::TypeCache>,
         scope_cache: Option<&mut ScopeCache>,
-        mut scope_stats: Option<&mut ScopeCacheStats>,
+        scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<HoverInfo> {
         // 1. Find node at position
         let offset = self
@@ -122,7 +122,7 @@ impl<'a> HoverProvider<'a> {
         // We use ScopeWalker to handle local scopes correctly
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats.as_deref_mut())?
+            walker.resolve_node_cached(root, node_idx, scope_cache, scope_stats)?
         } else {
             walker.resolve_node(root, node_idx)?
         };
@@ -222,11 +222,10 @@ impl<'a> HoverProvider<'a> {
         }
 
         let mut sections = Vec::new();
-        if let Some(summary) = parsed.summary.as_ref() {
-            if !summary.is_empty() {
+        if let Some(summary) = parsed.summary.as_ref()
+            && !summary.is_empty() {
                 sections.push(summary.clone());
             }
-        }
 
         if !parsed.params.is_empty() {
             let mut names: Vec<&String> = parsed.params.keys().collect();

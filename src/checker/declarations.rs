@@ -295,13 +295,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 )),
                 k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                     // For computed properties, try to get the identifier
-                    if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                        Some(PropertyKey::Computed(ComputedKey::Ident(
+                    self.ctx.arena.get_identifier(name_node).map(|ident| PropertyKey::Computed(ComputedKey::Ident(
                             ident.escaped_text.clone(),
                         )))
-                    } else {
-                        None
-                    }
                 }
                 _ => None,
             }
@@ -543,12 +539,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         };
 
         // Check for binary expression assignment (this.prop = value)
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-                if bin_expr.operator_token == SyntaxKind::EqualsToken as u16 {
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin_expr) = self.ctx.arena.get_binary_expr(node)
+                && bin_expr.operator_token == SyntaxKind::EqualsToken as u16 {
                     // Check if left side is a property access (this.prop)
-                    if self.is_this_property_access(bin_expr.left) {
-                        if let Some(prop_key) = self.extract_property_key(bin_expr.left) {
+                    if self.is_this_property_access(bin_expr.left)
+                        && let Some(prop_key) = self.extract_property_key(bin_expr.left) {
                             // Only track if this property is in our tracked set
                             if tracked.contains(&prop_key) {
                                 let mut assigned = assigned_in.clone();
@@ -556,10 +552,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 return assigned;
                             }
                         }
-                    }
                 }
-            }
-        }
 
         assigned_in.clone()
     }
@@ -604,11 +597,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return None;
         };
 
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            Some(PropertyKey::Ident(ident.escaped_text.clone()))
-        } else {
-            None
-        }
+        self.ctx.arena.get_identifier(name_node).map(|ident| PropertyKey::Ident(ident.escaped_text.clone()))
     }
 
     /// Analyze an if statement.
@@ -721,11 +710,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Finally block always runs, so we can just update current
-        if let Some(finally_res) = finally_result {
-            if let Some(finally_set) = finally_res.normal {
+        if let Some(finally_res) = finally_result
+            && let Some(finally_set) = finally_res.normal {
                 current = finally_set;
             }
-        }
 
         FlowResult {
             normal: Some(current),
@@ -791,8 +779,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // TS2435: Ambient modules cannot be nested in other modules or namespaces
             // Check if this is an ambient external module (declare module "string")
             // inside another namespace/module
-            if let Some(name_node) = self.ctx.arena.get(module.name) {
-                if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            if let Some(name_node) = self.ctx.arena.get(module.name)
+                && name_node.kind == SyntaxKind::StringLiteral as u16 {
                     // This is an ambient external module with a string name
                     // Check if it's nested inside a namespace
                     if self.is_inside_namespace(module_idx) {
@@ -806,17 +794,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         return; // Don't emit other errors for nested ambient modules
                     }
                 }
-            }
 
             // TS5061: Check for relative module names in ambient declarations
             // declare module "./foo" { } -> Error
             if self
                 .ctx
                 .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16)
-            {
-                if let Some(name_node) = self.ctx.arena.get(module.name) {
-                    if name_node.kind == SyntaxKind::StringLiteral as u16 {
-                        if let Some(lit) = self.ctx.arena.get_literal(name_node) {
+                && let Some(name_node) = self.ctx.arena.get(module.name)
+                    && name_node.kind == SyntaxKind::StringLiteral as u16
+                        && let Some(lit) = self.ctx.arena.get_literal(name_node) {
                             // Check TS5061 first
                             if self.is_relative_module_name(&lit.text) {
                                 self.ctx.error(
@@ -849,9 +835,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 );
                             }
                         }
-                    }
-                }
-            }
 
             if !module.body.is_none() {
                 // Check module body (which can be a block or nested module)
@@ -876,11 +859,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Returns true if the module is in resolved_modules or module_exports.
     fn module_exists(&self, module_name: &str) -> bool {
         // Check if the module was resolved by the CLI driver (multi-file mode)
-        if let Some(ref resolved) = self.ctx.resolved_modules {
-            if resolved.contains(module_name) {
+        if let Some(ref resolved) = self.ctx.resolved_modules
+            && resolved.contains(module_name) {
                 return true;
             }
-        }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
@@ -937,15 +919,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         };
 
         if node.kind == syntax_kind_ext::MODULE_BLOCK {
-            if let Some(block) = self.ctx.arena.get_module_block(node) {
-                if let Some(ref stmts) = block.statements {
+            if let Some(block) = self.ctx.arena.get_module_block(node)
+                && let Some(ref stmts) = block.statements {
                     for &stmt_idx in &stmts.nodes {
                         // Dispatch to statement/declaration checking
                         // Currently a no-op - will call StatementChecker
                         let _ = stmt_idx;
                     }
                 }
-            }
         } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
             // Nested module
             self.check_module_declaration(body_idx);
@@ -964,8 +945,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             if let Some(param) = self.ctx.arena.get_parameter(node) {
                 // If parameter has accessibility modifiers (public/private/protected/readonly)
                 // and we're not in a constructor, report error
-                if param.modifiers.is_some() {
-                    if let Some((pos, end)) = self.ctx.get_node_span(param_idx) {
+                if param.modifiers.is_some()
+                    && let Some((pos, end)) = self.ctx.get_node_span(param_idx) {
                         self.ctx.error(
                             pos,
                             end - pos,
@@ -974,7 +955,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             diagnostic_codes::PARAMETER_PROPERTY_NOT_ALLOWED,
                         );
                     }
-                }
             }
         }
     }
@@ -1013,15 +993,13 @@ mod tests {
         );
 
         // Get the variable statement
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
                     // Test passes if no panic
                 }
-            }
-        }
     }
 
     #[test]
@@ -1053,9 +1031,9 @@ class Foo {
         );
 
         // Get the class declaration
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1082,8 +1060,6 @@ class Foo {
                         );
                     }
                 }
-            }
-        }
     }
 
     #[test]
@@ -1114,9 +1090,9 @@ class Foo {
         );
 
         // Get the class declaration
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1134,8 +1110,6 @@ class Foo {
                         ts2564_errors.len()
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -1166,9 +1140,9 @@ class Foo {
         );
 
         // Get the class declaration
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1186,8 +1160,6 @@ class Foo {
                         ts2564_errors.len()
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -1214,9 +1186,9 @@ class Foo {
         );
 
         // Get the class declaration
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1234,8 +1206,6 @@ class Foo {
                         ts2564_errors.len()
                     );
                 }
-            }
-        }
     }
 
     // ========== Phase 2 Tests: Control Flow Analysis ==========
@@ -1270,9 +1240,9 @@ class Foo {
             },
         );
 
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1290,8 +1260,6 @@ class Foo {
                         ts2564_errors.len()
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -1328,9 +1296,9 @@ class Foo {
             },
         );
 
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1348,8 +1316,6 @@ class Foo {
                         ts2564_errors.len()
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -1385,9 +1351,9 @@ class Foo {
             },
         );
 
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1405,8 +1371,6 @@ class Foo {
                         ts2564_errors.len()
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -1442,9 +1406,9 @@ class Foo {
             },
         );
 
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1462,8 +1426,6 @@ class Foo {
                         ts2564_errors.len()
                     );
                 }
-            }
-        }
     }
 
     #[test]
@@ -1498,9 +1460,9 @@ class Foo {
             },
         );
 
-        if let Some(root_node) = parser.get_arena().get(root) {
-            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
-                if let Some(&stmt_idx) = sf_data.statements.nodes.first() {
+        if let Some(root_node) = parser.get_arena().get(root)
+            && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
+                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
                     let mut checker = DeclarationChecker::new(&mut ctx);
                     checker.check(stmt_idx);
 
@@ -1526,7 +1488,5 @@ class Foo {
                         );
                     }
                 }
-            }
-        }
     }
 }

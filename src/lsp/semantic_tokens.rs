@@ -156,7 +156,7 @@ impl<'a> SemanticTokensProvider<'a> {
         self.visit_node(root);
 
         // Take the builder and return the encoded data
-        std::mem::replace(&mut self.builder, SemanticTokensBuilder::new()).build()
+        std::mem::take(&mut self.builder).build()
     }
 
     /// Visit a node and its children recursively.
@@ -187,12 +187,11 @@ impl<'a> SemanticTokensProvider<'a> {
         }
 
         // Check if this declaration node has a symbol
-        if let Some(sym_id) = self.binder.get_node_symbol(node_idx) {
-            if let Some(symbol) = self.binder.get_symbol(sym_id) {
+        if let Some(sym_id) = self.binder.get_node_symbol(node_idx)
+            && let Some(symbol) = self.binder.get_symbol(sym_id) {
                 // This is a declaration - emit token for its name
                 self.emit_token_for_declaration(node_idx, symbol);
             }
-        }
 
         // Recurse into children
         self.visit_children(node_idx);
@@ -595,11 +594,10 @@ impl<'a> SemanticTokensProvider<'a> {
             _ => None,
         };
 
-        if let Some(name_idx) = name_idx {
-            if !name_idx.is_none() {
+        if let Some(name_idx) = name_idx
+            && !name_idx.is_none() {
                 self.emit_token_for_name(name_idx, symbol, true);
             }
-        }
     }
 
     /// Emit a semantic token for a name identifier.
@@ -655,13 +653,11 @@ impl<'a> SemanticTokensProvider<'a> {
             SemanticTokenType::Property
         } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             // Check if it's a parameter
-            if symbol.value_declaration.is_some() {
-                if let Some(decl_node) = self.arena.get(symbol.value_declaration) {
-                    if decl_node.kind == syntax_kind_ext::PARAMETER {
+            if symbol.value_declaration.is_some()
+                && let Some(decl_node) = self.arena.get(symbol.value_declaration)
+                    && decl_node.kind == syntax_kind_ext::PARAMETER {
                         return (SemanticTokenType::Parameter, modifiers);
                     }
-                }
-            }
             SemanticTokenType::Variable
         } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
             SemanticTokenType::Variable

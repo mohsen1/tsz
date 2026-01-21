@@ -96,11 +96,10 @@ impl<'a> NamespaceTransformContext<'a> {
                 self.collect_name_parts(qn_data.left, parts);
                 self.collect_name_parts(qn_data.right, parts);
             }
-        } else if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.arena.get_identifier(node) {
+        } else if node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(node) {
                 parts.push(ident.escaped_text.clone());
             }
-        }
     }
 
     /// Transform namespace body
@@ -113,15 +112,14 @@ impl<'a> NamespaceTransformContext<'a> {
         };
 
         // Check if it's a module block
-        if let Some(block_data) = self.arena.get_module_block(body_node) {
-            if let Some(ref stmts) = block_data.statements {
+        if let Some(block_data) = self.arena.get_module_block(body_node)
+            && let Some(ref stmts) = block_data.statements {
                 for &stmt_idx in &stmts.nodes {
                     if let Some(ir) = self.transform_namespace_member(ns_name, stmt_idx) {
                         result.push(ir);
                     }
                 }
             }
-        }
 
         result
     }
@@ -434,11 +432,10 @@ fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
 fn has_modifier(arena: &NodeArena, modifiers: &Option<NodeList>, kind: u16) -> bool {
     if let Some(mods) = modifiers {
         for &mod_idx in &mods.nodes {
-            if let Some(mod_node) = arena.get(mod_idx) {
-                if mod_node.kind == kind {
+            if let Some(mod_node) = arena.get(mod_idx)
+                && mod_node.kind == kind {
                     return true;
                 }
-            }
         }
     }
     false
@@ -457,19 +454,16 @@ fn collect_variable_names(arena: &NodeArena, declarations: &NodeList) -> Vec<Str
     let mut names = Vec::new();
 
     for &decl_list_idx in &declarations.nodes {
-        if let Some(decl_list_node) = arena.get(decl_list_idx) {
-            if let Some(decl_list) = arena.get_variable(decl_list_node) {
+        if let Some(decl_list_node) = arena.get(decl_list_idx)
+            && let Some(decl_list) = arena.get_variable(decl_list_node) {
                 for &decl_idx in &decl_list.declarations.nodes {
-                    if let Some(decl_node) = arena.get(decl_idx) {
-                        if let Some(decl) = arena.get_variable_declaration(decl_node) {
-                            if let Some(name) = get_identifier_text(arena, decl.name) {
+                    if let Some(decl_node) = arena.get(decl_idx)
+                        && let Some(decl) = arena.get_variable_declaration(decl_node)
+                            && let Some(name) = get_identifier_text(arena, decl.name) {
                                 names.push(name);
                             }
-                        }
-                    }
                 }
             }
-        }
     }
 
     names

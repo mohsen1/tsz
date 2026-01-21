@@ -122,11 +122,10 @@ fn extract_enum_value(arena: &NodeArena, idx: NodeIndex) -> EnumMemberValue {
 
     match node.kind {
         k if k == SyntaxKind::NumericLiteral as u16 => {
-            if let Some(lit) = arena.get_literal(node) {
-                if let Ok(val) = lit.text.parse::<i64>() {
+            if let Some(lit) = arena.get_literal(node)
+                && let Ok(val) = lit.text.parse::<i64>() {
                     return EnumMemberValue::Numeric(val);
                 }
-            }
             EnumMemberValue::Auto(0)
         }
         k if k == SyntaxKind::StringLiteral as u16 => {
@@ -180,11 +179,10 @@ impl EnumMemberValue {
 fn is_const_enum(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
     if let Some(mods) = modifiers {
         for &idx in &mods.nodes {
-            if let Some(node) = arena.get(idx) {
-                if node.kind == SyntaxKind::ConstKeyword as u16 {
+            if let Some(node) = arena.get(idx)
+                && node.kind == SyntaxKind::ConstKeyword as u16 {
                     return true;
                 }
-            }
         }
     }
     false

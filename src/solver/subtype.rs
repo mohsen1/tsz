@@ -483,8 +483,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 for &member in members.iter() {
                     if let Some(TypeKey::TypeParameter(param_info))
                     | Some(TypeKey::Infer(param_info)) = self.interner.lookup(member)
-                    {
-                        if let Some(constraint) = param_info.constraint {
+                        && let Some(constraint) = param_info.constraint {
                             // Create intersection of constraint with other members
                             let other_members: Vec<TypeId> =
                                 members.iter().filter(|&&m| m != member).copied().collect();
@@ -500,7 +499,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 }
                             }
                         }
-                    }
                 }
 
                 SubtypeResult::False
@@ -594,11 +592,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 return SubtypeResult::False;
                             }
                         }
-                        if let Some(variadic) = expansion.variadic {
-                            if !self.check_subtype(variadic, *t_elem).is_true() {
+                        if let Some(variadic) = expansion.variadic
+                            && !self.check_subtype(variadic, *t_elem).is_true() {
                                 return SubtypeResult::False;
                             }
-                        }
                     } else {
                         // Regular element: T <: U
                         if !self.check_subtype(elem.type_id, *t_elem).is_true() {
@@ -935,11 +932,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Skip expansion if the resolved type is just this Application
             // (prevents infinite recursion on self-referential types)
             let resolved_key = self.interner.lookup(resolved);
-            if let Some(TypeKey::Application(resolved_app_id)) = resolved_key {
-                if resolved_app_id == app_id {
+            if let Some(TypeKey::Application(resolved_app_id)) = resolved_key
+                && resolved_app_id == app_id {
                     return None;
                 }
-            }
 
             // Create substitution and instantiate
             let substitution = TypeSubstitution::from_args(&type_params, &app.args);
@@ -1860,15 +1856,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // (since number converts to string for property access)
         if let (Some(s_string_idx), Some(s_number_idx)) =
             (&source.string_index, &source.number_index)
-        {
-            if !self
+            && !self
                 .check_subtype(s_number_idx.value_type, s_string_idx.value_type)
                 .is_true()
             {
                 // This is a constraint violation in the source itself
                 return SubtypeResult::False;
             }
-        }
 
         SubtypeResult::True
     }
@@ -1935,8 +1929,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut checked = false;
         let target_type = self.optional_property_type(target_prop);
 
-        if self.is_numeric_property_name(target_prop.name) {
-            if let Some(number_idx) = &source.number_index {
+        if self.is_numeric_property_name(target_prop.name)
+            && let Some(number_idx) = &source.number_index {
                 checked = true;
                 if number_idx.readonly && !target_prop.readonly {
                     return SubtypeResult::False;
@@ -1952,7 +1946,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
             }
-        }
 
         if let Some(string_idx) = &source.string_index {
             checked = true;
@@ -2222,20 +2215,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }) {
                     return true;
                 }
-                if let Some(index) = &shape.string_index {
-                    if self.type_contains_this_type_inner(index.key_type, visited)
-                        || self.type_contains_this_type_inner(index.value_type, visited)
+                if let Some(index) = &shape.string_index
+                    && (self.type_contains_this_type_inner(index.key_type, visited)
+                        || self.type_contains_this_type_inner(index.value_type, visited))
                     {
                         return true;
                     }
-                }
-                if let Some(index) = &shape.number_index {
-                    if self.type_contains_this_type_inner(index.key_type, visited)
-                        || self.type_contains_this_type_inner(index.value_type, visited)
+                if let Some(index) = &shape.number_index
+                    && (self.type_contains_this_type_inner(index.key_type, visited)
+                        || self.type_contains_this_type_inner(index.value_type, visited))
                     {
                         return true;
                     }
-                }
                 false
             }
             TypeKey::Function(shape_id) => {
@@ -3593,8 +3584,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check number index signature
-        if let Some(ref t_number_idx) = target_shape.number_index {
-            if let Some(ref s_number_idx) = source_shape.number_index {
+        if let Some(ref t_number_idx) = target_shape.number_index
+            && let Some(ref s_number_idx) = source_shape.number_index {
                 if s_number_idx.readonly && !t_number_idx.readonly {
                     return Some(SubtypeFailureReason::TypeMismatch {
                         source_type: source,
@@ -3612,7 +3603,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     });
                 }
             }
-        }
 
         if let Some(reason) =
             self.explain_properties_against_index_signatures(&source_shape.properties, target_shape)
@@ -3697,8 +3687,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let mut checked = false;
             let target_type = self.optional_property_type(t_prop);
 
-            if self.is_numeric_property_name(t_prop.name) {
-                if let Some(number_idx) = &source_shape.number_index {
+            if self.is_numeric_property_name(t_prop.name)
+                && let Some(number_idx) = &source_shape.number_index {
                     checked = true;
                     if number_idx.readonly && !t_prop.readonly {
                         return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
@@ -3720,7 +3710,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         });
                     }
                 }
-            }
 
             if let Some(string_idx) = &source_shape.string_index {
                 checked = true;
@@ -3936,11 +3925,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if source_has_rest {
-            let rest_param = if let Some(rest_param) = source.params.last() {
-                rest_param
-            } else {
-                return None; // Invalid rest parameter - should not happen
-            };
+            let rest_param = source.params.last()?;
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
             let rest_is_top = self.allow_bivariant_rest
                 && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);

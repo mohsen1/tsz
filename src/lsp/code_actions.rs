@@ -192,19 +192,17 @@ impl<'a> CodeActionProvider<'a> {
             .only
             .as_ref()
             .is_none_or(|kinds| kinds.contains(&CodeActionKind::SourceOrganizeImports));
-        if request_organize {
-            if let Some(action) = self.organize_imports(root) {
+        if request_organize
+            && let Some(action) = self.organize_imports(root) {
                 actions.push(action);
             }
-        }
 
         // Refactorings (selection-based)
         // Only if the range is non-empty (user selected text)
-        if range.start != range.end {
-            if let Some(action) = self.extract_variable(root, range) {
+        if range.start != range.end
+            && let Some(action) = self.extract_variable(root, range) {
                 actions.push(action);
             }
-        }
 
         actions
     }
@@ -537,13 +535,12 @@ impl<'a> CodeActionProvider<'a> {
             }
             let end_idx = i;
 
-            if end_idx > start_idx + 1 {
-                if let Some(edit) =
+            if end_idx > start_idx + 1
+                && let Some(edit) =
                     self.sort_imports_range(&statements[start_idx..end_idx], &source_file.comments)
                 {
                     edits.push(edit);
                 }
-            }
 
             while i < statements.len() && !self.is_import_declaration(statements[i]) {
                 i += 1;
@@ -913,8 +910,8 @@ impl<'a> CodeActionProvider<'a> {
 
     fn import_decl_range(&self, node: &crate::parser::node::Node) -> (Range, String) {
         let mut end = node.end;
-        if let Some(import_decl) = self.arena.get_import_decl(node) {
-            if let Some(module_node) = self.arena.get(import_decl.module_specifier) {
+        if let Some(import_decl) = self.arena.get_import_decl(node)
+            && let Some(module_node) = self.arena.get(import_decl.module_specifier) {
                 end = module_node.end;
                 if let Some(rest) = self.source.get(end as usize..) {
                     let mut offset = 0usize;
@@ -933,7 +930,6 @@ impl<'a> CodeActionProvider<'a> {
                     }
                 }
             }
-        }
         let mut trailing = String::new();
         if let Some(rest) = self.source.get(end as usize..) {
             if rest.starts_with("\r\n") {
@@ -1017,17 +1013,15 @@ impl<'a> CodeActionProvider<'a> {
                 return ImportUsage::Value;
             }
 
-            if parent_node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
-                if let Some(usage) = self.import_usage_for_heritage_clause(parent_idx) {
+            if parent_node.kind == syntax_kind_ext::HERITAGE_CLAUSE
+                && let Some(usage) = self.import_usage_for_heritage_clause(parent_idx) {
                     return usage;
                 }
-            }
 
-            if parent_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS {
-                if let Some(usage) = self.import_usage_in_heritage(parent_idx) {
+            if parent_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                && let Some(usage) = self.import_usage_in_heritage(parent_idx) {
                     return usage;
                 }
-            }
 
             if parent_node.is_type_node() {
                 return ImportUsage::Type;
@@ -1186,11 +1180,10 @@ impl<'a> CodeActionProvider<'a> {
             }
 
             if !clause.name.is_none() {
-                if let Some(name) = self.arena.get_identifier_text(clause.name) {
-                    if name == candidate.local_name {
+                if let Some(name) = self.arena.get_identifier_text(clause.name)
+                    && name == candidate.local_name {
                         return MergeDefaultImport::AlreadyImported;
                     }
-                }
                 continue;
             }
 
@@ -1289,11 +1282,10 @@ impl<'a> CodeActionProvider<'a> {
             }
         }
 
-        if let Some(import_idx) = default_target {
-            if let Some(edit) = self.build_default_import_named_edit(import_idx, candidate) {
+        if let Some(import_idx) = default_target
+            && let Some(edit) = self.build_default_import_named_edit(import_idx, candidate) {
                 return MergeNamedImport::Edits(vec![edit]);
             }
-        }
 
         MergeNamedImport::NoMatch
     }
@@ -1315,11 +1307,10 @@ impl<'a> CodeActionProvider<'a> {
             } else {
                 spec.property_name
             };
-            if let Some(name) = self.arena.get_identifier_text(local_ident) {
-                if name == local_name {
+            if let Some(name) = self.arena.get_identifier_text(local_ident)
+                && name == local_name {
                     return true;
                 }
-            }
         }
 
         false
@@ -1990,8 +1981,8 @@ impl<'a> CodeActionProvider<'a> {
         let mut start = expr_node.pos;
         let mut end = expr_node.end;
 
-        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = self.arena.get_binary_expr(expr_node) {
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(expr_node) {
                 start = self
                     .arena
                     .get(binary.left)
@@ -2003,19 +1994,16 @@ impl<'a> CodeActionProvider<'a> {
                     .map(|node| node.end)
                     .unwrap_or(end);
             }
-        }
 
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(expr_node) {
-                if let Some(name_node) = self.arena.get(access.name_or_argument) {
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(name_node) = self.arena.get(access.name_or_argument) {
                     end = name_node.end;
                 }
-            }
-        }
 
-        if let Some(ext) = self.arena.get_extended(expr_idx) {
-            if let Some(parent_node) = self.arena.get(ext.parent) {
-                if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+        if let Some(ext) = self.arena.get_extended(expr_idx)
+            && let Some(parent_node) = self.arena.get(ext.parent)
+                && parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                     let parent_start = parent_node.pos as usize;
                     let parent_end = parent_node.end as usize;
                     if let Some(slice) = self.source.get(parent_start..parent_end) {
@@ -2033,27 +2021,23 @@ impl<'a> CodeActionProvider<'a> {
                         }
                     }
                 }
-            }
-        }
 
         (start, end)
     }
 
     fn needs_parentheses_for_extraction(&self, expr_node: &Node) -> bool {
         if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.arena.get_parenthesized(expr_node) {
-                if let Some(inner) = self.arena.get(paren.expression) {
+            if let Some(paren) = self.arena.get_parenthesized(expr_node)
+                && let Some(inner) = self.arena.get(paren.expression) {
                     return self.needs_parentheses_for_extraction(inner);
                 }
-            }
             return false;
         }
 
-        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = self.arena.get_binary_expr(expr_node) {
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(expr_node) {
                 return binary.operator_token == SyntaxKind::CommaToken as u16;
             }
-        }
 
         false
     }
@@ -2075,19 +2059,17 @@ impl<'a> CodeActionProvider<'a> {
 
     fn is_comma_expression(&self, expr_node: &Node) -> bool {
         if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.arena.get_parenthesized(expr_node) {
-                if let Some(inner) = self.arena.get(paren.expression) {
+            if let Some(paren) = self.arena.get_parenthesized(expr_node)
+                && let Some(inner) = self.arena.get(paren.expression) {
                     return self.is_comma_expression(inner);
                 }
-            }
             return false;
         }
 
-        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = self.arena.get_binary_expr(expr_node) {
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(expr_node) {
                 return binary.operator_token == SyntaxKind::CommaToken as u16;
             }
-        }
 
         false
     }
@@ -2246,11 +2228,10 @@ impl<'a> CodeActionProvider<'a> {
                 || k == syntax_kind_ext::SPREAD_ELEMENT
                 || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
             {
-                if node.has_data() {
-                    if let Some(unary) = self.arena.unary_exprs_ex.get(node.data_index as usize) {
+                if node.has_data()
+                    && let Some(unary) = self.arena.unary_exprs_ex.get(node.data_index as usize) {
                         self.collect_identifier_uses_in_expression(unary.expression, out);
                     }
-                }
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = self.arena.get_conditional_expr(node) {
@@ -2279,13 +2260,12 @@ impl<'a> CodeActionProvider<'a> {
                 }
             }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
-                if node.has_data() {
-                    if let Some(tagged) = self.arena.tagged_templates.get(node.data_index as usize)
+                if node.has_data()
+                    && let Some(tagged) = self.arena.tagged_templates.get(node.data_index as usize)
                     {
                         self.collect_identifier_uses_in_expression(tagged.tag, out);
                         self.collect_identifier_uses_in_expression(tagged.template, out);
                     }
-                }
             }
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
                 if let Some(template) = self.arena.get_template_expr(node) {
@@ -2303,13 +2283,12 @@ impl<'a> CodeActionProvider<'a> {
                 || k == syntax_kind_ext::AS_EXPRESSION
                 || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
             {
-                if node.has_data() {
-                    if let Some(assertion) =
+                if node.has_data()
+                    && let Some(assertion) =
                         self.arena.type_assertions.get(node.data_index as usize)
                     {
                         self.collect_identifier_uses_in_expression(assertion.expression, out);
                     }
-                }
             }
             k if k == syntax_kind_ext::JSX_ELEMENT => {
                 if let Some(jsx) = self.arena.get_jsx_element(node) {
@@ -2380,11 +2359,10 @@ impl<'a> CodeActionProvider<'a> {
             return;
         };
 
-        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(name_node) {
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(name_node) {
                 self.collect_identifier_uses_in_expression(computed.expression, out);
             }
-        }
     }
 
     fn collect_identifier_uses_in_jsx_opening(
@@ -2414,11 +2392,10 @@ impl<'a> CodeActionProvider<'a> {
 
         match tag_node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
-                if let Some(name) = self.arena.get_identifier_text(tag_idx) {
-                    if Self::jsx_tag_is_component(name) {
+                if let Some(name) = self.arena.get_identifier_text(tag_idx)
+                    && Self::jsx_tag_is_component(name) {
                         out.push(tag_idx);
                     }
-                }
             }
             k if k == syntax_kind_ext::JSX_NAMESPACED_NAME => {
                 // Namespaced JSX names are intrinsic; skip to avoid false TDZ positives.

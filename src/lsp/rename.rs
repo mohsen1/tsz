@@ -171,7 +171,7 @@ impl<'a> RenameProvider<'a> {
         position: Position,
         new_name: String,
         scope_cache: Option<&mut ScopeCache>,
-        mut scope_stats: Option<&mut ScopeCacheStats>,
+        scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Result<WorkspaceEdit, String> {
         let node_idx = self
             .rename_target_node(position)
@@ -198,7 +198,7 @@ impl<'a> RenameProvider<'a> {
                 root,
                 position,
                 scope_cache,
-                scope_stats.as_deref_mut(),
+                scope_stats,
             )
         } else {
             finder.find_references(root, position)
@@ -251,13 +251,12 @@ impl<'a> RenameProvider<'a> {
 
         // Check if it's a reserved word or strict mode reserved word
         // Allow contextual keywords (async, await, type, string, number, etc.)
-        if let Some(kind) = scanner::text_to_keyword(name) {
-            if scanner::token_is_reserved_word(kind)
-                || scanner::token_is_strict_mode_reserved_word(kind)
+        if let Some(kind) = scanner::text_to_keyword(name)
+            && (scanner::token_is_reserved_word(kind)
+                || scanner::token_is_strict_mode_reserved_word(kind))
             {
                 return false;
             }
-        }
 
         // Manual char check
         let mut chars = name.chars();
@@ -369,7 +368,7 @@ mod rename_tests {
         assert!(result.is_ok(), "Rename should succeed");
 
         let workspace_edit = result.unwrap();
-        let edits = workspace_edit.changes.get("test.ts").unwrap();
+        let edits = &workspace_edit.changes["test.ts"];
 
         // Should have at least 2 edits: the declaration and the usage
         assert!(
@@ -474,7 +473,7 @@ mod rename_tests {
         assert!(result.is_ok(), "Rename should succeed");
 
         let workspace_edit = result.unwrap();
-        let edits = workspace_edit.changes.get("test.ts").unwrap();
+        let edits = &workspace_edit.changes["test.ts"];
 
         // Should have at least 2 edits: the declaration and the call
         assert!(edits.len() >= 2, "Should have at least 2 edits");
@@ -507,7 +506,7 @@ mod rename_tests {
         );
 
         let workspace_edit = result.unwrap();
-        let edits = workspace_edit.changes.get("test.ts").unwrap();
+        let edits = &workspace_edit.changes["test.ts"];
         assert!(edits.len() >= 2, "Should rename declaration and usage");
         for edit in edits {
             assert_eq!(edit.new_text, "#baz");
@@ -536,7 +535,7 @@ mod rename_tests {
         );
 
         let workspace_edit = result.unwrap();
-        let edits = workspace_edit.changes.get("test.ts").unwrap();
+        let edits = &workspace_edit.changes["test.ts"];
         for edit in edits {
             assert_eq!(edit.new_text, "#qux");
         }

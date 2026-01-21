@@ -189,7 +189,7 @@ where
     let completed_clone = completed.clone();
 
     let handle = thread::spawn(move || {
-        let result = panic::catch_unwind(AssertUnwindSafe(|| test_fn()));
+        let result = panic::catch_unwind(AssertUnwindSafe(test_fn));
         completed_clone.store(true, Ordering::SeqCst);
         result
     });

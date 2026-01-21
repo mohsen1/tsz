@@ -4,8 +4,7 @@ use super::*;
 use crate::TypeInterner;
 use crate::interner::Atom;
 use crate::solver::{
-    CallableShape, CallSignature, ConditionalType, FunctionShape, IndexSignature, MappedType,
-    ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
+    FunctionShape, ParamInfo, PropertyInfo, TupleElement,
 };
 
 /// Helper function to create an object type with properties

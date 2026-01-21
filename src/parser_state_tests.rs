@@ -22,7 +22,7 @@ fn test_parser_simple_expression() {
     let root = parser.parse_source_file();
 
     assert!(!root.is_none());
-    assert!(parser.arena.len() > 0);
+    assert!(!parser.arena.is_empty());
 
     // Should have: SourceFile, ExpressionStatement, BinaryExpression, 2 NumericLiterals
     assert!(
@@ -76,10 +76,8 @@ fn test_parser_numeric_separator_invalid_diagnostic() {
     let diag = diagnostics
         .iter()
         .find(|diag| diag.code == diagnostic_codes::NUMERIC_SEPARATORS_NOT_ALLOWED_HERE)
-        .expect(&format!(
-            "Expected numeric separator diagnostic, got: {:?}",
-            diagnostics
-        ));
+        .unwrap_or_else(|| panic!("Expected numeric separator diagnostic, got: {:?}",
+            diagnostics));
     let underscore_pos = source.find('_').expect("underscore not found") as u32;
     assert_eq!(diag.start, underscore_pos);
     assert_eq!(diag.length, 1);
@@ -97,10 +95,8 @@ fn test_parser_numeric_separator_consecutive_diagnostic() {
         .find(|diag| {
             diag.code == diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED
         })
-        .expect(&format!(
-            "Expected consecutive separator diagnostic, got: {:?}",
-            diagnostics
-        ));
+        .unwrap_or_else(|| panic!("Expected consecutive separator diagnostic, got: {:?}",
+            diagnostics));
     let underscore_pos = source.find("__").expect("double underscore not found") as u32 + 1;
     assert_eq!(diag.start, underscore_pos);
     assert_eq!(diag.length, 1);

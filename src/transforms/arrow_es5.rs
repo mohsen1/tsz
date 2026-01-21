@@ -137,43 +137,38 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
             }
         }
         k if k == syntax_kind_ext::SPREAD_ELEMENT || k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
-            if let Some(spread) = arena.get_spread(node) {
-                if contains_this_reference(arena, spread.expression) {
+            if let Some(spread) = arena.get_spread(node)
+                && contains_this_reference(arena, spread.expression) {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::METHOD_DECLARATION => {
-            if let Some(method) = arena.get_method_decl(node) {
-                if contains_this_reference(arena, method.name) {
+            if let Some(method) = arena.get_method_decl(node)
+                && contains_this_reference(arena, method.name) {
                     return true;
                 }
-            }
             return false;
         }
         k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-            if let Some(accessor) = arena.get_accessor(node) {
-                if contains_this_reference(arena, accessor.name) {
+            if let Some(accessor) = arena.get_accessor(node)
+                && contains_this_reference(arena, accessor.name) {
                     return true;
                 }
-            }
             return false;
         }
         k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
-            if let Some(computed) = arena.get_computed_property(node) {
-                if contains_this_reference(arena, computed.expression) {
+            if let Some(computed) = arena.get_computed_property(node)
+                && contains_this_reference(arena, computed.expression) {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
-            if let Some(tagged) = arena.get_tagged_template(node) {
-                if contains_this_reference(arena, tagged.tag)
-                    || contains_this_reference(arena, tagged.template)
+            if let Some(tagged) = arena.get_tagged_template(node)
+                && (contains_this_reference(arena, tagged.tag)
+                    || contains_this_reference(arena, tagged.template))
                 {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
             if let Some(template) = arena.get_template_expr(node) {
@@ -185,11 +180,10 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
             }
         }
         k if k == syntax_kind_ext::TEMPLATE_SPAN => {
-            if let Some(span) = arena.get_template_span(node) {
-                if contains_this_reference(arena, span.expression) {
+            if let Some(span) = arena.get_template_span(node)
+                && contains_this_reference(arena, span.expression) {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::BINARY_EXPRESSION => {
             if let Some(bin) = arena.get_binary_expr(node) {
@@ -207,40 +201,36 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
             }
         }
         k if k == syntax_kind_ext::RETURN_STATEMENT => {
-            if let Some(ret) = arena.get_return_statement(node) {
-                if !ret.expression.is_none() {
+            if let Some(ret) = arena.get_return_statement(node)
+                && !ret.expression.is_none() {
                     return contains_this_reference(arena, ret.expression);
                 }
-            }
         }
         k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
         {
-            if let Some(unary) = arena.get_unary_expr(node) {
-                if contains_this_reference(arena, unary.operand) {
+            if let Some(unary) = arena.get_unary_expr(node)
+                && contains_this_reference(arena, unary.operand) {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::AWAIT_EXPRESSION
             || k == syntax_kind_ext::YIELD_EXPRESSION
             || k == syntax_kind_ext::NON_NULL_EXPRESSION =>
         {
-            if let Some(unary) = arena.get_unary_expr_ex(node) {
-                if !unary.expression.is_none() && contains_this_reference(arena, unary.expression) {
+            if let Some(unary) = arena.get_unary_expr_ex(node)
+                && !unary.expression.is_none() && contains_this_reference(arena, unary.expression) {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::TYPE_ASSERTION
             || k == syntax_kind_ext::AS_EXPRESSION
             || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
         {
-            if let Some(assertion) = arena.get_type_assertion(node) {
-                if contains_this_reference(arena, assertion.expression) {
+            if let Some(assertion) = arena.get_type_assertion(node)
+                && contains_this_reference(arena, assertion.expression) {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::VARIABLE_STATEMENT
             || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST =>
@@ -254,11 +244,10 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
             }
         }
         k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-            if let Some(decl) = arena.get_variable_declaration(node) {
-                if !decl.initializer.is_none() && contains_this_reference(arena, decl.initializer) {
+            if let Some(decl) = arena.get_variable_declaration(node)
+                && !decl.initializer.is_none() && contains_this_reference(arena, decl.initializer) {
                     return true;
                 }
-            }
         }
         k if k == syntax_kind_ext::ARROW_FUNCTION => {
             if let Some(func) = arena.get_function(node) {
@@ -298,6 +287,12 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
 pub struct ArrowTransformContext {
     /// Whether we need to capture `this` as `_this`
     pub needs_this_capture: bool,
+}
+
+impl Default for ArrowTransformContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ArrowTransformContext {

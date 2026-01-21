@@ -723,13 +723,12 @@ fn parse_type_alias(source: &str) -> (NodeArena, crate::parser::base::NodeIndex)
     // We need to find the FunctionType node
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::FUNCTION_TYPE
-                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+        if let Some(node) = arena.get(idx)
+            && (node.kind == syntax_kind_ext::FUNCTION_TYPE
+                || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE)
             {
                 return (arena, idx);
             }
-        }
     }
 
     panic!("Could not find function type in parsed AST");
@@ -749,14 +748,12 @@ fn parse_type_alias_type_node(source: &str) -> (NodeArena, crate::parser::base::
     let mut type_node = crate::parser::base::NodeIndex::NONE;
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                if let Some(alias) = arena.get_type_alias(node) {
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                && let Some(alias) = arena.get_type_alias(node) {
                     type_node = alias.type_node;
                     break;
                 }
-            }
-        }
     }
 
     if type_node == crate::parser::base::NodeIndex::NONE {
@@ -779,11 +776,10 @@ fn parse_tuple_type(source: &str) -> (NodeArena, crate::parser::base::NodeIndex)
     let arena = std::mem::take(&mut parser.arena);
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::TUPLE_TYPE {
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::TUPLE_TYPE {
                 return (arena, idx);
             }
-        }
     }
 
     panic!("Could not find tuple type in parsed AST");
@@ -802,11 +798,10 @@ fn parse_template_literal_type(source: &str) -> (NodeArena, crate::parser::base:
     let arena = std::mem::take(&mut parser.arena);
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE {
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE {
                 return (arena, idx);
             }
-        }
     }
 
     panic!("Could not find template literal type in parsed AST");
@@ -825,11 +820,10 @@ fn parse_mapped_type(source: &str) -> (NodeArena, crate::parser::base::NodeIndex
     let arena = std::mem::take(&mut parser.arena);
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::MAPPED_TYPE {
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::MAPPED_TYPE {
                 return (arena, idx);
             }
-        }
     }
 
     panic!("Could not find mapped type in parsed AST");
@@ -848,19 +842,14 @@ fn parse_type_reference(source: &str, name: &str) -> (NodeArena, crate::parser::
     let arena = std::mem::take(&mut parser.arena);
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                if let Some(data) = arena.get_type_ref(node) {
-                    if let Some(type_name_node) = arena.get(data.type_name) {
-                        if let Some(ident) = arena.get_identifier(type_name_node) {
-                            if ident.escaped_text == name {
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(data) = arena.get_type_ref(node)
+                    && let Some(type_name_node) = arena.get(data.type_name)
+                        && let Some(ident) = arena.get_identifier(type_name_node)
+                            && ident.escaped_text == name {
                                 return (arena, idx);
                             }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     panic!("Could not find type reference in parsed AST");
@@ -879,11 +868,10 @@ fn parse_type_literal(source: &str) -> (NodeArena, crate::parser::base::NodeInde
     let arena = std::mem::take(&mut parser.arena);
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::TYPE_LITERAL {
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::TYPE_LITERAL {
                 return (arena, idx);
             }
-        }
     }
 
     panic!("Could not find type literal in parsed AST");
@@ -903,19 +891,14 @@ fn parse_interface_declarations(source: &str, name: &str) -> (NodeArena, Vec<Nod
     let mut declarations = Vec::new();
     for i in 0..arena.len() {
         let idx = crate::parser::base::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                if let Some(interface) = arena.get_interface(node) {
-                    if let Some(name_node) = arena.get(interface.name) {
-                        if let Some(ident) = arena.get_identifier(name_node) {
-                            if ident.escaped_text == name {
+        if let Some(node) = arena.get(idx)
+            && node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                && let Some(interface) = arena.get_interface(node)
+                    && let Some(name_node) = arena.get(interface.name)
+                        && let Some(ident) = arena.get_identifier(name_node)
+                            && ident.escaped_text == name {
                                 declarations.push(idx);
                             }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     assert!(

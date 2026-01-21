@@ -3482,7 +3482,7 @@ fn test_strict_function_variance() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
     // Ensure strict mode is on (default)
-    assert_eq!(checker.strict_function_types, true);
+    assert!(checker.strict_function_types);
 
     // (x: string | number) => void
     let union_arg_fn = interner.function(FunctionShape {

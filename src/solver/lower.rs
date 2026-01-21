@@ -539,14 +539,10 @@ impl<'a> TypeLowering<'a> {
             };
         };
 
-        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
-            if let Some(data) = self.arena.get_named_tuple_member(node) {
+        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+            && let Some(data) = self.arena.get_named_tuple_member(node) {
                 let name = if let Some(name_node) = self.arena.get(data.name) {
-                    if let Some(id_data) = self.arena.get_identifier(name_node) {
-                        Some(self.interner.intern_string(&id_data.escaped_text))
-                    } else {
-                        None
-                    }
+                    self.arena.get_identifier(name_node).map(|id_data| self.interner.intern_string(&id_data.escaped_text))
                 } else {
                     None
                 };
@@ -558,7 +554,6 @@ impl<'a> TypeLowering<'a> {
                     rest: data.dot_dot_dot_token,
                 };
             }
-        }
 
         if node.kind == syntax_kind_ext::REST_TYPE || node.kind == syntax_kind_ext::OPTIONAL_TYPE {
             let wrapped = if let Some(data) = self.arena.get_wrapped_type(node) {
@@ -670,16 +665,14 @@ impl<'a> TypeLowering<'a> {
                 continue;
             };
 
-            if let Some(name_node) = self.arena.get(param_data.name) {
-                if let Some(id_data) = self.arena.get_identifier(name_node) {
-                    if id_data.escaped_text == "this" {
+            if let Some(name_node) = self.arena.get(param_data.name)
+                && let Some(id_data) = self.arena.get_identifier(name_node)
+                    && id_data.escaped_text == "this" {
                         if this_type.is_none() {
                             this_type = Some(self.lower_type(param_data.type_annotation));
                         }
                         continue;
                     }
-                }
-            }
 
             lowered.push(ParamInfo {
                 name: self.lower_parameter_name(param_data.name),
@@ -794,15 +787,14 @@ impl<'a> TypeLowering<'a> {
                     continue;
                 }
 
-                if let Some(index_sig) = self.arena.get_index_signature(member) {
-                    if let Some(index_info) = self.lower_index_signature(index_sig) {
+                if let Some(index_sig) = self.arena.get_index_signature(member)
+                    && let Some(index_info) = self.lower_index_signature(index_sig) {
                         if index_info.key_type == TypeId::NUMBER {
                             number_index = Some(index_info);
                         } else {
                             string_index = Some(index_info);
                         }
                     }
-                }
             }
 
             if !call_signatures.is_empty() || !construct_signatures.is_empty() {
@@ -885,15 +877,14 @@ impl<'a> TypeLowering<'a> {
     }
 
     pub fn lower_type_alias_declaration(&self, alias: &TypeAliasData) -> TypeId {
-        if let Some(params) = alias.type_parameters.as_ref() {
-            if !params.nodes.is_empty() {
+        if let Some(params) = alias.type_parameters.as_ref()
+            && !params.nodes.is_empty() {
                 self.push_type_param_scope();
                 let _ = self.collect_type_parameters(params);
                 let result = self.lower_type(alias.type_node);
                 self.pop_type_param_scope();
                 return result;
             }
-        }
 
         self.lower_type(alias.type_node)
     }
@@ -930,11 +921,10 @@ impl<'a> TypeLowering<'a> {
                 continue;
             }
 
-            if let Some(index_sig) = self.arena.get_index_signature(member) {
-                if let Some(index_info) = self.lower_index_signature(index_sig) {
+            if let Some(index_sig) = self.arena.get_index_signature(member)
+                && let Some(index_info) = self.lower_index_signature(index_sig) {
                     parts.merge_index_signature(index_info);
                 }
-            }
         }
     }
 
@@ -1039,11 +1029,10 @@ impl<'a> TypeLowering<'a> {
         if let Some(id_data) = self.arena.get_identifier(node) {
             return Some(self.interner.intern_string(&id_data.escaped_text));
         }
-        if let Some(lit_data) = self.arena.get_literal(node) {
-            if !lit_data.text.is_empty() {
+        if let Some(lit_data) = self.arena.get_literal(node)
+            && !lit_data.text.is_empty() {
                 return Some(self.interner.intern_string(&lit_data.text));
             }
-        }
         None
     }
 
@@ -1098,21 +1087,19 @@ impl<'a> TypeLowering<'a> {
                 continue;
             }
 
-            if let Some(number_idx) = number_index {
-                if !skip_number {
+            if let Some(number_idx) = number_index
+                && !skip_number {
                     let prop_name = self.interner.resolve_atom_ref(prop.name);
                     let is_numeric = prop_name.as_ref().parse::<f64>().is_ok();
                     if is_numeric && !checker.is_subtype_of(prop_type, number_idx.value_type) {
                         return false;
                     }
                 }
-            }
 
-            if let Some(string_idx) = string_index {
-                if !skip_string && !checker.is_subtype_of(prop_type, string_idx.value_type) {
+            if let Some(string_idx) = string_index
+                && !skip_string && !checker.is_subtype_of(prop_type, string_idx.value_type) {
                     return false;
                 }
-            }
         }
 
         true
@@ -1171,20 +1158,18 @@ impl<'a> TypeLowering<'a> {
                 {
                     return true;
                 }
-                if let Some(index) = &shape.string_index {
-                    if self.contains_meta_type_inner(index.value_type, visited)
-                        || self.contains_meta_type_inner(index.key_type, visited)
+                if let Some(index) = &shape.string_index
+                    && (self.contains_meta_type_inner(index.value_type, visited)
+                        || self.contains_meta_type_inner(index.key_type, visited))
                     {
                         return true;
                     }
-                }
-                if let Some(index) = &shape.number_index {
-                    if self.contains_meta_type_inner(index.value_type, visited)
-                        || self.contains_meta_type_inner(index.key_type, visited)
+                if let Some(index) = &shape.number_index
+                    && (self.contains_meta_type_inner(index.value_type, visited)
+                        || self.contains_meta_type_inner(index.key_type, visited))
                     {
                         return true;
                     }
-                }
                 false
             }
             TypeKey::Function(shape_id) => {
@@ -1200,16 +1185,14 @@ impl<'a> TypeLowering<'a> {
                     return true;
                 }
                 for param in &shape.type_params {
-                    if let Some(constraint) = param.constraint {
-                        if self.contains_meta_type_inner(constraint, visited) {
+                    if let Some(constraint) = param.constraint
+                        && self.contains_meta_type_inner(constraint, visited) {
                             return true;
                         }
-                    }
-                    if let Some(default) = param.default {
-                        if self.contains_meta_type_inner(default, visited) {
+                    if let Some(default) = param.default
+                        && self.contains_meta_type_inner(default, visited) {
                             return true;
                         }
-                    }
                 }
                 false
             }
@@ -1227,16 +1210,14 @@ impl<'a> TypeLowering<'a> {
                         return true;
                     }
                     for param in &sig.type_params {
-                        if let Some(constraint) = param.constraint {
-                            if self.contains_meta_type_inner(constraint, visited) {
+                        if let Some(constraint) = param.constraint
+                            && self.contains_meta_type_inner(constraint, visited) {
                                 return true;
                             }
-                        }
-                        if let Some(default) = param.default {
-                            if self.contains_meta_type_inner(default, visited) {
+                        if let Some(default) = param.default
+                            && self.contains_meta_type_inner(default, visited) {
                                 return true;
                             }
-                        }
                     }
                 }
                 for sig in &shape.construct_signatures {
@@ -1251,16 +1232,14 @@ impl<'a> TypeLowering<'a> {
                         return true;
                     }
                     for param in &sig.type_params {
-                        if let Some(constraint) = param.constraint {
-                            if self.contains_meta_type_inner(constraint, visited) {
+                        if let Some(constraint) = param.constraint
+                            && self.contains_meta_type_inner(constraint, visited) {
                                 return true;
                             }
-                        }
-                        if let Some(default) = param.default {
-                            if self.contains_meta_type_inner(default, visited) {
+                        if let Some(default) = param.default
+                            && self.contains_meta_type_inner(default, visited) {
                                 return true;
                             }
-                        }
                     }
                 }
                 shape
@@ -1324,11 +1303,10 @@ impl<'a> TypeLowering<'a> {
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::ReadonlyKeyword as u16 {
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -1384,11 +1362,10 @@ impl<'a> TypeLowering<'a> {
                     let Some(data) = self.arena.get_type_ref(node) else {
                         return false;
                     };
-                    if let Some(args) = &data.type_arguments {
-                        if !args.nodes.is_empty() {
+                    if let Some(args) = &data.type_arguments
+                        && !args.nodes.is_empty() {
                             return false;
                         }
-                    }
                     let Some(name_node) = self.arena.get(data.type_name) else {
                         return false;
                     };
@@ -1985,8 +1962,8 @@ impl<'a> TypeLowering<'a> {
         };
 
         if let Some(data) = self.arena.get_type_ref(node) {
-            if let Some(name_node) = self.arena.get(data.type_name) {
-                if let Some(ident) = self.arena.get_identifier(name_node) {
+            if let Some(name_node) = self.arena.get(data.type_name)
+                && let Some(ident) = self.arena.get_identifier(name_node) {
                     let name = ident.escaped_text.as_str();
                     if (name == "Array" || name == "ReadonlyArray")
                         && self.lookup_type_param(name).is_none()
@@ -2008,17 +1985,15 @@ impl<'a> TypeLowering<'a> {
                         return array_type;
                     }
                 }
-            }
 
             // For now, just lower the type name as an identifier
             let base_type = self.lower_type(data.type_name);
-            if let Some(args) = &data.type_arguments {
-                if !args.nodes.is_empty() {
+            if let Some(args) = &data.type_arguments
+                && !args.nodes.is_empty() {
                     let type_args: Vec<TypeId> =
                         args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
                     return self.interner.application(base_type, type_args);
                 }
-            }
             base_type
         } else {
             TypeId::ERROR
@@ -2102,13 +2077,12 @@ impl<'a> TypeLowering<'a> {
                 let base = self
                     .interner
                     .intern(TypeKey::TypeQuery(SymbolRef(symbol_id)));
-                if let Some(args) = &data.type_arguments {
-                    if !args.nodes.is_empty() {
+                if let Some(args) = &data.type_arguments
+                    && !args.nodes.is_empty() {
                         let type_args: Vec<TypeId> =
                             args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
                         return self.interner.application(base, type_args);
                     }
-                }
                 return base;
             }
             TypeId::ERROR
@@ -2242,38 +2216,32 @@ impl<'a> TypeLowering<'a> {
             let mut spans: Vec<TemplateSpan> = Vec::new();
 
             // Add the head text if present
-            if let Some(head_node) = self.arena.get(data.head) {
-                if let Some(head_lit) = self.arena.get_literal(head_node) {
-                    if !head_lit.text.is_empty() {
+            if let Some(head_node) = self.arena.get(data.head)
+                && let Some(head_lit) = self.arena.get_literal(head_node)
+                    && !head_lit.text.is_empty() {
                         spans.push(TemplateSpan::Text(
                             self.interner.intern_string(&head_lit.text),
                         ));
                     }
-                }
-            }
 
             // Add template spans (type + text pairs)
             for &span_idx in &data.template_spans.nodes {
-                if let Some(span_node) = self.arena.get(span_idx) {
-                    if span_node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
-                        if let Some(span_data) =
+                if let Some(span_node) = self.arena.get(span_idx)
+                    && span_node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN
+                        && let Some(span_data) =
                             self.arena.template_spans.get(span_node.data_index as usize)
                         {
                             let type_id = self.lower_type(span_data.expression);
                             spans.push(TemplateSpan::Type(type_id));
 
-                            if let Some(lit_node) = self.arena.get(span_data.literal) {
-                                if let Some(lit_data) = self.arena.get_literal(lit_node) {
-                                    if !lit_data.text.is_empty() {
+                            if let Some(lit_node) = self.arena.get(span_data.literal)
+                                && let Some(lit_data) = self.arena.get_literal(lit_node)
+                                    && !lit_data.text.is_empty() {
                                         spans.push(TemplateSpan::Text(
                                             self.interner.intern_string(&lit_data.text),
                                         ));
                                     }
-                                }
-                            }
                         }
-                    }
-                }
             }
 
             self.interner.template_literal(spans)

@@ -357,11 +357,10 @@ fn get_thread_memory_usage() -> Option<usize> {
             if line.starts_with("VmRSS:") {
                 // VmRSS: 12345 kB
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(kb) = parts[1].parse::<usize>() {
+                if parts.len() >= 2
+                    && let Ok(kb) = parts[1].parse::<usize>() {
                         return Some(kb * 1024); // Convert to bytes
                     }
-                }
             }
         }
     }

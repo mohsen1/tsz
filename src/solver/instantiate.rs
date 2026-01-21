@@ -186,7 +186,7 @@ impl<'a> TypeInstantiator<'a> {
             .params
             .iter()
             .map(|p| ParamInfo {
-                name: p.name.clone(),
+                name: p.name,
                 type_id: self.instantiate(p.type_id),
                 optional: p.optional,
                 rest: p.rest,
@@ -423,12 +423,11 @@ impl<'a> TypeInstantiator<'a> {
             // Conditional: instantiate all parts
             TypeKey::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(*cond_id);
-                if cond.is_distributive {
-                    if let Some(TypeKey::TypeParameter(info)) =
+                if cond.is_distributive
+                    && let Some(TypeKey::TypeParameter(info)) =
                         self.interner.lookup(cond.check_type)
-                    {
-                        if !self.is_shadowed(info.name) {
-                            if let Some(substituted) = self.substitution.get(info.name) {
+                        && !self.is_shadowed(info.name)
+                            && let Some(substituted) = self.substitution.get(info.name) {
                                 // When substituting with `never`, the result is `never`
                                 if substituted == crate::solver::types::TypeId::NEVER {
                                     return substituted;
@@ -459,9 +458,6 @@ impl<'a> TypeInstantiator<'a> {
                                     return self.interner.union(results);
                                 }
                             }
-                        }
-                    }
-                }
                 let instantiated = ConditionalType {
                     check_type: self.instantiate(cond.check_type),
                     extends_type: self.instantiate(cond.extends_type),
@@ -531,11 +527,10 @@ impl<'a> TypeInstantiator<'a> {
 
             // Infer: keep as-is unless explicitly substituting inference variables
             TypeKey::Infer(info) => {
-                if self.substitute_infer && !self.is_shadowed(info.name) {
-                    if let Some(substituted) = self.substitution.get(info.name) {
+                if self.substitute_infer && !self.is_shadowed(info.name)
+                    && let Some(substituted) = self.substitution.get(info.name) {
                         return substituted;
                     }
-                }
                 self.interner.intern(TypeKey::Infer(info.clone()))
             }
         }

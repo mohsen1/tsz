@@ -198,8 +198,8 @@ impl<'a> ES5DestructuringTransformer<'a> {
             }
 
             // Handle binding element
-            if element_node.kind == syntax_kind_ext::BINDING_ELEMENT {
-                if let Some(binding_elem) = self.arena.get_binding_element(element_node) {
+            if element_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(binding_elem) = self.arena.get_binding_element(element_node) {
                     // Check for rest pattern
                     if binding_elem.dot_dot_dot_token {
                         // Rest: ...rest -> rest = source.slice(index)
@@ -215,9 +215,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     }
 
                     // Check for nested pattern
-                    if let Some(name_node) = self.arena.get(binding_elem.name) {
-                        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    if let Some(name_node) = self.arena.get(binding_elem.name)
+                        && (name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN)
                         {
                             // Nested pattern - create temp and recurse
                             let nested_temp = self.next_temp_var();
@@ -231,7 +231,6 @@ impl<'a> ES5DestructuringTransformer<'a> {
                             );
                             continue;
                         }
-                    }
 
                     // Simple binding
                     let name = self.get_identifier_text(binding_elem.name);
@@ -262,7 +261,6 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         result.push(IRNode::var_decl(&name, Some(value)));
                     }
                 }
-            }
         }
     }
 
@@ -288,15 +286,15 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 continue;
             };
 
-            if element_node.kind == syntax_kind_ext::BINDING_ELEMENT {
-                if let Some(binding_elem) = self.arena.get_binding_element(element_node) {
+            if element_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(binding_elem) = self.arena.get_binding_element(element_node) {
                     // Check for rest pattern
                     if binding_elem.dot_dot_dot_token {
                         // Rest: ...others -> others = __rest(source, ["a", "b", ...])
                         let name = self.get_identifier_text(binding_elem.name);
                         if !name.is_empty() {
                             let excluded_array: Vec<IRNode> =
-                                rest_excluded.iter().map(|s| IRNode::string(s)).collect();
+                                rest_excluded.iter().map(IRNode::string).collect();
                             let rest_call = IRNode::call(
                                 IRNode::id("__rest"),
                                 vec![IRNode::id(source), IRNode::ArrayLiteral(excluded_array)],
@@ -319,9 +317,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     }
 
                     // Check for nested pattern
-                    if let Some(name_node) = self.arena.get(binding_elem.name) {
-                        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    if let Some(name_node) = self.arena.get(binding_elem.name)
+                        && (name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN)
                         {
                             // Nested pattern - create temp and recurse
                             let nested_temp = self.next_temp_var();
@@ -334,7 +332,6 @@ impl<'a> ES5DestructuringTransformer<'a> {
                             );
                             continue;
                         }
-                    }
 
                     // Get binding name (might differ from property name with renaming)
                     let binding_name = self.get_identifier_text(binding_elem.name);
@@ -366,7 +363,6 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
                     result.push(IRNode::var_decl(&binding_name, Some(value)));
                 }
-            }
         }
     }
 
@@ -396,15 +392,14 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
             // Handle spread element
             if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                if let Some(spread) = self.arena.get_unary_expr_ex(element_node) {
-                    if let Some(target) = self.transform_expression(spread.expression) {
+                if let Some(spread) = self.arena.get_unary_expr_ex(element_node)
+                    && let Some(target) = self.transform_expression(spread.expression) {
                         let slice_call = IRNode::call(
                             IRNode::prop(IRNode::id(source), "slice"),
                             vec![IRNode::number(index.to_string())],
                         );
                         result.push(IRNode::assign(target, slice_call));
                     }
-                }
                 continue;
             }
 
@@ -456,9 +451,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         rest_excluded.push(prop_name.clone());
 
                         // Check for nested destructuring
-                        if let Some(init_node) = self.arena.get(prop.initializer) {
-                            if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        if let Some(init_node) = self.arena.get(prop.initializer)
+                            && (init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
                             {
                                 let nested_temp = self.next_temp_var();
                                 let access = IRNode::prop(IRNode::id(source), &prop_name);
@@ -470,7 +465,6 @@ impl<'a> ES5DestructuringTransformer<'a> {
                                 );
                                 continue;
                             }
-                        }
 
                         if let Some(target) = self.transform_expression(prop.initializer) {
                             let access = IRNode::prop(IRNode::id(source), &prop_name);
@@ -488,17 +482,16 @@ impl<'a> ES5DestructuringTransformer<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
-                    if let Some(spread) = self.arena.get_unary_expr_ex(element_node) {
-                        if let Some(target) = self.transform_expression(spread.expression) {
+                    if let Some(spread) = self.arena.get_unary_expr_ex(element_node)
+                        && let Some(target) = self.transform_expression(spread.expression) {
                             let excluded_array: Vec<IRNode> =
-                                rest_excluded.iter().map(|s| IRNode::string(s)).collect();
+                                rest_excluded.iter().map(IRNode::string).collect();
                             let rest_call = IRNode::call(
                                 IRNode::id("__rest"),
                                 vec![IRNode::id(source), IRNode::ArrayLiteral(excluded_array)],
                             );
                             result.push(IRNode::assign(target, rest_call));
                         }
-                    }
                 }
                 _ => {}
             }
@@ -666,10 +659,10 @@ mod tests {
         let mut output = String::new();
         for (i, node) in nodes.iter().enumerate() {
             if i > 0 {
-                output.push_str("\n");
+                output.push('\n');
             }
             let mut printer = IRPrinter::with_arena(&parser.arena);
-            printer.emit(&node);
+            printer.emit(node);
             output.push_str(printer.get_output());
             output.push(';');
         }

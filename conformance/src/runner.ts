@@ -23,6 +23,8 @@ interface RunnerConfig {
   categories: string[];
   workers: number;
   testTimeout: number;
+  useWasm: boolean;
+  nativeBinaryPath?: string;
 }
 
 const DEFAULT_CONFIG: RunnerConfig = {
@@ -34,6 +36,8 @@ const DEFAULT_CONFIG: RunnerConfig = {
   categories: ['conformance', 'compiler'],
   workers: Math.max(1, os.cpus().length),
   testTimeout: 10000,
+  useWasm: true,
+  nativeBinaryPath: path.resolve(__dirname, '../../target/release/tsz'),
 };
 
 // Recycle workers after this many tests to prevent memory leaks
@@ -144,7 +148,7 @@ class WorkerPool {
   private pending = new Map<number, PendingTest>();
   private nextId = 0;
   private workerPath: string;
-  private workerDataBase: { wasmPkgPath: string; libPath: string };
+  private workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string };
   private timeout: number;
   private testsBasePath: string;
   private nextWorkerId = 0;
@@ -157,7 +161,7 @@ class WorkerPool {
   constructor(
     count: number,
     workerPath: string,
-    workerData: { wasmPkgPath: string; libPath: string },
+    workerData: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string },
     timeout: number,
     testsBasePath: string
   ) {
@@ -450,10 +454,17 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
 
   // Create worker pool
   const workerPath = path.join(__dirname, 'worker.js');
+  const workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string } = {
+    wasmPkgPath: cfg.wasmPkgPath,
+    libPath: cfg.libPath,
+    useWasm: cfg.useWasm,
+    nativeBinaryPath: cfg.nativeBinaryPath,
+  };
+
   const pool = new WorkerPool(
     cfg.workers,
     workerPath,
-    { wasmPkgPath: cfg.wasmPkgPath, libPath: cfg.libPath },
+    workerDataBase,
     cfg.testTimeout,
     cfg.testsBasePath
   );
@@ -641,6 +652,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else if (arg.startsWith('--timeout=')) config.testTimeout = parseInt(arg.split('=')[1], 10);
     else if (arg === '--verbose' || arg === '-v') config.verbose = true;
     else if (arg.startsWith('--category=')) config.categories = arg.split('=')[1].split(',');
+    else if (arg.startsWith('--wasm=')) config.useWasm = arg.split('=')[1] === 'true';
+    else if (arg === '--wasm') config.useWasm = true;
+    else if (arg === '--native') config.useWasm = false;
   }
 
   runConformanceTests(config).then(stats => {

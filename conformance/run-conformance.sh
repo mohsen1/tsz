@@ -2,13 +2,14 @@
 #
 # TSZ Conformance Test Runner
 #
-# Defaults to native Rust binary (fast). Use --wasm for WASM+Docker (isolated).
+# Defaults to Docker-isolated WASM for safety. Use --no-sandbox for native binary.
 #
 # Usage:
-#   ./run-conformance.sh                    # Run 500 tests (native)
-#   ./run-conformance.sh --wasm             # Run with WASM in Docker
-#   ./run-conformance.sh --max=100          # Run 100 tests
+#   ./run-conformance.sh                    # Run 500 tests (Docker+WASM, safe)
+#   ./run-conformance.sh --no-sandbox      # Run with native binary (faster, risky)
+#   ./run-conformance.sh --wasm            # Use WASM (default) in Docker
 #   ./run-conformance.sh --all              # Run all tests
+#   ./run-conformance.sh --max=100          # Run 100 tests
 #   ./run-conformance.sh --category=compiler # Run compiler tests only
 #   ./run-conformance.sh --verbose          # Show detailed output
 
@@ -26,42 +27,59 @@ fi
 
 # Defaults
 MAX_TESTS=500
-USE_WASM=false
+USE_SANDBOX=true  # Docker by default
+USE_WASM=true     # WASM by default
 VERBOSE=false
 CATEGORIES="conformance,compiler"
+TIMEOUT=600
+WORKERS=$CPU_CORES
 
 # Parse arguments
 for arg in "$@"; do
     case $arg in
+        --no-sandbox) USE_SANDBOX=false ;;
         --wasm) USE_WASM=true ;;
-        --all) MAX_TESTS=99999 ;;
+        --native) USE_WASM=false ;;
+        --all) MAX_TESTS=99999; TIMEOUT=3600 ;;
         --max=*) MAX_TESTS="${arg#*=}" ;;
+        --workers=*) WORKERS="${arg#*=}" ;;
         --verbose|-v) VERBOSE=true ;;
         --category=*) CATEGORIES="${arg#*=}" ;;
+        --timeout=*) TIMEOUT="${arg#*=}" ;;
         --help|-h)
             echo "TSZ Conformance Test Runner"
             echo ""
             echo "Usage: ./run-conformance.sh [options]"
             echo ""
             echo "Options:"
-            echo "  --wasm          Use WASM build in Docker (default: native binary)"
+            echo "  --no-sandbox    Use native binary without Docker (faster, risky)"
+            echo "  --wasm          Use WASM in Docker (default: true)"
+            echo "  --native        Use native binary in Docker (faster, still isolated)"
             echo "  --max=N         Run N tests (default: 500)"
             echo "  --all           Run all tests"
             echo "  --category=X    Test category: conformance, compiler, or both"
             echo "  --verbose, -v   Show detailed output"
             echo "  --help, -h      Show this help"
             echo ""
-            echo "Native mode: Faster, uses cargo build --release"
-            echo "WASM mode: Slower, uses Docker isolation for safety"
+            echo "Modes:"
+            echo "  Default (no flags):        Docker + WASM (safe, slower)"
+            echo "  --native:                 Docker + Native binary (safe, faster)"
+            echo "  --no-sandbox:              Native binary directly (fastest, risky)"
+            echo ""
+            echo "Safety: Docker provides isolation from infinite loops/OOM."
+            echo "Use --native in Docker for speed while maintaining safety."
             exit 0
             ;;
     esac
 done
 
 # Branch based on mode
-if [ "$USE_WASM" = true ]; then
-    exec "$SCRIPT_DIR/run-wasm.sh" "$@"
+if [ "$USE_SANDBOX" = false ]; then
+    # No sandbox - run native binary directly
+    exec "$SCRIPT_DIR/run-native-unsafe.sh" "$@"
 else
-    exec "$SCRIPT_DIR/run-native.sh" "$@"
+    # Docker mode - pass wasm/native choice
+    exec "$SCRIPT_DIR/run-docker.sh" "--wasm=$USE_WASM" "$@"
 fi
+
 

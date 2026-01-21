@@ -185,9 +185,7 @@ async function foo() {
         codes
     );
     assert!(
-        !codes
-            .iter()
-            .any(|&code| code == diagnostic_codes::CANNOT_FIND_NAME),
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
         "Unexpected TS2304 for 'await' in type position: {:?}",
         codes
     );
@@ -841,7 +839,7 @@ mixed;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -912,7 +910,7 @@ obj[key];
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -4343,7 +4341,7 @@ map[key] = 2;
 }
 
 #[test]
-fn test_abstractPropertyNegative_errors() {
+fn test_abstract_property_negative_errors() {
     // Test the full abstractPropertyNegative test case to verify expected errors
     use crate::parser::ParserState;
 
@@ -4495,7 +4493,7 @@ takesHandler(function(this: { value: number }, x) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -10052,7 +10050,7 @@ interface Bar {
                 .properties
                 .iter()
                 .find(|prop| types.resolve_atom(prop.name) == "y")
-                .expect(&format!("Expected property y, got {:?}", prop_names));
+                .unwrap_or_else(|| panic!("Expected property y, got {:?}", prop_names));
 
             match types.lookup(prop_x.type_id) {
                 Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
@@ -10242,8 +10240,8 @@ fn test_index_signature_at_solver_level() {
             from_index_signature,
         } => {
             assert_eq!(type_id, TypeId::NUMBER);
-            assert_eq!(
-                from_index_signature, true,
+            assert!(
+                from_index_signature,
                 "Should be marked as from_index_signature"
             );
         }
@@ -12255,7 +12253,7 @@ x;
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::BLOCK)
+                .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK)
         })
         .expect("block statement");
     let block = arena
@@ -12267,7 +12265,7 @@ x;
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -12282,7 +12280,7 @@ x;
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -12344,7 +12342,7 @@ if (typeof x === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -12358,7 +12356,7 @@ if (typeof x === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -12450,7 +12448,7 @@ while (typeof x === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::WHILE_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::WHILE_STATEMENT)
         })
         .expect("while statement");
     let while_node = arena.get(while_idx).expect("while node");
@@ -12464,7 +12462,7 @@ while (typeof x === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -12521,7 +12519,7 @@ for (; typeof x === "string"; ) {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::FOR_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FOR_STATEMENT)
         })
         .expect("for statement");
     let for_node = arena.get(for_idx).expect("for node");
@@ -12535,7 +12533,7 @@ for (; typeof x === "string"; ) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -12592,7 +12590,7 @@ for (const value of [x]) {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
         })
         .expect("for-of statement");
     let for_node = arena.get(for_idx).expect("for-of node");
@@ -12606,7 +12604,7 @@ for (const value of [x]) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -12667,7 +12665,7 @@ for (const key in { a: x }) {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::FOR_IN_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FOR_IN_STATEMENT)
         })
         .expect("for-in statement");
     let for_node = arena.get(for_idx).expect("for-in node");
@@ -12681,7 +12679,7 @@ for (const key in { a: x }) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -12780,11 +12778,11 @@ x;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
-        .last()
+        .next_back()
         .expect("expression statement");
     let expr_stmt = arena
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
@@ -12843,11 +12841,11 @@ x;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
-        .last()
+        .next_back()
         .expect("expression statement");
     let expr_stmt = arena
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
@@ -12904,11 +12902,11 @@ x;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
-        .last()
+        .next_back()
         .expect("expression statement");
     let expr_stmt = arena
         .get_expression_statement(arena.get(expr_stmt_idx).expect("expr node"))
@@ -12965,7 +12963,7 @@ if (typeof Alias.value === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -12979,7 +12977,7 @@ if (typeof Alias.value === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13034,7 +13032,7 @@ if (typeof Ns["value"] === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13048,7 +13046,7 @@ if (typeof Ns["value"] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13363,7 +13361,7 @@ if (typeof obj[key] === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13377,7 +13375,7 @@ if (typeof obj[key] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13439,7 +13437,7 @@ if (typeof obj[key] === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13453,7 +13451,7 @@ if (typeof obj[key] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13551,7 +13549,7 @@ if (typeof arr[idx] === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13565,7 +13563,7 @@ if (typeof arr[idx] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13663,7 +13661,7 @@ if (typeof obj[key] === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13677,7 +13675,7 @@ if (typeof obj[key] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13736,7 +13734,7 @@ if (typeof arr[idx] === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13750,7 +13748,7 @@ if (typeof arr[idx] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13810,7 +13808,7 @@ if (obj[key] === "a") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13824,7 +13822,7 @@ if (obj[key] === "a") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -13882,7 +13880,7 @@ if (typeof obj["prop"] === "string") {
         .find(|&idx| {
             arena
                 .get(idx)
-                .map_or(false, |node| node.kind == syntax_kind_ext::IF_STATEMENT)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
         })
         .expect("if statement");
     let if_node = arena.get(if_idx).expect("if node");
@@ -13896,7 +13894,7 @@ if (typeof obj["prop"] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
             })
         })
@@ -14024,7 +14022,7 @@ function f(x: number) { return x; }
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             })
         })
@@ -27099,7 +27097,7 @@ namespace MyNamespace {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::MODULE_DECLARATION
             })
         })
@@ -27119,7 +27117,7 @@ namespace MyNamespace {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).map_or(false, |node| {
+            arena.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             })
         })
@@ -27163,7 +27161,7 @@ function topLevelFunc() {
         .iter()
         .copied()
         .find(|&idx| {
-            arena2.get(idx).map_or(false, |node| {
+            arena2.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             })
         })
@@ -27208,7 +27206,7 @@ module MyModule {
         .iter()
         .copied()
         .find(|&idx| {
-            arena3.get(idx).map_or(false, |node| {
+            arena3.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::MODULE_DECLARATION
             })
         })
@@ -27229,7 +27227,7 @@ module MyModule {
         .iter()
         .copied()
         .find(|&idx| {
-            arena3.get(idx).map_or(false, |node| {
+            arena3.get(idx).is_some_and(|node| {
                 node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             })
         })

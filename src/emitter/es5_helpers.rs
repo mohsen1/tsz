@@ -103,11 +103,10 @@ impl<'a> Printer<'a> {
             _ => None,
         };
 
-        if let Some(name_idx) = name_idx {
-            if let Some(name_node) = self.arena.get(name_idx) {
+        if let Some(name_idx) = name_idx
+            && let Some(name_node) = self.arena.get(name_idx) {
                 return name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME;
             }
-        }
         false
     }
 
@@ -305,11 +304,10 @@ impl<'a> Printer<'a> {
                 self.write(&lit.text);
                 self.write("\"");
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node) {
                 self.write(&lit.text);
             }
-        }
     }
 
     /// Emit ES5-compatible function expression for arrow function
@@ -530,11 +528,10 @@ impl<'a> Printer<'a> {
         let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
         // Transform emitter handles its own indentation inside __awaiter
         async_emitter.set_indent_level(self.writer.indent_level() + 1);
-        if let Some(text) = self.source_text_for_map() {
-            if self.writer.has_source_map() {
+        if let Some(text) = self.source_text_for_map()
+            && self.writer.has_source_map() {
                 async_emitter.set_source_map_context(text, self.writer.current_source_index());
             }
-        }
         async_emitter.set_lexical_this(this_expr != "this");
 
         let generator_body = if async_emitter.body_contains_await(body) {
@@ -846,33 +843,30 @@ impl<'a> Printer<'a> {
 
             match member_node.kind {
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                    if let Some(prop) = self.arena.get_property_decl(member_node) {
-                        if crate::transforms::private_fields_es5::is_private_identifier(
+                    if let Some(prop) = self.arena.get_property_decl(member_node)
+                        && crate::transforms::private_fields_es5::is_private_identifier(
                             self.arena, prop.name,
                         ) {
                             return true;
                         }
-                    }
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    if let Some(method) = self.arena.get_method_decl(member_node) {
-                        if crate::transforms::private_fields_es5::is_private_identifier(
+                    if let Some(method) = self.arena.get_method_decl(member_node)
+                        && crate::transforms::private_fields_es5::is_private_identifier(
                             self.arena,
                             method.name,
                         ) {
                             return true;
                         }
-                    }
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    if let Some(accessor) = self.arena.get_accessor(member_node) {
-                        if crate::transforms::private_fields_es5::is_private_identifier(
+                    if let Some(accessor) = self.arena.get_accessor(member_node)
+                        && crate::transforms::private_fields_es5::is_private_identifier(
                             self.arena,
                             accessor.name,
                         ) {
                             return true;
                         }
-                    }
                 }
                 _ => {}
             }
@@ -953,11 +947,10 @@ impl<'a> Printer<'a> {
                 return func.is_async;
             }
 
-            if node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                if let Some(method) = self.arena.get_method_decl(node) {
+            if node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method) = self.arena.get_method_decl(node) {
                     return self.has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword as u16);
                 }
-            }
 
             false
         })
@@ -1007,11 +1000,10 @@ impl<'a> Printer<'a> {
         match node.kind {
             // Class declaration
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class_data) = self.arena.get_class(node) {
-                    if self.class_has_extends(&class_data.heritage_clauses) {
+                if let Some(class_data) = self.arena.get_class(node)
+                    && self.class_has_extends(&class_data.heritage_clauses) {
                         return true;
                     }
-                }
                 false
             }
             // Expression statement - might contain IIFE with class

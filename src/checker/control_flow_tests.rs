@@ -2193,13 +2193,13 @@ const result = add(1, 2);
 
     let arena = parser.get_arena();
 
-    if let Some(source_file) = arena.get(root) {
-        if let Some(sf) = arena.get_source_file(source_file) {
+    if let Some(source_file) = arena.get(root)
+        && let Some(sf) = arena.get_source_file(source_file) {
             let mut builder = FlowGraphBuilder::new(arena);
             let graph = builder.build_source_file(&sf.statements);
 
             // Verify flow graph exists and has nodes
-            assert!(graph.nodes.len() > 0, "Flow graph should have nodes");
+            assert!(!graph.nodes.is_empty(), "Flow graph should have nodes");
 
             // Verify that we can query flow for arrow function
             let arrow_func_idx = *sf.statements.nodes.get(1).expect("arrow function");
@@ -2208,7 +2208,6 @@ const result = add(1, 2);
                 "Flow should be recorded for arrow function"
             );
         }
-    }
 }
 
 /// Test callback with filter method (another common array method).
@@ -2558,7 +2557,7 @@ class Foo {
     let source_file = arena.get_source_file(root_node).expect("source file");
 
     // Class should have flow recorded
-    let class_idx = *source_file.statements.nodes.get(0).expect("class");
+    let class_idx = *source_file.statements.nodes.first().expect("class");
     let flow_at_class = binder.get_node_flow(class_idx);
     assert!(
         flow_at_class.is_some(),

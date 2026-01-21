@@ -347,11 +347,10 @@ impl<'a> EnumES5Transformer<'a> {
     fn is_const_enum(&self, modifiers: &Option<NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx) {
-                    if node.kind == SyntaxKind::ConstKeyword as u16 {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == SyntaxKind::ConstKeyword as u16 {
                         return true;
                     }
-                }
             }
         }
         false
@@ -372,7 +371,8 @@ impl<'a> EnumES5Transformer<'a> {
                 let left = self.evaluate_constant_expression(bin.left)?;
                 let right = self.evaluate_constant_expression(bin.right)?;
                 let op = bin.operator_token;
-                let result = match op {
+                
+                match op {
                     o if o == SyntaxKind::PlusToken as u16 => left.checked_add(right),
                     o if o == SyntaxKind::MinusToken as u16 => left.checked_sub(right),
                     o if o == SyntaxKind::AsteriskToken as u16 => left.checked_mul(right),
@@ -402,9 +402,8 @@ impl<'a> EnumES5Transformer<'a> {
                     o if o == SyntaxKind::AmpersandToken as u16 => Some(left & right),
                     o if o == SyntaxKind::BarToken as u16 => Some(left | right),
                     o if o == SyntaxKind::CaretToken as u16 => Some(left ^ right),
-                    _ => return None,
-                };
-                result
+                    _ => None,
+                }
             }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 let unary = self.arena.get_unary_expr(node)?;
@@ -436,11 +435,10 @@ impl<'a> EnumES5Transformer<'a> {
     }
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            if let Some(ident) = self.arena.get_identifier(node) {
+        if let Some(node) = self.arena.get(idx)
+            && let Some(ident) = self.arena.get_identifier(node) {
                 return ident.escaped_text.clone();
             }
-        }
         String::new()
     }
 
@@ -518,16 +516,14 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&enum_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut transformer = EnumES5Transformer::new(&parser.arena);
                     if let Some(ir) = transformer.transform_enum(enum_idx) {
                         return IRPrinter::emit_to_string(&ir);
                     }
                 }
-            }
-        }
         String::new()
     }
 
@@ -535,14 +531,12 @@ mod tests {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
-        if let Some(root_node) = parser.arena.get(root) {
-            if let Some(source_file) = parser.arena.get_source_file(root_node) {
-                if let Some(&enum_idx) = source_file.statements.nodes.first() {
+        if let Some(root_node) = parser.arena.get(root)
+            && let Some(source_file) = parser.arena.get_source_file(root_node)
+                && let Some(&enum_idx) = source_file.statements.nodes.first() {
                     let mut emitter = EnumES5Emitter::new(&parser.arena);
                     return emitter.emit_enum(enum_idx);
                 }
-            }
-        }
         String::new()
     }
 

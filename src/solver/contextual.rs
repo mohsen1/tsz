@@ -358,11 +358,10 @@ impl<'a> ContextualTypeContext<'a> {
                     // Find the tuple element at the given index
                     if index < elements.len() {
                         return Some(elements[index].type_id);
-                    } else if let Some(last_elem) = elements.last() {
-                        if last_elem.rest {
+                    } else if let Some(last_elem) = elements.last()
+                        && last_elem.rest {
                             return Some(last_elem.type_id);
                         }
-                    }
                 }
             }
             Some(param.type_id)
@@ -393,11 +392,10 @@ impl<'a> ContextualTypeContext<'a> {
                     // Find the tuple element at the given index
                     if index < elements.len() {
                         return Some(elements[index].type_id);
-                    } else if let Some(last_elem) = elements.last() {
-                        if last_elem.rest {
+                    } else if let Some(last_elem) = elements.last()
+                        && last_elem.rest {
                             return Some(last_elem.type_id);
                         }
-                    }
                 }
             }
             None

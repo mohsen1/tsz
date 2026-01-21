@@ -205,7 +205,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             failures
                 .into_iter()
                 .next()
-                .unwrap_or_else(|| CallResult::NotCallable {
+                .unwrap_or(CallResult::NotCallable {
                     type_id: union_type,
                 })
         } else {
@@ -238,15 +238,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
-        if let Some(max) = max_args {
-            if arg_types.len() > max {
+        if let Some(max) = max_args
+            && arg_types.len() > max {
                 return CallResult::ArgumentCountMismatch {
                     expected_min: min_args,
                     expected_max: Some(max),
                     actual: arg_types.len(),
                 };
             }
-        }
 
         // Handle generic functions
         if !func.type_params.is_empty() {
@@ -313,7 +312,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .params
             .iter()
             .map(|p| ParamInfo {
-                name: p.name.clone(),
+                name: p.name,
                 type_id: instantiate_type(self.interner, p.type_id, &substitution),
                 optional: p.optional,
                 rest: p.rest,
@@ -346,8 +345,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             } else {
                 // Target type contains placeholders - check against their constraints
-                if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(target_type) {
-                    if let Some(constraint) = tp.constraint {
+                if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(target_type)
+                    && let Some(constraint) = tp.constraint {
                         // Check if argument is assignable to the type parameter's constraint
                         if !self.checker.is_assignable_to(arg_type, constraint) {
                             return CallResult::ArgumentTypeMismatch {
@@ -357,7 +356,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             };
                         }
                     }
-                }
             }
 
             // arg_type <: target_type
@@ -421,7 +419,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .map(|p| {
                 let instantiated = instantiate_type(self.interner, p.type_id, &final_subst);
                 ParamInfo {
-                    name: p.name.clone(),
+                    name: p.name,
                     type_id: instantiated,
                     optional: p.optional,
                     rest: p.rest,
@@ -436,15 +434,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: arg_types.len(),
             };
         }
-        if let Some(max) = max_args {
-            if arg_types.len() > max {
+        if let Some(max) = max_args
+            && arg_types.len() > max {
                 return CallResult::ArgumentCountMismatch {
                     expected_min: min_args,
                     expected_max: Some(max),
                     actual: arg_types.len(),
                 };
             }
-        }
         if let Some(result) = self.check_argument_types_with(&instantiated_params, arg_types, true)
         {
             return result;
@@ -1068,12 +1065,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                 }
-                if count == 1 {
-                    if let Some(member) = non_nullable {
+                if count == 1
+                    && let Some(member) = non_nullable {
                         self.constrain_types(ctx, var_map, source, member);
                         return;
                     }
-                }
 
                 let mut placeholder_member = None;
                 let mut placeholder_count = 0;
@@ -1088,13 +1084,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         }
                     }
                 }
-                if placeholder_count == 1 {
-                    if let Some(member) = placeholder_member {
-                        if !self.defaulted_placeholders.contains(&member) {
+                if placeholder_count == 1
+                    && let Some(member) = placeholder_member
+                        && !self.defaulted_placeholders.contains(&member) {
                             self.constrain_types(ctx, var_map, source, member);
                         }
-                    }
-                }
             }
             (Some(TypeKey::Array(s_elem)), Some(TypeKey::Array(t_elem))) => {
                 self.constrain_types(ctx, var_map, s_elem, t_elem);
@@ -1485,11 +1479,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for prop in source_props {
             let prop_type = self.optional_property_type(prop);
 
-            if let Some(number_idx) = number_index {
-                if self.is_numeric_property_name(prop.name) {
+            if let Some(number_idx) = number_index
+                && self.is_numeric_property_name(prop.name) {
                     self.constrain_types(ctx, var_map, prop_type, number_idx.value_type);
                 }
-            }
 
             if let Some(string_idx) = string_index {
                 self.constrain_types(ctx, var_map, prop_type, string_idx.value_type);
@@ -1514,11 +1507,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for prop in target_props {
             let prop_type = self.optional_property_type(prop);
 
-            if let Some(number_idx) = number_index {
-                if self.is_numeric_property_name(prop.name) {
+            if let Some(number_idx) = number_index
+                && self.is_numeric_property_name(prop.name) {
                     self.constrain_types(ctx, var_map, number_idx.value_type, prop_type);
                 }
-            }
 
             if let Some(string_idx) = string_index {
                 self.constrain_types(ctx, var_map, string_idx.value_type, prop_type);
@@ -1575,7 +1567,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     for s_elem in source.iter().take(end_index).skip(i) {
                         tail.push(TupleElement {
                             type_id: s_elem.type_id,
-                            name: s_elem.name.clone(),
+                            name: s_elem.name,
                             optional: s_elem.optional,
                             rest: s_elem.rest,
                         });
@@ -2108,11 +2100,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         Some(self.interner.union(valid_results))
                     };
 
-                    if any_from_index && self.no_unchecked_indexed_access {
-                        if let Some(t) = property_type {
+                    if any_from_index && self.no_unchecked_indexed_access
+                        && let Some(t) = property_type {
                             property_type = Some(self.add_undefined_if_unchecked(t));
                         }
-                    }
 
                     return PropertyAccessResult::PossiblyNullOrUndefined {
                         property_type,
@@ -2958,11 +2949,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
 pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
     match interner.lookup(type_id) {
         Some(TypeKey::ReadonlyType(inner)) => {
-            if let Some(TypeKey::Array(_) | TypeKey::Tuple(_)) = interner.lookup(inner) {
-                if is_numeric_index_name(prop_name) {
+            if let Some(TypeKey::Array(_) | TypeKey::Tuple(_)) = interner.lookup(inner)
+                && is_numeric_index_name(prop_name) {
                     return true;
                 }
-            }
             property_is_readonly(interner, inner, prop_name)
         }
         Some(TypeKey::Object(shape_id)) => {
@@ -3006,11 +2996,10 @@ pub fn is_readonly_index_signature(
 ) -> bool {
     match interner.lookup(type_id) {
         Some(TypeKey::ReadonlyType(inner)) => {
-            if wants_number {
-                if let Some(TypeKey::Array(_) | TypeKey::Tuple(_)) = interner.lookup(inner) {
+            if wants_number
+                && let Some(TypeKey::Array(_) | TypeKey::Tuple(_)) = interner.lookup(inner) {
                     return true;
                 }
-            }
             is_readonly_index_signature(interner, inner, wants_string, wants_number)
         }
         Some(TypeKey::ObjectWithIndex(shape_id)) => {
