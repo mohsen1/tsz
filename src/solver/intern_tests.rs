@@ -1,6 +1,4 @@
 use super::*;
-use crate::parser::NodeArena;
-use crate::parser::NodeIndex;
 use crate::solver::intern::PROPERTY_MAP_THRESHOLD;
 
 #[test]
@@ -268,7 +266,7 @@ fn test_interner_intersection_optional_object_literals_not_reduced() {
 #[test]
 fn test_interner_object_sorting() {
     let interner = TypeInterner::new();
-    use std::sync::Arc;
+    
 
     // Properties in different order should produce same TypeId
     let props1 = vec![

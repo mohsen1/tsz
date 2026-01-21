@@ -104,7 +104,7 @@ impl<'a> EnumTransformer<'a> {
             let values = evaluator.evaluate_enum(enum_idx);
             self.enum_value_cache.insert(enum_idx, values);
         }
-        self.enum_value_cache.get(&enum_idx).unwrap()
+        &self.enum_value_cache[&enum_idx]
     }
 
     /// Get a cached enum value
@@ -256,7 +256,7 @@ impl<'a> EnumTransformer<'a> {
                 }
                 Some(EnumValue::Number(n)) => {
                     // Numeric enum: E[E["A"] = 0] = "A";
-                    output.push_str("[");
+                    output.push('[');
                     output.push_str(&name);
                     output.push_str("[\"");
                     output.push_str(&member_name);
@@ -274,7 +274,7 @@ impl<'a> EnumTransformer<'a> {
                     if !member_data.initializer.is_none() {
                         output.push_str(&self.emit_expression(member_data.initializer));
                     } else {
-                        output.push_str("0");
+                        output.push('0');
                     }
                     output.push_str(";\n");
                 }

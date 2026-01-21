@@ -26777,7 +26777,7 @@ fn test_distributive_large_union_15_members() {
 
     // Type parameter T for check type
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let _t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -27180,7 +27180,7 @@ fn test_never_filtering_exclude_pattern() {
 
     // T param for distributive check
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let _t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -28767,7 +28767,7 @@ fn test_recursive_conditional_type_unwrap_promise() {
     let interner = TypeInterner::new();
 
     // Create Promise<number>
-    let promise_number = interner.object(vec![PropertyInfo {
+    let _promise_number = interner.object(vec![PropertyInfo {
         name: interner.intern_string("then"),
         type_id: TypeId::NUMBER, // Simplified
         write_type: TypeId::NUMBER,
@@ -31140,7 +31140,7 @@ fn test_string_union_narrowing() {
     let lit_c = interner.literal_string("c");
 
     // Given union "a" | "b" | "c", extract those extending "a" | "b"
-    let union_abc = interner.union(vec![lit_a, lit_b, lit_c]);
+    let _union_abc = interner.union(vec![lit_a, lit_b, lit_c]);
     let target_ab = interner.union(vec![lit_a, lit_b]);
 
     // Process each member
@@ -38663,7 +38663,7 @@ fn test_nonnullable_type() {
 
     let null_or_undefined = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
 
-    let non_nullable_cond = ConditionalType {
+    let _non_nullable_cond = ConditionalType {
         check_type: t_param,
         extends_type: null_or_undefined,
         true_type: TypeId::NEVER,

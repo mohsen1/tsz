@@ -3,7 +3,10 @@
 use super::*;
 use crate::TypeInterner;
 use crate::interner::Atom;
-use crate::solver::types::*;
+use crate::solver::{
+    CallableShape, CallSignature, ConditionalType, FunctionShape, IndexSignature, MappedType,
+    ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
+};
 
 /// Helper function to create an object type with properties
 fn make_test_object(interner: &TypeInterner, props: Vec<(Atom, TypeId)>) -> TypeId {
@@ -24,7 +27,7 @@ fn make_test_object(interner: &TypeInterner, props: Vec<(Atom, TypeId)>) -> Type
 
 #[test]
 fn test_any_propagation_rules_default() {
-    let interner = TypeInterner::new();
+    let _interner = TypeInterner::new();
     let rules = AnyPropagationRules::new();
 
     // Default: allow suppression is true

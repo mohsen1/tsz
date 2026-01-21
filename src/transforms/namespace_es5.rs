@@ -904,6 +904,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn emit_block(&mut self, block_idx: NodeIndex) {
         let Some(block_node) = self.arena.get(block_idx) else {
             return;
@@ -930,6 +931,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.write("}");
     }
 
+    #[allow(dead_code)]
     fn emit_parameters(&mut self, params: &NodeList) {
         let mut first = true;
         for &param_idx in &params.nodes {

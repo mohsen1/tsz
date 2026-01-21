@@ -341,11 +341,7 @@ impl ParserState {
                                 true
                             }
                             // If there's a line break, give the user benefit of doubt
-                            else if self.scanner.has_preceding_line_break() {
-                                true
-                            } else {
-                                false
-                            }
+                            else { self.scanner.has_preceding_line_break() }
                         }
                         _ => false,
                     }
@@ -3520,12 +3516,12 @@ impl ParserState {
             };
 
             // Check if method has async modifier
-            let is_async = modifiers.as_ref().map_or(false, |mods| {
+            let is_async = modifiers.as_ref().is_some_and(|mods| {
                 mods.nodes.iter().any(|&idx| {
                     self.arena
                         .nodes
                         .get(idx.0 as usize)
-                        .map_or(false, |node| node.kind == SyntaxKind::AsyncKeyword as u16)
+                        .is_some_and(|node| node.kind == SyntaxKind::AsyncKeyword as u16)
                 })
             });
 

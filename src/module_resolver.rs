@@ -311,7 +311,7 @@ impl ModuleResolver {
     fn try_path_mappings(&self, specifier: &str, containing_dir: &Path) -> Option<ResolvedModule> {
         // Sort path mappings by specificity (most specific first)
         let mut sorted_mappings: Vec<_> = self.path_mappings.iter().collect();
-        sorted_mappings.sort_by(|a, b| b.specificity().cmp(&a.specificity()));
+        sorted_mappings.sort_by_key(|b| std::cmp::Reverse(b.specificity()));
 
         for mapping in sorted_mappings {
             if let Some(star_match) = mapping.match_specifier(specifier) {

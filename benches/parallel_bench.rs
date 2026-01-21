@@ -3,9 +3,8 @@
 //! This benchmark suite tests the scaling of parallel type checking
 //! with the lock-free TypeInterner architecture.
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use wasm::solver::{TypeId, TypeInterner};
@@ -68,7 +67,7 @@ fn bench_concurrent_objects(c: &mut Criterion) {
                     let interner = Arc::new(TypeInterner::new());
                     pool.scope(|_s| {
                         (0..1000).into_par_iter().for_each(|i| {
-                            use wasm::solver::{PropertyInfo, TypeParamInfo};
+                            use wasm::solver::PropertyInfo;
                             let name = interner.intern_string(&format!("prop_{}", i % 100));
                             let _ = interner.object(vec![PropertyInfo {
                                 name,
@@ -94,7 +93,7 @@ fn bench_scaling_efficiency(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(2));
 
     // Baseline: single-threaded performance
-    let baseline_ops = {
+    let _baseline_ops = {
         let interner = TypeInterner::new();
         let start = std::time::Instant::now();
         for i in 0..100000 {

@@ -1155,7 +1155,7 @@ impl<'a> CheckerState<'a> {
         let has_type_args = type_ref
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         // Check if type_name is a qualified name (A.B)
         if let Some(name_node) = self.ctx.arena.get(type_name_idx) {
@@ -1477,7 +1477,7 @@ impl<'a> CheckerState<'a> {
                 if arg_ref
                     .type_arguments
                     .as_ref()
-                    .map_or(false, |list| !list.nodes.is_empty())
+                    .is_some_and(|list| !list.nodes.is_empty())
                 {
                     return false;
                 }
@@ -1922,7 +1922,7 @@ impl<'a> CheckerState<'a> {
         if symbol.flags & symbol_flags::ALIAS == 0 {
             return Some(sym_id);
         }
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -2558,7 +2558,7 @@ impl<'a> CheckerState<'a> {
                         _ => None,
                     };
 
-                    if common_props.as_ref().map_or(true, |props| props.is_empty())
+                    if common_props.as_ref().is_none_or(|props| props.is_empty())
                         && common_string_index.is_none()
                         && common_number_index.is_none()
                     {
@@ -2812,7 +2812,7 @@ impl<'a> CheckerState<'a> {
         let has_type_args = type_query
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         let base =
             if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
@@ -3010,7 +3010,7 @@ impl<'a> CheckerState<'a> {
         let has_type_args = type_ref
             .type_arguments
             .as_ref()
-            .map_or(false, |args| !args.nodes.is_empty());
+            .is_some_and(|args| !args.nodes.is_empty());
 
         if let Some(name_node) = self.ctx.arena.get(type_name_idx) {
             if name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
@@ -3531,7 +3531,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Second pass: Now resolve constraints and defaults with all type parameters in scope
-        for (_idx, &param_idx) in param_indices.iter().enumerate() {
+        for &param_idx in param_indices.iter() {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -16496,14 +16496,8 @@ impl<'a> CheckerState<'a> {
 
         // Unwrap readonly wrappers.
         let mut ty = iterable_type;
-        loop {
-            match self.ctx.types.lookup(ty) {
-                Some(TypeKey::ReadonlyType(inner)) => {
-                    ty = inner;
-                    continue;
-                }
-                _ => break,
-            }
+        while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(ty) {
+            ty = inner;
         }
 
         match self.ctx.types.lookup(ty) {
@@ -16722,7 +16716,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .arena
                         .get(var_decl.name)
-                        .map_or(false, |name_node| {
+                        .is_some_and(|name_node| {
                             name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                         });
@@ -16962,14 +16956,8 @@ impl<'a> CheckerState<'a> {
 
             // Unwrap readonly wrappers for destructuring element access.
             let mut array_like = parent_type;
-            loop {
-                match self.ctx.types.lookup(array_like) {
-                    Some(TypeKey::ReadonlyType(inner)) => {
-                        array_like = inner;
-                        continue;
-                    }
-                    _ => break,
-                }
+            while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(array_like) {
+                array_like = inner;
             }
 
             // Rest element: ...rest
@@ -18529,7 +18517,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let members = self.ctx.types.type_list(members);
-        members.iter().any(|&member| member == TypeId::UNDEFINED)
+        members.contains(&TypeId::UNDEFINED)
     }
 
     fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
@@ -24589,7 +24577,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::solver::TypeKey;
 
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
@@ -24676,7 +24664,7 @@ impl<'a> CheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
-        if visited_aliases.iter().any(|&seen| seen == sym_id) {
+        if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);

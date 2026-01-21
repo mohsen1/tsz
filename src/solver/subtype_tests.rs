@@ -1228,7 +1228,7 @@ fn test_correlated_union_index_access_subtyping() {
 
 #[test]
 fn test_object_subtyping() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -1368,7 +1368,7 @@ fn test_array_covariant_mutable_unsoundness() {
 
 #[test]
 fn test_type_environment() {
-    let interner = TypeInterner::new();
+    let _interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
     // Initially empty
@@ -1396,7 +1396,7 @@ fn test_type_environment() {
 
 #[test]
 fn test_ref_resolution_with_environment() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -1420,7 +1420,7 @@ fn test_ref_resolution_with_environment() {
 
 #[test]
 fn test_ref_to_ref_resolution() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -1440,7 +1440,7 @@ fn test_ref_to_ref_resolution() {
 
 #[test]
 fn test_ref_to_object_resolution() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -1502,7 +1502,7 @@ fn test_unresolved_ref_behavior() {
 
 #[test]
 fn test_function_rest_parameter_subtyping() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -2563,7 +2563,7 @@ fn test_never_array_to_variadic_tuple() {
 #[test]
 fn test_number_index_signature_numeric_property() {
     // CRITICAL: { 0: string } should match { [x: number]: string }
-    use std::sync::Arc;
+    
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2596,7 +2596,7 @@ fn test_number_index_signature_numeric_property() {
 #[test]
 fn test_number_index_signature_type_mismatch() {
     // { 0: number } should NOT match { [x: number]: string }
-    use std::sync::Arc;
+    
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2771,7 +2771,7 @@ fn test_string_index_signature_method_bivariant_property() {
 #[test]
 fn test_number_index_signature_multiple_numeric_props() {
     // { 0: string, 1: string, 2: string } should match { [x: number]: string }
-    use std::sync::Arc;
+    
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2822,7 +2822,7 @@ fn test_number_index_signature_multiple_numeric_props() {
 #[test]
 fn test_number_and_string_index_signatures() {
     // { 0: string, foo: string } should match { [x: number]: string; [y: string]: string }
-    use std::sync::Arc;
+    
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -3478,7 +3478,7 @@ fn test_conditional_tuple_wrapper_no_distribution_subtyping() {
 
 #[test]
 fn test_strict_function_variance() {
-    use std::sync::Arc;
+    
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
     // Ensure strict mode is on (default)
@@ -5030,7 +5030,7 @@ fn test_class_like_subtyping_this_param_covariant() {
 
 #[test]
 fn test_function_fixed_to_rest_subtyping() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -5106,7 +5106,7 @@ fn test_function_fixed_to_rest_subtyping() {
 
 #[test]
 fn test_function_fixed_to_rest_extra_param_accepts_undefined() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -5165,7 +5165,7 @@ fn test_function_fixed_to_rest_extra_param_accepts_undefined() {
 
 #[test]
 fn test_function_fixed_to_rest_extra_param_rejects_undefined() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -5222,7 +5222,7 @@ fn test_function_fixed_to_rest_extra_param_rejects_undefined() {
 
 #[test]
 fn test_function_rest_tuple_to_rest_array_subtyping() {
-    use std::sync::Arc;
+    
 
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -9839,7 +9839,7 @@ fn test_intersection_conflicting_property_types() {
         is_method: false,
     }]);
 
-    let intersection = interner.intersection(vec![obj_x_string, obj_x_number]);
+    let _intersection = interner.intersection(vec![obj_x_string, obj_x_number]);
 
     // The intersection of { x: string } & { x: number } has x: string & number = never
     // So this should reduce to never or be subtype of never
@@ -17398,7 +17398,7 @@ fn test_const_enum_inlined_literal() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let const_a = interner.literal_number(1.0);
-    let const_b = interner.literal_number(2.0);
+    let _const_b = interner.literal_number(2.0);
 
     // Const enum members maintain literal types
     assert!(checker.is_subtype_of(const_a, TypeId::NUMBER));
@@ -17625,7 +17625,7 @@ fn test_string_enum_unicode() {
 fn test_enum_in_mapped_type_context() {
     // { [K in E]: K } where E = "a" | "b"
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
@@ -17791,7 +17791,7 @@ fn test_index_signature_number_subtype_of_string() {
     // Number index signature value must be subtype of string index signature value
     // { [key: string]: any, [key: number]: string } - string is subtype of any
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let obj = interner.object_with_index(ObjectShape {
         properties: vec![],
@@ -17848,7 +17848,7 @@ fn test_index_signature_intersection_combines() {
 fn test_index_signature_with_properties() {
     // { x: number, [key: string]: number | string }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let union_type = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
 
@@ -17878,7 +17878,7 @@ fn test_index_signature_property_must_match_index() {
     // Property type must be subtype of index signature value type
     // { x: string, [key: string]: string } is valid
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let obj_valid = interner.object_with_index(ObjectShape {
         properties: vec![PropertyInfo {
@@ -17996,7 +17996,7 @@ fn test_index_signature_union_value_subtyping() {
 fn test_index_signature_intersection_value() {
     // { [key: string]: A & B }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let obj_a = interner.object(vec![PropertyInfo {
         name: interner.intern_string("a"),
@@ -18220,7 +18220,7 @@ fn test_index_signature_never_value() {
 fn test_index_signature_function_value() {
     // { [key: string]: () => void }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
@@ -18249,7 +18249,7 @@ fn test_index_signature_function_value() {
 fn test_index_signature_array_value() {
     // { [key: string]: T[] }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let array_type = interner.array(TypeId::NUMBER);
 
@@ -18270,7 +18270,7 @@ fn test_index_signature_array_value() {
 fn test_index_signature_tuple_value() {
     // { [key: number]: [string, number] }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let tuple_type = interner.tuple(vec![
         TupleElement {
@@ -18304,7 +18304,7 @@ fn test_index_signature_tuple_value() {
 fn test_index_signature_nested_object_value() {
     // { [key: string]: { x: number } }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let nested_obj = interner.object(vec![PropertyInfo {
         name: interner.intern_string("x"),
@@ -18332,7 +18332,7 @@ fn test_index_signature_nested_object_value() {
 fn test_index_signature_intersection_objects() {
     // { [key: string]: A } & { x: B }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let indexed_obj = interner.object_with_index(ObjectShape {
         properties: vec![],
@@ -18363,9 +18363,9 @@ fn test_index_signature_intersection_objects() {
 fn test_index_signature_literal_key_subset() {
     // { [key: "a" | "b"]: T } - template literal pattern index
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
-    let literal_keys = interner.union(vec![
+    let _literal_keys = interner.union(vec![
         interner.literal_string("a"),
         interner.literal_string("b"),
     ]);
@@ -20370,9 +20370,9 @@ fn test_symbol_keyed_object_property() {
     // Object with symbol-keyed property
     // { [Symbol.iterator]: () => Iterator }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
-    let sym_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1000)));
+    let _sym_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1000)));
 
     // Iterator-like return type
     let iterator_fn = interner.function(FunctionShape {
@@ -20512,7 +20512,7 @@ fn test_symbol_for_shared() {
 fn test_iterable_protocol_types() {
     // Iterable<T> has [Symbol.iterator](): Iterator<T>
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     // IteratorResult<number> = { value: number, done: boolean }
     let value_name = interner.intern_string("value");
@@ -21484,7 +21484,7 @@ fn test_intersection_different_brands_is_never() {
 fn test_intersection_readonly_property() {
     // { readonly x: string } & { x: string }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let x_name = interner.intern_string("x");
 
@@ -22650,7 +22650,7 @@ fn test_keyof_object_intrinsic() {
 fn test_keyof_symbol_keyed_object() {
     // Objects with symbol keys in keyof result
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     // Simulated: { [Symbol.iterator]: () => Iterator }
     let sym_iterator = interner.intern_string("Symbol.iterator");
@@ -22688,7 +22688,7 @@ fn test_keyof_symbol_keyed_object() {
 fn test_constructor_basic_new_signature() {
     // new () => T
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let instance = interner.object(vec![PropertyInfo {
         name: interner.intern_string("x"),
@@ -22808,7 +22808,7 @@ fn test_constructor_vs_regular_function() {
 fn test_constructor_callable_with_construct_signature() {
     // interface C { new (): T }
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let instance = interner.object(vec![PropertyInfo {
         name: interner.intern_string("value"),
@@ -23164,7 +23164,7 @@ fn test_constructor_abstract_pattern() {
     // abstract new () => T (abstract constructor)
     // Represented as a construct signature that can't be directly called
     let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
+    let _checker = SubtypeChecker::new(&interner);
 
     let instance = interner.object(vec![PropertyInfo {
         name: interner.intern_string("x"),

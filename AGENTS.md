@@ -13,106 +13,40 @@ This document defines critical architecture rules for Project Zang. All contribu
 3. **Configuration-driven** - Use `CompilerOptions` for all behavior changes
 4. **Fix root causes** - Never suppress errors or add special cases
 
-## Critical Anti-Patterns
-
-### 1. Test-Aware Code (NEVER DO THIS)
-
-```rust
-// BAD - NEVER check file names in core logic:
-let is_test_file = self.ctx.file_name.contains("conformance")
-    || self.ctx.file_name.contains("test");
-
-if is_test_file {
-    return; // Suppressing errors for tests
-}
-```
-
-**Why this is wrong:** Production code should not know about tests. If a test fails, fix the underlying logic.
-
-### 2. Error Suppression (NEVER DO THIS)
-
-```rust
-// BAD - NEVER suppress specific errors:
-if error_code == 2304 && some_condition {
-    return; // Skip this error
-}
-```
-
-**Why this is wrong:** This hides bugs. Fix the root cause instead.
-
-### 3. Tier-Based Patches (NEVER DO THIS)
-
-```rust
-// BAD - NEVER apply different logic to different tests:
-if tier_0_test {
-    apply_strict_logic();
-} else {
-    apply_relaxed_logic();
-}
-```
-
-**Why this is wrong:** Fix the logic correctly once, for all cases.
-
-## Correct Approaches
-
-### Use CompilerOptions
-
-```rust
-// GOOD - Configuration-driven:
-fn check_variable(&mut self, node: ThinNodeId) {
-    if self.options.strict {
-        self.check_explicit_type(node);
-    }
-    // Universal logic for all code
-}
-```
-
-### Fix Root Causes
-
-When tests fail:
-1. Understand what tsc produces vs. what we produce
-2. Find the incorrect type system logic
-3. Fix the core implementation (parser/checker/solver)
-4. Verify against broader test suite
-
-### Test Infrastructure Configuration
-
-Test runners should configure the compiler via directives:
-
-```typescript
-// @strict
-// @noImplicitAny
-// @target: ES2015
-
-// Test runner parses these and calls:
-parser.set_compiler_options(JSON.stringify({
-    strict: true,
-    noImplicitAny: true,
-    target: "ES2015"
-}));
-```
-
 ## Code Review Checklist
 
 Before merging changes:
-- [ ] No `file_name.contains()`, `path.contains()` in core logic
-- [ ] No error suppression based on test names
-- [ ] No "tier" or "phase" based logic
-- [ ] All behavior driven by `CompilerOptions`
-- [ ] Fix addresses root cause, not symptom
-- [ ] Works for all TypeScript code, not just tests
 
-## Key Questions
-
-1. Does this check file names or paths? → Reject
-2. Does this suppress errors for specific tests? → Reject
-3. Is this a workaround or correct solution? → Reject workarounds
-4. Will this match tsc behavior for all TypeScript code? → Must be yes
+- [ ] Rust and WASM builds succeed (`cargo build`, `wasm-pack build`)
+- [ ] Unit tests pass (`scripts/test.sh`)
+- [ ] No clippy warnings (`cargo clippy -- -D warnings`)
+- [ ] Conformance tests pass (`./conformance/run-conformance.sh --all`) -- does not have to be 100% but should not drop significantly
+- [ ] No shortcuts taken - all fixes address root causes
+- [ ] No test-aware code in source
 
 ## References
 
-- **src/lib.rs**: `CompilerOptions` struct, `setCompilerOptions()`, `markAsLibFile()`
 - **PROJECT_DIRECTION.md**: Project priorities and architecture rules
+- **specs/TS_UNSOUNDNESS_CATALOG.md**: Catalog of known unsoundness issues and required compat layer rules
+- **specs/SOLVER.md**: Type resolution architecture and guidelines
+- **specs/WASM_ARCHITECTURE.md**: WASM build and runtime architecture
+
+Below are key internal documents and a couple of external references used by contributors:
+
+- [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md): Project priorities and architecture rules.
+- [specs/TS_UNSOUNDNESS_CATALOG.md](specs/TS_UNSOUNDNESS_CATALOG.md): Catalog of known unsoundness issues and required compat-layer rules.
+- [specs/SOLVER.md](specs/SOLVER.md): Type resolution architecture and design guidelines.
+- [specs/WASM_ARCHITECTURE.md](specs/WASM_ARCHITECTURE.md): WASM build and runtime architecture.
+- [specs/COMPILER_OPTIONS.md](specs/COMPILER_OPTIONS.md): Semantics and supported `CompilerOptions`.
+- [specs/DIAGNOSTICS.md](specs/DIAGNOSTICS.md): Diagnostic message guidelines and error mapping.
+- [scripts/test.sh](scripts/test.sh): Recommended test runner (runs tests in Docker).
+- [conformance/run-conformance.sh](conformance/run-conformance.sh): Conformance test harness and invocation.
+
+External references:
+
+- [TypeScript Compiler (tsc) — GitHub](https://github.com/microsoft/TypeScript): Reference behavior to match for compatibility.
+- [ECMAScript® Language Specification](https://tc39.es/ecma262/): Language semantics referenced by the project.
+
 
 ## When work is done?
 
@@ -121,3 +55,6 @@ All unit tests should pass. There should be zero clippy warnings. It's okay if c
 ## Run commands with a reasonable timeout
 
 ALWAYS run commands with a reasonable timeout to avoid commands that will hang
+
+## Run tests in docker
+Always run tests in docker to ensure a consistent environment. Using `scripts/test.sh` will automatically use docker

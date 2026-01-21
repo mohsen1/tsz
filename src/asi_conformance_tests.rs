@@ -5,7 +5,6 @@
 
 use crate::checker::types::diagnostics::diagnostic_codes;
 use crate::parser::ParserState;
-use crate::scanner::SyntaxKind;
 
 /// Test that throw with line break reports TS1109
 #[test]

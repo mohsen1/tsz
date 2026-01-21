@@ -23,6 +23,7 @@ pub struct ReachabilityAnalyzer<'a> {
     /// Reference to the NodeArena for AST access
     arena: &'a NodeArena,
     /// Cached set of unreachable node IDs
+    #[allow(dead_code)]
     unreachable_cache: FxHashSet<u32>,
 }
 

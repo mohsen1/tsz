@@ -497,7 +497,7 @@ fn test_optional_property_includes_undefined() {
     let prop_name = interner.intern_string("x");
 
     // { x?: string }
-    let type_a = interner.object(vec![PropertyInfo {
+    let _type_a = interner.object(vec![PropertyInfo {
         name: prop_name,
         type_id: TypeId::STRING,
         write_type: TypeId::STRING,
@@ -508,7 +508,7 @@ fn test_optional_property_includes_undefined() {
 
     // { x: string | undefined }
     let undefined_union = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
-    let type_b = interner.object(vec![PropertyInfo {
+    let _type_b = interner.object(vec![PropertyInfo {
         name: prop_name,
         type_id: undefined_union,
         write_type: undefined_union,

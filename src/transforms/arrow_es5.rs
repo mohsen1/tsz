@@ -325,9 +325,9 @@ impl ArrowTransformContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
     use crate::parser::ParserState;
-    use crate::scanner::SyntaxKind;
+    
 
     #[test]
     fn test_detect_this_in_arrow() {

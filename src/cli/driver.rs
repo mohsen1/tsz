@@ -582,7 +582,7 @@ fn update_import_symbol_ids(
                 continue;
             };
             let canonical = canonicalize_or_owned(&resolved);
-            let entry = by_dep.entry(canonical).or_insert_with(Vec::new);
+            let entry = by_dep.entry(canonical).or_default();
             if let Some(file_locals) = program.file_locals.get(file_idx) {
                 for name in local_names {
                     if let Some(sym_id) = file_locals.get(&name) {
@@ -605,7 +605,7 @@ fn update_import_symbol_ids(
                 continue;
             };
             let canonical = canonicalize_or_owned(&resolved);
-            let entry = by_dep.entry(canonical).or_insert_with(Vec::new);
+            let entry = by_dep.entry(canonical).or_default();
             for node_idx in binding_nodes {
                 if let Some(sym_id) = file.node_symbols.get(&node_idx.0).copied() {
                     entry.push(sym_id);
@@ -978,7 +978,7 @@ fn read_source_files(
         sources.insert(path.clone(), Some(text));
         let entry = dependencies
             .entry(path.clone())
-            .or_insert_with(HashSet::new);
+            .or_default();
 
         for specifier in specifiers {
             if let Some(resolved) = resolve_module_specifier(
@@ -1574,7 +1574,7 @@ fn export_conditions(options: &ResolvedCompilerOptions) -> Vec<&'static str> {
 }
 
 fn push_condition(conditions: &mut Vec<&'static str>, condition: &'static str) {
-    if !conditions.iter().any(|&value| value == condition) {
+    if !conditions.contains(&condition) {
         conditions.push(condition);
     }
 }
@@ -1823,19 +1823,15 @@ fn collect_package_entry_candidates(package_json: &PackageJson) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
 
-    for value in [package_json.types.as_ref(), package_json.typings.as_ref()] {
-        if let Some(value) = value {
-            if seen.insert(value.clone()) {
-                candidates.push(value.clone());
-            }
+    for value in [package_json.types.as_ref(), package_json.typings.as_ref()].into_iter().flatten() {
+        if seen.insert(value.clone()) {
+            candidates.push(value.clone());
         }
     }
 
-    for value in [package_json.module.as_ref(), package_json.main.as_ref()] {
-        if let Some(value) = value {
-            if seen.insert(value.clone()) {
-                candidates.push(value.clone());
-            }
+    for value in [package_json.module.as_ref(), package_json.main.as_ref()].into_iter().flatten() {
+        if seen.insert(value.clone()) {
+            candidates.push(value.clone());
         }
     }
 
@@ -1939,7 +1935,7 @@ fn select_types_versions_paths_for_version(
             None => true,
             Some(best) => {
                 score > best
-                    || (score == best && best_key.map_or(true, |best_key| key.as_str() < best_key))
+                    || (score == best && best_key.is_none_or(|best_key| key.as_str() < best_key))
             }
         };
 
@@ -2012,7 +2008,7 @@ fn match_types_versions_range(range: &str, compiler_version: SemVer) -> Option<R
         else {
             continue;
         };
-        if best.map_or(true, |current| score > current) {
+        if best.is_none_or(|current| score > current) {
             best = Some(score);
         }
     }
@@ -2108,7 +2104,7 @@ fn parse_semver(value: &str) -> Option<SemVer> {
         return None;
     }
     let core = value
-        .split(|ch| ch == '-' || ch == '+')
+        .split(['-', '+'])
         .next()
         .unwrap_or(value);
     let mut parts = core.split('.');

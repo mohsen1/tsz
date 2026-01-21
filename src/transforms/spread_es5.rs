@@ -572,7 +572,7 @@ impl<'a> ES5SpreadTransformer<'a> {
             .statements
             .nodes
             .iter()
-            .filter_map(|&idx| Some(IRNode::ASTRef(idx)))
+            .map(|&idx| IRNode::ASTRef(idx))
             .collect()
     }
 

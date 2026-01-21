@@ -3338,7 +3338,7 @@ impl<'a> FlowAnalyzer<'a> {
         if symbol.flags & symbol_flags::ALIAS == 0 {
             return Some(sym_id);
         }
-        if visited.iter().any(|&seen| seen == sym_id) {
+        if visited.contains(&sym_id) {
             return None;
         }
         visited.push(sym_id);

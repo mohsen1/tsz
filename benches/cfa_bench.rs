@@ -7,7 +7,7 @@ use wasm::binder::BinderState;
 use wasm::checker::CheckerOptions;
 use wasm::checker::state::CheckerState;
 use wasm::parser::ParserState;
-use wasm::solver::{TypeId, TypeInterner};
+use wasm::solver::TypeInterner;
 
 /// Simple code without complex control flow.
 const SIMPLE_CODE: &str = r#"

@@ -81,7 +81,7 @@ const OBJECT_METHODS_RETURN_STRING: &[&str] = &["toString"];
 const OBJECT_METHODS_RETURN_ANY: &[&str] = &["valueOf"];
 
 fn is_member(name: &str, list: &[&str]) -> bool {
-    list.iter().any(|&item| item == name)
+    list.contains(&name)
 }
 
 fn object_member_kind(name: &str, include_to_locale: bool) -> Option<ApparentMemberKind> {
