@@ -131,10 +131,19 @@ impl<'a> IRPrinter<'a> {
                 self.write(operator);
             }
             IRNode::CallExpr { callee, arguments } => {
+                // Check if this is an IIFE (immediately invoked function expression)
+                // IIFEs should be wrapped in parentheses: (function() { ... })()
+                let is_iife = matches!(&**callee, IRNode::FunctionExpr { .. });
+                if is_iife {
+                    self.write("(");
+                }
                 self.emit_node(callee);
                 self.write("(");
                 self.emit_comma_separated(arguments);
                 self.write(")");
+                if is_iife {
+                    self.write(")");
+                }
             }
             IRNode::NewExpr { callee, arguments } => {
                 self.write("new ");
@@ -236,6 +245,7 @@ impl<'a> IRPrinter<'a> {
                     self.write(" = ");
                     self.emit_node(init);
                 }
+                self.write(";");
             }
             IRNode::VarDeclList(decls) => {
                 self.write("var ");
@@ -253,6 +263,7 @@ impl<'a> IRPrinter<'a> {
                         self.emit_node(decl);
                     }
                 }
+                self.write(";");
             }
             IRNode::ExpressionStatement(expr) => {
                 self.emit_node(expr);

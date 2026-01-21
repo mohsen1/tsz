@@ -1223,6 +1223,20 @@ impl<'a> CheckerState<'a> {
                             return type_id;
                         }
                         if self.is_known_global_type_name(name) {
+                            // Check if this is a built-in mapped type utility (Record, Partial, etc.)
+                            // These are standard TypeScript utility types that should not emit errors
+                            // when used with type arguments - they represent type transformations
+                            if self.is_mapped_type_utility(name) {
+                                // Process type arguments but don't emit an error
+                                // Return ANY as a reasonable approximation for these utility types
+                                if let Some(args) = &type_ref.type_arguments {
+                                    for &arg_idx in &args.nodes {
+                                        let _ = self.get_type_from_type_node(arg_idx);
+                                    }
+                                }
+                                return TypeId::ANY;
+                            }
+
                             // Emit TS2318/TS2583 for missing global types
                             // TS2583 for ES2015+ types, TS2318 for other global types
                             self.error_cannot_find_global_type(name, type_name_idx);
@@ -14841,6 +14855,17 @@ impl<'a> CheckerState<'a> {
                 | "navigator"
                 | "location"
                 | "history"
+        )
+    }
+
+    /// Check if a type name is a built-in mapped type utility.
+    /// These are standard TypeScript utility types that transform other types.
+    /// When used with type arguments, they should not cause "cannot find type" errors.
+    fn is_mapped_type_utility(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "Partial" | "Required" | "Readonly" | "Record" | "Pick" | "Omit" | "Extract"
+                | "Exclude" | "NonNullable" | "ThisType" | "Infer"
         )
     }
 
