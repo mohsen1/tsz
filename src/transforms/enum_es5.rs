@@ -39,86 +39,86 @@ use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::transforms::emit_utils;
+use crate::transforms::ir::*;
+use crate::transforms::ir_printer::IRPrinter;
 
-/// Enum ES5 emitter
-pub struct EnumES5Emitter<'a> {
+/// Enum ES5 transformer - produces IR for enum declarations
+pub struct EnumES5Transformer<'a> {
     arena: &'a NodeArena,
-    output: String,
-    indent_level: u32,
     /// Track last numeric value for auto-incrementing
     last_value: Option<i64>,
 }
 
-impl<'a> EnumES5Emitter<'a> {
+impl<'a> EnumES5Transformer<'a> {
     pub fn new(arena: &'a NodeArena) -> Self {
-        EnumES5Emitter {
+        EnumES5Transformer {
             arena,
-            output: String::with_capacity(1024),
-            indent_level: 0,
             last_value: None,
         }
     }
 
-    pub fn set_indent_level(&mut self, level: u32) {
-        self.indent_level = level;
-    }
-
-    /// Emit an enum declaration
-    /// Returns empty string for const enums (they are erased)
-    pub fn emit_enum(&mut self, enum_idx: NodeIndex) -> String {
-        self.output.clear();
+    /// Transform an enum declaration to IR
+    /// Returns None for const enums (they are erased)
+    pub fn transform_enum(&mut self, enum_idx: NodeIndex) -> Option<IRNode> {
         self.last_value = Some(-1); // Start at -1 so first increment is 0
 
         let Some(enum_node) = self.arena.get(enum_idx) else {
-            return String::new();
+            return None;
         };
 
         let Some(enum_data) = self.arena.get_enum(enum_node) else {
-            return String::new();
+            return None;
         };
 
         // Check for const enum - erase by default (preserveConstEnums not yet supported)
         if self.is_const_enum(&enum_data.modifiers) {
-            return String::new();
+            return None;
         }
 
         let name = self.get_identifier_text(enum_data.name);
         if name.is_empty() {
-            return String::new();
+            return None;
         }
 
+        // Build IR for: var E; (function (E) { ... })(E || (E = {}));
+        let mut statements = Vec::new();
+
         // var E;
-        self.write_indent();
-        self.write("var ");
-        self.write(&name);
-        self.write(";");
-        self.write_line();
+        statements.push(IRNode::VarDecl {
+            name: name.clone(),
+            initializer: None,
+        });
 
-        // (function (E) { ... })(E || (E = {}));
-        self.write_indent();
-        self.write("(function (");
-        self.write(&name);
-        self.write(") {");
-        self.write_line();
-        self.increase_indent();
+        // Build IIFE body (enum member assignments)
+        let body = self.transform_members(&enum_data.members, &name);
 
-        // Emit members
-        self.emit_members(&enum_data.members, &name);
+        // Build IIFE argument: E || (E = {})
+        let iife_arg = IRNode::LogicalOr {
+            left: Box::new(IRNode::Identifier(name.clone())),
+            right: Box::new(IRNode::BinaryExpr {
+                left: Box::new(IRNode::Identifier(name.clone())),
+                operator: "=".to_string(),
+                right: Box::new(IRNode::ObjectLiteral(Vec::new())),
+            }),
+        };
 
-        // Close IIFE
-        self.decrease_indent();
-        self.write_indent();
-        self.write("})(");
-        self.write(&name);
-        self.write(" || (");
-        self.write(&name);
-        self.write(" = {}));");
+        // (function (E) { body })(arg)
+        let iife = IRNode::CallExpr {
+            callee: Box::new(IRNode::FunctionExpr {
+                name: Some(name.clone()),
+                parameters: vec![IRParam::new(&name)],
+                body,
+                is_expression_body: false,
+            }),
+            arguments: vec![iife_arg],
+        };
 
-        std::mem::take(&mut self.output)
+        statements.push(IRNode::ExpressionStatement(Box::new(iife)));
+
+        Some(IRNode::Sequence(statements))
     }
 
-    /// Get the enum name without emitting anything
+    /// Get the enum name without transforming
     pub fn get_enum_name(&self, enum_idx: NodeIndex) -> String {
         let Some(enum_node) = self.arena.get(enum_idx) else {
             return String::new();
@@ -140,7 +140,10 @@ impl<'a> EnumES5Emitter<'a> {
         self.is_const_enum(&enum_data.modifiers)
     }
 
-    fn emit_members(&mut self, members: &NodeList, enum_name: &str) {
+    /// Transform enum members to IR statements
+    fn transform_members(&mut self, members: &NodeList, enum_name: &str) -> Vec<IRNode> {
+        let mut statements = Vec::new();
+
         for &member_idx in &members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -152,53 +155,184 @@ impl<'a> EnumES5Emitter<'a> {
             let member_name = self.get_member_name(member_data.name);
             let has_initializer = !member_data.initializer.is_none();
 
-            self.write_indent();
-            self.write(enum_name);
-
-            if has_initializer {
+            let stmt = if has_initializer {
                 if self.is_string_literal(member_data.initializer) {
                     // String enum: E["A"] = "val";
                     // No reverse mapping for string enums
-                    self.write("[\"");
-                    self.write(&member_name);
-                    self.write("\"] = ");
-                    self.emit_expression(member_data.initializer);
-                    self.write(";");
-
-                    // Reset auto-increment - can't continue after string
-                    self.last_value = None;
+                    let assign = IRNode::BinaryExpr {
+                        left: Box::new(IRNode::ElementAccess {
+                            object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                            index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                        }),
+                        operator: "=".to_string(),
+                        right: Box::new(self.transform_expression(member_data.initializer)),
+                    };
+                    self.last_value = None; // Reset auto-increment
+                    IRNode::ExpressionStatement(Box::new(assign))
                 } else {
                     // Numeric/Computed: E[E["A"] = val] = "A";
-                    self.write("[");
-                    self.write(enum_name);
-                    self.write("[\"");
-                    self.write(&member_name);
-                    self.write("\"] = ");
-                    self.emit_expression(member_data.initializer);
-                    self.write("] = \"");
-                    self.write(&member_name);
-                    self.write("\";");
-
-                    // Try to track value for next member
-                    self.update_last_value_from_expr(member_data.initializer);
+                    let inner_value = self.transform_expression(member_data.initializer);
+                    let inner_assign = IRNode::BinaryExpr {
+                        left: Box::new(IRNode::ElementAccess {
+                            object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                            index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                        }),
+                        operator: "=".to_string(),
+                        right: Box::new(inner_value),
+                    };
+                    let outer_assign = IRNode::BinaryExpr {
+                        left: Box::new(IRNode::ElementAccess {
+                            object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                            index: Box::new(inner_assign),
+                        }),
+                        operator: "=".to_string(),
+                        right: Box::new(IRNode::StringLiteral(member_name.clone())),
+                    };
+                    IRNode::ExpressionStatement(Box::new(outer_assign))
                 }
             } else {
                 // Auto-increment: E[E["A"] = 0] = "A";
                 let next_val = self.last_value.map(|v| v + 1).unwrap_or(0);
                 self.last_value = Some(next_val);
 
-                self.write("[");
-                self.write(enum_name);
-                self.write("[\"");
-                self.write(&member_name);
-                self.write("\"] = ");
-                self.write_i64(next_val);
-                self.write("] = \"");
-                self.write(&member_name);
-                self.write("\";");
-            }
-            self.write_line();
+                let inner_assign = IRNode::BinaryExpr {
+                    left: Box::new(IRNode::ElementAccess {
+                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        index: Box::new(IRNode::StringLiteral(member_name.clone())),
+                    }),
+                    operator: "=".to_string(),
+                    right: Box::new(IRNode::NumericLiteral(next_val.to_string())),
+                };
+                let outer_assign = IRNode::BinaryExpr {
+                    left: Box::new(IRNode::ElementAccess {
+                        object: Box::new(IRNode::Identifier(enum_name.to_string())),
+                        index: Box::new(inner_assign),
+                    }),
+                    operator: "=".to_string(),
+                    right: Box::new(IRNode::StringLiteral(member_name.clone())),
+                };
+                IRNode::ExpressionStatement(Box::new(outer_assign))
+            };
+
+            statements.push(stmt);
         }
+
+        statements
+    }
+
+    /// Transform an expression node to IR
+    fn transform_expression(&self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::NumericLiteral("0".to_string());
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(node) {
+                    IRNode::NumericLiteral(lit.text.clone())
+                } else {
+                    IRNode::NumericLiteral("0".to_string())
+                }
+            }
+            k if k == SyntaxKind::StringLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(node) {
+                    IRNode::StringLiteral(lit.text.clone())
+                } else {
+                    IRNode::StringLiteral(String::new())
+                }
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(id) = self.arena.get_identifier(node) {
+                    IRNode::Identifier(id.escaped_text.clone())
+                } else {
+                    IRNode::Identifier("unknown".to_string())
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(bin) = self.arena.get_binary_expr(node) {
+                    IRNode::BinaryExpr {
+                        left: Box::new(self.transform_expression(bin.left)),
+                        operator: self.emit_operator(bin.operator_token),
+                        right: Box::new(self.transform_expression(bin.right)),
+                    }
+                } else {
+                    IRNode::NumericLiteral("0".to_string())
+                }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr(node) {
+                    IRNode::PrefixUnaryExpr {
+                        operator: self.emit_operator(unary.operator),
+                        operand: Box::new(self.transform_expression(unary.operand)),
+                    }
+                } else {
+                    IRNode::NumericLiteral("0".to_string())
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.arena.get_parenthesized(node) {
+                    IRNode::Parenthesized(Box::new(self.transform_expression(paren.expression)))
+                } else {
+                    IRNode::NumericLiteral("0".to_string())
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                // E.A reference inside enum
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    let obj = self.transform_expression(access.expression);
+                    let prop = if let Some(prop_node) = self.arena.get(access.name_or_argument) {
+                        if let Some(ident) = self.arena.get_identifier(prop_node) {
+                            ident.escaped_text.clone()
+                        } else if let Some(lit) = self.arena.get_literal(prop_node) {
+                            lit.text.clone()
+                        } else {
+                            "unknown".to_string()
+                        }
+                    } else {
+                        "unknown".to_string()
+                    };
+                    IRNode::PropertyAccess {
+                        object: Box::new(obj),
+                        property: prop,
+                    }
+                } else {
+                    IRNode::NumericLiteral("0".to_string())
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    IRNode::ElementAccess {
+                        object: Box::new(self.transform_expression(access.expression)),
+                        index: Box::new(self.transform_expression(access.name_or_argument)),
+                    }
+                } else {
+                    IRNode::NumericLiteral("0".to_string())
+                }
+            }
+            _ => {
+                // Fallback - return 0
+                IRNode::NumericLiteral("0".to_string())
+            }
+        }
+    }
+
+    fn emit_operator(&self, op: u16) -> String {
+        match op {
+            k if k == SyntaxKind::PlusToken as u16 => "+",
+            k if k == SyntaxKind::MinusToken as u16 => "-",
+            k if k == SyntaxKind::AsteriskToken as u16 => "*",
+            k if k == SyntaxKind::SlashToken as u16 => "/",
+            k if k == SyntaxKind::PercentToken as u16 => "%",
+            k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
+            k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
+            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>",
+            k if k == SyntaxKind::AmpersandToken as u16 => "&",
+            k if k == SyntaxKind::BarToken as u16 => "|",
+            k if k == SyntaxKind::CaretToken as u16 => "^",
+            k if k == SyntaxKind::TildeToken as u16 => "~",
+            k if k == SyntaxKind::ExclamationToken as u16 => "!",
+            _ => "+",
+        }.to_string()
     }
 
     fn is_const_enum(&self, modifiers: &Option<NodeList>) -> bool {
@@ -219,21 +353,6 @@ impl<'a> EnumES5Emitter<'a> {
             return node.kind == SyntaxKind::StringLiteral as u16;
         }
         false
-    }
-
-    fn update_last_value_from_expr(&mut self, idx: NodeIndex) {
-        if let Some(node) = self.arena.get(idx) {
-            if node.kind == SyntaxKind::NumericLiteral as u16 {
-                if let Some(lit) = self.arena.get_literal(node) {
-                    if let Ok(val) = lit.text.parse::<i64>() {
-                        self.last_value = Some(val);
-                        return;
-                    }
-                }
-            }
-        }
-        // Complex expression - lose track
-        self.last_value = None;
     }
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
@@ -257,121 +376,56 @@ impl<'a> EnumES5Emitter<'a> {
         }
         String::new()
     }
+}
 
-    fn emit_expression(&mut self, idx: NodeIndex) {
-        let Some(node) = self.arena.get(idx) else {
-            return;
+/// Legacy enum ES5 emitter for backward compatibility
+/// Deprecated: Use EnumES5Transformer + IRPrinter instead
+pub struct EnumES5Emitter<'a> {
+    arena: &'a NodeArena,
+    output: String,
+    indent_level: u32,
+    transformer: EnumES5Transformer<'a>,
+}
+
+impl<'a> EnumES5Emitter<'a> {
+    pub fn new(arena: &'a NodeArena) -> Self {
+        EnumES5Emitter {
+            arena,
+            output: String::with_capacity(1024),
+            indent_level: 0,
+            transformer: EnumES5Transformer::new(arena),
+        }
+    }
+
+    pub fn set_indent_level(&mut self, level: u32) {
+        self.indent_level = level;
+    }
+
+    /// Emit an enum declaration
+    /// Returns empty string for const enums (they are erased)
+    pub fn emit_enum(&mut self, enum_idx: NodeIndex) -> String {
+        self.output.clear();
+
+        let ir = self.transformer.transform_enum(enum_idx);
+        let ir = match ir {
+            Some(ir) => ir,
+            None => return String::new(),
         };
 
-        match node.kind {
-            k if k == SyntaxKind::NumericLiteral as u16 => {
-                if let Some(lit) = self.arena.get_literal(node) {
-                    self.write(&lit.text);
-                }
-            }
-            k if k == SyntaxKind::StringLiteral as u16 => {
-                if let Some(lit) = self.arena.get_literal(node) {
-                    self.write("\"");
-                    self.write(&lit.text);
-                    self.write("\"");
-                }
-            }
-            k if k == SyntaxKind::Identifier as u16 => {
-                if let Some(id) = self.arena.get_identifier(node) {
-                    self.write(&id.escaped_text);
-                }
-            }
-            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                if let Some(bin) = self.arena.get_binary_expr(node) {
-                    self.emit_expression(bin.left);
-                    self.write(" ");
-                    self.emit_operator(bin.operator_token);
-                    self.write(" ");
-                    self.emit_expression(bin.right);
-                }
-            }
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                if let Some(unary) = self.arena.get_unary_expr(node) {
-                    self.emit_operator(unary.operator);
-                    self.emit_expression(unary.operand);
-                }
-            }
-            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                if let Some(paren) = self.arena.get_parenthesized(node) {
-                    self.write("(");
-                    self.emit_expression(paren.expression);
-                    self.write(")");
-                }
-            }
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                // E.A reference inside enum
-                if let Some(access) = self.arena.get_access_expr(node) {
-                    self.emit_expression(access.expression);
-                    self.write(".");
-                    self.emit_expression(access.name_or_argument);
-                }
-            }
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                if let Some(access) = self.arena.get_access_expr(node) {
-                    self.emit_expression(access.expression);
-                    self.write("[");
-                    self.emit_expression(access.name_or_argument);
-                    self.write("]");
-                }
-            }
-            _ => {
-                // Fallback - write placeholder
-                self.write("0 /* complex */");
-            }
-        }
+        let mut printer = IRPrinter::new();
+        printer.set_indent_level(self.indent_level);
+        let result = printer.emit(&ir);
+        result.to_string()
     }
 
-    fn emit_operator(&mut self, op: u16) {
-        let op_str = match op {
-            k if k == SyntaxKind::PlusToken as u16 => "+",
-            k if k == SyntaxKind::MinusToken as u16 => "-",
-            k if k == SyntaxKind::AsteriskToken as u16 => "*",
-            k if k == SyntaxKind::SlashToken as u16 => "/",
-            k if k == SyntaxKind::PercentToken as u16 => "%",
-            k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
-            k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
-            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>",
-            k if k == SyntaxKind::AmpersandToken as u16 => "&",
-            k if k == SyntaxKind::BarToken as u16 => "|",
-            k if k == SyntaxKind::CaretToken as u16 => "^",
-            k if k == SyntaxKind::TildeToken as u16 => "~",
-            k if k == SyntaxKind::ExclamationToken as u16 => "!",
-            _ => "/* op */",
-        };
-        self.write(op_str);
+    /// Get the enum name without emitting anything
+    pub fn get_enum_name(&self, enum_idx: NodeIndex) -> String {
+        self.transformer.get_enum_name(enum_idx)
     }
 
-    fn write(&mut self, s: &str) {
-        self.output.push_str(s);
-    }
-
-    fn write_i64(&mut self, value: i64) {
-        emit_utils::push_i64(&mut self.output, value);
-    }
-
-    fn write_line(&mut self) {
-        self.output.push('\n');
-    }
-
-    fn write_indent(&mut self) {
-        for _ in 0..self.indent_level {
-            self.output.push_str("    ");
-        }
-    }
-
-    fn increase_indent(&mut self) {
-        self.indent_level += 1;
-    }
-
-    fn decrease_indent(&mut self) {
-        if self.indent_level > 0 {
-            self.indent_level -= 1;
-        }
+    /// Check if enum is a const enum
+    pub fn is_const_enum_by_idx(&self, enum_idx: NodeIndex) -> bool {
+        self.transformer.is_const_enum_by_idx(enum_idx)
     }
 }
 
@@ -380,7 +434,24 @@ mod tests {
     use super::*;
     use crate::parser::ParserState;
 
-    fn emit_enum(source: &str) -> String {
+    fn transform_enum(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        if let Some(root_node) = parser.arena.get(root) {
+            if let Some(source_file) = parser.arena.get_source_file(root_node) {
+                if let Some(&enum_idx) = source_file.statements.nodes.first() {
+                    let mut transformer = EnumES5Transformer::new(&parser.arena);
+                    if let Some(ir) = transformer.transform_enum(enum_idx) {
+                        return IRPrinter::emit_to_string(&ir);
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+
+    fn emit_enum_legacy(source: &str) -> String {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
@@ -397,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_numeric_enum() {
-        let output = emit_enum("enum E { A, B, C }");
+        let output = transform_enum("enum E { A, B, C }");
         assert!(output.contains("var E;"), "Should declare var E");
         assert!(output.contains("(function (E)"), "Should have IIFE");
         assert!(
@@ -416,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_enum_with_initializer() {
-        let output = emit_enum("enum E { A = 10, B, C = 20 }");
+        let output = transform_enum("enum E { A = 10, B, C = 20 }");
         assert!(
             output.contains("E[E[\"A\"] = 10] = \"A\""),
             "A should be 10"
@@ -433,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_string_enum() {
-        let output = emit_enum("enum S { A = \"alpha\", B = \"beta\" }");
+        let output = transform_enum("enum S { A = \"alpha\", B = \"beta\" }");
         assert!(output.contains("var S;"), "Should declare var S");
         assert!(
             output.contains("S[\"A\"] = \"alpha\";"),
@@ -452,11 +523,51 @@ mod tests {
 
     #[test]
     fn test_const_enum_erased() {
-        let output = emit_enum("const enum CE { A = 0 }");
+        let output = transform_enum("const enum CE { A = 0 }");
         assert!(
             output.trim().is_empty(),
             "Const enums should be erased: {}",
             output
         );
+    }
+
+    #[test]
+    fn test_legacy_emitter_produces_same_output() {
+        // Test that the legacy wrapper produces the same output
+        let new_output = transform_enum("enum E { A, B = 2 }");
+        let legacy_output = emit_enum_legacy("enum E { A, B = 2 }");
+        assert_eq!(new_output, legacy_output, "Legacy and new output should match");
+    }
+
+    #[test]
+    fn test_enum_with_binary_expression() {
+        let output = transform_enum("enum E { A = 1 + 2, B }");
+        assert!(output.contains("var E;"), "Should declare var E");
+        assert!(
+            output.contains("E[E[\"A\"] = 1 + 2] = \"A\""),
+            "Should handle binary expression"
+        );
+        assert!(
+            output.contains("E[E[\"B\"] = 3] = \"B\""),
+            "Should auto-increment after computed value"
+        );
+    }
+
+    #[test]
+    fn test_enum_with_unary_expression() {
+        let output = transform_enum("enum E { A = -5 }");
+        assert!(output.contains("var E;"), "Should declare var E");
+        assert!(
+            output.contains("E[E[\"A\"] = -5] = \"A\""),
+            "Should handle unary expression"
+        );
+    }
+
+    #[test]
+    fn test_enum_with_property_access() {
+        let output = transform_enum("enum E { A = E.B }");
+        assert!(output.contains("var E;"), "Should declare var E");
+        // Property access should be preserved
+        assert!(output.contains("E.B"), "Should preserve property access");
     }
 }
