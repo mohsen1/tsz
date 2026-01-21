@@ -63,3 +63,6 @@ Dockerfile.*
 
 
 .claude/
+# Runaway process daemon files
+.runaway-daemon.pid
+.runaway-daemon.log
