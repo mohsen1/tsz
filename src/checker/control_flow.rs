@@ -557,15 +557,14 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &mut FxHashMap<FlowNodeId, bool>,
     ) -> bool {
         // Helper: Add a node to the worklist if not already present
-        let mut add_to_worklist =
-            |node: FlowNodeId,
-             worklist: &mut Vec<FlowNodeId>,
-             in_worklist: &mut FxHashSet<FlowNodeId>| {
-                if !in_worklist.contains(&node) {
-                    worklist.push(node);
-                    in_worklist.insert(node);
-                }
-            };
+        let add_to_worklist = |node: FlowNodeId,
+                               worklist: &mut Vec<FlowNodeId>,
+                               in_worklist: &mut FxHashSet<FlowNodeId>| {
+            if !in_worklist.contains(&node) {
+                worklist.push(node);
+                in_worklist.insert(node);
+            }
+        };
 
         // Result cache: flow_id -> is_assigned
         // We use a local cache that we'll merge into the provided cache

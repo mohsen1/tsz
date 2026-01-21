@@ -1,8 +1,6 @@
 //! Tests for index signature matching in subtype checking.
 
 use super::*;
-use std::sync::Arc;
-
 // =============================================================================
 // Index Signature Subtyping Tests
 // =============================================================================

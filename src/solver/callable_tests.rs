@@ -1,8 +1,6 @@
 //! Tests for callable type (overloaded signatures) subtype checking.
 
 use super::*;
-use std::sync::Arc;
-
 // =============================================================================
 // Callable Subtype Tests
 // =============================================================================

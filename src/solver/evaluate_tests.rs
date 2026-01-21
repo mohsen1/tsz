@@ -21062,7 +21062,7 @@ fn test_nested_distributive_two_levels() {
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
     let lit_matched = interner.literal_string("matched");
-    let lit_unmatched = interner.literal_string("unmatched");
+    let _lit_unmatched = interner.literal_string("unmatched");
 
     // Input: "a" | "b" | number
     let union_input = interner.union(vec![lit_a, lit_b, TypeId::NUMBER]);
@@ -21100,7 +21100,7 @@ fn test_nested_distributive_inner_also_distributes() {
     let union_input = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     let string_array = interner.array(TypeId::STRING);
-    let number_array = interner.array(TypeId::NUMBER);
+    let _number_array = interner.array(TypeId::NUMBER);
 
     // Distributive: string -> string[], number -> number[]
     let cond = ConditionalType {
@@ -23921,7 +23921,7 @@ fn test_exclude_basic_union() {
     let interner = TypeInterner::new();
 
     // Build: string | number | boolean
-    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    let _union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
 
     // Exclude pattern: T extends string ? never : T
     let t_name = interner.intern_string("T");
@@ -23958,7 +23958,7 @@ fn test_exclude_removes_matching_type() {
 
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
-    let lit_c = interner.literal_string("c");
+    let _lit_c = interner.literal_string("c");
 
     // Test individual conditional: "a" extends "a" ? never : "a"
     let cond_a = ConditionalType {
@@ -33414,7 +33414,7 @@ fn test_omit_basic() {
     let lit_c = interner.literal_string("c");
 
     // keyof T = "a" | "b" | "c"
-    let all_keys = interner.union(vec![lit_a, lit_b, lit_c]);
+    let _all_keys = interner.union(vec![lit_a, lit_b, lit_c]);
 
     // Exclude<keyof T, K> = Exclude<"a" | "b" | "c", "c"> = "a" | "b"
     // For each key, if it extends "c", return never, else return the key
