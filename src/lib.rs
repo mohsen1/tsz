@@ -49,15 +49,15 @@ mod checker_state_tests;
 pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 
 // Emitter - Emitter using NodeArena (Phase 0.1)
+pub mod emitter;
 #[cfg(test)]
 mod emitter_edge_case_tests;
 #[cfg(test)]
 mod emitter_parity_tests;
 #[cfg(test)]
-mod emitter_transform_integration_tests;
-pub mod emitter;
-#[cfg(test)]
 mod emitter_tests;
+#[cfg(test)]
+mod emitter_transform_integration_tests;
 #[cfg(test)]
 mod transform_api_tests;
 
@@ -167,8 +167,10 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 // Parser WASM Interface (High-Performance Parser)
 // =============================================================================
 
+use crate::binder::BinderState;
 use crate::checker::context::LibContext;
 use crate::emit_context::EmitContext;
+use crate::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 use crate::lib_loader::LibFile;
 use crate::lowering_pass::LoweringPass;
 use crate::lsp::diagnostics::convert_diagnostic;
@@ -179,10 +181,8 @@ use crate::lsp::{
     GoToDefinition, HoverProvider, ImportCandidate, ImportCandidateKind, RenameProvider,
     SemanticTokensProvider, SignatureHelpProvider,
 };
-use crate::solver::TypeInterner;
-use crate::binder::BinderState;
-use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget, Printer};
 use crate::parser::ParserState;
+use crate::solver::TypeInterner;
 use crate::transform_context::TransformContext;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -2507,7 +2507,8 @@ pub fn is_word_character(ch: u32) -> bool {
 // Docker environment check - compile-time error if tests run outside Docker
 // The build.rs sets `in_docker` cfg when running inside Docker
 #[cfg(all(test, not(in_docker)))]
-compile_error!(r#"
+compile_error!(
+    r#"
 
 ╔════════════════════════════════════════════════════════════╗
 ║  ❌ ERROR: Tests must be run inside Docker!                ║
@@ -2521,7 +2522,8 @@ Examples:
   ./scripts/test.sh test_name          # Run specific test
   ./scripts/test.sh --bench            # Run benchmarks
 
-"#);
+"#
+);
 
 // ASI Conformance tests for verifying TS1005/TS1109 patterns
 #[cfg(test)]

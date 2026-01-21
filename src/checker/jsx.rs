@@ -9,8 +9,8 @@
 //! - Handling JSX namespace configuration
 
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 
 /// JSX intrinsic element types that map to HTML/DOM elements

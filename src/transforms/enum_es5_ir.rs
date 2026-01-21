@@ -35,8 +35,8 @@
 //! // usages are inlined
 //! ```
 
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
@@ -63,7 +63,11 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
 }
 
 /// Transform enum members to IR
-fn transform_enum_members(arena: &NodeArena, members: &NodeList, _enum_name: &str) -> Vec<EnumMember> {
+fn transform_enum_members(
+    arena: &NodeArena,
+    members: &NodeList,
+    _enum_name: &str,
+) -> Vec<EnumMember> {
     let mut result = Vec::new();
     let mut last_value: Option<i64> = None;
 
@@ -134,7 +138,9 @@ fn extract_enum_value(arena: &NodeArena, idx: NodeIndex) -> EnumMemberValue {
         }
         k if k == SyntaxKind::Identifier as u16 => {
             // Reference to another enum member - treat as computed
-            EnumMemberValue::Computed(Box::new(IRNode::id(get_identifier_text(arena, idx).unwrap_or_default())))
+            EnumMemberValue::Computed(Box::new(IRNode::id(
+                get_identifier_text(arena, idx).unwrap_or_default(),
+            )))
         }
         k if k == syntax_kind_ext::BINARY_EXPRESSION => {
             // Complex expression - treat as computed

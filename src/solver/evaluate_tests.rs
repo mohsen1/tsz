@@ -20134,7 +20134,10 @@ fn test_module_augmentation_namespace_merge() {
             let shape = interner.object_shape(shape_id);
             let has_version = shape.properties.iter().any(|p| p.name == version_prop);
             let has_utils = shape.properties.iter().any(|p| p.name == utils_prop);
-            assert!(has_version && has_utils, "merged namespace should include both props");
+            assert!(
+                has_version && has_utils,
+                "merged namespace should include both props"
+            );
         }
         other => panic!("unexpected merged namespace representation: {:?}", other),
     }

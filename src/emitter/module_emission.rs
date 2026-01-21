@@ -1,7 +1,7 @@
 use super::is_valid_identifier_name;
 use super::{ModuleKind, Printer};
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::Node;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transform_context::IdentifierId;
@@ -54,11 +54,7 @@ impl<'a> Printer<'a> {
         });
     }
 
-    pub(super) fn emit_commonjs_default_export_expr_inner(
-        &mut self,
-        node: &Node,
-        idx: NodeIndex,
-    ) {
+    pub(super) fn emit_commonjs_default_export_expr_inner(&mut self, node: &Node, idx: NodeIndex) {
         match node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_expression(node, idx);

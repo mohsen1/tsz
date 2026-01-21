@@ -4,11 +4,11 @@
 //! references to the symbol at the cursor position, distinguishing
 //! between reads (references) and writes (assignments).
 
+use crate::binder::BinderState;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::references::FindReferences;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
-use crate::binder::BinderState;
 
 /// The kind of highlight - distinguishes between reads and writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -251,8 +251,8 @@ impl<'a> DocumentHighlightProvider<'a> {
 #[cfg(test)]
 mod highlighting_tests {
     use super::*;
-    use crate::lsp::position::LineMap;
     use crate::binder::BinderState;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
 
     #[test]

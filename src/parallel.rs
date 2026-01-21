@@ -26,11 +26,11 @@
 //! // results is Vec<ParseResult> with parsed ASTs
 //! ```
 
+use crate::binder::BinderState;
 use crate::binder::{Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
 use crate::lib_loader;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
-use crate::binder::BinderState;
 use crate::parser::{ParseDiagnostic, ParserState};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -805,10 +805,10 @@ pub fn compile_files(files: Vec<(String, String)>) -> MergedProgram {
 // Parallel Type Checking
 // =============================================================================
 
+use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeId;
-use crate::checker::state::CheckerState;
 
 /// Result of type checking a single function body
 #[derive(Debug)]

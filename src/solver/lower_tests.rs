@@ -1,8 +1,8 @@
 use super::*;
-use crate::parser::NodeIndex;
 use crate::parser::NodeArena;
-use crate::parser::syntax_kind_ext;
+use crate::parser::NodeIndex;
 use crate::parser::ParserState;
+use crate::parser::syntax_kind_ext;
 
 #[test]
 fn test_intrinsic_type_ids() {
@@ -836,10 +836,7 @@ fn parse_mapped_type(source: &str) -> (NodeArena, crate::parser::base::NodeIndex
 }
 
 /// Helper to parse a type alias and return the type reference node index for a name.
-fn parse_type_reference(
-    source: &str,
-    name: &str,
-) -> (NodeArena, crate::parser::base::NodeIndex) {
+fn parse_type_reference(source: &str, name: &str) -> (NodeArena, crate::parser::base::NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
     assert!(

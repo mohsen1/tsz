@@ -11,12 +11,12 @@
 //!
 //! Each token is encoded relative to the previous token for efficiency.
 
+use crate::binder::BinderState;
 use crate::binder::{Symbol, symbol_flags};
 use crate::lsp::position::LineMap;
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::binder::BinderState;
 
 /// LSP Semantic Token Types (mapped to indices 0-N).
 /// These match the standard LSP semantic token types.

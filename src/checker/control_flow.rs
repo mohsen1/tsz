@@ -18,6 +18,7 @@
 //! }
 //! ```
 
+use crate::binder::BinderState;
 use crate::binder::{FlowNode, FlowNodeArena, FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use crate::interner::Atom;
 use crate::parser::node::{BinaryExprData, CallExprData, NodeArena};
@@ -27,7 +28,6 @@ use crate::solver::{
     LiteralValue, NarrowingContext, ParamInfo, TypeId, TypeInterner, TypeKey, TypePredicate,
     TypePredicateTarget,
 };
-use crate::binder::BinderState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -133,11 +133,7 @@ struct PredicateSignature {
 
 impl<'a> FlowAnalyzer<'a> {
     /// Create a new FlowAnalyzer.
-    pub fn new(
-        arena: &'a NodeArena,
-        binder: &'a BinderState,
-        interner: &'a TypeInterner,
-    ) -> Self {
+    pub fn new(arena: &'a NodeArena, binder: &'a BinderState, interner: &'a TypeInterner) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
         Self {
             arena,
@@ -561,14 +557,15 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &mut FxHashMap<FlowNodeId, bool>,
     ) -> bool {
         // Helper: Add a node to the worklist if not already present
-        let mut add_to_worklist = |node: FlowNodeId,
-                                   worklist: &mut Vec<FlowNodeId>,
-                                   in_worklist: &mut FxHashSet<FlowNodeId>| {
-            if !in_worklist.contains(&node) {
-                worklist.push(node);
-                in_worklist.insert(node);
-            }
-        };
+        let mut add_to_worklist =
+            |node: FlowNodeId,
+             worklist: &mut Vec<FlowNodeId>,
+             in_worklist: &mut FxHashSet<FlowNodeId>| {
+                if !in_worklist.contains(&node) {
+                    worklist.push(node);
+                    in_worklist.insert(node);
+                }
+            };
 
         // Result cache: flow_id -> is_assigned
         // We use a local cache that we'll merge into the provided cache
@@ -3382,8 +3379,8 @@ pub fn statement_falls_through(_arena: &NodeArena, _stmt_idx: NodeIndex) -> bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solver::PropertyInfo;
     use crate::parser::ParserState;
+    use crate::solver::PropertyInfo;
 
     fn get_if_condition(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
         let root_node = arena.get(root).expect("root node");

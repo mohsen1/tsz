@@ -1,11 +1,11 @@
 use super::FlowAnalyzer;
-use crate::checker::flow_graph_builder::FlowGraphBuilder;
-use crate::parser::NodeIndex;
-use crate::parser::node::NodeArena;
-use crate::solver::{PropertyInfo, TypeId, TypeInterner};
 use crate::binder::BinderState;
 use crate::checker::CheckerState;
+use crate::checker::flow_graph_builder::FlowGraphBuilder;
+use crate::parser::NodeIndex;
 use crate::parser::ParserState;
+use crate::parser::node::NodeArena;
+use crate::solver::{PropertyInfo, TypeId, TypeInterner};
 
 fn get_switch_statement(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
     let root_node = arena.get(root).expect("root node");
@@ -78,11 +78,7 @@ fn extract_expression_from_statement(arena: &NodeArena, stmt_idx: NodeIndex) -> 
     expr_stmt.expression
 }
 
-fn get_block_expression(
-    arena: &NodeArena,
-    block_idx: NodeIndex,
-    stmt_index: usize,
-) -> NodeIndex {
+fn get_block_expression(arena: &NodeArena, block_idx: NodeIndex, stmt_index: usize) -> NodeIndex {
     let block_node = arena.get(block_idx).expect("block node");
     let block = arena.get_block(block_node).expect("block");
     let stmt_idx = *block
@@ -2574,9 +2570,9 @@ class Foo {
 /// This verifies the definite assignment checking is working.
 #[test]
 fn test_ts2454_variable_used_before_assigned() {
-    use crate::interner::Atom;
     use crate::binder::BinderState;
     use crate::checker::CheckerState;
+    use crate::interner::Atom;
     use crate::parser::ParserState;
 
     let source = r#"

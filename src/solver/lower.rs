@@ -8,8 +8,8 @@
 use crate::interner::Atom;
 use crate::parser::NodeList;
 use crate::parser::base::NodeIndex;
+use crate::parser::node::{IndexSignatureData, NodeArena, SignatureData, TypeAliasData};
 use crate::parser::syntax_kind_ext;
-use crate::parser::node::{IndexSignatureData, SignatureData, NodeArena, TypeAliasData};
 use crate::scanner::SyntaxKind;
 use crate::solver::subtype::{SubtypeChecker, TypeResolver};
 use crate::solver::types::*;

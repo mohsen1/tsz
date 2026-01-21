@@ -4,11 +4,7 @@ use std::mem::size_of;
 #[test]
 fn test_node_size() {
     // This is the critical test - Node MUST be 16 bytes
-    assert_eq!(
-        size_of::<Node>(),
-        16,
-        "Node must be exactly 16 bytes"
-    );
+    assert_eq!(size_of::<Node>(), 16, "Node must be exactly 16 bytes");
 
     // 4 nodes per cache line
     let nodes_per_cache_line = 64 / size_of::<Node>();

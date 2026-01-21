@@ -696,7 +696,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let is_union = matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
+                    let is_union =
+                        matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
                     if is_union && !cond.is_distributive {
                         // For unions in non-distributive conditionals, use filter that adds undefined
                         inferred = self.filter_inferred_by_constraint_or_undefined(
@@ -948,7 +949,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let is_union = matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
+                    let is_union =
+                        matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
                     if prop_optional {
                         let Some(filtered) =
                             self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
@@ -1074,7 +1076,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 if let Some(constraint) = info.constraint {
                     let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    let is_union = matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
+                    let is_union =
+                        matches!(self.interner.lookup(inferred), Some(TypeKey::Union(_)));
                     if is_union || cond.is_distributive {
                         // For unions or distributive conditionals, use filter that adds undefined
                         inferred = self.filter_inferred_by_constraint_or_undefined(
@@ -3565,19 +3568,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                             return false;
                                         }
                                         let source_sig = &source_shape.call_signatures[0];
-                                        if !match_params(
-                                            &source_sig.params,
-                                            &mut member_bindings,
-                                        ) {
+                                        if !match_params(&source_sig.params, &mut member_bindings) {
                                             return false;
                                         }
                                     }
                                     Some(TypeKey::Function(source_fn_id)) => {
                                         let source_fn = self.interner.function_shape(source_fn_id);
-                                        if !match_params(
-                                            &source_fn.params,
-                                            &mut member_bindings,
-                                        ) {
+                                        if !match_params(&source_fn.params, &mut member_bindings) {
                                             return false;
                                         }
                                     }
@@ -4707,91 +4704,103 @@ impl<'a> InferSubstitutor<'a> {
             TypeKey::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 let mut changed = false;
-                
-                let call_signatures: Vec<CallSignature> = shape.call_signatures.iter().map(|sig| {
-                    let mut new_params = Vec::with_capacity(sig.params.len());
-                    for param in sig.params.iter() {
-                        let param_type = self.substitute(param.type_id);
-                        if param_type != param.type_id {
+
+                let call_signatures: Vec<CallSignature> = shape
+                    .call_signatures
+                    .iter()
+                    .map(|sig| {
+                        let mut new_params = Vec::with_capacity(sig.params.len());
+                        for param in sig.params.iter() {
+                            let param_type = self.substitute(param.type_id);
+                            if param_type != param.type_id {
+                                changed = true;
+                            }
+                            new_params.push(ParamInfo {
+                                name: param.name,
+                                type_id: param_type,
+                                optional: param.optional,
+                                rest: param.rest,
+                            });
+                        }
+                        let return_type = self.substitute(sig.return_type);
+                        if return_type != sig.return_type {
                             changed = true;
                         }
-                        new_params.push(ParamInfo {
-                            name: param.name,
-                            type_id: param_type,
-                            optional: param.optional,
-                            rest: param.rest,
+                        let this_type = sig.this_type.map(|t| {
+                            let substituted = self.substitute(t);
+                            if substituted != t {
+                                changed = true;
+                            }
+                            substituted
                         });
-                    }
-                    let return_type = self.substitute(sig.return_type);
-                    if return_type != sig.return_type {
-                        changed = true;
-                    }
-                    let this_type = sig.this_type.map(|t| {
-                        let substituted = self.substitute(t);
-                        if substituted != t {
+                        CallSignature {
+                            params: new_params,
+                            this_type,
+                            return_type,
+                            type_params: sig.type_params.clone(),
+                            type_predicate: sig.type_predicate.clone(),
+                        }
+                    })
+                    .collect();
+
+                let construct_signatures: Vec<CallSignature> = shape
+                    .construct_signatures
+                    .iter()
+                    .map(|sig| {
+                        let mut new_params = Vec::with_capacity(sig.params.len());
+                        for param in sig.params.iter() {
+                            let param_type = self.substitute(param.type_id);
+                            if param_type != param.type_id {
+                                changed = true;
+                            }
+                            new_params.push(ParamInfo {
+                                name: param.name,
+                                type_id: param_type,
+                                optional: param.optional,
+                                rest: param.rest,
+                            });
+                        }
+                        let return_type = self.substitute(sig.return_type);
+                        if return_type != sig.return_type {
                             changed = true;
                         }
-                        substituted
-                    });
-                    CallSignature {
-                        params: new_params,
-                        this_type,
-                        return_type,
-                        type_params: sig.type_params.clone(),
-                        type_predicate: sig.type_predicate.clone(),
-                    }
-                }).collect();
-                
-                let construct_signatures: Vec<CallSignature> = shape.construct_signatures.iter().map(|sig| {
-                    let mut new_params = Vec::with_capacity(sig.params.len());
-                    for param in sig.params.iter() {
-                        let param_type = self.substitute(param.type_id);
-                        if param_type != param.type_id {
-                            changed = true;
-                        }
-                        new_params.push(ParamInfo {
-                            name: param.name,
-                            type_id: param_type,
-                            optional: param.optional,
-                            rest: param.rest,
+                        let this_type = sig.this_type.map(|t| {
+                            let substituted = self.substitute(t);
+                            if substituted != t {
+                                changed = true;
+                            }
+                            substituted
                         });
-                    }
-                    let return_type = self.substitute(sig.return_type);
-                    if return_type != sig.return_type {
-                        changed = true;
-                    }
-                    let this_type = sig.this_type.map(|t| {
-                        let substituted = self.substitute(t);
-                        if substituted != t {
+                        CallSignature {
+                            params: new_params,
+                            this_type,
+                            return_type,
+                            type_params: sig.type_params.clone(),
+                            type_predicate: sig.type_predicate.clone(),
+                        }
+                    })
+                    .collect();
+
+                let properties: Vec<PropertyInfo> = shape
+                    .properties
+                    .iter()
+                    .map(|prop| {
+                        let prop_type = self.substitute(prop.type_id);
+                        let write_type = self.substitute(prop.write_type);
+                        if prop_type != prop.type_id || write_type != prop.write_type {
                             changed = true;
                         }
-                        substituted
-                    });
-                    CallSignature {
-                        params: new_params,
-                        this_type,
-                        return_type,
-                        type_params: sig.type_params.clone(),
-                        type_predicate: sig.type_predicate.clone(),
-                    }
-                }).collect();
-                
-                let properties: Vec<PropertyInfo> = shape.properties.iter().map(|prop| {
-                    let prop_type = self.substitute(prop.type_id);
-                    let write_type = self.substitute(prop.write_type);
-                    if prop_type != prop.type_id || write_type != prop.write_type {
-                        changed = true;
-                    }
-                    PropertyInfo {
-                        name: prop.name,
-                        type_id: prop_type,
-                        write_type,
-                        optional: prop.optional,
-                        readonly: prop.readonly,
-                        is_method: prop.is_method,
-                    }
-                }).collect();
-                
+                        PropertyInfo {
+                            name: prop.name,
+                            type_id: prop_type,
+                            write_type,
+                            optional: prop.optional,
+                            readonly: prop.readonly,
+                            is_method: prop.is_method,
+                        }
+                    })
+                    .collect();
+
                 let string_index = shape.string_index.as_ref().map(|idx| {
                     let key_type = self.substitute(idx.key_type);
                     let value_type = self.substitute(idx.value_type);
@@ -4804,7 +4813,7 @@ impl<'a> InferSubstitutor<'a> {
                         readonly: idx.readonly,
                     }
                 });
-                
+
                 let number_index = shape.number_index.as_ref().map(|idx| {
                     let key_type = self.substitute(idx.key_type);
                     let value_type = self.substitute(idx.value_type);
@@ -4817,7 +4826,7 @@ impl<'a> InferSubstitutor<'a> {
                         readonly: idx.readonly,
                     }
                 });
-                
+
                 if changed {
                     self.interner.callable(CallableShape {
                         call_signatures,

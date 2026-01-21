@@ -30,8 +30,8 @@
 //! ```
 
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
 

@@ -13,17 +13,18 @@
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
 use crate::parser::{
-    NodeIndex, NodeList, node_flags, syntax_kind_ext,
+    NodeIndex, NodeList,
     node::{
         AccessExprData, BinaryExprData, BlockData, CallExprData, CaseClauseData, CatchClauseData,
         ClassData, ConditionalExprData, EnumData, EnumMemberData, ExportAssignmentData,
         ExportDeclData, ExprStatementData, FunctionData, IdentifierData, IfStatementData,
         ImportClauseData, ImportDeclData, LabeledData, LiteralData, LiteralExprData, LoopData,
-        NamedImportsData, ParameterData, ParenthesizedData, QualifiedNameData, ReturnData,
-        SourceFileData, SpecifierData, SwitchData, TaggedTemplateData, TemplateExprData,
-        TemplateSpanData, NodeArena, TryData, TypeAssertionData, UnaryExprData,
+        NamedImportsData, NodeArena, ParameterData, ParenthesizedData, QualifiedNameData,
+        ReturnData, SourceFileData, SpecifierData, SwitchData, TaggedTemplateData,
+        TemplateExprData, TemplateSpanData, TryData, TypeAssertionData, UnaryExprData,
         UnaryExprDataEx, VariableData, VariableDeclarationData,
     },
+    node_flags, syntax_kind_ext,
 };
 use crate::scanner::SyntaxKind;
 use crate::scanner_impl::{ScannerState, TokenFlags};
@@ -2819,9 +2820,7 @@ impl ParserState {
                 diagnostic_codes::EXPRESSION_EXPECTED,
             );
             self.next_token();
-            return self
-                .arena
-                .add_token(SyntaxKind::Unknown as u16, start, end);
+            return self.arena.add_token(SyntaxKind::Unknown as u16, start, end);
         }
 
         self.parse_heritage_type_reference()

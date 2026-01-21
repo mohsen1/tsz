@@ -38,9 +38,7 @@
 //! console.log(result);
 //! ```
 
-use crate::parallel::{
-    BindStats, CheckStats, ParallelStats, compile_files,
-};
+use crate::parallel::{BindStats, CheckStats, ParallelStats, compile_files};
 use crate::solver::TypeInterner;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;

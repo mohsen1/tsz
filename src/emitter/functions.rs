@@ -1,7 +1,7 @@
 use super::{ParamTransformPlan, Printer};
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::Node;
+use crate::parser::syntax_kind_ext;
 use crate::transforms::arrow_es5::contains_this_reference;
 
 impl<'a> Printer<'a> {

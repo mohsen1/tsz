@@ -821,7 +821,11 @@ impl<'a> IRPrinter<'a> {
             } => {
                 self.emit_namespace_iife(&name_parts, 0, body, *is_exported, *attach_to_exports);
             }
-            IRNode::NamespaceExport { namespace, name, value } => {
+            IRNode::NamespaceExport {
+                namespace,
+                name,
+                value,
+            } => {
                 self.write(namespace);
                 self.write(".");
                 self.write(name);

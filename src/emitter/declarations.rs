@@ -1,6 +1,6 @@
 use super::Printer;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::Node;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::class_es5::ClassES5Emitter;

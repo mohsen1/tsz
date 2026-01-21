@@ -37,11 +37,7 @@ pub fn find_node_at_offset(arena: &NodeArena, offset: u32) -> NodeIndex {
 
 /// Find the nearest node at or before an offset, skipping whitespace and
 /// optional chaining/member access punctuation when no node is found.
-pub fn find_node_at_or_before_offset(
-    arena: &NodeArena,
-    offset: u32,
-    source: &str,
-) -> NodeIndex {
+pub fn find_node_at_or_before_offset(arena: &NodeArena, offset: u32, source: &str) -> NodeIndex {
     let node = find_node_at_offset(arena, offset);
     if node.is_some() {
         return node;

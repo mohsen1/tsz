@@ -257,41 +257,26 @@ fn test_streaming_printer_newlines() {
 #[test]
 fn test_print_options_es5() {
     let opts = PrintOptions::es5();
-    assert!(matches!(
-        opts.target,
-        crate::emitter::ScriptTarget::ES5
-    ));
+    assert!(matches!(opts.target, crate::emitter::ScriptTarget::ES5));
 }
 
 #[test]
 fn test_print_options_es6() {
     let opts = PrintOptions::es6();
-    assert!(matches!(
-        opts.target,
-        crate::emitter::ScriptTarget::ES2015
-    ));
+    assert!(matches!(opts.target, crate::emitter::ScriptTarget::ES2015));
 }
 
 #[test]
 fn test_print_options_commonjs() {
     let opts = PrintOptions::commonjs();
-    assert!(matches!(
-        opts.module,
-        crate::emitter::ModuleKind::CommonJS
-    ));
+    assert!(matches!(opts.module, crate::emitter::ModuleKind::CommonJS));
 }
 
 #[test]
 fn test_print_options_es5_commonjs() {
     let opts = PrintOptions::es5_commonjs();
-    assert!(matches!(
-        opts.target,
-        crate::emitter::ScriptTarget::ES5
-    ));
-    assert!(matches!(
-        opts.module,
-        crate::emitter::ModuleKind::CommonJS
-    ));
+    assert!(matches!(opts.target, crate::emitter::ScriptTarget::ES5));
+    assert!(matches!(opts.module, crate::emitter::ModuleKind::CommonJS));
 }
 
 // =============================================================================

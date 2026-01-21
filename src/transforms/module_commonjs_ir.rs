@@ -21,8 +21,8 @@
 //! ```
 
 use crate::parser::NodeIndex;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
 
@@ -49,7 +49,8 @@ impl<'a> CommonJsTransformContext<'a> {
         result.push(IRNode::EsesModuleMarker);
 
         // Collect export names for initialization
-        let exports = crate::transforms::module_commonjs::collect_export_names(self.arena, statements);
+        let exports =
+            crate::transforms::module_commonjs::collect_export_names(self.arena, statements);
 
         // Initialize exports
         if !exports.is_empty() {
@@ -75,12 +76,8 @@ impl<'a> CommonJsTransformContext<'a> {
         let stmt_node = self.arena.get(stmt_idx)?;
 
         match stmt_node.kind {
-            k if k == syntax_kind_ext::IMPORT_DECLARATION => {
-                self.transform_import(stmt_idx)
-            }
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                self.transform_export(stmt_idx)
-            }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => self.transform_import(stmt_idx),
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => self.transform_export(stmt_idx),
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.transform_variable_statement(stmt_idx)
             }
@@ -90,9 +87,7 @@ impl<'a> CommonJsTransformContext<'a> {
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 self.transform_class_statement(stmt_idx)
             }
-            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                self.transform_enum_statement(stmt_idx)
-            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => self.transform_enum_statement(stmt_idx),
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.transform_namespace_statement(stmt_idx)
             }
@@ -166,16 +161,14 @@ impl<'a> CommonJsTransformContext<'a> {
                                     if spec.is_type_only {
                                         continue;
                                     }
-                                    let local_name =
-                                        get_identifier_text(self.arena, spec.name)
-                                            .unwrap_or_default();
-                                    let import_name =
-                                        if !spec.property_name.is_none() {
-                                            get_identifier_text(self.arena, spec.property_name)
-                                                .unwrap_or(local_name.clone())
-                                        } else {
-                                            local_name.clone()
-                                        };
+                                    let local_name = get_identifier_text(self.arena, spec.name)
+                                        .unwrap_or_default();
+                                    let import_name = if !spec.property_name.is_none() {
+                                        get_identifier_text(self.arena, spec.property_name)
+                                            .unwrap_or(local_name.clone())
+                                    } else {
+                                        local_name.clone()
+                                    };
                                     statements.push(IRNode::NamedImport {
                                         var_name: local_name,
                                         module_var: var_name.clone(),
@@ -224,7 +217,10 @@ impl<'a> CommonJsTransformContext<'a> {
     }
 
     /// Transform a re-export (export { x } from "./module")
-    fn transform_re_export(&mut self, export_data: &crate::parser::node::ExportDeclData) -> Option<IRNode> {
+    fn transform_re_export(
+        &mut self,
+        export_data: &crate::parser::node::ExportDeclData,
+    ) -> Option<IRNode> {
         let module_spec = get_string_literal_text(self.arena, export_data.module_specifier)?;
         let module_var = sanitize_module_name(&module_spec);
 
@@ -251,8 +247,8 @@ impl<'a> CommonJsTransformContext<'a> {
                         if spec.is_type_only {
                             continue;
                         }
-                        let export_name = get_identifier_text(self.arena, spec.name)
-                            .unwrap_or_default();
+                        let export_name =
+                            get_identifier_text(self.arena, spec.name).unwrap_or_default();
                         let import_name = if !spec.property_name.is_none() {
                             get_identifier_text(self.arena, spec.property_name)
                                 .unwrap_or(export_name.clone())
@@ -425,11 +421,7 @@ fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> 
     }
 }
 
-fn has_modifier(
-    arena: &NodeArena,
-    modifiers: &Option<crate::parser::NodeList>,
-    kind: u16,
-) -> bool {
+fn has_modifier(arena: &NodeArena, modifiers: &Option<crate::parser::NodeList>, kind: u16) -> bool {
     if let Some(mods) = modifiers {
         for &mod_idx in &mods.nodes {
             if let Some(mod_node) = arena.get(mod_idx) {

@@ -28,10 +28,10 @@
 //! ```
 
 use crate::emit_context::EmitContext;
+use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions, ScriptTarget};
 use crate::lowering_pass::LoweringPass;
 use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
-use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions, ScriptTarget};
 use crate::transform_context::TransformContext;
 use std::io::{self, Write};
 
@@ -279,11 +279,7 @@ impl<'a> Printer<'a> {
 ///
 /// This runs the lowering pass to compute transforms, then prints the result.
 /// Use this when you want ES5 or CommonJS output with proper transforms.
-pub fn lower_and_print(
-    arena: &NodeArena,
-    root: NodeIndex,
-    options: PrintOptions,
-) -> PrintResult {
+pub fn lower_and_print(arena: &NodeArena, root: NodeIndex, options: PrintOptions) -> PrintResult {
     // Create emit context for lowering
     let emit_ctx = EmitContext::with_options(options.to_printer_options());
 

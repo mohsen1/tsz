@@ -1,6 +1,6 @@
 use crate::emit_context::EmitContext;
+use crate::emitter::{Printer, PrinterOptions, ScriptTarget};
 use crate::lowering_pass::LoweringPass;
-use crate::emitter::{PrinterOptions, ScriptTarget, Printer};
 use crate::parser::ParserState;
 use crate::transforms::class_es5::ClassES5Emitter;
 

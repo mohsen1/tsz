@@ -53,8 +53,8 @@
 //! var obj = Object.assign(Object.assign({}, base), { x: 1 });
 //! ```
 
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;

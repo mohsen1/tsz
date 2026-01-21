@@ -35,8 +35,8 @@
 //! // usages are inlined
 //! ```
 
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::ir::*;
@@ -172,7 +172,9 @@ impl<'a> EnumES5Transformer<'a> {
                 } else {
                     // Numeric/Computed: E[E["A"] = val] = "A";
                     // Try to evaluate the constant expression for auto-increment tracking
-                    if let Some(evaluated) = self.evaluate_constant_expression(member_data.initializer) {
+                    if let Some(evaluated) =
+                        self.evaluate_constant_expression(member_data.initializer)
+                    {
                         self.last_value = Some(evaluated);
                     } else {
                         self.last_value = None; // Can't evaluate, reset auto-increment
@@ -338,7 +340,8 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == SyntaxKind::TildeToken as u16 => "~",
             k if k == SyntaxKind::ExclamationToken as u16 => "!",
             _ => "+",
-        }.to_string()
+        }
+        .to_string()
     }
 
     fn is_const_enum(&self, modifiers: &Option<NodeList>) -> bool {
@@ -374,10 +377,18 @@ impl<'a> EnumES5Transformer<'a> {
                     o if o == SyntaxKind::MinusToken as u16 => left.checked_sub(right),
                     o if o == SyntaxKind::AsteriskToken as u16 => left.checked_mul(right),
                     o if o == SyntaxKind::SlashToken as u16 => {
-                        if right != 0 { Some(left / right) } else { None }
+                        if right != 0 {
+                            Some(left / right)
+                        } else {
+                            None
+                        }
                     }
                     o if o == SyntaxKind::PercentToken as u16 => {
-                        if right != 0 { Some(left % right) } else { None }
+                        if right != 0 {
+                            Some(left % right)
+                        } else {
+                            None
+                        }
                     }
                     o if o == SyntaxKind::LessThanLessThanToken as u16 => {
                         Some(left.wrapping_shl(right as u32))
@@ -605,7 +616,10 @@ mod tests {
         // Test that the legacy wrapper produces the same output
         let new_output = transform_enum("enum E { A, B = 2 }");
         let legacy_output = emit_enum_legacy("enum E { A, B = 2 }");
-        assert_eq!(new_output, legacy_output, "Legacy and new output should match");
+        assert_eq!(
+            new_output, legacy_output,
+            "Legacy and new output should match"
+        );
     }
 
     #[test]

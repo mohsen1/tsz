@@ -1,7 +1,7 @@
-use super::{TemplateParts, Printer};
+use super::{Printer, TemplateParts};
 use crate::parser::NodeIndex;
+use crate::parser::node::{Node, TaggedTemplateData, TemplateExprData};
 use crate::parser::syntax_kind_ext;
-use crate::parser::node::{TaggedTemplateData, TemplateExprData, Node};
 use crate::scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {

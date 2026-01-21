@@ -11,8 +11,8 @@ use crate::binder::{
 };
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
-use crate::parser::node_flags;
 use crate::parser::node::{Node, NodeArena};
+use crate::parser::node_flags;
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -344,11 +344,7 @@ impl BinderState {
     /// - Falls through to file_locals
     /// - Falls through to lib_binders
     /// - Resolution failures
-    pub fn resolve_identifier(
-        &self,
-        arena: &NodeArena,
-        node_idx: NodeIndex,
-    ) -> Option<SymbolId> {
+    pub fn resolve_identifier(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<SymbolId> {
         let node = arena.get(node_idx)?;
 
         // Get the identifier text
@@ -1919,12 +1915,7 @@ impl BinderState {
         }
     }
 
-    fn collect_import_names(
-        &self,
-        arena: &NodeArena,
-        node: &Node,
-        out: &mut FxHashSet<String>,
-    ) {
+    fn collect_import_names(&self, arena: &NodeArena, node: &Node, out: &mut FxHashSet<String>) {
         if let Some(import) = arena.get_import_decl(node) {
             if let Some(clause_node) = arena.get(import.import_clause) {
                 if let Some(clause) = arena.get_import_clause(clause_node) {
@@ -2484,12 +2475,7 @@ impl BinderState {
 
     // Declaration binding methods
 
-    fn bind_variable_declaration(
-        &mut self,
-        arena: &NodeArena,
-        node: &Node,
-        idx: NodeIndex,
-    ) {
+    fn bind_variable_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(decl) = arena.get_variable_declaration(node) {
             let mut decl_flags = node.flags as u32;
             if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0 {
@@ -2540,12 +2526,7 @@ impl BinderState {
         }
     }
 
-    fn bind_function_declaration(
-        &mut self,
-        arena: &NodeArena,
-        node: &Node,
-        idx: NodeIndex,
-    ) {
+    fn bind_function_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(func) = arena.get_function(node) {
             self.bind_modifiers(arena, &func.modifiers);
             // Function declaration creates a symbol in the current scope
@@ -2845,12 +2826,7 @@ impl BinderState {
         }
     }
 
-    fn bind_interface_declaration(
-        &mut self,
-        arena: &NodeArena,
-        node: &Node,
-        idx: NodeIndex,
-    ) {
+    fn bind_interface_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(iface) = arena.get_interface(node) {
             if let Some(name) = self.get_identifier_name(arena, iface.name) {
                 // Check if exported BEFORE allocating symbol
@@ -2870,12 +2846,7 @@ impl BinderState {
         }
     }
 
-    fn bind_type_alias_declaration(
-        &mut self,
-        arena: &NodeArena,
-        node: &Node,
-        idx: NodeIndex,
-    ) {
+    fn bind_type_alias_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(alias) = arena.get_type_alias(node) {
             if let Some(name) = self.get_identifier_name(arena, alias.name) {
                 // Check if exported BEFORE allocating symbol
@@ -2900,8 +2871,7 @@ impl BinderState {
                     symbol_flags::REGULAR_ENUM
                 };
 
-                let enum_sym_id =
-                    self.declare_symbol(name, enum_flags, idx, is_exported);
+                let enum_sym_id = self.declare_symbol(name, enum_flags, idx, is_exported);
 
                 // Get existing exports (for namespace merging)
                 let mut exports = SymbolTable::new();
@@ -3205,12 +3175,7 @@ impl BinderState {
     }
 
     /// Bind import equals declaration: import x = ns.member or import x = require("...")
-    fn bind_import_equals_declaration(
-        &mut self,
-        arena: &NodeArena,
-        node: &Node,
-        idx: NodeIndex,
-    ) {
+    fn bind_import_equals_declaration(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         if let Some(import) = arena.get_import_decl(node) {
             // import_clause holds the alias name (e.g., 'x' in 'import x = ...')
             if let Some(name) = self.get_identifier_name(arena, import.import_clause) {

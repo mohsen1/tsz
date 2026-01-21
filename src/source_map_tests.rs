@@ -1,10 +1,10 @@
 //! Tests for source_map.rs
 
 use crate::emit_context::EmitContext;
+use crate::emitter::{Printer, PrinterOptions, ScriptTarget};
 use crate::lowering_pass::LoweringPass;
-use crate::source_map::*;
-use crate::emitter::{PrinterOptions, ScriptTarget, Printer};
 use crate::parser::ParserState;
+use crate::source_map::*;
 use serde_json::Value;
 
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use crate::emit_context::EmitContext;
+use crate::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 use crate::lowering_pass::LoweringPass;
-use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget, Printer};
 use crate::parser::ParserState;
 
 fn assert_parity(source: &str, target: ScriptTarget, module: ModuleKind) {
@@ -55,23 +55,6 @@ fn assert_parity(source: &str, target: ScriptTarget, module: ModuleKind) {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class() {
     assert_parity(
         "class Point { constructor(x, y) { this.x = x; this.y = y; } }",
@@ -81,23 +64,6 @@ fn test_parity_es5_class() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_commonjs_export() {
     assert_parity(
@@ -109,23 +75,6 @@ fn test_parity_commonjs_export() {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow() {
     assert_parity(
         "const add = (a, b) => a + b;",
@@ -135,23 +84,6 @@ fn test_parity_es5_arrow() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_async_es5() {
     assert_parity(
@@ -168,23 +100,6 @@ fn test_parity_async_es5() {
 /// 2. Use _super.prototype.method.call(this) for super calls
 /// 3. Include __extends helper for class inheritance
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_async_super_method() {
     let source = "class Derived extends Base { async foo() { return super.method(); } }";
@@ -244,23 +159,6 @@ fn test_parity_es5_class_async_super_method() {
 /// In ES5, class accessors should be downleveled to Object.defineProperty calls.
 /// tsc emits: Object.defineProperty(Foo.prototype, "value", { get: function() {...}, set: function(v) {...}, ... });
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_getter_setter() {
     let source = "class Foo { private _value: number = 0; get value() { return this._value; } set value(v) { this._value = v; } }";
@@ -330,23 +228,6 @@ fn test_parity_es5_class_getter_setter() {
 /// Static accessors should be defined on the class constructor, not the prototype.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_static_getter() {
     let source = "class Foo { private static _instance: Foo; static get instance() { return Foo._instance; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -401,23 +282,6 @@ fn test_parity_es5_class_static_getter() {
 /// In static methods, `this` refers to the class constructor.
 /// The async static method should be wrapped in __awaiter and properly capture `this`.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_static_async_this_capture() {
     let source = "class Foo { static value = 42; static async getValue() { return this.value; } }";
@@ -478,23 +342,6 @@ fn test_parity_es5_class_static_async_this_capture() {
 /// Class expressions should be downleveled similarly to class declarations,
 /// using __extends helper and IIFE pattern.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_extends() {
     let source =
@@ -566,23 +413,6 @@ fn test_parity_es5_class_expression_extends() {
 /// Instance fields should be initialized in constructor after super().
 /// Static fields should be assigned on class constructor after IIFE.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_derived_class_instance_static_fields() {
     let source = r#"
@@ -661,23 +491,6 @@ class Derived extends Base {
 /// __awaiter, __generator, and __asyncGenerator helpers.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_function() {
     let source = "async function* gen() { yield 1; yield await Promise.resolve(2); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -726,23 +539,6 @@ fn test_parity_es5_async_generator_function() {
 /// Parity test for ES5 arrow function with rest parameters.
 /// Rest parameters should be converted to use arguments with slice.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_rest_parameters() {
     let source = "const sum = (...nums) => nums.reduce((a, b) => a + b, 0);";
@@ -800,23 +596,6 @@ fn test_parity_es5_arrow_rest_parameters() {
 /// Parity test for ES5 default export class in CommonJS.
 /// Default exported class should be downleveled and exported via exports.default.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_export_class() {
     let source = "export default class Foo { constructor(x) { this.x = x; } }";
@@ -880,23 +659,6 @@ fn test_parity_es5_default_export_class() {
 /// Async iteration should be downleveled using __asyncValues helper.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_iteration() {
     let source =
         "async function process(items) { for await (const item of items) { console.log(item); } }";
@@ -958,23 +720,6 @@ fn test_parity_es5_async_iteration() {
 /// Parity test for ES5 for-await-of with destructuring.
 /// Tests a more complex for-await-of scenario with object destructuring.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_destructuring() {
     let source = "async function processItems(stream) { for await (const { id, value } of stream) { console.log(id, value); } }";
@@ -1042,23 +787,6 @@ fn test_parity_es5_for_await_of_destructuring() {
 /// Parity test for ES5 for-await-of in class method.
 /// Async iteration inside a class method with typed stream.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_class_method() {
     let source = r#"
@@ -1145,23 +873,6 @@ class StreamProcessor {
 /// Parity test for ES5 for-await-of with error handling.
 /// Async iteration with try/catch/finally for error handling.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_error_handling() {
     let source = r#"
@@ -1250,23 +961,6 @@ async function safeIterate<T>(stream: AsyncIterable<T>): Promise<T[]> {
 /// Async iteration with complex nested destructuring patterns.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_nested_destructuring() {
     let source = r#"
 interface NestedData { outer: { inner: { value: number } }; meta: string }
@@ -1342,23 +1036,6 @@ async function extractValues(stream: AsyncIterable<NestedData>): Promise<number[
 /// Template literals should be downleveled to string concatenation.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal() {
     let source = r#"const greeting = `Hello, ${name}!`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1411,23 +1088,6 @@ fn test_parity_es5_template_literal() {
 /// Computed properties in object literals should be downleveled.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property() {
     let source = r#"const key = "foo"; const obj = { [key]: 42 };"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1478,23 +1138,6 @@ fn test_parity_es5_computed_property() {
 /// Parity test for ES5 shorthand property syntax.
 /// Shorthand properties { x, y } should be expanded to { x: x, y: y }.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_property() {
     let source = "const x = 1; const y = 2; const obj = { x, y };";
@@ -1551,23 +1194,6 @@ fn test_parity_es5_shorthand_property() {
 /// Method shorthand { foo() {} } should be expanded to { foo: function() {} }.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_method_shorthand() {
     let source = "const obj = { greet() { return 'hello'; } };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -1618,23 +1244,6 @@ fn test_parity_es5_method_shorthand() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_definitions() {
     let source = r#"
@@ -1717,23 +1326,6 @@ class MathOps {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_computed() {
     let source = r#"
 const methodName = "process";
@@ -1810,23 +1402,6 @@ class DynamicMethods {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_async() {
     let source = r#"
@@ -1922,23 +1497,6 @@ class AsyncHandler {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_shorthand_method_generator() {
     let source = r#"
@@ -2050,23 +1608,6 @@ class GeneratorContainer<T> {
 /// Default parameters should be downleveled to undefined checks.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_parameters() {
     let source = "function greet(name = 'World') { return 'Hello, ' + name; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2117,23 +1658,6 @@ fn test_parity_es5_default_parameters() {
 /// Parity test for ES5 for...of loop.
 /// for...of should be downleveled to iterator pattern or indexed loop.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_loop() {
     let source = "const arr = [1, 2, 3]; for (const x of arr) { console.log(x); }";
@@ -2186,23 +1710,6 @@ fn test_parity_es5_for_of_loop() {
 /// Array destructuring params should be downleveled to indexed access.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_destructuring_param() {
     let source = "function swap([a, b]) { return [b, a]; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2249,23 +1756,6 @@ fn test_parity_es5_array_destructuring_param() {
 /// Object destructuring params should be downleveled to property access.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_destructuring_param() {
     let source = "function greet({ name, age }) { return name + ' is ' + age; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2311,23 +1801,6 @@ fn test_parity_es5_object_destructuring_param() {
 /// Parity test for ES5 arrow function with expression body.
 /// Arrow with expression body should be converted to function with return.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_expression_body() {
     let source = "const double = (x) => x * 2;";
@@ -2385,23 +1858,6 @@ fn test_parity_es5_arrow_expression_body() {
 /// Derived class constructor should call _super with proper arguments.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_constructor_super() {
     let source = "class Animal { constructor(name) { this.name = name; } } class Dog extends Animal { constructor(name, breed) { super(name); this.breed = breed; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2457,23 +1913,6 @@ fn test_parity_es5_class_constructor_super() {
 /// Class methods should be added to the prototype.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_prototype_method() {
     let source =
         "class Calculator { add(a, b) { return a + b; } multiply(a, b) { return a * b; } }";
@@ -2524,23 +1963,6 @@ fn test_parity_es5_class_prototype_method() {
 /// Parity test for ES5 async arrow function.
 /// Async arrow should be converted to function with __awaiter/__generator.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_arrow() {
     let source =
@@ -2602,23 +2024,6 @@ fn test_parity_es5_async_arrow() {
 /// let/const should be converted to var.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_let_in_for_loop() {
     let source = "for (let i = 0; i < 10; i++) { console.log(i); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2662,23 +2067,6 @@ fn test_parity_es5_let_in_for_loop() {
 /// Parity test for ES5 const declaration.
 /// const should be converted to var.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_declaration() {
     let source = "const PI = 3.14159; const E = 2.71828;";
@@ -2728,23 +2116,6 @@ fn test_parity_es5_const_declaration() {
 /// Parity test for ES5 CommonJS named exports.
 /// Named exports should be assigned to exports object.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_commonjs_named_exports() {
     let source = "const foo = 1; const bar = 2; export { foo, bar };";
@@ -2806,23 +2177,6 @@ fn test_parity_es5_commonjs_named_exports() {
 /// Static properties should be assigned after the class IIFE.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_static_property() {
     let source = "class Config { static version = '1.0.0'; static count = 0; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2881,23 +2235,6 @@ fn test_parity_es5_class_static_property() {
 /// with the abstract keyword removed (only TypeScript type checking uses it).
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class() {
     let source = "abstract class Shape { abstract area(): number; getName() { return 'shape'; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -2955,23 +2292,6 @@ fn test_parity_es5_abstract_class() {
 /// TypeScript namespaces should be downleveled to IIFE with exports.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace() {
     let source = "namespace Utils { export function add(a: number, b: number) { return a + b; } export const PI = 3.14; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3028,23 +2348,6 @@ fn test_parity_es5_namespace() {
 /// TypeScript enums should be downleveled to IIFE with bidirectional mapping.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum() {
     let source = "enum Color { Red, Green, Blue }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3095,23 +2398,6 @@ fn test_parity_es5_enum() {
 /// Parity test for ES5 string enum downlevel.
 /// String enums should be downleveled without reverse mapping.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_string_enum() {
     let source = r#"enum Direction { Up = "UP", Down = "DOWN", Left = "LEFT", Right = "RIGHT" }"#;
@@ -3167,23 +2453,6 @@ fn test_parity_es5_string_enum() {
 /// Type-only imports should be completely removed from output.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_type_only_import_erasure() {
     let source = "import type { Foo } from './foo'; import { bar } from './bar'; bar();";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3228,23 +2497,6 @@ fn test_parity_type_only_import_erasure() {
 /// Parity test for interface erasure.
 /// TypeScript interfaces should be completely removed from output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_interface_erasure() {
     let source = "interface User { name: string; age: number; } const user: User = { name: 'Alice', age: 30 };";
@@ -3291,23 +2543,6 @@ fn test_parity_interface_erasure() {
 /// TypeScript type aliases should be completely removed from output.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_type_alias_erasure() {
     let source = "type StringOrNumber = string | number; const value: StringOrNumber = 42;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3352,23 +2587,6 @@ fn test_parity_type_alias_erasure() {
 /// Parity test for function parameter type erasure.
 /// Function parameter types should be removed from output.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_function_param_type_erasure() {
     let source = "function greet(name: string, age: number): string { return name + age; }";
@@ -3421,23 +2639,6 @@ fn test_parity_function_param_type_erasure() {
 /// Generic type parameters should be removed from output.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_generic_type_erasure() {
     let source = "function identity<T>(value: T): T { return value; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3488,23 +2689,6 @@ fn test_parity_generic_type_erasure() {
 /// Parity test for optional parameter question mark erasure.
 /// The ? marker on optional parameters should be removed.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_optional_param_erasure() {
     let source = "function greet(name?: string) { return name || 'World'; }";
@@ -3557,23 +2741,6 @@ fn test_parity_optional_param_erasure() {
 /// Rest parameters should be converted to arguments slicing.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params() {
     let source = "function sum(...nums: number[]) { return nums.reduce((a, b) => a + b, 0); }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3618,23 +2785,6 @@ fn test_parity_es5_rest_params() {
 /// Parity test for ES5 class static block downlevel.
 /// Static blocks should be converted to static initialization code.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block() {
     let source = r#"class Counter {
@@ -3685,23 +2835,6 @@ fn test_parity_es5_static_block() {
 /// Parity test for ES5 class static block with multiple statements.
 /// Multiple statements in static block should be preserved.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_multi_stmt() {
     let source = r#"class Config {
@@ -3762,23 +2895,6 @@ fn test_parity_es5_static_block_multi_stmt() {
 /// Object spread should be converted to Object.assign or helper.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread() {
     let source = "const merged = { ...obj1, ...obj2, extra: true };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -3815,23 +2931,6 @@ fn test_parity_es5_object_spread() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_typed() {
     let source = r#"
@@ -3915,23 +3014,6 @@ const partial: PartialEmployee = { ...employee, salary: undefined };
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_multiple() {
     let source = r#"
 interface Config {
@@ -4008,23 +3090,6 @@ const combined = { ...a, ...b, ...c, ...d };
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_overrides() {
     let source = r#"
@@ -4107,23 +3172,6 @@ const result = withDefaults(lightTheme, { primary: "navy" });
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_nested_deep() {
     let source = r#"
@@ -4226,23 +3274,6 @@ function deepMerge<T extends object>(a: T, b: Partial<T>): T {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_spread_computed() {
     let source = r#"
@@ -4357,23 +3388,6 @@ class SpreadBuilder<T extends object> {
 /// NOTE: Currently ignored - ES5 array spread downleveling is not fully implemented.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread() {
     let source = "const combined = [...arr1, ...arr2, 42];";
@@ -4413,23 +3427,6 @@ fn test_parity_es5_array_spread() {
 /// Parity test for ES5 private class field downlevel.
 /// Private fields (#name) should be converted to WeakMap-based emulation.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_field() {
     let source = r#"class Person {
@@ -4484,23 +3481,6 @@ fn test_parity_es5_private_field() {
 /// Static private field access should use __classPrivateFieldGet helper.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_static_field_access() {
     let source = r#"class Counter {
     static #count = 0;
@@ -4544,23 +3524,6 @@ fn test_parity_es5_private_static_field_access() {
 /// Parity test for ES5 private method downlevel.
 /// Private methods should be converted to WeakSet-based emulation.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method() {
     let source = r#"class Calculator {
@@ -4617,23 +3580,6 @@ fn test_parity_es5_private_method() {
 /// Private getters should be converted using helper functions.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_getter() {
     let source = r#"class Box {
     #value = 0;
@@ -4680,23 +3626,6 @@ fn test_parity_es5_private_getter() {
 /// Parity test for ES5 private setter downlevel.
 /// Private setters should be converted using helper functions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_setter() {
     let source = r#"class Container {
@@ -4751,23 +3680,6 @@ fn test_parity_es5_private_setter() {
 /// The ?? operator should be converted to ternary checks.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_coalescing() {
     let source = "const result = value ?? 'default';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4801,23 +3713,6 @@ fn test_parity_es5_nullish_coalescing() {
 /// The ?. operator should be converted to conditional checks.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining() {
     let source = "const name = obj?.person?.name;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -4850,23 +3745,6 @@ fn test_parity_es5_optional_chaining() {
 /// Parity test for ES5 generator function type erasure.
 /// Generator function type annotations should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_type_erasure() {
     let source = r#"function* range(start: number, end: number): Generator<number> {
@@ -4908,23 +3786,6 @@ fn test_parity_es5_generator_type_erasure() {
 /// Parity test for ES5 generator method in class downlevel.
 /// Generator methods should be converted to __generator helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_method() {
     let source = r#"class Sequence {
@@ -4971,23 +3832,6 @@ fn test_parity_es5_generator_method() {
 /// Generator yield expressions should have types erased.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_yield_type_erasure() {
     let source = r#"function* gen(): Generator<string, void, unknown> {
     const result: string = yield "hello";
@@ -5029,23 +3873,6 @@ fn test_parity_es5_generator_yield_type_erasure() {
 /// Parity test for ES5 async generator function type erasure.
 /// Async generator type annotations should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_type_erasure() {
     let source = r#"async function* fetchPages(urls: string[]): AsyncGenerator<string> {
@@ -5089,23 +3916,6 @@ fn test_parity_es5_async_generator_type_erasure() {
 /// Parity test for ES5 async generator method in class.
 /// Async generator methods should have types erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_method() {
     let source = r#"class DataStream {
@@ -5151,23 +3961,6 @@ fn test_parity_es5_async_generator_method() {
 /// Both await and yield should be preserved in output.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_await_yield() {
     let source = r#"async function* process(items: Promise<number>[]): AsyncGenerator<number> {
     for (const item of items) {
@@ -5211,23 +4004,6 @@ fn test_parity_es5_async_generator_await_yield() {
 /// Parity test for ES5 class decorator downlevel.
 /// Class decorators should use __decorate helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator() {
     let source = r#"function sealed(constructor: Function) {}
@@ -5278,23 +4054,6 @@ class Greeter {
 /// Parity test for ES5 method decorator downlevel.
 /// Method decorators should use __decorate helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_method_decorator() {
     let source = r#"function log(target: any, key: string, descriptor: PropertyDescriptor) {}
@@ -5350,23 +4109,6 @@ class Calculator {
 /// Property decorators should use __decorate helper.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator() {
     let source = r#"function observable(target: any, key: string) {}
 
@@ -5417,23 +4159,6 @@ class User {
 /// Parameter decorators should use __param helper.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator() {
     let source = r#"function inject(target: any, key: string, index: number) {}
 
@@ -5483,23 +4208,6 @@ class Service {
 /// Spread in function calls should use .apply() or similar.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_call_spread() {
     let source = "const result = Math.max(...numbers);";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5539,23 +4247,6 @@ fn test_parity_es5_call_spread() {
 /// Spread in new expressions should be handled.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_new_spread() {
     let source = "const date = new Date(...args);";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -5594,23 +4285,6 @@ fn test_parity_es5_new_spread() {
 /// Parity test for ES5 rest parameters in function downlevel.
 /// Rest parameters should be converted to arguments slicing.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_function() {
     let source = "function collect(first: number, ...rest: number[]) { return [first, ...rest]; }";
@@ -5659,23 +4333,6 @@ fn test_parity_es5_rest_params_function() {
 /// NOTE: Currently ignored - see `test_parity_es5_array_spread`.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_mixed() {
     let source = "const arr = [1, ...middle, 2, ...end, 3];";
@@ -5716,23 +4373,6 @@ fn test_parity_es5_array_spread_mixed() {
 ///
 /// NOTE: Currently ignored - see `test_parity_es5_array_spread`.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_literal_typed() {
@@ -5823,23 +4463,6 @@ class Container<T> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_function_call() {
     let source = r#"
 function sum(...nums: number[]): number {
@@ -5919,23 +4542,6 @@ const logger: Logger = {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_new_expression() {
     let source = r#"
@@ -6042,23 +4648,6 @@ function createWithDefaults<T>(factory: Factory<T>): T {
 /// NOTE: Currently ignored - see `test_parity_es5_array_spread`.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 array spread downleveling not fully implemented"]
 fn test_parity_es5_array_spread_mixed_complex() {
     let source = r#"
@@ -6161,23 +4750,6 @@ const flat = ArrayUtils.flatten(nested);
 /// Array destructuring should be converted to indexed access.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_array_destructuring_assignment() {
     let source = "const [first, second, third] = items;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6216,23 +4788,6 @@ fn test_parity_es5_array_destructuring_assignment() {
 /// Parity test for ES5 object destructuring assignment downlevel.
 /// Object destructuring should be converted to property access.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_object_destructuring_assignment() {
     let source = "const { name, age, city } = person;";
@@ -6273,23 +4828,6 @@ fn test_parity_es5_object_destructuring_assignment() {
 /// Nested destructuring should be fully expanded.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nested_destructuring() {
     let source = "const { user: { name, address: { city } } } = data;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6322,23 +4860,6 @@ fn test_parity_es5_nested_destructuring() {
 /// Parity test for ES5 destructuring with default values downlevel.
 /// Default values in destructuring should be preserved.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_defaults() {
     let source = "const { name = 'Anonymous', age = 0 } = config;";
@@ -6379,23 +4900,6 @@ fn test_parity_es5_destructuring_defaults() {
 /// Rest element in destructuring should be handled.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_rest() {
     let source = "const [first, ...remaining] = items;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6435,23 +4939,6 @@ fn test_parity_es5_destructuring_rest() {
 /// Optional method calls (?.) should be transformed.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_method_call() {
     let source = "const result = obj?.method?.();";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6485,23 +4972,6 @@ fn test_parity_es5_optional_method_call() {
 /// Optional element access (?.[ ]) should be transformed.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_element_access() {
     let source = "const value = arr?.[0]?.name;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6534,23 +5004,6 @@ fn test_parity_es5_optional_element_access() {
 /// Parity test for ES5 optional chaining with nullish coalescing.
 /// Combined ?. and ?? should both be handled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_with_nullish() {
     let source = "const name = user?.profile?.name ?? 'Anonymous';";
@@ -6591,23 +5044,6 @@ fn test_parity_es5_optional_chaining_with_nullish() {
 /// Optional chaining before function call should be handled.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_call() {
     let source = "const result = callback?.(arg1, arg2);";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6646,23 +5082,6 @@ fn test_parity_es5_optional_chaining_call() {
 /// Parity test for ES5 nullish coalescing with function call.
 /// Nullish coalescing with function call as fallback.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_coalescing_call() {
     let source = "const value = config ?? getDefault();";
@@ -6703,23 +5122,6 @@ fn test_parity_es5_nullish_coalescing_call() {
 /// The ??= operator should be downleveled.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_assignment() {
     let source = "x ??= defaultValue;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6752,23 +5154,6 @@ fn test_parity_es5_nullish_assignment() {
 /// Parity test for ES5 chained nullish coalescing.
 /// Multiple ?? operators in chain.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_chained() {
     let source = "const result = a ?? b ?? c ?? 'fallback';";
@@ -6815,23 +5200,6 @@ fn test_parity_es5_nullish_chained() {
 /// Nullish coalescing on object property access.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_property() {
     let source = "const name = obj.name ?? obj.defaultName ?? 'Unknown';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6870,23 +5238,6 @@ fn test_parity_es5_nullish_property() {
 /// Parity test for ES5 template literal with multiple expressions.
 /// Multiple expressions should all be concatenated.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_multi_expr() {
     let source = r#"const msg = `Hello ${first} ${middle} ${last}!`;"#;
@@ -6933,23 +5284,6 @@ fn test_parity_es5_template_multi_expr() {
 /// Tagged templates should be converted to function calls.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tagged_template() {
     let source = r#"const result = tag`Hello ${name}!`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -6988,23 +5322,6 @@ fn test_parity_es5_tagged_template() {
 /// Parity test for ES5 template literal with function call expression.
 /// Function calls in template expressions should be preserved.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_with_call() {
     let source = r#"const msg = `Result: ${compute(x, y)}`;"#;
@@ -7051,23 +5368,6 @@ fn test_parity_es5_template_with_call() {
 /// Nested templates should all be converted.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_nested() {
     let source = r#"const msg = `outer ${`inner ${value}`}`;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7112,23 +5412,6 @@ fn test_parity_es5_template_nested() {
 /// Parity test for ES5 for-of with array destructuring.
 /// for (const [a, b] of pairs) should downlevel both for-of and destructuring.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_array_destructuring() {
     let source = "const pairs = [[1,2],[3,4]]; for (const [a, b] of pairs) { console.log(a + b); }";
@@ -7180,23 +5463,6 @@ fn test_parity_es5_for_of_array_destructuring() {
 /// Parity test for ES5 for-of with object destructuring.
 /// for (const {x, y} of points) should downlevel both for-of and destructuring.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_object_destructuring() {
     let source =
@@ -7250,23 +5516,6 @@ fn test_parity_es5_for_of_object_destructuring() {
 /// Nested for-of should both be downleveled correctly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_nested() {
     let source = "const matrix = [[1,2],[3,4]]; for (const row of matrix) { for (const cell of row) { console.log(cell); } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7311,23 +5560,6 @@ fn test_parity_es5_for_of_nested() {
 /// Parity test for ES5 for-of with let binding.
 /// for (let x of arr) should downlevel to var in ES5.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_let() {
     let source = "const items = [1, 2, 3]; for (let item of items) { item++; console.log(item); }";
@@ -7380,23 +5612,6 @@ fn test_parity_es5_for_of_let() {
 /// x ||= y should downlevel to x || (x = y) or equivalent.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_logical_or_assignment() {
     let source = "let x = null; x ||= 'default';";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7441,23 +5656,6 @@ fn test_parity_es5_logical_or_assignment() {
 /// Parity test for ES5 logical AND assignment (&&=).
 /// x &&= y should downlevel to x && (x = y) or equivalent.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_logical_and_assignment() {
     let source = "let obj = { value: 1 }; obj.value &&= 42;";
@@ -7504,23 +5702,6 @@ fn test_parity_es5_logical_and_assignment() {
 /// x ??= y should downlevel to x ?? (x = y) or null check equivalent.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_assignment_operator() {
     let source = "let config = { timeout: undefined }; config.timeout ??= 5000;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7565,23 +5746,6 @@ fn test_parity_es5_nullish_assignment_operator() {
 /// Parity test for ES5 logical assignment with property access.
 /// obj.prop ||= value should downlevel correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_logical_assignment_property() {
     let source = "const settings = {}; settings.theme ||= 'dark'; settings.debug &&= false;";
@@ -7628,23 +5792,6 @@ fn test_parity_es5_logical_assignment_property() {
 /// Verifies type annotations are erased alongside exponentiation usage.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_type_erasure() {
     let source = "function power(base: number, exp: number): number { return base ** exp; }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7690,23 +5837,6 @@ fn test_parity_es5_exponentiation_type_erasure() {
 /// const with exponentiation should convert to var in ES5.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_const_to_var() {
     let source = "const squared = 5 ** 2;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7746,23 +5876,6 @@ fn test_parity_es5_exponentiation_const_to_var() {
 /// let with exponentiation should convert to var in ES5.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_let_to_var() {
     let source = "let result = 2 ** 10; result = result ** 2;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7801,23 +5914,6 @@ fn test_parity_es5_exponentiation_let_to_var() {
 /// Parity test for ES5 exponentiation in arrow function.
 /// Arrow function with exponentiation should downlevel correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_exponentiation_arrow() {
     let source = "const cube = (n: number) => n ** 3;";
@@ -7863,23 +5959,6 @@ fn test_parity_es5_exponentiation_arrow() {
 /// Parity test for ES5 arrow function with typed expression body.
 /// () => expr should convert to function() { return expr; }.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_typed_expression() {
     let source = "const double = (x: number) => x * 2;";
@@ -7932,23 +6011,6 @@ fn test_parity_es5_arrow_typed_expression() {
 /// () => { stmts } should convert to function() { stmts }.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_block_body() {
     let source = "const greet = (name: string) => { console.log('Hello ' + name); };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -7999,23 +6061,6 @@ fn test_parity_es5_arrow_block_body() {
 /// Parity test for ES5 arrow function with this capture.
 /// Arrow functions should capture outer this.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_this_capture() {
     let source = r#"class Counter {
@@ -8071,23 +6116,6 @@ fn test_parity_es5_arrow_this_capture() {
 /// (a, b, c) => expr should convert correctly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_multi_params() {
     let source = "const sum = (a: number, b: number, c: number) => a + b + c;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -8138,23 +6166,6 @@ fn test_parity_es5_arrow_multi_params() {
 /// Parity test for ES5 arrow with typed params and inference.
 /// Arrow with explicit param types and inferred return type.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_typed_params_inference() {
     let source = r#"
@@ -8210,23 +6221,6 @@ const origin: Point = { x: 0, y: 0 };
 /// Parity test for ES5 arrow with default params and complex types.
 /// Arrow with default values that have type annotations.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_defaults_complex() {
     let source = r#"
@@ -8293,23 +6287,6 @@ const fetchData = (url: string, options: Options = { timeout: 3000, retries: 3 }
 /// Arrow with rest parameter that has a tuple type annotation.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_rest_tuple() {
     let source = r#"
 type NumTuple = [number, number, number];
@@ -8364,23 +6341,6 @@ const sum = (...nums: NumTuple) => nums.reduce((a, b) => a + b, 0);
 /// Arrow function with generic type parameters.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_generic() {
     let source = r#"
 const identity = <T>(value: T): T => value;
@@ -8433,23 +6393,6 @@ const mapArray = <T, U>(arr: T[], fn: (item: T) => U): U[] => arr.map(fn);
 /// Parity test for ES5 arrow with nested destructuring params.
 /// Arrow with deeply nested destructuring in parameters.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_nested_destructuring() {
     let source = r#"
@@ -8512,23 +6455,6 @@ const getData = ([first, [second, third]]: [number, [string, boolean]]) => first
 /// Parity test for ES5 arrow returning arrow (curried function).
 /// Arrow function that returns another arrow function.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_returning_arrow() {
     let source = r#"
@@ -8596,23 +6522,6 @@ const add = (x: number) => (y: number) => x + y;
 /// get prop(): Type should downlevel and erase type.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_getter_only_typed() {
     let source = "class Config { get timeout(): number { return 5000; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -8663,23 +6572,6 @@ fn test_parity_es5_getter_only_typed() {
 /// Parity test for ES5 setter-only accessor with param type.
 /// set prop(v: Type) should downlevel and erase type.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_setter_only_typed() {
     let source =
@@ -8733,23 +6625,6 @@ fn test_parity_es5_setter_only_typed() {
 /// Both getter return type and setter param type should be erased.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_pair_typed() {
     let source = "class Box<T> { private _value: T; get value(): T { return this._value; } set value(v: T) { this._value = v; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -8798,23 +6673,6 @@ fn test_parity_es5_accessor_pair_typed() {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_getter_inheritance() {
     let source = r#"
@@ -8904,23 +6762,6 @@ class Square extends Rectangle {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_setter_validation() {
     let source = r#"
@@ -9023,23 +6864,6 @@ class BoundedValue<T extends number> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_pair_caching() {
     let source = r#"
 class LazyLoader<T> {
@@ -9139,23 +6963,6 @@ class MemoizedComputation {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_static_class() {
     let source = r#"
 class Configuration {
@@ -9250,23 +7057,6 @@ class Counter {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_computed_dynamic() {
     let source = r#"
 const propName = "dynamicValue";
@@ -9360,23 +7150,6 @@ class SymbolAccessors {
 /// Static setters should be defined on constructor, not prototype.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_setter_typed() {
     let source = "class Logger { private static _level: string = 'info'; static set level(val: string) { Logger._level = val; } }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -9428,23 +7201,6 @@ fn test_parity_es5_static_setter_typed() {
 /// Parity test for ES5 static block with this reference.
 /// Static block using this should downlevel correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_this_ref() {
     let source = r#"class Registry {
@@ -9502,23 +7258,6 @@ fn test_parity_es5_static_block_this_ref() {
 /// Multiple static blocks should all be downleveled.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_multiple() {
     let source = r#"class App {
     static name = "";
@@ -9572,23 +7311,6 @@ fn test_parity_es5_static_block_multiple() {
 /// Parity test for ES5 static block with typed variable.
 /// Local typed variables in static block should have types erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_typed_var() {
     let source = r#"class Calculator {
@@ -9653,23 +7375,6 @@ fn test_parity_es5_static_block_typed_var() {
 /// Function calls inside static block should be preserved.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_function_call() {
     let source = r#"class Logger {
     static initialized = false;
@@ -9727,23 +7432,6 @@ fn test_parity_es5_static_block_function_call() {
 /// Private method with types should erase all type annotations.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_multi_params() {
     let source = r#"class MathHelper {
     #add(a: number, b: number, c: number): number {
@@ -9795,23 +7483,6 @@ fn test_parity_es5_private_method_multi_params() {
 /// Parity test for ES5 private static method.
 /// Private static methods should be downleveled correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_static_method() {
     let source = r#"class IdGenerator {
@@ -9866,23 +7537,6 @@ fn test_parity_es5_private_static_method() {
 /// Private async methods should combine async and private downleveling.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_async_method() {
     let source = r#"class DataFetcher {
     async #fetchData(url: string): Promise<string> {
@@ -9934,23 +7588,6 @@ fn test_parity_es5_private_async_method() {
 /// Parity test for ES5 private method calling another private method.
 /// Chained private method calls should all be downleveled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_chain() {
     let source = r#"class Processor {
@@ -10007,23 +7644,6 @@ fn test_parity_es5_private_method_chain() {
 /// Multiple decorators should all be applied.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_multiple() {
     let source = r#"function sealed(ctor: Function) {}
 function logged(ctor: Function) {}
@@ -10077,23 +7697,6 @@ class Service {
 /// Parity test for ES5 class decorator factory.
 /// Decorator factory with arguments should be downleveled.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_factory() {
     let source = r#"function component(name: string) {
@@ -10155,23 +7758,6 @@ class Widget {
 /// Decorator on generic class should erase type params.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_generic() {
     let source = r#"function observable(ctor: Function) {}
 
@@ -10230,23 +7816,6 @@ class Store<T> {
 /// Parity test for ES5 class decorator with extends.
 /// Decorator on derived class should work correctly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_extends() {
     let source = r#"function injectable(ctor: Function) {}
@@ -10310,23 +7879,6 @@ class DerivedService extends BaseService {
 /// Multiple decorators on a method should be lowered without decorator syntax.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_method_decorator_multiple() {
     let source = r#"function log(target: any, key: string, desc: PropertyDescriptor) {}
 function validate(target: any, key: string, desc: PropertyDescriptor) {}
@@ -10385,23 +7937,6 @@ class DataService {
 /// Decorator factories with arguments should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_method_decorator_factory() {
     let source = r#"function throttle(ms: number) {
     return function(target: any, key: string, desc: PropertyDescriptor) {};
@@ -10459,23 +7994,6 @@ class SearchController {
 /// Decorators on static methods should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_method_decorator_static() {
     let source = r#"function memoize(target: any, key: string, desc: PropertyDescriptor) {}
 
@@ -10527,23 +8045,6 @@ class MathUtils {
 /// Parity test for ES5 async method decorator.
 /// Decorators on async methods should be lowered with async transform.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_method_decorator_async() {
     let source = r#"function retry(target: any, key: string, desc: PropertyDescriptor) {}
@@ -10605,23 +8106,6 @@ class ApiClient {
 /// Multiple decorators on a property should be lowered without decorator syntax.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_multiple() {
     let source = r#"function observable(target: any, key: string) {}
 function validate(target: any, key: string) {}
@@ -10678,23 +8162,6 @@ class FormField {
 /// Decorator factories with arguments should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_factory() {
     let source = r#"function column(name: string) {
     return function(target: any, key: string) {};
@@ -10747,23 +8214,6 @@ class Entity {
 /// Decorators on static properties should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_static() {
     let source = r#"function readonly(target: any, key: string) {}
 
@@ -10813,23 +8263,6 @@ class Config {
 /// Parity test for ES5 property decorator with complex initializer.
 /// Property decorators with arrow function initializers should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_property_decorator_initializer() {
     let source = r#"function lazy(target: any, key: string) {}
@@ -10887,23 +8320,6 @@ class DataLoader {
 /// Decorator on getter accessor should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_decorator_getter() {
     let source = r#"function enumerable(target: any, key: string, desc: PropertyDescriptor) {}
 
@@ -10958,23 +8374,6 @@ class Person {
 /// Decorator on setter accessor should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_decorator_setter() {
     let source = r#"function validate(target: any, key: string, desc: PropertyDescriptor) {}
 
@@ -11028,23 +8427,6 @@ class Account {
 /// Parity test for ES5 multiple accessor decorators.
 /// Multiple decorators on accessor should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_decorator_multiple() {
     let source = r#"function log(target: any, key: string, desc: PropertyDescriptor) {}
@@ -11102,23 +8484,6 @@ class Calculator {
 /// Decorator on static accessor should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_accessor_decorator_static() {
     let source = r#"function readonly(target: any, key: string, desc: PropertyDescriptor) {}
 
@@ -11173,23 +8538,6 @@ class AppConfig {
 /// Multiple decorators on a single parameter should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_multiple() {
     let source = r#"function required(target: any, key: string, index: number) {}
 function validate(target: any, key: string, index: number) {}
@@ -11239,23 +8587,6 @@ class UserService {
 /// Parity test for ES5 parameter decorator on method.
 /// Parameter decorator on regular method should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_method() {
     let source = r#"function log(target: any, key: string, index: number) {}
@@ -11307,23 +8638,6 @@ class Logger {
 /// Parity test for ES5 parameter decorator factory.
 /// Parameter decorator factories with arguments should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_factory() {
     let source = r#"function maxLength(max: number) {
@@ -11378,23 +8692,6 @@ class FormValidator {
 /// Multiple parameters each with decorators should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_parameter_decorator_multi_params() {
     let source = r#"function inject(target: any, key: string, index: number) {}
 
@@ -11443,23 +8740,6 @@ class Container {
 /// Parity test for ES5 async generator with try/catch.
 /// Async generator with error handling should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_try_catch() {
     let source = r#"async function* safeFetch(urls: string[]): AsyncGenerator<string> {
@@ -11510,23 +8790,6 @@ fn test_parity_es5_async_generator_try_catch() {
 /// Static async generator methods should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_static() {
     let source = r#"class StreamFactory {
     static async *createStream(): AsyncGenerator<number> {
@@ -11572,23 +8835,6 @@ fn test_parity_es5_async_generator_static() {
 /// Async generator with multiple sequential yields should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_multi_yield() {
     let source = r#"async function* countdown(start: number): AsyncGenerator<number> {
     yield start;
@@ -11633,23 +8879,6 @@ fn test_parity_es5_async_generator_multi_yield() {
 /// Async generator using yield* should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_yield_star() {
     let source = r#"async function* concat(a: AsyncGenerator<number>, b: AsyncGenerator<number>): AsyncGenerator<number> {
     yield* a;
@@ -11691,23 +8920,6 @@ fn test_parity_es5_async_generator_yield_star() {
 /// Parity test for ES5 nested namespaces.
 /// Nested namespaces should be lowered to nested objects.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_nested() {
     let source = r#"namespace Outer {
@@ -11760,23 +8972,6 @@ fn test_parity_es5_namespace_nested() {
 /// Namespace containing a class should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_with_class() {
     let source = r#"namespace Models {
     export class User {
@@ -11828,23 +9023,6 @@ fn test_parity_es5_namespace_with_class() {
 /// Parity test for ES5 namespace with interface.
 /// Interface inside namespace should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_with_interface() {
     let source = r#"namespace Types {
@@ -11903,23 +9081,6 @@ fn test_parity_es5_namespace_with_interface() {
 /// Namespace containing an enum should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_with_enum() {
     let source = r#"namespace Status {
     export enum Code {
@@ -11970,23 +9131,6 @@ fn test_parity_es5_namespace_with_enum() {
 /// Parity test for ES5 namespace merging.
 /// Multiple namespace declarations that merge together.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_merging() {
     let source = r#"
@@ -12057,23 +9201,6 @@ namespace Utils {
 /// Parity test for ES5 namespace with exported functions and types.
 /// Namespace with various exported members.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_exports() {
     let source = r#"
@@ -12162,23 +9289,6 @@ namespace Validation {
 /// Parity test for ES5 deeply nested namespaces with types.
 /// Multiple levels of namespace nesting with type declarations.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_namespace_deeply_nested() {
     let source = r#"
@@ -12280,23 +9390,6 @@ namespace Company {
 /// Enum with explicit numeric values should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_explicit_values() {
     let source = r#"enum HttpStatus {
     OK = 200,
@@ -12348,23 +9441,6 @@ fn test_parity_es5_enum_explicit_values() {
 /// Const enum should be inlined at usage sites.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_const() {
     let source = r#"const enum Flags {
     None = 0,
@@ -12403,23 +9479,6 @@ fn test_parity_es5_enum_const() {
 /// Parity test for ES5 enum with computed member.
 /// Enum with computed values should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_computed() {
     let source = r#"enum FileAccess {
@@ -12464,23 +9523,6 @@ fn test_parity_es5_enum_computed() {
 /// Parity test for ES5 heterogeneous enum.
 /// Enum with mixed string and numeric values should be lowered properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_heterogeneous() {
     let source = r#"enum Mixed {
@@ -12531,23 +9573,6 @@ fn test_parity_es5_enum_heterogeneous() {
 /// Named exports with aliases should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_alias() {
     let source = r#"const internalName: string = "value";
 export { internalName as publicName };"#;
@@ -12593,23 +9618,6 @@ export { internalName as publicName };"#;
 /// Parity test for ES5 default export function.
 /// Default export function should be lowered to CommonJS.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_default_function() {
     let source = r#"export default function greet(name: string): string {
@@ -12657,23 +9665,6 @@ fn test_parity_es5_export_default_function() {
 /// Parity test for ES5 export interface erasure.
 /// Interface exports should be erased entirely.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_interface() {
     let source = r#"export interface User {
@@ -12724,23 +9715,6 @@ export const DEFAULT_AGE: number = 0;"#;
 /// Type alias exports should be erased entirely.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_export_type_alias() {
     let source = r#"export type ID = string | number;
 export type Handler = (event: Event) => void;
@@ -12790,23 +9764,6 @@ export const VERSION: string = "1.0";"#;
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_anonymous() {
     let source = r#"
 const MyClass = class {
@@ -12854,23 +9811,6 @@ const MyClass = class {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_named() {
     let source = r#"
@@ -12920,23 +9860,6 @@ const Factory = class InnerClass {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_static() {
     let source = r#"
 const Counter = class {
@@ -12984,23 +9907,6 @@ const Counter = class {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_accessor() {
     let source = r#"
@@ -13065,23 +9971,6 @@ const Rectangle = class {
 /// Parity test for ES5 class expression in return statement.
 /// Class expression returned from a factory function.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_return() {
     let source = r#"
@@ -13150,23 +10039,6 @@ function createComponent(name: string): new () => Component {
 /// Parity test for ES5 class expression as argument.
 /// Class expression passed as an argument to a function.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_argument() {
     let source = r#"
@@ -13240,23 +10112,6 @@ registerHandler(class implements Handler {
 /// Class expression extending a computed base class.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_extends_computed() {
     let source = r#"
 interface Serializable { serialize(): string }
@@ -13316,23 +10171,6 @@ function getMixin<T extends new (...args: any[]) => Serializable>(Base: T) {
 /// Parity test for ES5 class expression with implements.
 /// Class expression implementing multiple interfaces.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_implements() {
     let source = r#"
@@ -13411,23 +10249,6 @@ const Stream = class implements Readable, Writable, Closable {
 /// Class expressions stored in an array.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_array() {
     let source = r#"
 interface Shape { area(): number }
@@ -13496,23 +10317,6 @@ const shapes: ShapeConstructor[] = [
 /// Parity test for ES5 class expression in IIFE.
 /// Class expression inside an immediately-invoked function expression.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_expression_iife() {
     let source = r#"
@@ -13583,23 +10387,6 @@ const singleton = (function(): new () => Singleton {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_return_value() {
     let source = r#"
 function* countdown(start: number): Generator<number, string, unknown> {
@@ -13651,23 +10438,6 @@ function* countdown(start: number): Generator<number, string, unknown> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_multiple_yields() {
     let source = r#"
 function* multiYield(): Generator<string> {
@@ -13712,23 +10482,6 @@ function* multiYield(): Generator<string> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_try_catch() {
     let source = r#"
@@ -13785,23 +10538,6 @@ function* safeGenerator(): Generator<number> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_expression() {
     let source = r#"
 const gen = function* (limit: number): Generator<number> {
@@ -13847,23 +10583,6 @@ const gen = function* (limit: number): Generator<number> {
 /// Parity test for ES5 generator with typed yields.
 /// Generator function with complex typed yield expressions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_typed_yields() {
     let source = r#"
@@ -13923,23 +10642,6 @@ function* itemGenerator(): Generator<Item, void, undefined> {
 /// Generator function that delegates to another generator.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_delegation() {
     let source = r#"
 function* innerGen(): Generator<number> {
@@ -13994,23 +10696,6 @@ function* outerGen(): Generator<number> {
 /// Parity test for ES5 async generator with await.
 /// Async generator function combining yield and await.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_async_await() {
     let source = r#"
@@ -14075,23 +10760,6 @@ async function* streamData(url: string): AsyncGenerator<DataChunk> {
 /// Parity test for ES5 generator in class methods.
 /// Generator method with this binding in a class.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_class_method_this() {
     let source = r#"
@@ -14160,23 +10828,6 @@ class NumberSequence {
 /// Generator function with cleanup in finally block.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_try_finally() {
     let source = r#"
 interface Connection { close(): void }
@@ -14244,23 +10895,6 @@ function* processWithCleanup(conn: Connection): Generator<string, void, undefine
 /// Generator function with typed return value after yields.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_complex_return() {
     let source = r#"
 interface Summary { count: number; total: number }
@@ -14324,23 +10958,6 @@ function* accumulator(values: number[]): Generator<number, Summary, undefined> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_properties() {
     let source = r#"
 class Counter {
@@ -14384,23 +11001,6 @@ class Counter {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_blocks() {
     let source = r#"
@@ -14453,23 +11053,6 @@ class Logger {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_interleaved() {
     let source = r#"
 class Interleaved {
@@ -14520,23 +11103,6 @@ class Interleaved {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_init_order_derived() {
     let source = r#"
@@ -14594,23 +11160,6 @@ class Derived extends Base {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_basic() {
     let source = r#"
 class Base {
@@ -14660,23 +11209,6 @@ class Derived extends Base {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_with_args() {
     let source = r#"
@@ -14729,23 +11261,6 @@ class AsyncCalculator extends Calculator {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_static() {
     let source = r#"
 class BaseService {
@@ -14795,23 +11310,6 @@ class DerivedService extends BaseService {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_super_call_with_await() {
     let source = r#"
@@ -14866,23 +11364,6 @@ class AsyncDataFetcher extends DataFetcher {
 /// Parity test for ES5 async with try/finally.
 /// Async function with try/finally should downlevel properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_try_finally() {
     let source = r#"
@@ -14955,23 +11436,6 @@ async function withResource<T>(resource: Resource, fn: () => Promise<T>): Promis
 /// Parity test for ES5 async with Promise.all destructuring.
 /// Async function with Promise.all and destructuring assignment.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_promise_all_destructure() {
     let source = r#"
@@ -15047,23 +11511,6 @@ declare function fetchOrders(id: number): Promise<Order[]>;
 /// Async IIFE should downlevel to non-async IIFE with __awaiter.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_iife() {
     let source = r#"
 type Config = { apiUrl: string; timeout: number };
@@ -15132,23 +11579,6 @@ const result = (async (): Promise<Config> => {
 /// Parity test for ES5 nested async arrows.
 /// Multiple levels of nested async arrow functions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_nested_arrows() {
     let source = r#"
@@ -15236,23 +11666,6 @@ declare function process(n: number): Promise<number>;
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_getter() {
     let source = r#"
 class Person {
@@ -15309,23 +11722,6 @@ class Person {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_setter() {
     let source = r#"
 class Counter {
@@ -15381,23 +11777,6 @@ class Counter {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_pair() {
     let source = r#"
@@ -15463,23 +11842,6 @@ class Temperature {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_static() {
     let source = r#"
 class Registry {
@@ -15533,23 +11895,6 @@ class Registry {
 // ============================================================================
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_try_catch() {
     let source = r#"
@@ -15607,23 +11952,6 @@ class SafeInit {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_loop_init() {
     let source = r#"
 class LookupTable {
@@ -15677,23 +12005,6 @@ class LookupTable {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_conditional() {
     let source = r#"
@@ -15752,23 +12063,6 @@ class Environment {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_derived_class() {
     let source = r#"
 class Parent {
@@ -15820,23 +12114,6 @@ class Child extends Parent {
 /// Parity test for ES5 static block with async IIFE.
 /// Static block containing async immediately-invoked function expression.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_async() {
     let source = r#"
@@ -15906,23 +12183,6 @@ class ApiClient {
 /// Parity test for ES5 static block with private field access.
 /// Static block accessing private static fields.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_private_access() {
     let source = r#"
@@ -15995,23 +12255,6 @@ class Counter {
 /// Multiple static blocks verifying initialization order.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_init_order() {
     let source = r#"
 class OrderTest {
@@ -16082,23 +12325,6 @@ class OrderTest {
 /// Parity test for ES5 static block with super access.
 /// Static block in derived class accessing parent static members via super.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_super() {
     let source = r#"
@@ -16172,23 +12398,6 @@ class DerivedConfig extends BaseConfig {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_symbol() {
     let source = r#"
 const sym = Symbol("key");
@@ -16235,23 +12444,6 @@ const obj = {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_class_method() {
     let source = r#"
@@ -16303,23 +12495,6 @@ class DynamicClass {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_expression() {
     let source = r#"
 const prefix = "prop";
@@ -16366,23 +12541,6 @@ const obj: Record<string, number> = {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_accessor() {
     let source = r#"
@@ -16442,23 +12600,6 @@ class ComputedAccessor {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_template() {
     let source = r#"
 const prefix = "user";
@@ -16516,23 +12657,6 @@ class TemplateComputed {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_binary() {
     let source = r#"
@@ -16592,23 +12716,6 @@ class BinaryComputed {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_nested() {
     let source = r#"
@@ -16680,23 +12787,6 @@ function createNested<T>(key: string, value: T): { [k: string]: T } {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_conditional() {
     let source = r#"
 const useAlternate = true;
@@ -16765,23 +12855,6 @@ class ConditionalComputed {
 /// Parity test for ES5 computed property with method call as key.
 /// Computed property using method call result as key.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_method_call() {
     let source = r#"
@@ -16863,23 +12936,6 @@ class PropertyMapper {
 /// Computed property using external function call as key.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_function_call() {
     let source = r#"
 function generateKey(namespace: string, name: string): string {
@@ -16951,23 +13007,6 @@ const config: Config = {
 /// Parity test for ES5 computed property with complex typed expressions.
 /// Computed property with generic types and complex expressions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_property_typed() {
     let source = r#"
@@ -17064,23 +13103,6 @@ const result = builder.build(42);
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_class_method() {
     let source = r#"
 class Logger {
@@ -17135,23 +13157,6 @@ class Logger {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_typed_array() {
     let source = r#"
 function sumNumbers(...nums: number[]): number {
@@ -17204,23 +13209,6 @@ function concatArrays<T>(...arrays: T[][]): T[] {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_arrow() {
     let source = r#"
 const sum = (...nums: number[]): number => nums.reduce((a, b) => a + b, 0);
@@ -17268,23 +13256,6 @@ const join = (separator: string, ...parts: string[]): string => parts.join(separ
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_with_defaults() {
     let source = r#"
@@ -17339,23 +13310,6 @@ function logWithLevel(level: string = "debug", timestamp: boolean = true, ...mes
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_generator() {
     let source = r#"
@@ -17414,23 +13368,6 @@ function* logAndYield(prefix: string, ...items: string[]): Generator<string> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_async() {
     let source = r#"
 async function fetchAll(...urls: string[]): Promise<Response[]> {
@@ -17484,23 +13421,6 @@ async function logAsync(level: string, ...messages: string[]): Promise<void> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_destructuring() {
     let source = r#"
 function processItems(...items: { id: number; name: string }[]): void {
@@ -17552,23 +13472,6 @@ function mergeConfigs(...configs: { [key: string]: any }[]): object {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_constructor() {
     let source = r#"
@@ -17634,23 +13537,6 @@ class EventEmitter {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_nested() {
     let source = r#"
 function outer(prefix: string) {
@@ -17706,23 +13592,6 @@ function createLogger(level: string) {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_overload() {
     let source = r#"
@@ -17781,23 +13650,6 @@ function log(first: string, ...rest: string[]): void {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_tuple() {
     let source = r#"
 function processPairs(...pairs: [string, number][]): void {
@@ -17849,23 +13701,6 @@ function zipArrays<T, U>(...arrays: [T[], U[]][]): [T, U][] {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_params_callback() {
     let source = r#"
@@ -17927,23 +13762,6 @@ const processor = (fn: (...nums: number[]) => number): number => {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_params_class_method() {
     let source = r#"
@@ -18009,23 +13827,6 @@ class Calculator {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_params_arrow() {
     let source = r#"
 const greet = (name: string = "World"): string => "Hello, " + name;
@@ -18083,23 +13884,6 @@ const createLogger = (prefix: string = "[LOG]") => {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_params_expression() {
     let source = r#"
@@ -18160,23 +13944,6 @@ function processArray(items: number[] = [], transform: (x: number) => number = (
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_default_params_constructor() {
     let source = r#"
@@ -18248,23 +14015,6 @@ class Config<T> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_spread_method_call() {
     let source = r#"
 class Logger {
@@ -18319,23 +14069,6 @@ class Math {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_spread_typed_array() {
     let source = r#"
 function sumNumbers(...nums: number[]): number {
@@ -18385,23 +14118,6 @@ function concat<T>(...arrays: T[][]): T[] {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_spread_constructor() {
     let source = r#"
@@ -18460,23 +14176,6 @@ const rect = new Rectangle(...dimensions);
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_spread_nested() {
     let source = r#"
@@ -18538,23 +14237,6 @@ const spread = (arr: number[]) => [...arr, ...[...arr]];
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_computed() {
     let source = r#"
 const key = "name";
@@ -18603,23 +14285,6 @@ const { [propName]: userId, name: userName } = user;
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_return() {
     let source = r#"
@@ -18684,23 +14349,6 @@ const { items, count } = provider.getData();
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_rename() {
     let source = r#"
 interface Person { firstName: string; lastName: string; age: number }
@@ -18751,23 +14399,6 @@ function process({ input: src, output: dest }: { input: string; output: string }
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_loop() {
     let source = r#"
@@ -18825,23 +14456,6 @@ for (const [k, v] of map.entries()) {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_object_typed() {
     let source = r#"
@@ -18932,23 +14546,6 @@ const { host, port }: Config = { host: "localhost", port: 8080 };
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_array_tuple() {
     let source = r#"
 type Point2D = [number, number];
@@ -19034,23 +14631,6 @@ const [left, right]: [string, string] = pair.values;
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_nested_deep() {
     let source = r#"
@@ -19153,23 +14733,6 @@ const { employees: [{ details: { name: firstName } }] }: Company = company;
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_defaults_typed() {
     let source = r#"
 interface Options {
@@ -19269,23 +14832,6 @@ function getValue<T>({ value, fallback }: Config<T>): T {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_rest_typed() {
     let source = r#"
@@ -19400,23 +14946,6 @@ function collectRest<T>(...items: T[]): T[] {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_iterables() {
     let source = r#"
 const set: Set<number> = new Set([1, 2, 3]);
@@ -19469,23 +14998,6 @@ for (const char of str) {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_control_flow() {
     let source = r#"
@@ -19564,23 +15076,6 @@ function skipNegative(values: number[]): number[] {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_generator() {
     let source = r#"
 function* range(start: number, end: number): Generator<number> {
@@ -19639,23 +15134,6 @@ for (const [a, b] of pairs(items)) {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_class_method() {
     let source = r#"
@@ -19729,23 +15207,6 @@ class StringCollector {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_async() {
     let source = r#"
 async function processItems(items: string[]): Promise<void> {
@@ -19807,23 +15268,6 @@ class AsyncProcessor {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_try_catch() {
     let source = r#"
@@ -19895,23 +15339,6 @@ function processWithFinally(nums: number[]): number {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_labeled() {
     let source = r#"
 function findInMatrix(matrix: number[][], target: number): boolean {
@@ -19975,23 +15402,6 @@ function skipRows(data: string[][], skipValue: string): string[] {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_arrow() {
     let source = r#"
@@ -20059,23 +15469,6 @@ const logEach = <T>(items: T[]): void => {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_constructor() {
     let source = r#"
 function sealed(constructor: Function) {
@@ -20137,23 +15530,6 @@ class Service {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_static_members() {
     let source = r#"
 function staticInit<T extends { new(...args: any[]): {} }>(constructor: T) {
@@ -20213,23 +15589,6 @@ class Config {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_metadata() {
     let source = r#"
@@ -20297,23 +15656,6 @@ class AppComponent {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_decorator_inheritance() {
     let source = r#"
@@ -20399,23 +15741,6 @@ class Admin extends User {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_this_binding() {
     let source = r#"
 class Calculator {
@@ -20483,23 +15808,6 @@ class Calculator {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_generic() {
     let source = r#"
 class Container<T> {
@@ -20559,23 +15867,6 @@ class Container<T> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_derived() {
     let source = r#"
@@ -20642,23 +15933,6 @@ class ExtendedService extends BaseService {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_callback() {
     let source = r#"
 class EventHandler {
@@ -20724,23 +15998,6 @@ class EventHandler {
 /// Parity test for ES5 private async method with complex await.
 /// Private async method with multiple awaits and error handling.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_async_method_complex() {
     let source = r#"
@@ -20829,23 +16086,6 @@ class DataService {
 /// Private generator method in a class.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_generator_method() {
     let source = r#"
 interface TreeNode<T> { value: T; children: TreeNode<T>[] }
@@ -20931,23 +16171,6 @@ class TreeIterator<T> {
 /// Parity test for ES5 private accessor with complex types.
 /// Private getter/setter with complex type annotations.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_complex() {
     let source = r#"
@@ -21042,23 +16265,6 @@ class FormField<T> {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_field_computed() {
     let source = r#"
 class Config {
@@ -21120,23 +16326,6 @@ class Counter {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_field_methods() {
     let source = r#"
@@ -21207,23 +16396,6 @@ class Cache<T> {
 }
 
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_field_inheritance() {
     let source = r#"
@@ -21300,23 +16472,6 @@ class Admin extends User {
 
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_field_generic() {
     let source = r#"
 class Registry<T> {
@@ -21388,23 +16543,6 @@ class Pool<T> {
 /// Const enum usage should be inlined with the literal values.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_const_with_usage() {
     let source = r#"const enum Direction {
     Up = 1,
@@ -21463,23 +16601,6 @@ const d: Direction = Direction.Left;
 /// Numeric enums should have bidirectional mapping (name -> value, value -> name).
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_reverse_mapping() {
     let source = r#"enum Color {
     Red,
@@ -21532,23 +16653,6 @@ const colorValue = Color.Red;
 /// Parity test for ES5 string enum.
 /// String enums should emit only forward mapping (no reverse mapping).
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_string_values() {
     let source = r#"enum LogLevel {
@@ -21611,23 +16715,6 @@ function log(level: LogLevel, message: string): void {
 /// Complex computed members with function calls and expressions.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_enum_computed_complex() {
     let source = r#"function getValue(): number { return 10; }
 
@@ -21681,23 +16768,6 @@ enum Computed {
 /// Re-exports should be transformed to CommonJS require/exports pattern.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_reexport_patterns() {
     let source = r#"export { foo, bar } from './module';
 export { baz as qux } from './other';
@@ -21739,23 +16809,6 @@ export * from './all';
 /// Parity test for ES5 barrel file pattern.
 /// Barrel files re-exporting from multiple modules.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_barrel_file() {
     let source = r#"export { User } from './user';
@@ -21805,23 +16858,6 @@ export type { UserType } from './types';
 /// Parity test for ES5 type-only imports.
 /// Type-only imports should be completely erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_type_only_imports() {
     let source = r#"import type { User, Product } from './types';
@@ -21880,23 +16916,6 @@ function process(user: User): Product {
 /// Parity test for ES5 class extends clause.
 /// Class extending another class should use __extends helper.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_extends_clause() {
     let source = r#"class Animal {
@@ -21966,23 +16985,6 @@ class Dog extends Animal {
 /// Super calls should be transformed to parent prototype calls.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_super_calls() {
     let source = r#"class Base {
     value: number;
@@ -22047,23 +17049,6 @@ class Derived extends Base {
 /// Parity test for ES5 method overrides.
 /// Overridden methods should be on prototype chain.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_method_overrides() {
     let source = r#"class Shape {
@@ -22140,23 +17125,6 @@ class Rectangle extends Shape {
 /// Abstract classes with abstract and concrete methods should be lowered properly.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class_methods() {
     let source = r#"abstract class Vehicle {
     abstract start(): void;
@@ -22225,23 +17193,6 @@ class Car extends Vehicle {
 /// Multiple class decorators should be applied in reverse order.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_class_chaining() {
     let source = r#"function first<T extends { new(...args: any[]): {} }>(target: T) {
     return class extends target {
@@ -22303,23 +17254,6 @@ class Example {
 /// Parity test for ES5 method decorator with descriptor.
 /// Method decorators should receive property descriptor.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_method_descriptor() {
     let source = r#"function log(target: any, key: string, descriptor: PropertyDescriptor) {
@@ -22392,23 +17326,6 @@ class Calculator {
 /// Parameter decorators for dependency injection pattern.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_parameter_injection() {
     let source = r#"function inject(token: string) {
     return function(target: any, key: string | symbol, index: number) {
@@ -22471,23 +17388,6 @@ class UserService {
 /// Parity test for ES5 for-await-of with async generators.
 /// Async generators with for-await-of should be transformed properly.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_await_of_async_generator() {
     let source = r#"async function* asyncRange(start: number, end: number): AsyncGenerator<number> {
@@ -22555,23 +17455,6 @@ async function consumeRange(): Promise<number[]> {
 /// Parity test for ES5 async iterator protocol.
 /// Custom async iterators implementing Symbol.asyncIterator.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_iterator_protocol() {
     let source = r#"class AsyncQueue<T> {
@@ -22641,23 +17524,6 @@ async function processQueue(): Promise<void> {
 /// Object implementing async iterable interface.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_symbol_async_iterator() {
     let source = r#"const asyncIterable = {
     data: [1, 2, 3, 4, 5],
@@ -22724,23 +17590,6 @@ async function iterate(): Promise<void> {
 /// Dynamic import() expressions should be preserved or polyfilled.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_dynamic_import() {
     let source = r#"async function loadModule(name: string): Promise<any> {
     const module = await import(`./modules/${name}`);
@@ -22799,23 +17648,6 @@ async function conditionalLoad(condition: boolean): Promise<void> {
 /// Top-level await in async IIFE pattern.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_top_level_await_iife() {
     let source = r#"const config = await import('./config');
 const data: string = await fetch('/api/data').then(r => r.text());
@@ -22860,23 +17692,6 @@ export async function initialize(): Promise<void> {
 /// Parity test for ES5 import.meta usage.
 /// import.meta should be handled appropriately for target.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_import_meta() {
     let source = r#"const currentUrl: string = import.meta.url;
@@ -22926,23 +17741,6 @@ export { currentUrl, baseDir, getModulePath };
 /// Parity test for ES5 tagged template with complex arguments.
 /// Tagged templates with typed tag functions and complex expressions.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tagged_template_complex() {
     let source = r#"function sql<T>(strings: TemplateStringsArray, ...values: any[]): T {
@@ -23001,23 +17799,6 @@ const query = sql<User[]>`SELECT * FROM users WHERE id = ${userId} AND name = ${
 /// Template literals with method calls, ternaries, and nested expressions.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_spans_complex() {
     let source = r#"function formatUser(user: { name: string; age: number }): string {
     return `User: ${user.name.toUpperCase()} is ${user.age >= 18 ? 'adult' : 'minor'} (${user.age} years old)`;
@@ -23073,23 +17854,6 @@ function buildUrl(base: string, params: Record<string, string>): string {
 /// Templates inside templates with multiple nesting levels.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_deeply_nested() {
     let source = r#"function createHtml(items: string[]): string {
     return `<ul>${items.map(item => `<li>${item.includes('!') ? `<strong>${item}</strong>` : item}</li>`).join('')}</ul>`;
@@ -23139,23 +17903,6 @@ const result: string = createHtml(['Hello', 'World!', 'Test']);
 /// Parity test for ES5 String.raw tagged template.
 /// String.raw for raw string handling without escape processing.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_raw_strings() {
     let source = r#"const path: string = String.raw`C:\Users\Documents\file.txt`;
@@ -23211,23 +17958,6 @@ Third line`;
 /// Parity test for ES5 auto-accessor property.
 /// Auto-accessors using the accessor keyword should be transformed.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_auto_accessor() {
     let source = r#"class Counter {
@@ -23295,23 +18025,6 @@ class Person {
 /// Accessors with computed property names from symbols or expressions.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_computed_accessor_symbol() {
     let source = r#"const nameKey = Symbol('name');
 const ageKey = 'user_age';
@@ -23378,23 +18091,6 @@ class User {
 /// Parity test for ES5 inherited accessor override.
 /// Derived class overriding base class accessors.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_inherited_accessor_override() {
     let source = r#"class BaseConfig {
@@ -23471,23 +18167,6 @@ class ReadOnlyConfig extends BaseConfig {
 /// Private fields accessed and modified by instance methods.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_instance_field_methods() {
     let source = r#"class BankAccount {
     #balance: number = 0;
@@ -23557,23 +18236,6 @@ fn test_parity_es5_private_instance_field_methods() {
 /// Static private fields shared across all instances.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_static_field_complex() {
     let source = r#"class Logger {
     static #instance: Logger | null = null;
@@ -23641,23 +18303,6 @@ fn test_parity_es5_private_static_field_complex() {
 /// Private methods that need proper this context.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_this_context() {
     let source = r#"class EventEmitter {
     #listeners: Map<string, Function[]> = new Map();
@@ -23719,23 +18364,6 @@ fn test_parity_es5_private_method_this_context() {
 /// Parity test for ES5 private accessors with validation.
 /// Private getters and setters with type checking logic.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_validation() {
     let source = r#"class Temperature {
@@ -23812,23 +18440,6 @@ fn test_parity_es5_private_accessor_validation() {
 /// Static blocks initializing dependent static properties.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_complex_init_order() {
     let source = r#"class Config {
     static readonly BASE_URL: string = 'https://api.example.com';
@@ -23897,23 +18508,6 @@ fn test_parity_es5_static_block_complex_init_order() {
 /// Parity test for ES5 static blocks interleaved with static fields.
 /// Multiple static blocks between static field declarations.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_interleaved() {
     let source = r#"class Registry {
@@ -23987,23 +18581,6 @@ fn test_parity_es5_static_block_interleaved() {
 /// Static blocks setting up async-related configurations.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_static_block_async_pattern() {
     let source = r#"class AsyncService {
     static #initPromise: Promise<void>;
@@ -24071,23 +18648,6 @@ fn test_parity_es5_static_block_async_pattern() {
 /// Parity test for ES5 super property access.
 /// Accessing properties on super in derived classes.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_super_property_access() {
     let source = r#"class Base {
@@ -24157,23 +18717,6 @@ class Derived extends Base {
 /// Calling super methods using computed property names.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_super_method_computed() {
     let source = r#"const methodName = 'process';
 
@@ -24237,23 +18780,6 @@ class DerivedProcessor extends BaseProcessor {
 /// Parity test for ES5 super in async method.
 /// Calling super methods from async methods with await.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_super_in_async_method() {
     let source = r#"class BaseService {
@@ -24321,23 +18847,6 @@ class DerivedService extends BaseService {
 /// Parity test for ES5 super in arrow function.
 /// Super captured correctly in arrow functions within class methods.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_super_in_arrow() {
     let source = r#"class BaseHandler {
@@ -24410,23 +18919,6 @@ class DerivedHandler extends BaseHandler {
 /// Test: yield expressions in conditional branches
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_yield_in_conditional() {
     let source = r#"
 class StateMachine<T> {
@@ -24497,23 +18989,6 @@ class StateMachine<T> {
 /// Test: yield as function argument
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_yield_as_argument() {
     let source = r#"
 function log<T>(value: T): T {
@@ -24580,23 +19055,6 @@ class DataProducer {
 
 /// Test: nested yield* delegation with multiple levels
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_delegation_nested() {
     let source = r#"
@@ -24673,23 +19131,6 @@ class NestedDelegator {
 
 /// Test: async generator with Promise.all pattern
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_promise_all() {
     let source = r#"
@@ -24770,23 +19211,6 @@ class BatchProcessor<T, R> {
 /// Test: async arrow with destructuring params and array methods
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_arrow_destructuring() {
     let source = r#"
 interface User {
@@ -24862,23 +19286,6 @@ const asyncInReduce = async (values: number[]): Promise<number> => {
 
 /// Test: async method with computed property and this capture
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_method_computed_this() {
     let source = r#"
@@ -24956,23 +19363,6 @@ class DataService<T> {
 /// Test: async generator with Symbol.asyncIterator implementation
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_async_generator_symbol_iterator() {
     let source = r#"
 class AsyncStream<T> {
@@ -25045,23 +19435,6 @@ class AsyncStream<T> {
 
 /// Test: await expressions with advanced patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_await_advanced_patterns() {
     let source = r#"
@@ -25159,23 +19532,6 @@ class ApiClient {
 /// Test: for-in loop with type annotations and object types
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_in_typed() {
     let source = r#"
 interface Config {
@@ -25261,23 +19617,6 @@ class ObjectUtils {
 
 /// Test: for-in with computed property access
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_in_computed() {
     let source = r#"
@@ -25371,23 +19710,6 @@ class DynamicAccessor {
 
 /// Test: for-of with custom iterator protocol
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_custom_iterator() {
     let source = r#"
@@ -25489,23 +19811,6 @@ class IterableCollection<T> {
 /// Test: for-of with Map and Set destructuring
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_for_of_map_set_destruct() {
     let source = r#"
 function processMap<K, V>(map: Map<K, V>): Array<{ key: K; value: V }> {
@@ -25603,23 +19908,6 @@ async function asyncMapProcess<K, V>(
 /// Test: public fields with various initializers
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_public_field_initializers() {
     let source = r#"
 class DataModel<T> {
@@ -25705,23 +19993,6 @@ class ConfigurableService {
 
 /// Test: class fields with decorators
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_field_with_decorators() {
     let source = r#"
@@ -25811,23 +20082,6 @@ class FormModel {
 /// Test: computed fields with dynamic expressions
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_field_computed_dynamic() {
     let source = r#"
 const FIELD_PREFIX = "data_";
@@ -25907,23 +20161,6 @@ class ComputedFromFunction {
 
 /// Test: field inheritance across multiple classes
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_class_field_inheritance_chain() {
     let source = r#"
@@ -26031,23 +20268,6 @@ class Admin extends User {
 /// Test: deeply nested arrows with this binding at multiple levels
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_deeply_nested_this() {
     let source = r#"
 class EventManager {
@@ -26125,23 +20345,6 @@ class EventManager {
 
 /// Test: arrows in class field initializers with this context
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_class_field_context() {
     let source = r#"
@@ -26221,23 +20424,6 @@ class DerivedComponent extends Component<string> {
 
 /// Test: complex rest and spread patterns in arrows
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_rest_spread_complex() {
     let source = r#"
@@ -26322,23 +20508,6 @@ class Aggregator<T> {
 
 /// Test: arrow functions in method chains and callbacks
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_arrow_callback_chains() {
     let source = r#"
@@ -26442,23 +20611,6 @@ const createPipeline = <T>() => ({
 /// Test: complex function parameter destructuring
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_function_params_complex() {
     let source = r#"
 interface Options {
@@ -26532,23 +20684,6 @@ class ConfigParser {
 
 /// Test: mixing array and object destructuring in various contexts
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_mixed_patterns() {
     let source = r#"
@@ -26625,23 +20760,6 @@ class DataExtractor<T> {
 
 /// Test: defaults with computed values and expressions
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_computed_defaults() {
     let source = r#"
@@ -26732,23 +20850,6 @@ class Builder {
 
 /// Test: destructuring in class methods and constructors
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_destructuring_class_methods() {
     let source = r#"
@@ -26842,23 +20943,6 @@ class Transform extends Geometry {
 /// Test: spread with method definitions in object literals
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_spread_object_literal_methods() {
     let source = r#"
 interface Base {
@@ -26944,23 +21028,6 @@ const mergeWithMethods = <T extends object>(
 
 /// Test: rest patterns in async error handling
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_async_error_handling() {
     let source = r#"
@@ -27067,23 +21134,6 @@ async function batchProcess<T, R>(
 /// Test: spread with custom iterables and generators
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_spread_custom_iterables() {
     let source = r#"
 class NumberRange implements Iterable<number> {
@@ -27177,23 +21227,6 @@ class IterableCollector<T> {
 
 /// Test: generics with rest/spread in function signatures
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_rest_spread_generic_signatures() {
     let source = r#"
@@ -27297,23 +21330,6 @@ const wrapWithLogging = <T extends unknown[], R>(
 /// Test: deeply nested optional chains
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_deep_nested() {
     let source = r#"
 interface DeepObject {
@@ -27401,23 +21417,6 @@ class DeepAccessor {
 
 /// Test: optional chaining in class method contexts
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_class_methods() {
     let source = r#"
@@ -27514,23 +21513,6 @@ class ChainedProcessor<T> {
 /// Test: optional chaining with generic types
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_generics() {
     let source = r#"
 interface Container<T> {
@@ -27620,23 +21602,6 @@ const optionalMap = <T, U>(
 
 /// Test: mixed property access, method calls, and element access
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_optional_chaining_mixed_access() {
     let source = r#"
@@ -27740,23 +21705,6 @@ const chainedOperations = (data: DataStore | null): string[] => {
 /// Test: nullish coalescing with complex expressions
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_complex_expressions() {
     let source = r#"
 interface Config {
@@ -27850,23 +21798,6 @@ class ExpressionProcessor {
 /// Test: nullish coalescing in class context
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_class_context() {
     let source = r#"
 class DefaultValueService<T> {
@@ -27958,23 +21889,6 @@ class ConfigManager {
 
 /// Test: nullish coalescing with function calls
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_function_calls() {
     let source = r#"
@@ -28075,23 +21989,6 @@ class ResolverChain<T> {
 
 /// Test: deeply nested nullish coalescing with default chains
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_nullish_nested_defaults() {
     let source = r#"
@@ -28207,23 +22104,6 @@ class NestedDefaultResolver {
 /// Test BigInt literal syntax with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_bigint_literal() {
     let source = r#"
 const small: bigint = 123n;
@@ -28299,23 +22179,6 @@ const container = new BigIntContainer(100n);
 
 /// Test BigInt arithmetic operations with type erasure
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_bigint_arithmetic() {
     let source = r#"
@@ -28410,23 +22273,6 @@ calc.add(100n).subtract(20n).multiply(2n);
 
 /// Test BigInt comparison operations with generics
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_bigint_comparison() {
     let source = r#"
@@ -28523,23 +22369,6 @@ const isLess: boolean = comp1.lessThan(200n);
 
 /// Test BigInt method calls and conversions
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_bigint_method_calls() {
     let source = r#"
@@ -28652,23 +22481,6 @@ const maxVal: bigint = BigIntWrapper.max(1n, 2n, 3n, 100n);
 /// Test well-known symbols with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_symbol_well_known() {
     let source = r#"
 interface Iterable<T> {
@@ -28778,23 +22590,6 @@ const matchable = new Matchable(/test/);
 /// Test Symbol.for with global symbol registry
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_symbol_for() {
     let source = r#"
 type SymbolKey = string | number;
@@ -28901,23 +22696,6 @@ const isSame: boolean = Symbol.for("app.global") === globalSymbol;
 /// Test Symbol.keyFor to retrieve global symbol keys
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_symbol_key_for() {
     let source = r#"
 interface SymbolInfo {
@@ -29022,23 +22800,6 @@ const isGlobalRegistered: boolean = analyzer.isRegistered(globalSym);
 
 /// Test Symbol in class computed properties and methods
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_symbol_computed_class() {
     let source = r#"
@@ -29148,23 +22909,6 @@ const tagged = factory.createTagged(42);
 /// Test Proxy handler traps with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_proxy_handler_traps() {
     let source = r#"
 interface Target {
@@ -29268,23 +23012,6 @@ const factory = new ProxyFactory<Target>(handler);
 /// Test Proxy.revocable with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_proxy_revocable() {
     let source = r#"
 interface RevocableResult<T> {
@@ -29387,23 +23114,6 @@ const manager = new RevocableProxyManager<DataObject>();
 
 /// Test Reflect API integration with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_reflect_integration() {
     let source = r#"
@@ -29519,23 +23229,6 @@ const keys: (string | symbol)[] = ReflectWrapper.getKeys(target);
 /// Test Proxy with class instance wrapping
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_proxy_class_wrapper() {
     let source = r#"
 interface Observable<T> {
@@ -29648,23 +23341,6 @@ const proxy = reactive.createProxy();
 /// Test WeakRef deref with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_weakref_deref() {
     let source = r#"
 interface CacheableObject {
@@ -29762,23 +23438,6 @@ const derefed: CacheableObject | undefined = weakRef.deref();
 
 /// Test FinalizationRegistry with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_finalization_registry() {
     let source = r#"
@@ -29885,23 +23544,6 @@ tracker.track(resource, "resource-1");
 
 /// Test weak cache pattern with WeakRef and Map
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_weak_cache() {
     let source = r#"
@@ -30023,23 +23665,6 @@ const retrieved: Cacheable | undefined = cache.get("key1");
 /// Test WeakRef with async patterns
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_weakref_async() {
     let source = r#"
 interface AsyncResource {
@@ -30157,23 +23782,6 @@ const manager = new AsyncWeakRefManager<AsyncResource>();
 /// Test Promise.all with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_promise_all() {
     let source = r#"
 interface ApiResponse<T> {
@@ -30278,23 +23886,6 @@ const results: object[] = await fetchAll<object>(["/a", "/b"]);
 
 /// Test Promise.race with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_promise_race() {
     let source = r#"
@@ -30406,23 +23997,6 @@ const racer = new RacingFetcher<object>(3000);
 
 /// Test Promise.allSettled with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_promise_all_settled() {
     let source = r#"
@@ -30538,23 +24112,6 @@ const fetcher = new ResilientFetcher<object>();
 /// Test Promise.any with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_promise_any() {
     let source = r#"
 interface FetchOptions {
@@ -30658,23 +24215,6 @@ const fetcher = new AnyFirstFetcher<object>(["/api1", "/api2"]);
 
 /// Test Symbol.iterator implementation with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_iterator_symbol_iterator() {
     let source = r#"
@@ -30785,23 +24325,6 @@ const arrIter = new ArrayIterator<string>(["a", "b", "c"]);
 /// Test Iterator next method with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_iterator_next() {
     let source = r#"
 interface IteratorResult<T> {
@@ -30911,23 +24434,6 @@ const first = counter.next();
 /// Test Iterator return method with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_iterator_return() {
     let source = r#"
 interface IteratorReturnResult<T> {
@@ -31031,23 +24537,6 @@ const result = resourceIter.return(0);
 
 /// Test Iterator throw method with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_iterator_throw() {
     let source = r#"
@@ -31171,23 +24660,6 @@ const throwResult = iter.throw(new Error("test"));
 /// Test basic yield expression with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_basic_yield() {
     let source = r#"
 interface NumberGenerator {
@@ -31284,23 +24756,6 @@ const seq = new NumberSequence([1, 2, 3]);
 /// Test yield* delegation with type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_yield_star() {
     let source = r#"
 function* inner(): Generator<number> {
@@ -31380,23 +24835,6 @@ const flatGen = flatten([[1, 2], [3, 4]]);
 
 /// Test generator conditional return with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_conditional_return() {
     let source = r#"
@@ -31496,23 +24934,6 @@ const stateful = new StatefulGenerator<number, boolean>();
 
 /// Test generator throw with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_throw() {
     let source = r#"
@@ -31618,23 +25039,6 @@ const throwable = new ThrowableGenerator<string>();
 /// Test generator resource management with try/catch and type annotations
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_resource_management() {
     let source = r#"
 interface SafeResult<T> {
@@ -31735,23 +25139,6 @@ const safeIter = new SafeIterator<number>();
 
 /// Test combined generator patterns with type annotations
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generator_combined() {
     let source = r#"
@@ -31859,23 +25246,6 @@ const pipe = new GeneratorPipeline(rangeGen);
 /// Test class decorator with private fields
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_class_private_fields() {
     let source = r#"
 interface ClassDecorator {
@@ -31965,23 +25335,6 @@ const data = new SecureData("password123");
 
 /// Test method decorator with computed property name
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_method_computed_name() {
     let source = r#"
@@ -32080,23 +25433,6 @@ const instance = new DynamicMethods();
 
 /// Test accessor decorator on getter/setter pair
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_accessor_pair() {
     let source = r#"
@@ -32202,23 +25538,6 @@ const bounded = new BoundedValue();
 /// Test parameter decorator in constructor
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_parameter_constructor() {
     let source = r#"
 interface ParameterDecorator {
@@ -32315,23 +25634,6 @@ class UserRepository {
 
 /// Test decorator inheritance with method override
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_inheritance_override() {
     let source = r#"
@@ -32461,23 +25763,6 @@ const user = new UserEntity(1, "John");
 
 /// Test combined all decorator types
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_decorator_combined_all() {
     let source = r#"
@@ -32620,23 +25905,6 @@ const widget = new Widget({});
 /// Test private instance field with inheritance chain
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_field_inheritance_chain() {
     let source = r#"
 interface Identifiable {
@@ -32748,23 +26016,6 @@ const admin = new Admin("1", "admin@test.com", "secret", ["read", "write"]);
 /// Test private static field with initialization dependencies
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_static_initialization_order() {
     let source = r#"
 interface Config {
@@ -32866,23 +26117,6 @@ const client2 = new ApiClient({ timeout: 10000 });
 
 /// Test private method with async patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_method_async_patterns() {
     let source = r#"
@@ -32990,23 +26224,6 @@ const service = new DataService("https://api.example.com");
 
 /// Test private accessor with computed values
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_accessor_computed_values() {
     let source = r#"
@@ -33124,23 +26341,6 @@ const rect = new Rectangle(10, 20);
 /// Test private field in conditional expressions
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_field_conditional_expr() {
     let source = r#"
 interface State {
@@ -33256,23 +26456,6 @@ const machine = new StateMachine(0, 100);
 
 /// Test combined private patterns with generics
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_private_combined_generics() {
     let source = r#"
@@ -33432,23 +26615,6 @@ const collection = new PrivateCollection<NumberWrapper>(50);
 /// Test abstract class with abstract methods
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class_abstract_methods() {
     let source = r#"
 interface Drawable {
@@ -33553,23 +26719,6 @@ const triangle = new Triangle(3, 4, 5);
 /// Test abstract class with implemented methods
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class_implemented_methods() {
     let source = r#"
 interface Logger {
@@ -33669,23 +26818,6 @@ const service = new EmailService(["user@example.com"]);
 
 /// Test abstract class with static members
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class_static_members() {
     let source = r#"
@@ -33797,23 +26929,6 @@ const counter2 = UpDownCounter.create();
 
 /// Test abstract class inheritance chain
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class_inheritance_chain() {
     let source = r#"
@@ -33929,23 +27044,6 @@ const button = new Button("Submit");
 /// Test abstract class with generics
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class_generics() {
     let source = r#"
 interface Repository<T> {
@@ -34059,23 +27157,6 @@ const repo = new UserRepository();
 
 /// Test combined abstract class patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_abstract_class_combined_patterns() {
     let source = r#"
@@ -34222,23 +27303,6 @@ const userEntity = new UserEntity();
 /// Test basic mixin function pattern
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_mixin_basic_function() {
     let source = r#"
 type Constructor<T = {}> = new (...args: any[]) => T;
@@ -34343,23 +27407,6 @@ const entity = new TimestampedEntity(1);
 
 /// Test mixin with generics
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_mixin_generics() {
     let source = r#"
@@ -34491,23 +27538,6 @@ const user = new User("1", "Alice");
 
 /// Test multiple mixin composition
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_mixin_composition() {
     let source = r#"
@@ -34643,23 +27673,6 @@ const widget = new Widget("MyWidget", 100, 200);
 
 /// Test mixin with static members
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_mixin_static_members() {
     let source = r#"
@@ -34798,23 +27811,6 @@ const db = new DatabaseService("DB", "localhost:5432");
 
 /// Test mixin with private fields
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_mixin_private_fields() {
     let source = r#"
@@ -34973,23 +27969,6 @@ const file = new FileResource("config", "/etc/config.json");
 
 /// Test combined mixin patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_mixin_combined_patterns() {
     let source = r#"
@@ -35201,23 +28180,6 @@ const user = new UserModel("user-1");
 /// Test ES5 generic class with single type parameter
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generic_class_single_param() {
     let source = r#"
 class Container<T> {
@@ -35292,23 +28254,6 @@ const strContainer = new StringContainer("hello");
 
 /// Test ES5 generic class with multiple type parameters
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generic_class_multi_params() {
     let source = r#"
@@ -35394,23 +28339,6 @@ const triple = new Triple<number, string, boolean>(1, "two", true);
 
 /// Test ES5 generic class with constraints
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generic_class_constraints() {
     let source = r#"
@@ -35508,23 +28436,6 @@ class KeyValueStore<K extends string | number, V extends object> {
 
 /// Test ES5 generic class extending generic base
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generic_class_extends_generic() {
     let source = r#"
@@ -35638,23 +28549,6 @@ class CachedRepository<T, ID> extends BaseRepository<T, ID> {
 /// Test ES5 generic class with default type parameters
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generic_class_default_params() {
     let source = r#"
 class EventEmitter<T = any> {
@@ -35755,23 +28649,6 @@ const map2 = new TypedMap<number, boolean>();
 
 /// Test ES5 combined generic class patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_generic_class_combined() {
     let source = r#"
@@ -35918,23 +28795,6 @@ class Pipeline<TInput, TOutput = TInput> {
 /// Test ES5 basic tuple type
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tuple_basic() {
     let source = r#"
 type Point = [number, number];
@@ -36013,23 +28873,6 @@ const [r, g, b] = color;
 
 /// Test ES5 tuple with optional elements
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tuple_optional() {
     let source = r#"
@@ -36115,23 +28958,6 @@ const full: OptionalTuple = ["test", 42, true];
 /// Test ES5 tuple with rest elements
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tuple_rest() {
     let source = r#"
 type StringNumberBooleans = [string, number, ...boolean[]];
@@ -36206,23 +29032,6 @@ const tuple2: StringNumbers = ["value", 1, 2, 3, 4, 5];
 
 /// Test ES5 named tuple elements
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tuple_named() {
     let source = r#"
@@ -36318,23 +29127,6 @@ const user: Person = ["John", 25, "john@example.com"];
 /// Test ES5 variadic tuple types
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tuple_variadic() {
     let source = r#"
 type Concat<T extends unknown[], U extends unknown[]> = [...T, ...U];
@@ -36422,23 +29214,6 @@ const withPrefix = prepend("start", [1, 2, 3]);
 
 /// Test ES5 combined tuple patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_tuple_combined() {
     let source = r#"
@@ -36564,23 +29339,6 @@ async function fetchData(): Promise<AsyncResult<object>> {
 /// Test ES5 basic union type
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_union_basic() {
     let source = r#"
 type StringOrNumber = string | number;
@@ -36678,23 +29436,6 @@ const status: Status = "pending";
 
 /// Test ES5 discriminated union
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_union_discriminated() {
     let source = r#"
@@ -36803,23 +29544,6 @@ const rect: Rectangle = { kind: "rectangle", width: 10, height: 20 };
 /// Test ES5 intersection type
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_intersection_basic() {
     let source = r#"
 interface Named {
@@ -36918,23 +29642,6 @@ const fullContact: FullContact = { name: "Bob", age: 25, email: "bob@example.com
 
 /// Test ES5 union with null/undefined
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_union_nullable() {
     let source = r#"
@@ -37035,23 +29742,6 @@ const maybe: Maybe<boolean> = true;
 
 /// Test ES5 complex intersection patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_intersection_complex() {
     let source = r#"
@@ -37167,23 +29857,6 @@ const user: SerializableEntity = new User("Alice", "alice@example.com");
 
 /// Test ES5 combined union/intersection patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_union_intersection_combined() {
     let source = r#"
@@ -37334,23 +30007,6 @@ const service: Instrumented<{ name: string }> = {
 /// Test ES5 user-defined type guard
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_type_guard_user_defined() {
     let source = r#"
 interface Cat {
@@ -37463,23 +30119,6 @@ const nonNullValues = values.filter(isNonNull);
 /// Test ES5 typeof type guard
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_type_guard_typeof() {
     let source = r#"
 type Primitive = string | number | boolean | symbol | bigint;
@@ -37591,23 +30230,6 @@ function processValue(value: string | number | object): void {
 
 /// Test ES5 instanceof type guard
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_type_guard_instanceof() {
     let source = r#"
@@ -37730,23 +30352,6 @@ function handleError(e: unknown): string {
 
 /// Test ES5 in operator guard
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_type_guard_in() {
     let source = r#"
@@ -37872,23 +30477,6 @@ function hasName<T>(obj: T): obj is T & WithName {
 /// Test ES5 assertion function guard
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_type_guard_assertion() {
     let source = r#"
 function assertIsString(value: unknown): asserts value is string {
@@ -38007,23 +30595,6 @@ function processNumber(value: unknown): number {
 
 /// Test ES5 combined type guard patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_type_guard_combined() {
     let source = r#"
@@ -38169,23 +30740,6 @@ function narrowUnion(value: string | number | boolean | object | null): string {
 /// Test ES5 basic satisfies with object literal
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_satisfies_object_literal() {
     let source = r##"
 interface Config {
@@ -38277,23 +30831,6 @@ function getConfig(): Config {
 /// Test ES5 satisfies with array literal
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_satisfies_array_literal() {
     let source = r#"
 type StringArray = string[];
@@ -38380,23 +30917,6 @@ const mixed = [1, "two", true] satisfies (number | string | boolean)[];
 
 /// Test ES5 satisfies with function expression
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_satisfies_function_expr() {
     let source = r#"
@@ -38491,23 +31011,6 @@ const counterReducer = ((state: number, action: { type: string }) => {
 
 /// Test ES5 satisfies with as const
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_satisfies_as_const() {
     let source = r##"
@@ -38615,23 +31118,6 @@ const appConfig = {
 /// Test ES5 satisfies in class context
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_satisfies_class_context() {
     let source = r#"
 interface ButtonConfig {
@@ -38721,23 +31207,6 @@ const options = {
 
 /// Test ES5 combined satisfies patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_satisfies_combined() {
     let source = r#"
@@ -38875,23 +31344,6 @@ async function fetchData<T>(): Promise<State<T>> {
 /// Test ES5 object literal as const
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_assertion_object() {
     let source = r#"
 const config = {
@@ -38975,23 +31427,6 @@ const nested = {
 /// Test ES5 array literal as const
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_assertion_array() {
     let source = r#"
 const colors = ["red", "green", "blue"] as const;
@@ -39065,23 +31500,6 @@ const single = ["only"] as const;
 
 /// Test ES5 nested as const
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_assertion_nested() {
     let source = r#"
@@ -39177,23 +31595,6 @@ const arrayOfObjects = [
 /// Test ES5 as const with type assertion
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_assertion_with_type() {
     let source = r#"
 interface Config {
@@ -39280,23 +31681,6 @@ const booleanLiteral = true as const;
 
 /// Test ES5 as const in function return
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_assertion_function_return() {
     let source = r#"
@@ -39393,23 +31777,6 @@ function* generatorConfig() {
 
 /// Test ES5 combined const assertion patterns
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_const_assertion_combined() {
     let source = r#"
@@ -39533,23 +31900,6 @@ function getCode<K extends keyof typeof lookup.codes>(key: K): typeof lookup.cod
 /// Template literal types should be completely erased.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal_type_basic() {
     let source = r#"
 type Greeting = `Hello, ${string}!`;
@@ -39611,23 +31961,6 @@ const key: Key = "test_key";
 /// Template literal types with unions should be completely erased.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal_type_union() {
     let source = r#"
 type EventName = "click" | "hover" | "focus";
@@ -39688,23 +32021,6 @@ const combined: Combined = "click_success";
 /// These TypeScript intrinsic types should be completely erased.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal_type_uppercase_lowercase() {
     let source = r#"
 type BaseEvent = "click" | "hover";
@@ -39764,23 +32080,6 @@ const mixed: MixedCase = "HELLO";
 /// These TypeScript intrinsic types should be completely erased.
 #[test]
 #[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal_type_capitalize_uncapitalize() {
     let source = r#"
 type BaseWord = "hello" | "world";
@@ -39839,23 +32138,6 @@ const mixedVal: Mixed = "Test";
 /// Test template literal type inference patterns.
 /// Type inference with template literals should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal_type_inference() {
     let source = r#"
@@ -39920,23 +32202,6 @@ const result = parseRoute("users/123");
 /// Test combined template literal patterns - complex real-world usage.
 /// All template literal type constructs should be erased.
 #[test]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
-#[ignore = "ES5 spread downleveling not fully implemented"]
 #[ignore = "ES5 spread downleveling not fully implemented"]
 fn test_parity_es5_template_literal_type_combined() {
     let source = r#"

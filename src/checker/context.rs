@@ -46,16 +46,15 @@ impl CheckerOptions {
             self.strict_function_types = self.strict_function_types || true;
             self.strict_bind_call_apply = self.strict_bind_call_apply || true;
             self.strict_property_initialization = self.strict_property_initialization || true;
-            self.use_unknown_in_catch_variables =
-                self.use_unknown_in_catch_variables || true;
+            self.use_unknown_in_catch_variables = self.use_unknown_in_catch_variables || true;
             // exactOptionalPropertyTypes and other opts are not implied by --strict
         }
         self
     }
 }
+use crate::binder::BinderState;
 use crate::parser::node::NodeArena;
 use crate::solver::{TypeEnvironment, TypeId, TypeInterner};
-use crate::binder::BinderState;
 
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]

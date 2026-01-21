@@ -2,6 +2,7 @@
 //!
 //! Given a position in the source, finds all references to the symbol at that position.
 
+use crate::binder::BinderState;
 use crate::binder::SymbolId;
 use crate::lsp::position::{LineMap, Location, Position, Range};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
@@ -9,7 +10,6 @@ use crate::lsp::utils::find_node_at_offset;
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
-use crate::binder::BinderState;
 
 /// Find References provider.
 ///
@@ -487,8 +487,8 @@ impl<'a> FindReferences<'a> {
 #[cfg(test)]
 mod references_tests {
     use super::*;
-    use crate::lsp::position::LineMap;
     use crate::binder::BinderState;
+    use crate::lsp::position::LineMap;
     use crate::parser::ParserState;
 
     #[test]

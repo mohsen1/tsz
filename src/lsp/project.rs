@@ -9,8 +9,10 @@ use std::time::{Duration, Instant};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::binder::BinderState;
 use crate::binder::SymbolId;
 use crate::checker::TypeCache;
+use crate::checker::state::CheckerState;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::cli::config::{load_tsconfig, resolve_compiler_options};
 use crate::lsp::code_actions::{
@@ -27,13 +29,11 @@ use crate::lsp::rename::{RenameProvider, TextEdit, WorkspaceEdit};
 use crate::lsp::resolver::{ScopeCache, ScopeCacheStats};
 use crate::lsp::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::lsp::utils::find_node_at_offset;
+use crate::parser::ParserState;
 use crate::parser::node::NodeAccess;
-use crate::parser::{NodeIndex, NodeList, syntax_kind_ext, node::NodeArena};
+use crate::parser::{NodeIndex, NodeList, node::NodeArena, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeInterner;
-use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
-use crate::parser::ParserState;
 
 enum ImportKind {
     Named(String),

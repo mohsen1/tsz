@@ -14,6 +14,7 @@
 //!
 //! Phase 7.5 integration - using solver type system for type checking.
 
+use crate::binder::BinderState;
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::context::CheckerOptions;
 use crate::checker::types::diagnostics::{
@@ -21,12 +22,11 @@ use crate::checker::types::diagnostics::{
 };
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
 use crate::interner::Atom;
-use crate::parser::syntax_kind_ext;
 use crate::parser::node::{ImportDeclData, NodeArena};
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::solver::{ContextualTypeContext, TypeId, TypeInterner};
-use crate::binder::BinderState;
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
@@ -12139,11 +12139,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        fn parse_type(
-            checker: &mut CheckerState,
-            text: &str,
-            pos: &mut usize,
-        ) -> Option<TypeId> {
+        fn parse_type(checker: &mut CheckerState, text: &str, pos: &mut usize) -> Option<TypeId> {
             skip_ws(text, pos);
             if text[*pos..].starts_with("function") {
                 return parse_function_type(checker, text, pos);
@@ -14864,8 +14860,17 @@ impl<'a> CheckerState<'a> {
     fn is_mapped_type_utility(&self, name: &str) -> bool {
         matches!(
             name,
-            "Partial" | "Required" | "Readonly" | "Record" | "Pick" | "Omit" | "Extract"
-                | "Exclude" | "NonNullable" | "ThisType" | "Infer"
+            "Partial"
+                | "Required"
+                | "Readonly"
+                | "Record"
+                | "Pick"
+                | "Omit"
+                | "Extract"
+                | "Exclude"
+                | "NonNullable"
+                | "ThisType"
+                | "Infer"
         )
     }
 

@@ -38,11 +38,11 @@
 //! chains with any other transforms (like ES5Class).
 
 use crate::emit_context::EmitContext;
-use crate::parser::syntax_kind_ext;
+use crate::emitter::ModuleKind;
 use crate::parser::node::{Node, NodeArena};
+use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::emitter::ModuleKind;
 use crate::transform_context::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
 use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::private_fields_es5::is_private_identifier;
@@ -1884,8 +1884,8 @@ impl<'a> LoweringPass<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::node::NodeArena;
     use crate::parser::ParserState;
+    use crate::parser::node::NodeArena;
 
     fn parse(source: &str) -> (NodeArena, NodeIndex) {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
