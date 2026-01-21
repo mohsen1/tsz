@@ -546,31 +546,72 @@ impl<'a> FlowAnalyzer<'a> {
         self.apply_type_predicate_narrowing(pre_type, &signature.predicate, true)
     }
 
-    /// Recursive flow graph traversal for definite assignment checks.
+    /// Iterative flow graph traversal for definite assignment checks.
+    ///
+    /// This replaces the recursive implementation to prevent stack overflow
+    /// on deeply nested control flow structures. Uses a worklist algorithm
+    /// with memoization to process flow nodes iteratively.
     fn check_definite_assignment(
         &self,
         reference: NodeIndex,
-        flow_id: FlowNodeId,
-        visited: &mut Vec<FlowNodeId>,
-        cache: &mut FxHashMap<FlowNodeId, bool>,
+        entry_id: FlowNodeId,
+        _visited: &mut Vec<FlowNodeId>,
+        _cache: &mut FxHashMap<FlowNodeId, bool>,
     ) -> bool {
-        if let Some(&cached) = cache.get(&flow_id) {
-            return cached;
-        }
+        // Result cache: flow_id -> is_assigned
+        let mut results: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
+        // Worklist for processing
+        let mut worklist: Vec<FlowNodeId> = vec![entry_id];
+        // Track nodes currently in worklist
+        let mut in_worklist: FxHashSet<FlowNodeId> = FxHashSet::default();
+        in_worklist.insert(entry_id);
 
-        if visited.contains(&flow_id) {
-            return false;
-        }
-        visited.push(flow_id);
+        while let Some(flow_id) = worklist.pop() {
+            in_worklist.remove(&flow_id);
 
-        let result = if let Some(flow) = self.binder.flow_nodes.get(flow_id) {
-            if flow.has_any_flags(flow_flags::UNREACHABLE) {
+            // Skip if already computed
+            if results.contains_key(&flow_id) {
+                continue;
+            }
+
+            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+                // Flow node doesn't exist - treat as assigned (conservative)
+                results.insert(flow_id, true);
+                continue;
+            };
+
+            // Check if we need to process antecedents first
+            let mut has_uncomputed_antecedent = false;
+
+            for &ant in &flow.antecedent {
+                if !results.contains_key(&ant) && !ant.is_none() {
+                    // Add antecedent to worklist
+                    if !in_worklist.contains(&ant) {
+                        worklist.push(ant);
+                        in_worklist.insert(ant);
+                    }
+                    has_uncomputed_antecedent = true;
+                }
+            }
+
+            // If we have uncomputed antecedents, defer this node
+            if has_uncomputed_antecedent {
+                // Add back to worklist for later processing
+                if !in_worklist.contains(&flow_id) {
+                    worklist.push(flow_id);
+                    in_worklist.insert(flow_id);
+                }
+                continue;
+            }
+
+            // Compute the result for this flow node
+            let result = if flow.has_any_flags(flow_flags::UNREACHABLE) {
                 false
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
                 if self.assignment_targets_reference(flow.node, reference) {
                     true
                 } else if let Some(&ant) = flow.antecedent.first() {
-                    self.check_definite_assignment(reference, ant, visited, cache)
+                    *results.get(&ant).unwrap_or(&false)
                 } else {
                     false
                 }
@@ -578,27 +619,29 @@ impl<'a> FlowAnalyzer<'a> {
                 if flow.antecedent.is_empty() {
                     false
                 } else {
-                    // Check all reachable antecedents (skip unreachable paths like return/throw)
+                    // All branches must have the reference definitely assigned
+                    // Unreachable branches satisfy this condition vacuously
                     flow.antecedent.iter().all(|&ant| {
-                        // Skip unreachable branches - they satisfy the condition vacuously
-                        // since execution never reaches the merge point from that path
+                        if ant.is_none() {
+                            return true;
+                        }
                         if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
                             if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
                                 return true;
                             }
                         }
-                        self.check_definite_assignment(reference, ant, visited, cache)
+                        *results.get(&ant).unwrap_or(&false)
                     })
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
                 if let Some(&ant) = flow.antecedent.first() {
-                    self.check_definite_assignment(reference, ant, visited, cache)
+                    *results.get(&ant).unwrap_or(&false)
                 } else {
                     false
                 }
             } else if flow.has_any_flags(flow_flags::CONDITION) {
                 if let Some(&ant) = flow.antecedent.first() {
-                    self.check_definite_assignment(reference, ant, visited, cache)
+                    *results.get(&ant).unwrap_or(&false)
                 } else {
                     false
                 }
@@ -606,218 +649,31 @@ impl<'a> FlowAnalyzer<'a> {
                 if flow.antecedent.is_empty() {
                     false
                 } else {
-                    // Check all reachable antecedents (skip unreachable paths like return/throw/break)
+                    // All clauses must have the reference definitely assigned
                     flow.antecedent.iter().all(|&ant| {
-                        // Skip unreachable branches - they satisfy the condition vacuously
-                        // since execution never reaches the merge point from that path
+                        if ant.is_none() {
+                            return true;
+                        }
                         if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
                             if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
                                 return true;
                             }
                         }
-                        self.check_definite_assignment(reference, ant, visited, cache)
+                        *results.get(&ant).unwrap_or(&false)
                     })
                 }
             } else if flow.has_any_flags(flow_flags::START) {
                 false
             } else if let Some(&ant) = flow.antecedent.first() {
-                self.check_definite_assignment(reference, ant, visited, cache)
+                *results.get(&ant).unwrap_or(&false)
             } else {
                 false
-            }
-        } else {
-            true
-        };
-
-        visited.pop();
-        cache.insert(flow_id, result);
-        result
-    }
-
-    /// Handle branch label (merge point) - union of types from all branches.
-    fn handle_branch_label(
-        &self,
-        reference: NodeIndex,
-        type_id: TypeId,
-        flow: &FlowNode,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> TypeId {
-        if flow.antecedent.is_empty() {
-            return type_id;
-        }
-
-        // Get types from all incoming branches
-        let branch_types: Vec<TypeId> = flow
-            .antecedent
-            .iter()
-            .map(|&ant| self.check_flow(reference, type_id, ant, &mut visited.clone()))
-            .collect();
-
-        // Union the types from different branches
-        if branch_types.is_empty() {
-            type_id
-        } else if branch_types.len() == 1 {
-            branch_types[0]
-        } else {
-            self.interner.union(branch_types)
-        }
-    }
-
-    /// Handle loop label - for now, just take the type from entry.
-    fn handle_loop_label(
-        &self,
-        reference: NodeIndex,
-        type_id: TypeId,
-        flow: &FlowNode,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> TypeId {
-        // For loops, we ideally compute a fixed point.
-        // Approximate by unioning entry and back-edge antecedents.
-        if flow.antecedent.is_empty() {
-            return type_id;
-        }
-
-        let loop_types: Vec<TypeId> = flow
-            .antecedent
-            .iter()
-            .map(|&ant| self.check_flow(reference, type_id, ant, &mut visited.clone()))
-            .collect();
-
-        if loop_types.is_empty() {
-            type_id
-        } else if loop_types.len() == 1 {
-            loop_types[0]
-        } else {
-            self.interner.union(loop_types)
-        }
-    }
-
-    /// Handle condition node (TRUE_CONDITION or FALSE_CONDITION).
-    fn handle_condition(
-        &self,
-        reference: NodeIndex,
-        type_id: TypeId,
-        flow: &FlowNode,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> TypeId {
-        // First get the type before this condition
-        let pre_type = if let Some(&ant) = flow.antecedent.first() {
-            self.check_flow(reference, type_id, ant, visited)
-        } else {
-            type_id
-        };
-
-        // Check if this condition narrows the reference we're interested in
-        let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-
-        // Apply narrowing based on the condition
-        self.narrow_type_by_condition(pre_type, flow.node, reference, is_true_branch)
-    }
-
-    /// Handle switch clause flow nodes, including fallthrough and default narrowing.
-    fn handle_switch_clause(
-        &self,
-        reference: NodeIndex,
-        type_id: TypeId,
-        flow: &FlowNode,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> TypeId {
-        let clause_idx = flow.node;
-        let Some(switch_idx) = self.binder.get_switch_for_clause(clause_idx) else {
-            return type_id;
-        };
-        let Some(switch_node) = self.arena.get(switch_idx) else {
-            return type_id;
-        };
-        let Some(switch_data) = self.arena.get_switch(switch_node) else {
-            return type_id;
-        };
-        let Some(clause_node) = self.arena.get(clause_idx) else {
-            return type_id;
-        };
-        let Some(clause) = self.arena.get_case_clause(clause_node) else {
-            return type_id;
-        };
-
-        let pre_switch_type = if let Some(&ant) = flow.antecedent.first() {
-            self.check_flow(reference, type_id, ant, visited)
-        } else {
-            type_id
-        };
-
-        let narrowing = NarrowingContext::new(self.interner);
-        let mut clause_type = if clause.expression.is_none() {
-            self.narrow_by_default_switch_clause(
-                pre_switch_type,
-                switch_data.expression,
-                switch_data.case_block,
-                reference,
-                &narrowing,
-            )
-        } else {
-            self.narrow_by_switch_clause(
-                pre_switch_type,
-                switch_data.expression,
-                clause.expression,
-                reference,
-                &narrowing,
-            )
-        };
-
-        if flow.antecedent.len() > 1 {
-            let mut fallthrough_types = Vec::new();
-            for &ant in flow.antecedent.iter().skip(1) {
-                fallthrough_types.push(self.check_flow(
-                    reference,
-                    type_id,
-                    ant,
-                    &mut visited.clone(),
-                ));
-            }
-
-            let fallthrough_type = if fallthrough_types.len() == 1 {
-                fallthrough_types[0]
-            } else {
-                self.interner.union(fallthrough_types)
             };
 
-            clause_type = self.union_types(clause_type, fallthrough_type);
+            results.insert(flow_id, result);
         }
 
-        clause_type
-    }
-
-    fn handle_assignment(
-        &self,
-        reference: NodeIndex,
-        type_id: TypeId,
-        flow: &FlowNode,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> TypeId {
-        let targets_reference = self.assignment_targets_reference_node(flow.node, reference);
-
-        if targets_reference {
-            // Check if this is a direct assignment (x = value) vs destructuring ([x] = ...)
-            if self.is_direct_assignment_to_reference(flow.node, reference) {
-                // Direct assignment: narrow to the assigned type
-                if let Some(assigned_type) = self.get_assigned_type(flow.node, reference) {
-                    return assigned_type;
-                }
-            }
-            // Destructuring or other complex assignment: clear narrowing
-            return type_id;
-        }
-
-        if self.assignment_affects_reference_node(flow.node, reference) {
-            // Assignment affects the reference - clear narrowing
-            return type_id;
-        }
-
-        if let Some(&ant) = flow.antecedent.first() {
-            self.check_flow(reference, type_id, ant, visited)
-        } else {
-            type_id
-        }
+        results.get(&entry_id).copied().unwrap_or(false)
     }
 
     /// Check if this is a direct assignment to a reference (e.g., `x = value`)
@@ -1358,79 +1214,6 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         self.assignment_targets_reference_internal(assignment_node, target)
-    }
-
-    fn handle_array_mutation(
-        &self,
-        reference: NodeIndex,
-        type_id: TypeId,
-        flow: &FlowNode,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> TypeId {
-        let Some(node) = self.arena.get(flow.node) else {
-            return type_id;
-        };
-        let Some(call) = self.arena.get_call_expr(node) else {
-            return type_id;
-        };
-
-        if self.array_mutation_affects_reference(call, reference) {
-            return type_id;
-        }
-
-        if let Some(&ant) = flow.antecedent.first() {
-            self.check_flow(reference, type_id, ant, visited)
-        } else {
-            type_id
-        }
-    }
-
-    fn handle_call(
-        &self,
-        reference: NodeIndex,
-        type_id: TypeId,
-        flow: &FlowNode,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> TypeId {
-        let pre_type = if let Some(&ant) = flow.antecedent.first() {
-            self.check_flow(reference, type_id, ant, visited)
-        } else {
-            type_id
-        };
-
-        let Some(node) = self.arena.get(flow.node) else {
-            return pre_type;
-        };
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return pre_type;
-        }
-        let Some(call) = self.arena.get_call_expr(node) else {
-            return pre_type;
-        };
-
-        let Some(node_types) = self.node_types else {
-            return pre_type;
-        };
-        let Some(&callee_type) = node_types.get(&call.expression.0) else {
-            return pre_type;
-        };
-        let Some(signature) = self.predicate_signature_for_type(callee_type) else {
-            return pre_type;
-        };
-        if !signature.predicate.asserts {
-            return pre_type;
-        }
-
-        let Some(predicate_target) =
-            self.predicate_target_expression(call, &signature.predicate, &signature.params)
-        else {
-            return pre_type;
-        };
-        if !self.is_matching_reference(predicate_target, reference) {
-            return pre_type;
-        }
-
-        self.apply_type_predicate_narrowing(pre_type, &signature.predicate, true)
     }
 
     fn narrow_by_switch_clause(
