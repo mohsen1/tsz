@@ -57,8 +57,10 @@ fn test_ir_namespace_iife() {
         name_parts: vec!["MyNamespace".to_string()],
         body: vec![
             IRNode::func_decl("foo", vec![], vec![IRNode::ret(Some(IRNode::number("42")))]),
-            IRNode::ExportAssignment {
+            IRNode::NamespaceExport {
+                namespace: "MyNamespace".to_string(),
                 name: "foo".to_string(),
+                value: Box::new(IRNode::id("foo")),
             },
         ],
         is_exported: false,
