@@ -40,13 +40,13 @@ impl CheckerOptions {
     /// We mirror that behavior by OR-ing the per-flag booleans with `strict`.
     pub fn apply_strict_defaults(mut self) -> Self {
         if self.strict {
-            self.no_implicit_any = self.no_implicit_any || true;
-            self.no_implicit_this = self.no_implicit_this || true;
-            self.strict_null_checks = self.strict_null_checks || true;
-            self.strict_function_types = self.strict_function_types || true;
-            self.strict_bind_call_apply = self.strict_bind_call_apply || true;
-            self.strict_property_initialization = self.strict_property_initialization || true;
-            self.use_unknown_in_catch_variables = self.use_unknown_in_catch_variables || true;
+            self.no_implicit_any = true;
+            self.no_implicit_this = true;
+            self.strict_null_checks = true;
+            self.strict_function_types = true;
+            self.strict_bind_call_apply = true;
+            self.strict_property_initialization = true;
+            self.use_unknown_in_catch_variables = true;
             // exactOptionalPropertyTypes and other opts are not implied by --strict
         }
         self
