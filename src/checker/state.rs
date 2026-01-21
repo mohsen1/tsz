@@ -1223,6 +1223,10 @@ impl<'a> CheckerState<'a> {
                             return type_id;
                         }
                         if self.is_known_global_type_name(name) {
+                            // Emit TS2318/TS2583 for missing global types
+                            // TS2583 for ES2015+ types, TS2318 for other global types
+                            self.error_cannot_find_global_type(name, type_name_idx);
+
                             // For Promise-like types with type arguments, create a proper TypeApplication
                             // so that promise_like_return_type_argument can extract T from Promise<T>
                             if self.is_promise_like_name(name) {
@@ -1242,13 +1246,13 @@ impl<'a> CheckerState<'a> {
                                     }
                                 }
                             }
-                            // For other known global types, just process args and return UNKNOWN
+                            // For other known global types, just process args and return ERROR
                             if let Some(args) = &type_ref.type_arguments {
                                 for &arg_idx in &args.nodes {
                                     let _ = self.get_type_from_type_node(arg_idx);
                                 }
                             }
-                            return TypeId::UNKNOWN;
+                            return TypeId::ERROR;
                         }
                         if name == "await" {
                             self.error_cannot_find_name_did_you_mean_at(
@@ -14351,6 +14355,44 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .diagnostics
                 .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Report error 2318/2583: Cannot find global type 'X'.
+    /// - TS2318: Cannot find global type (for @noLib tests)
+    /// - TS2583: Cannot find name - suggests changing target library (for ES2015+ types)
+    fn error_cannot_find_global_type(&mut self, name: &str, idx: NodeIndex) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::lib_loader;
+
+        // Check if this is an ES2015+ type that would require a specific lib
+        let is_es2015_type = lib_loader::is_es2015_plus_type(name);
+
+        if let Some(loc) = self.get_source_location(idx) {
+            let (code, message) = if is_es2015_type {
+                (
+                    lib_loader::MISSING_ES2015_LIB_SUPPORT,
+                    format!(
+                        "Cannot find name '{}'. Do you need to change your target library?",
+                        name
+                    ),
+                )
+            } else {
+                (
+                    lib_loader::CANNOT_FIND_GLOBAL_TYPE,
+                    format!("Cannot find global type '{}'", name),
+                )
+            };
+
+            self.ctx.diagnostics.push(Diagnostic {
+                code,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
         }
     }
 
