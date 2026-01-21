@@ -6,7 +6,8 @@
 # for fast iteration.
 #
 # Usage:
-#   ./scripts/test.sh                          # Run all Rust unit tests
+#   ./scripts/test.sh                          # Run all Rust unit tests (in Docker)
+#   ./scripts/test.sh --no-sandbox             # Run tests directly without Docker
 #   ./scripts/test.sh test_name                # Run specific test
 #   ./scripts/test.sh --ignored test_name      # Run ignored tests too (nextest: --run-ignored all)
 #   ./scripts/test.sh --timeout=60 test_name   # Kill the test run after N seconds (inside container)
@@ -36,9 +37,13 @@ CONFORMANCE_TEST=""
 CONFORMANCE_CATEGORY=""
 RUN_IGNORED=false
 TIMEOUT_SECS=""
+USE_DOCKER=true
 
 for arg in "$@"; do
     case $arg in
+        --no-sandbox)
+            USE_DOCKER=false
+            ;;
         --rebuild)
             REBUILD=true
             ;;
@@ -80,6 +85,38 @@ if [ "$CONFORMANCE_TEST" = true ]; then
     fi
 fi
 
+# Run tests directly if --no-sandbox is specified
+if [ "$USE_DOCKER" = false ]; then
+    echo "🧪 Running tests WITHOUT Docker sandbox..."
+    echo "⚠️  Warning: Tests may consume significant memory and could crash your host"
+
+    cd "$ROOT_DIR"
+
+    # Build nextest args
+    NEXT_TEST_ARGS=""
+    if [ "$RUN_IGNORED" = true ]; then
+        NEXT_TEST_ARGS="$NEXT_TEST_ARGS --run-ignored all"
+    fi
+
+    # Build the cargo command
+    if [ -n "$TIMEOUT_SECS" ]; then
+        echo "   Timeout: ${TIMEOUT_SECS}s"
+        CARGO_CMD="timeout ${TIMEOUT_SECS}s cargo nextest run$NEXT_TEST_ARGS"
+    else
+        CARGO_CMD="cargo nextest run$NEXT_TEST_ARGS"
+    fi
+
+    if [ -n "$TEST_FILTER" ]; then
+        echo "   Filter: $TEST_FILTER"
+        eval "$CARGO_CMD $TEST_FILTER"
+    else
+        eval "$CARGO_CMD"
+    fi
+
+    echo "✅ Tests complete!"
+    exit 0
+fi
+
 # Clean cached volumes if requested
 if [ "$CLEAN" = true ]; then
     echo "🧹 Cleaning cached volumes..."
@@ -99,7 +136,8 @@ EOF
 fi
 
 # Run tests
-echo "🧪 Running tests..."
+echo "🧪 Running tests in Docker sandbox (memory: 16g, cpus: 12)..."
+echo "   Use --no-sandbox to run tests directly without Docker"
 
 # We use a workaround: copy source to a writable location inside the container
 # This avoids the ro mount conflict with the target cache
@@ -116,14 +154,14 @@ fi
 
 if [ -n "$TEST_FILTER" ]; then
     echo "   Filter: $TEST_FILTER"
-    docker run --rm --memory="2g" --cpus="2.0" \
+    docker run --rm --memory="16g" --cpus="12" \
         -v "$ROOT_DIR:/source:ro" \
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
         -v wasm-target-cache:/app/target \
         "$IMAGE_NAME" bash -c "find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && cp -r /source/* /app/ && $NEXT_TEST_ARGS $TEST_FILTER"
 else
-    docker run --rm --memory="2g" --cpus="2.0" \
+    docker run --rm --memory="16g" --cpus="12" \
         -v "$ROOT_DIR:/source:ro" \
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
