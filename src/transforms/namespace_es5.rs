@@ -41,6 +41,7 @@ use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::class_es5::ClassES5Emitter;
 use crate::transforms::enum_es5::EnumES5Emitter;
+use crate::transforms::ir::*;
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::namespace_es5_ir::NamespaceTransformContext;
 use crate::transforms::emit_utils;
