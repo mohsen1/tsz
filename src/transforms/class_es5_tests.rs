@@ -5147,6 +5147,7 @@ const MyClass = class {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5204,6 +5205,7 @@ const Factory = class ServiceFactory {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5247,6 +5249,7 @@ function createClass() {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5299,6 +5302,7 @@ const Derived = class extends Base {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5361,6 +5365,7 @@ const Counter = class {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5405,6 +5410,7 @@ class Person {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5452,6 +5458,7 @@ class Counter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5501,6 +5508,7 @@ class Config {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5561,6 +5569,7 @@ class Dog extends Animal {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5617,6 +5626,7 @@ class SecureValue {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5665,6 +5675,7 @@ class Calculator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5711,6 +5722,7 @@ class Formatter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5765,6 +5777,7 @@ class Container<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5816,6 +5829,7 @@ class Factory {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5873,6 +5887,7 @@ class ExtendedService extends BaseService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5926,6 +5941,7 @@ class Point {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -5974,6 +5990,7 @@ class Data {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6036,6 +6053,7 @@ class Dog extends Animal {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6097,6 +6115,7 @@ class Config {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6155,6 +6174,7 @@ class Container<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6203,6 +6223,7 @@ class Person {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6255,6 +6276,7 @@ class BankAccount {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6313,6 +6335,7 @@ class Car extends Vehicle {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6366,6 +6389,7 @@ class Config {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -6427,6 +6451,7 @@ class User {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8274,6 +8299,7 @@ namespace Validator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8336,6 +8362,7 @@ namespace StringUtils {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8403,6 +8430,7 @@ namespace Point {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8466,6 +8494,7 @@ namespace Logger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8535,6 +8564,7 @@ namespace ApiService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8605,6 +8635,7 @@ const Container = class<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8661,6 +8692,7 @@ const Pair = class<K, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8717,6 +8749,7 @@ const Measurable = class<T extends HasLength> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8782,6 +8815,7 @@ const SortedCollection = class<T> extends BaseCollection<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -8849,6 +8883,7 @@ const UserRepo = createRepository<{ id: number; name: string }>();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9292,6 +9327,7 @@ class SecureData {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9354,6 +9390,7 @@ class Processor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9414,6 +9451,7 @@ class Child extends Parent {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9479,6 +9517,7 @@ class Registry {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9555,6 +9594,7 @@ class BoundedValue {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9614,6 +9654,7 @@ class Example {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9660,6 +9701,7 @@ class Derived extends Base {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9704,6 +9746,7 @@ class AbstractBase {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9756,6 +9799,7 @@ class Factory {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9817,6 +9861,7 @@ class Dog extends Mammal {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9871,6 +9916,7 @@ class Callable {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9929,6 +9975,7 @@ class ProxyWrapper<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -9992,6 +10039,7 @@ class ObservableObject {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10041,6 +10089,7 @@ class FunctionWrapper {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10092,6 +10141,7 @@ class ValidatedModel {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10161,6 +10211,7 @@ class LoggingProxy<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10222,6 +10273,7 @@ class RevocableAccess<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10280,6 +10332,7 @@ class WeakReference<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10339,6 +10392,7 @@ class ObjectTracker<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10396,6 +10450,7 @@ class ResourceManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10464,6 +10519,7 @@ class ManagedResource {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10537,6 +10593,7 @@ class WeakCache<K extends object, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10613,6 +10670,7 @@ class SubscriptionManager<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10673,6 +10731,7 @@ class PropertyAccessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10728,6 +10787,7 @@ class ObjectManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10780,6 +10840,7 @@ class Factory<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10831,6 +10892,7 @@ class FunctionInvoker {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10891,6 +10953,7 @@ class ObjectInspector {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -10956,6 +11019,7 @@ class PropertyDefiner {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11008,6 +11072,7 @@ class ObjectMerger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11070,6 +11135,7 @@ class ConfigManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11124,6 +11190,7 @@ class Cloner<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11188,6 +11255,7 @@ class MixinBuilder {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11256,6 +11324,7 @@ class Component {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11331,6 +11400,7 @@ class StateManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11391,6 +11461,7 @@ class PromiseFactory<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11442,6 +11513,7 @@ class BatchProcessor<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11495,6 +11567,7 @@ class RaceRunner<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11558,6 +11631,7 @@ class DataFetcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11626,6 +11700,7 @@ class SettledProcessor<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11693,6 +11768,7 @@ class Deferred<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11747,6 +11823,7 @@ class ArrayConverter<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11803,6 +11880,7 @@ class ArrayMapper<T, U> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11864,6 +11942,7 @@ class ArrayLikeConverter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11924,6 +12003,7 @@ class CollectionConverter<K, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -11992,6 +12072,7 @@ class GeneratorConverter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12054,6 +12135,7 @@ class ArrayFactory {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12129,6 +12211,7 @@ class MapWrapper<K, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12191,6 +12274,7 @@ class MapIterator<K, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12256,6 +12340,7 @@ class SetWrapper<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12317,6 +12402,7 @@ class PrivateStore {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12377,6 +12463,7 @@ class ObjectTracker {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12449,6 +12536,7 @@ class Graph<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12505,6 +12593,7 @@ class AsyncRange {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12559,6 +12648,7 @@ class DelayedSequence<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12630,6 +12720,7 @@ class PaginatedFetcher<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12695,6 +12786,7 @@ class AsyncQueue<T> extends BaseAsyncCollection<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12768,6 +12860,7 @@ class DataStream<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12829,6 +12922,7 @@ class WordMatcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12886,6 +12980,7 @@ class CaseInsensitiveMatcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -12953,6 +13048,7 @@ class GlobalMatcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13022,6 +13118,7 @@ class PrefixMatcher extends BaseMatcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13096,6 +13193,7 @@ class CustomPattern {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13154,6 +13252,7 @@ class SimpleReplacer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13210,6 +13309,7 @@ class FunctionReplacer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13265,6 +13365,7 @@ class GlobalReplacer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13348,6 +13449,7 @@ class CasePreservingReplacer extends BaseReplacer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13422,6 +13524,7 @@ class TemplateReplacer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13474,6 +13577,7 @@ class SubstringSearcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13528,6 +13632,7 @@ class CaseInsensitiveSearcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13594,6 +13699,7 @@ class LastIndexSearcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13662,6 +13768,7 @@ class WordBoundarySearcher extends BaseSearcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13743,6 +13850,7 @@ class MultiPatternSearcher {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13799,6 +13907,7 @@ class SimpleSplitter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13853,6 +13962,7 @@ class LimitedSplitter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13921,6 +14031,7 @@ class PreservingSplitter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -13977,6 +14088,7 @@ class WhitespaceSplitter extends BaseSplitter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14069,6 +14181,7 @@ class CSVSplitter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14137,6 +14250,7 @@ class CustomArray<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14202,6 +14316,7 @@ class Collection<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14271,6 +14386,7 @@ class DynamicUnscopables {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14338,6 +14454,7 @@ class ExtendedContainer<T> extends BaseContainer<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14421,6 +14538,7 @@ class ImmutableConfig {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14491,6 +14609,7 @@ class SymbolRegistry {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14553,6 +14672,7 @@ class SymbolInspector {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14613,6 +14733,7 @@ class Annotated {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14692,6 +14813,7 @@ class User extends BaseEntity {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14779,6 +14901,7 @@ class PluginRegistry {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14852,6 +14975,7 @@ class Range {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -14934,6 +15058,7 @@ class LinkedList<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15000,6 +15125,7 @@ class CountdownIterator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15070,6 +15196,7 @@ class ReverseIterable<T> extends IterableCollection<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15159,6 +15286,7 @@ class SimpleMap<K, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15222,6 +15350,7 @@ class CustomCollection {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15284,6 +15413,7 @@ class StatefulObject {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15357,6 +15487,7 @@ class AnotherDerived extends BaseType {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15424,6 +15555,7 @@ class TypeRegistry {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15492,6 +15624,7 @@ class AdvancedCollection<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15553,6 +15686,7 @@ class ConstructorInvoker {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15610,6 +15744,7 @@ class FunctionApplier {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15682,6 +15817,7 @@ class NewTargetHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15756,6 +15892,7 @@ class ContextBinder {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15826,6 +15963,7 @@ class ReflectiveClass {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15904,6 +16042,7 @@ class ReflectUtilities {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -15972,6 +16111,7 @@ class AsyncService extends BaseService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16051,6 +16191,7 @@ class AsyncEntity extends Entity {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16144,6 +16285,7 @@ class AsyncWidget extends InteractiveComponent {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16227,6 +16369,7 @@ class AsyncDataStore extends DataStore {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16300,6 +16443,7 @@ class UserRepository extends AbstractRepository<{ id: string; name: string }> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16353,6 +16497,7 @@ class Counter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16417,6 +16562,7 @@ class Singleton {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16489,6 +16635,7 @@ class ResourceLoader {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16555,6 +16702,7 @@ class ComponentRegistry {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16632,6 +16780,7 @@ class AppConfig {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16695,6 +16844,7 @@ class Person {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16758,6 +16908,7 @@ class User extends BaseEntity {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16825,6 +16976,7 @@ class SecureStorage {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16885,6 +17037,7 @@ class Configuration {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -16954,6 +17107,7 @@ class ReactiveValue<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17021,6 +17175,7 @@ function processFile(path: string): string {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17089,6 +17244,7 @@ async function runQuery(url: string, sql: string): Promise<any[]> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17150,6 +17306,7 @@ class CriticalSection {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17213,6 +17370,7 @@ function useMultipleResources(): void {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17313,6 +17471,7 @@ class TransactionScope extends BaseResource {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17380,6 +17539,7 @@ class Config {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17452,6 +17612,7 @@ class Registry {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17519,6 +17680,7 @@ class SecureService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17591,6 +17753,7 @@ class AppLogger extends BaseLogger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17676,6 +17839,7 @@ class DataProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17746,6 +17910,7 @@ class User {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17812,6 +17977,7 @@ class FormData {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17912,6 +18078,7 @@ class Product {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -17996,6 +18163,7 @@ class Article extends Document {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18086,6 +18254,7 @@ class Schema {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18195,6 +18364,7 @@ class ApiClient {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18306,6 +18476,7 @@ class Calculator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18416,6 +18587,7 @@ class DataService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18520,6 +18692,7 @@ class ServiceFactory {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18632,6 +18805,7 @@ class EventHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18718,6 +18892,7 @@ class UserRepository {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18806,6 +18981,7 @@ class ProductService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18895,6 +19071,7 @@ class ValidationService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -18997,6 +19174,7 @@ class ApiController {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19105,6 +19283,7 @@ class ApplicationService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19198,6 +19377,7 @@ class UserSettings {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19314,6 +19494,7 @@ class DatabaseConnection {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19452,6 +19633,7 @@ class ProductForm {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19588,6 +19770,7 @@ class FormModel {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19724,6 +19907,7 @@ class ApiResponse<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19798,6 +19982,7 @@ class LogicalAndConfig extends BaseConfig {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19881,6 +20066,7 @@ class RetryValidator extends BaseValidator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -19957,6 +20143,7 @@ class ChainedAsync extends BaseAsync {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20039,6 +20226,7 @@ class CachedEntity extends BaseEntity {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20117,6 +20305,7 @@ class TransformedCollection extends BaseCollection {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20206,6 +20395,7 @@ class ChainedCallProcessor extends BaseProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20287,6 +20477,7 @@ class Circle extends Shape {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20373,6 +20564,7 @@ abstract class DecoratedAbstract {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20465,6 +20657,7 @@ abstract class Singleton {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20574,6 +20767,7 @@ class BehaviorSubject<T> extends Observable<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20669,6 +20863,7 @@ class User extends AuditableEntity {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20793,6 +20988,7 @@ class WidgetFactory extends AbstractFactory<{ id: number }> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20896,6 +21092,7 @@ namespace Logger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -20992,6 +21189,7 @@ namespace Forms {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21094,6 +21292,7 @@ namespace Database {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21188,6 +21387,7 @@ namespace createFactory {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21300,6 +21500,7 @@ namespace App {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21416,6 +21617,7 @@ namespace Library {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21543,6 +21745,7 @@ class DataGridComponent {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21655,6 +21858,7 @@ class ReverseOrderedClass {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21772,6 +21976,7 @@ class FinalService extends ExtendedService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -21894,6 +22099,7 @@ class PostEntity {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22036,6 +22242,7 @@ class DataProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22121,6 +22328,7 @@ module.exports.QueryBuilder = QueryBuilder;
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22172,6 +22380,7 @@ module.exports = A;
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22248,6 +22457,7 @@ export class Config {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22344,6 +22554,7 @@ export { Logger as DefaultLogger };
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22434,6 +22645,7 @@ export { Product as Item };
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22541,6 +22753,7 @@ export default services;
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22648,6 +22861,7 @@ export type PipelineStage = (input: any) => any | Promise<any>;
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22766,6 +22980,7 @@ class DataProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -22883,6 +23098,7 @@ class UserService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23002,6 +23218,7 @@ class ConfigParser {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23133,6 +23350,7 @@ class ShapeCalculator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23266,6 +23484,7 @@ class Counter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23384,6 +23603,7 @@ class DataValidator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23499,6 +23719,7 @@ class ObjectNarrower {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23617,6 +23838,7 @@ class StatusHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23735,6 +23957,7 @@ class EnumHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23861,6 +24084,7 @@ class OptionalChainHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -23976,6 +24200,7 @@ class TupleHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24119,6 +24344,7 @@ class StateMachine<S extends string, E extends string> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24237,6 +24463,7 @@ class UpdateHandler<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24348,6 +24575,7 @@ class FormValidator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24473,6 +24701,7 @@ class ReadonlyCollection<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24596,6 +24825,7 @@ class DataProjector<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24728,6 +24958,7 @@ class IndexedStore<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24868,6 +25099,7 @@ class DeepTransformer<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -24955,6 +25187,7 @@ class ArrayTypeExtractor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25052,6 +25285,7 @@ class UnionDistributor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25147,6 +25381,7 @@ class ShapeProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25240,6 +25475,7 @@ class TypeFilter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25340,6 +25576,7 @@ class TypeNameResolver {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25447,6 +25684,7 @@ class DataPipeline<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25584,6 +25822,7 @@ class CacheService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25723,6 +25962,7 @@ class UserSettings {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25866,6 +26106,7 @@ class MetadataReader {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -25981,6 +26222,7 @@ class StateManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26071,6 +26313,7 @@ class MultipleComputed {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26206,6 +26449,7 @@ class BoundMethods {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26288,6 +26532,7 @@ class ArraySpreadHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26387,6 +26632,7 @@ class TupleTransformer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26477,6 +26723,7 @@ class RestParamHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26573,6 +26820,7 @@ class TupleSlice {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26676,6 +26924,7 @@ class ConfigBuilder {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26776,6 +27025,7 @@ class PipelineBuilder<T extends unknown[]> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26877,6 +27127,7 @@ class DeepTransformHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -26993,6 +27244,7 @@ class BinaryTreeBuilder<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27124,6 +27376,7 @@ class DoublyLinkedList<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27237,6 +27490,7 @@ class JSONValidator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27357,6 +27611,7 @@ class PathAccessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27492,6 +27747,7 @@ class RecursiveFlattener {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27589,6 +27845,7 @@ class EntityManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27713,6 +27970,7 @@ class JSONCodec<T> implements Serializable {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27805,6 +28063,7 @@ class SafeMerger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -27888,6 +28147,7 @@ class MixinApplicator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28004,6 +28264,7 @@ class ServiceBase implements Service {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28123,6 +28384,7 @@ class DataProcessor<T extends object, U extends object> implements Processor<T, 
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28223,6 +28485,7 @@ class ResultHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28314,6 +28577,7 @@ class InstanceChecker {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28408,6 +28672,7 @@ class Logger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28502,6 +28767,7 @@ class HttpResponse {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28605,6 +28871,7 @@ class NullableProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28712,6 +28979,7 @@ class PrimitiveHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28817,6 +29085,7 @@ class PartialBuilder<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -28910,6 +29179,7 @@ class RequiredWrapper<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29004,6 +29274,7 @@ class ImmutableWrapper<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29112,6 +29383,7 @@ class PickHelper<T, K extends keyof T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29222,6 +29494,7 @@ class OmitHelper<T, K extends keyof T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29322,6 +29595,7 @@ class RecordStore<K extends string, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29417,6 +29691,7 @@ class TypeExtractor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29507,6 +29782,7 @@ class ReturnExtractor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29597,6 +29873,7 @@ class AsyncUnwrapper {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29682,6 +29959,7 @@ class InstanceCreator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29774,6 +30052,7 @@ class TupleExtractor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29875,6 +30154,7 @@ class DeepProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -29988,6 +30268,7 @@ const mapping = new Mapping(["a", "b", "c"] as const, [1, 2, 3] as const);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30092,6 +30373,7 @@ const nestedStore = new NestedStore([
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30199,6 +30481,7 @@ const stack = new ImmutableStack([] as const);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30295,6 +30578,7 @@ class PersonEditor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30411,6 +30695,7 @@ class UserManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30519,6 +30804,7 @@ class IndexedAccessor<T, K extends keyof T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30628,6 +30914,7 @@ class KeyValidator<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30738,6 +31025,7 @@ class StatusHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30859,6 +31147,7 @@ class DynamicAccessor<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -30982,6 +31271,7 @@ class EventEmitter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31100,6 +31390,7 @@ class StyleBuilder {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31216,6 +31507,7 @@ class KeyTransformer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31333,6 +31625,7 @@ class HtmlBuilder {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31450,6 +31743,7 @@ class NameFormatter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31571,6 +31865,7 @@ class I18nManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31689,6 +31984,7 @@ class Cache {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31798,6 +32094,7 @@ class PluginRegistry {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -31907,6 +32204,7 @@ class LazyLoader {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32027,6 +32325,7 @@ class MySqlDataSource extends DataSource {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32151,6 +32450,7 @@ class TextField extends FormField {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32279,6 +32579,7 @@ class UserService extends Service<User> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32403,6 +32704,7 @@ class User implements Identifiable {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32544,6 +32846,7 @@ class ServiceBase implements EventEmitter, Logger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32684,6 +32987,7 @@ class HashMap<K, V> implements KeyValueStore<K, V> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32800,6 +33104,7 @@ class EventBus {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -32897,6 +33202,7 @@ class CompositeValidator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33023,6 +33329,7 @@ class Color {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33141,6 +33448,7 @@ class ComparableCollection<T extends { compareTo(other: T): number }> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33262,6 +33570,7 @@ class FormBuilder<T extends Record<string, any>> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33380,6 +33689,7 @@ class ArrayProcessor<T extends any[]> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33508,6 +33818,7 @@ class PrimitiveParser {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33632,6 +33943,7 @@ class MixinApplier<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33768,6 +34080,7 @@ class FunctionAnalyzer<T extends (...args: any[]) => any> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33889,6 +34202,7 @@ class HttpStatusChecker {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -33996,6 +34310,7 @@ class Logger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34098,6 +34413,7 @@ class WeekdayScheduler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34206,6 +34522,7 @@ class PermissionManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34339,6 +34656,7 @@ class User {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34504,6 +34822,7 @@ class NotificationManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34607,6 +34926,7 @@ class FormValidator {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34695,6 +35015,7 @@ class Canvas {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34798,6 +35119,7 @@ class HRManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -34917,6 +35239,7 @@ class UserService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -35023,6 +35346,7 @@ class TextProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -35187,6 +35511,7 @@ class Application {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -35351,6 +35676,7 @@ class UppercaseLogger extends Logger<UpperStatusLevel> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -35546,6 +35872,7 @@ class LowercaseQueryBuilder extends QueryBuilder<LowerDatabaseAction> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -35761,6 +36088,7 @@ class CapitalizedApiRouter extends ApiRouter<CapitalizedEndpoint> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -35947,6 +36275,7 @@ class DeepArrayFlattener<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -36141,6 +36470,7 @@ class ThrottledFunction<F extends (...args: unknown[]) => unknown> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -36360,6 +36690,7 @@ class TimeoutPromise<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -36583,6 +36914,7 @@ class FileSystemTree {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -36837,6 +37169,7 @@ class CircularLinkedList<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -37055,6 +37388,7 @@ class JSONPathQuery {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -37206,6 +37540,7 @@ class FunctionComposer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -37379,6 +37714,7 @@ class ColorHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -37560,6 +37896,7 @@ class OptionalArgsHandler<T extends unknown[]> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -37703,6 +38040,7 @@ class PropertyMapper<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -37847,6 +38185,7 @@ class PrefixedStorage<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38009,6 +38348,7 @@ class FunctionFieldsHandler<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38179,6 +38519,7 @@ class DeepPropertyAccessor<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38362,6 +38703,7 @@ class TypeFilteredHandler<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38570,6 +38912,7 @@ class FormValidator<T extends object> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38679,6 +39022,7 @@ class DataProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38768,6 +39112,7 @@ class AsyncHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38860,6 +39205,7 @@ class ServiceInitializer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -38953,6 +39299,7 @@ class CachedGetter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39032,6 +39379,7 @@ class RegistryInitializer {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39183,6 +39531,7 @@ class EventBus<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39277,6 +39626,7 @@ class GrandchildService extends DerivedService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39371,6 +39721,7 @@ class AsyncProcessor extends BaseProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39471,6 +39822,7 @@ class AsyncLogger extends BaseLogger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39562,6 +39914,7 @@ class ExtendedFactory extends AsyncFactory {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39685,6 +40038,7 @@ class SafeHandler extends BaseHandler {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39871,6 +40225,7 @@ class CachedRepository<T> extends AsyncRepository<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -39976,6 +40331,7 @@ class ChainedAccessor<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -40086,6 +40442,7 @@ class ReactiveProperty<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -40181,6 +40538,7 @@ class SymbolAccessors {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -40278,6 +40636,7 @@ class Registry<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -40408,6 +40767,7 @@ class ValidationAccessors {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -40640,6 +41000,7 @@ class AsyncAccessorPattern {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -40759,6 +41120,7 @@ class DataManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -40878,6 +41240,7 @@ class ChainedDecorators {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41014,6 +41377,7 @@ class ApiClient {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41145,6 +41509,7 @@ class DataProcessor {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41272,6 +41637,7 @@ class ConfigManager {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41476,6 +41842,7 @@ class EventEmitter {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41588,6 +41955,7 @@ class Temperature {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41709,6 +42077,7 @@ class AppState {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41844,6 +42213,7 @@ class Slider {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -41984,6 +42354,7 @@ class Admin extends User {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -42136,6 +42507,7 @@ class Cache {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -42322,6 +42694,7 @@ class Store<T> {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -42451,6 +42824,7 @@ class User extends Timestamped(Named(BaseEntity)) {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -42565,6 +42939,7 @@ class FactoryService extends WithFactory(WithRegistry(Service)) {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -42686,6 +43061,7 @@ class FormModel extends Validatable(Observable(DataModel)) {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -42799,6 +43175,7 @@ class EnhancedEntity extends WithFullInfo(WithDisplayName(WithId(Entity))) {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -42944,6 +43321,7 @@ class StatefulComponent extends WithState(WithLogger(WithCache(Component))) {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -43172,6 +43550,7 @@ class SecureResource extends Lockable(DisposableMixin(Resource)) {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -43279,6 +43658,7 @@ class Rectangle extends Shape {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -43368,6 +43748,7 @@ class Input extends BaseComponent {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -43469,6 +43850,7 @@ class CacheService extends AbstractService {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -43573,6 +43955,7 @@ function createTypedEntity<T extends Entity>(
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -43683,6 +44066,7 @@ class DerivedChecker extends TypeChecker {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -43896,6 +44280,7 @@ class DebugLogger extends Logger {
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -44010,6 +44395,7 @@ const vault = new TokenVault();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -44114,6 +44500,7 @@ const config = Configuration.getInstance();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -44224,6 +44611,7 @@ const encryptor = new Encryptor("secret-key");
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -44324,6 +44712,7 @@ const tracker = new VisitedTracker();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -44445,6 +44834,7 @@ const cache = new SmartCache<object>();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -44623,6 +45013,7 @@ const cacheManager = new CacheManager();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -44737,6 +45128,7 @@ class TransactionId {
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
@@ -44829,6 +45221,7 @@ class FibonacciBigInt {
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
@@ -44912,6 +45305,7 @@ class BigIntComparator {
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
@@ -45003,6 +45397,7 @@ class BlockchainAddress {
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
@@ -45090,6 +45485,7 @@ class CryptoConstants {
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
@@ -45231,6 +45627,7 @@ class Ledger {
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
     let output = printer.get_output().to_string();
 
@@ -45339,6 +45736,7 @@ const chars = new StringCharIterator("hello");
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -45445,6 +45843,7 @@ const generator = new AsyncNumberGenerator(5);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -45558,6 +45957,7 @@ const queue = new Queue<string>();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -45678,6 +46078,7 @@ const fib = new Fibonacci(100);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -45787,6 +46188,7 @@ const processor = new AsyncBatchProcessor<number>([1, 2, 3, 4, 5], 2);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -45992,6 +46394,7 @@ const eventStream = new EventStream<string>();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -46112,6 +46515,7 @@ const configService = new ConfigService();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -46230,6 +46634,7 @@ const repo = new Repository(new Database(), new Logger());
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -46336,6 +46741,7 @@ const authService = new AuthService();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -46452,6 +46858,7 @@ const repo = new UserRepository();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -46585,6 +46992,7 @@ const controller = new UserController();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -46808,6 +47216,7 @@ const logger = new Logger();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -46982,6 +47391,7 @@ const logger = new LoggerModule.Logger("App");
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -47108,6 +47518,7 @@ const service = new Services.UserService(repo);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -47239,6 +47650,7 @@ const product = new Product("1", "Widget", 9.99);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -47380,6 +47792,7 @@ const product = Factories.createProduct("1", "Widget", 9.99);
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -47571,6 +47984,7 @@ const cacheService = new CacheService();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -47810,6 +48224,7 @@ app.initialize();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -47928,6 +48343,7 @@ userService.createUser("Alice");
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -47994,6 +48410,7 @@ repo.findAll();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -48088,6 +48505,7 @@ const apiService = new ApiService();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -48175,6 +48593,7 @@ app.initialize();
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -48273,6 +48692,7 @@ notificationService.notify("user@example.com", "Hello!");
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
@@ -48481,6 +48901,7 @@ userRepo.save({ id: "1", name: "Alice", email: "alice@example.com" });
 
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(&source);
     printer.emit(root);
 
     let output = printer.get_output().to_string();
