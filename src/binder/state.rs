@@ -2366,6 +2366,16 @@ impl BinderState {
             return true;
         }
 
+        // Allow static and instance members to have the same name
+        // TypeScript allows a class to have both a static member and an instance member with the same name
+        // e.g., class C { static foo; foo; }
+        let existing_is_static = (existing_flags & symbol_flags::STATIC) != 0;
+        let new_is_static = (new_flags & symbol_flags::STATIC) != 0;
+        if existing_is_static != new_is_static {
+            // One is static, one is instance - allow merge
+            return true;
+        }
+
         false
     }
 
