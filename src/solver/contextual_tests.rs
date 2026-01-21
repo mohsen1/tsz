@@ -1,7 +1,5 @@
 use super::*;
 use crate::solver::{CompatChecker, InferenceContext, infer_generic_function};
-use std::sync::Arc;
-
 #[test]
 fn test_contextual_no_context() {
     let interner = TypeInterner::new();

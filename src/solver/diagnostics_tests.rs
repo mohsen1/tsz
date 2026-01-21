@@ -1,8 +1,6 @@
 //! Tests for diagnostic generation.
 
 use super::*;
-use std::sync::Arc;
-
 #[test]
 fn test_format_intrinsic_types() {
     let interner = TypeInterner::new();

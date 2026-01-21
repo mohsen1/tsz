@@ -204,7 +204,7 @@ fn test_simple_map_generic() {
     printer.enable_source_map("test.js", "test.ts");
     printer.emit(root);
 
-    let output = printer.get_output().to_string();
+    let _output = printer.get_output().to_string();
     assert!(
         output.contains("Map"),
         "expected output to contain Map. output: {output}"

@@ -3841,8 +3841,6 @@ function f() {
 
 #[test]
 fn test_parser_break_with_label_stores_label() {
-    use crate::parser::node::JumpData;
-
     let source = r#"
 outer: for (let i = 0; i < 10; i++) {
     for (let j = 0; j < 10; j++) {
@@ -3890,8 +3888,6 @@ outer: for (let i = 0; i < 10; i++) {
 
 #[test]
 fn test_parser_continue_with_label_stores_label() {
-    use crate::parser::node::JumpData;
-
     let source = r#"
 outer: for (let i = 0; i < 10; i++) {
     for (let j = 0; j < 10; j++) {
@@ -3939,8 +3935,6 @@ outer: for (let i = 0; i < 10; i++) {
 
 #[test]
 fn test_parser_break_without_label_has_none() {
-    use crate::parser::node::JumpData;
-
     let source = r#"
 for (let i = 0; i < 10; i++) {
     if (i > 5) break;
