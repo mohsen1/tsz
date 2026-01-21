@@ -74,9 +74,15 @@ impl Drop for EnvVarGuard {
 }
 
 fn with_types_versions_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
-    let _lock = TYPES_VERSIONS_ENV_LOCK
-        .lock()
-        .expect("typesVersions env lock");
+    // Use lock() instead of try_lock() and handle poisoning gracefully
+    let _lock = match TYPES_VERSIONS_ENV_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            // Recover from poisoned mutex by clearing the poisoning
+            // This can happen if a previous test panicked while holding the lock
+            poisoned.into_inner()
+        }
+    };
     let _guard = EnvVarGuard::set("TSZ_TYPES_VERSIONS_COMPILER_VERSION", value);
     f()
 }
