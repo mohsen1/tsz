@@ -53,6 +53,7 @@ fn test_ir_enum_string() {
 #[test]
 fn test_ir_namespace_iife() {
     let namespace_ir = IRNode::NamespaceIIFE {
+        name: "MyNamespace".to_string(),
         name_parts: vec!["MyNamespace".to_string()],
         body: vec![
             IRNode::func_decl("foo", vec![], vec![IRNode::ret(Some(IRNode::number("42")))]),
@@ -74,6 +75,7 @@ fn test_ir_namespace_iife() {
 #[test]
 fn test_ir_namespace_qualified() {
     let namespace_ir = IRNode::NamespaceIIFE {
+        name: "A".to_string(),
         name_parts: vec!["A".to_string(), "B".to_string(), "C".to_string()],
         body: vec![],
         is_exported: false,
@@ -170,6 +172,7 @@ fn test_ir_namespace_export() {
     let export = IRNode::NamespaceExport {
         namespace: "MyNamespace".to_string(),
         name: "myFunction".to_string(),
+        value: Box::new(IRNode::Identifier("myFunction".to_string())),
     };
 
     let output = IRPrinter::emit_to_string(&export);

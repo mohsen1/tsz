@@ -69,7 +69,10 @@ impl<'a> NamespaceTransformContext<'a> {
         // Transform body
         let body = self.transform_namespace_body(ns_data.body, &name_parts);
 
+        let name = name_parts.first().cloned().unwrap_or_default();
+
         Some(IRNode::NamespaceIIFE {
+            name,
             name_parts,
             body,
             is_exported,
@@ -343,7 +346,10 @@ impl<'a> NamespaceTransformContext<'a> {
         // Transform body
         let body = self.transform_namespace_body(ns_data.body, &name_parts);
 
+        let name = name_parts.first().cloned().unwrap_or_default();
+
         Some(IRNode::NamespaceIIFE {
+            name,
             name_parts,
             body,
             is_exported,
@@ -371,7 +377,10 @@ impl<'a> NamespaceTransformContext<'a> {
         // Transform body
         let body = self.transform_namespace_body(ns_data.body, &name_parts);
 
+        let name = name_parts.first().cloned().unwrap_or_default();
+
         Some(IRNode::NamespaceIIFE {
+            name,
             name_parts,
             body,
             is_exported,

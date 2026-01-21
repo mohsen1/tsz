@@ -335,6 +335,98 @@ pub enum IRNode {
 
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
+
+    // =========================================================================
+    // Module IR Nodes
+    // =========================================================================
+    /// "use strict" directive
+    UseStrict,
+
+    /// `Object.defineProperty(exports, "__esModule", { value: true });`
+    EsesModuleMarker,
+
+    /// `exports.name = void 0;` (export initialization)
+    ExportInit { name: String },
+
+    /// `var module = require("module");` (require statement)
+    RequireStatement {
+        var_name: String,
+        module_spec: String,
+    },
+
+    /// `import foo from "module";` -> `var foo = module.foo;` (default import)
+    DefaultImport {
+        var_name: String,
+        module_var: String,
+    },
+
+    /// `import * as ns from "module";` -> `var ns = require("module");` (namespace import)
+    NamespaceImport {
+        var_name: String,
+        module_var: String,
+    },
+
+    /// `import { foo } from "module";` -> `var foo = module.foo;` (named import)
+    NamedImport {
+        var_name: String,
+        module_var: String,
+        import_name: String,
+    },
+
+    /// `export default value;` -> `exports.default = value;`
+    ExportAssignment { name: String },
+
+    /// `export { foo as bar } from "module";` (re-export)
+    ReExportProperty {
+        export_name: String,
+        module_var: String,
+        import_name: String,
+    },
+
+    // =========================================================================
+    // Enum / Namespace IR Nodes
+    // =========================================================================
+    /// Enum IIFE: `(function (E) { ... })(E || (E = {}))`
+    EnumIIFE {
+        name: String,
+        members: Vec<EnumMember>,
+    },
+
+    /// Namespace IIFE: `(function (NS) { ... })(NS || (NS = {}))`
+    NamespaceIIFE {
+        name: String,
+        name_parts: Vec<String>,
+        body: Vec<IRNode>,
+        is_exported: bool,
+        attach_to_exports: bool,
+    },
+
+    /// Namespace export: `NS.foo = ...;`
+    NamespaceExport {
+        namespace: String,
+        name: String,
+        value: Box<IRNode>,
+    },
+}
+
+/// Enum member representation for IR
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    pub name: String,
+    pub value: EnumMemberValue,
+}
+
+/// Enum member value representation
+#[derive(Debug, Clone)]
+pub enum EnumMemberValue {
+    /// Auto-incremented numeric value
+    Auto(i64),
+    /// Explicit numeric value
+    Numeric(i64),
+    /// String value
+    String(String),
+    /// Computed expression (not a simple literal)
+    Computed(IRNode),
 }
 
 /// Property in an object literal
