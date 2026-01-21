@@ -18,7 +18,7 @@ The solver (`src/solver/`) is the heart of the type system. It must implement:
 - **Structural typing** with proper canonicalization
 - **Advanced TypeScript features** (conditionals, mapped types, template literals, inference)
 
-**Status:** Core solver architecture is sound but incomplete. See `SOLVER_ROADMAP.md` for comprehensive implementation plan.
+**Status:** Core solver architecture is sound but incomplete. See `specs/SOLVER_ROADMAP.md` for comprehensive implementation plan.
 
 ## Secondary Priority: Test Coverage for Solver
 
