@@ -560,7 +560,15 @@ impl<'a> FlowAnalyzer<'a> {
         _visited: &mut Vec<FlowNodeId>,
         cache: &mut FxHashMap<FlowNodeId, bool>,
     ) -> bool {
-        // Use a worklist-based iterative algorithm with fixed-point computation
+        // Helper: Add a node to the worklist if not already present
+        let mut add_to_worklist = |node: FlowNodeId,
+                                   worklist: &mut Vec<FlowNodeId>,
+                                   in_worklist: &mut FxHashSet<FlowNodeId>| {
+            if !in_worklist.contains(&node) {
+                worklist.push(node);
+                in_worklist.insert(node);
+            }
+        };
 
         // Result cache: flow_id -> is_assigned
         // We use a local cache that we'll merge into the provided cache
@@ -570,6 +578,10 @@ impl<'a> FlowAnalyzer<'a> {
         let mut worklist: Vec<FlowNodeId> = vec![flow_id];
         let mut in_worklist: FxHashSet<FlowNodeId> = FxHashSet::default();
         in_worklist.insert(flow_id);
+
+        // Track nodes that are waiting for their antecedents to be computed
+        // Map: node -> set of antecedents it's waiting for
+        let mut waiting_for: FxHashMap<FlowNodeId, FxHashSet<FlowNodeId>> = FxHashMap::default();
 
         while let Some(current_flow) = worklist.pop() {
             in_worklist.remove(&current_flow);
@@ -582,6 +594,16 @@ impl<'a> FlowAnalyzer<'a> {
             let Some(flow) = self.binder.flow_nodes.get(current_flow) else {
                 // Flow node doesn't exist - mark as assigned
                 local_cache.insert(current_flow, true);
+                // Notify any nodes waiting for this one
+                let ready: Vec<_> = waiting_for
+                    .iter()
+                    .filter(|(_, ants)| ants.contains(&current_flow))
+                    .map(|(&node, _)| node)
+                    .collect();
+                for node in ready {
+                    waiting_for.remove(&node);
+                    add_to_worklist(node, &mut worklist, &mut in_worklist);
+                }
                 continue;
             };
 
@@ -592,16 +614,12 @@ impl<'a> FlowAnalyzer<'a> {
                 if self.assignment_targets_reference(flow.node, reference) {
                     true
                 } else if let Some(&ant) = flow.antecedent.first() {
-                    // Need result from antecedent
                     if let Some(&ant_result) = local_cache.get(&ant) {
                         ant_result
                     } else {
                         // Add antecedent to worklist and defer
-                        if !in_worklist.contains(&ant) {
-                            worklist.push(ant);
-                            in_worklist.insert(ant);
-                        }
-                        // Can't compute yet, skip for now
+                        add_to_worklist(ant, &mut worklist, &mut in_worklist);
+                        waiting_for.entry(current_flow).or_default().insert(ant);
                         continue;
                     }
                 } else {
@@ -612,45 +630,41 @@ impl<'a> FlowAnalyzer<'a> {
                     false
                 } else {
                     // Check if all antecedents have results
-                    let ant_results: Vec<bool> = flow
-                        .antecedent
-                        .iter()
-                        .filter_map(|&ant| {
-                            if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
-                                if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
-                                    // Unreachable branches satisfy the condition vacuously
-                                    return Some(true);
-                                }
-                            }
-                            local_cache.get(&ant).copied()
-                        })
-                        .collect();
+                    let mut all_ready = true;
+                    let mut results = Vec::new();
 
-                    if ant_results.len() < flow.antecedent.len() {
-                        // Not all antecedents processed yet
-                        // Add missing ones to worklist
-                        for &ant in &flow.antecedent {
-                            if !local_cache.contains_key(&ant) && !in_worklist.contains(&ant) {
-                                worklist.push(ant);
-                                in_worklist.insert(ant);
+                    for &ant in &flow.antecedent {
+                        if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
+                            if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
+                                // Unreachable branches satisfy the condition vacuously
+                                results.push(true);
+                                continue;
                             }
                         }
+
+                        if let Some(&ant_result) = local_cache.get(&ant) {
+                            results.push(ant_result);
+                        } else {
+                            all_ready = false;
+                            add_to_worklist(ant, &mut worklist, &mut in_worklist);
+                            waiting_for.entry(current_flow).or_default().insert(ant);
+                        }
+                    }
+
+                    if !all_ready {
                         continue;
                     }
 
                     // All antecedents processed - compute result (all must be true)
-                    ant_results.iter().all(|&r| r)
+                    results.iter().all(|&r| r)
                 }
             } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
                 if let Some(&ant) = flow.antecedent.first() {
                     if let Some(&ant_result) = local_cache.get(&ant) {
                         ant_result
                     } else {
-                        // Add antecedent to worklist and defer
-                        if !in_worklist.contains(&ant) {
-                            worklist.push(ant);
-                            in_worklist.insert(ant);
-                        }
+                        add_to_worklist(ant, &mut worklist, &mut in_worklist);
+                        waiting_for.entry(current_flow).or_default().insert(ant);
                         continue;
                     }
                 } else {
@@ -661,11 +675,8 @@ impl<'a> FlowAnalyzer<'a> {
                     if let Some(&ant_result) = local_cache.get(&ant) {
                         ant_result
                     } else {
-                        // Add antecedent to worklist and defer
-                        if !in_worklist.contains(&ant) {
-                            worklist.push(ant);
-                            in_worklist.insert(ant);
-                        }
+                        add_to_worklist(ant, &mut worklist, &mut in_worklist);
+                        waiting_for.entry(current_flow).or_default().insert(ant);
                         continue;
                     }
                 } else {
@@ -676,31 +687,31 @@ impl<'a> FlowAnalyzer<'a> {
                     false
                 } else {
                     // Similar to BRANCH_LABEL - check all antecedents
-                    let ant_results: Vec<bool> = flow
-                        .antecedent
-                        .iter()
-                        .filter_map(|&ant| {
-                            if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
-                                if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
-                                    return Some(true);
-                                }
-                            }
-                            local_cache.get(&ant).copied()
-                        })
-                        .collect();
+                    let mut all_ready = true;
+                    let mut results = Vec::new();
 
-                    if ant_results.len() < flow.antecedent.len() {
-                        // Not all antecedents processed yet
-                        for &ant in &flow.antecedent {
-                            if !local_cache.contains_key(&ant) && !in_worklist.contains(&ant) {
-                                worklist.push(ant);
-                                in_worklist.insert(ant);
+                    for &ant in &flow.antecedent {
+                        if let Some(ant_node) = self.binder.flow_nodes.get(ant) {
+                            if ant_node.has_any_flags(flow_flags::UNREACHABLE) {
+                                results.push(true);
+                                continue;
                             }
                         }
+
+                        if let Some(&ant_result) = local_cache.get(&ant) {
+                            results.push(ant_result);
+                        } else {
+                            all_ready = false;
+                            add_to_worklist(ant, &mut worklist, &mut in_worklist);
+                            waiting_for.entry(current_flow).or_default().insert(ant);
+                        }
+                    }
+
+                    if !all_ready {
                         continue;
                     }
 
-                    ant_results.iter().all(|&r| r)
+                    results.iter().all(|&r| r)
                 }
             } else if flow.has_any_flags(flow_flags::START) {
                 false
@@ -708,11 +719,8 @@ impl<'a> FlowAnalyzer<'a> {
                 if let Some(&ant_result) = local_cache.get(&ant) {
                     ant_result
                 } else {
-                    // Add antecedent to worklist and defer
-                    if !in_worklist.contains(&ant) {
-                        worklist.push(ant);
-                        in_worklist.insert(ant);
-                    }
+                    add_to_worklist(ant, &mut worklist, &mut in_worklist);
+                    waiting_for.entry(current_flow).or_default().insert(ant);
                     continue;
                 }
             } else {
@@ -721,6 +729,17 @@ impl<'a> FlowAnalyzer<'a> {
 
             // Store the result
             local_cache.insert(current_flow, result);
+
+            // Notify any nodes waiting for this one
+            let ready: Vec<_> = waiting_for
+                .iter()
+                .filter(|(_, ants)| ants.contains(&current_flow))
+                .map(|(&node, _)| node)
+                .collect();
+            for node in ready {
+                waiting_for.remove(&node);
+                add_to_worklist(node, &mut worklist, &mut in_worklist);
+            }
         }
 
         // Get the final result
