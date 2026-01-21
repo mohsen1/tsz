@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# Pre-commit hook for tsz
+# Runs formatting check, clippy, and unit tests before allowing commit
+#
+
+set -e
+
+echo "🔧 Running pre-commit checks..."
+
+# Check if cargo is available
+if ! command -v cargo &> /dev/null; then
+    echo "❌ cargo not found. Please install Rust."
+    exit 1
+fi
+
+# Check formatting
+echo ""
+echo "1️⃣  Checking code formatting..."
+if ! cargo fmt --check; then
+    echo ""
+    echo "❌ Code is not formatted. Run: cargo fmt"
+    exit 1
+fi
+echo "✅ Formatting check passed"
+
+# Run clippy (lib and bins only, skip tests that require Docker)
+echo ""
+echo "2️⃣  Running clippy..."
+if ! cargo clippy --bins --lib -- -D warnings; then
+    echo ""
+    echo "❌ Clippy found issues. Please fix them before committing."
+    echo "   Run: cargo clippy --bins --lib --fix --allow-dirty --allow-staged"
+    exit 1
+fi
+echo "✅ Clippy passed"
+
+# Run unit tests (in Docker as required)
+echo ""
+echo "3️⃣  Running unit tests..."
+if ! ./scripts/test.sh >/dev/null 2>&1; then
+    echo ""
+    echo "❌ Unit tests failed. Please fix them before committing."
+    exit 1
+fi
+echo "✅ Unit tests passed"
+
+echo ""
+echo "✅ All pre-commit checks passed!"

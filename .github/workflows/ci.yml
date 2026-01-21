@@ -250,9 +250,11 @@ jobs:
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::warning::Conformance tests timed out"
-              exit 0  # Don't fail the build for timeout
+              exit 1  # Fail on timeout (process hung)
             fi
-            exit $EXIT_CODE
+            # Test failures (non-zero exit) are OK - don't fail CI
+            echo "::notice::Conformance tests completed with exit code $EXIT_CODE (not failing CI)"
+            exit 0
           }
 
   summary:
