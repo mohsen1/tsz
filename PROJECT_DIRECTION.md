@@ -2,7 +2,32 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
-## Current Test Status
+## Strategy Shift: Solver Foundation First
+
+**We are prioritizing solver/checker completion over conformance parity.**
+
+Chasing conformance percentages before the type system solver is solid is premature. A sound, complete solver is the foundation - conformance improvements will follow naturally from proper type system mechanics.
+
+**Key principle:** Understand the type system deeply, implement correctly, then validate with conformance tests.
+
+## Top Priority: Complete the Solver
+
+The solver (`src/solver/`) is the heart of the type system. It must implement:
+- **Semantic subtyping** (types as sets of values, set inclusion for subtyping)
+- **Coinductive semantics** (for recursive types)
+- **Structural typing** with proper canonicalization
+- **Advanced TypeScript features** (conditionals, mapped types, template literals, inference)
+
+**Status:** Core solver architecture is sound but incomplete. See `SOLVER_ROADMAP.md` for comprehensive implementation plan.
+
+## Secondary Priority: Test Coverage for Solver
+
+Conformance tests are useful for validation, but should not drive implementation. Use them to:
+- Validate solver correctness after implementation
+- Catch edge cases in type system mechanics
+- Ensure TypeScript compatibility behaviors are wired in compat layer
+
+**Current Test Status:**
 
 **Docker-isolated by default** for safety. Tests run in parallel across all CPU cores.
 
@@ -31,40 +56,28 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
   - `projects/`: 175 files (module resolution - HIGH VALUE)
   - `transpile/`: 22 files (JS output)
 
-## Gaps / Risks
-
-* **Conformance gap**: Target is 50%+. Run tests to get current metrics.
-* **WASM stability**: Previous runs showed 121 worker crashes in WASM mode - use native for faster, more stable testing.
-
-* **Transform pipeline debt**: `src/transforms/` mixes AST manipulation with string emission. Should produce lowered AST, then printer emits strings.
-
-* **Compat layer completeness**: `compat` module needs audit against `TS_UNSOUNDNESS_CATALOG.md` to ensure all rules (weak types, template literal limits, rest bivariance, exactOptionalPropertyTypes) are wired and option-driven.
-
 ***
 
-## Priority List
+## Lower Priority Items
 
-### 1. Unblock Testing
+These tasks are important but should be pursued **after** solver is solid:
 
-Fix WASM initialization crash path to enable conformance runs. Unit tests require Docker (`./scripts/test.sh` - enforced at compile time).
+### Code Hygiene
 
-### 2. Improve Conformance Test Pass Rate
+* Remove `#![allow(dead_code)]` and fix unused code
+* Add proper tracing infrastructure (replace print statements)
+* Clean up Clippy ignores in `clippy.toml`
+* Test-awareness cleanup: sweep checker/binder for path heuristics or test-specific workarounds (per AGENTS rules)
 
-**Target: 50%+**
+### Transform Pipeline Fix
 
-Run tests to get current metrics and identify top issues:
-```bash
-./conformance/run-conformance.sh --all
-```
+`src/transforms/` mixes AST manipulation with string emission. Transforms should produce a lowered AST, then the printer should emit strings.
 
-Focus areas based on latest run (1000 tests):
-- Library loading (TS2318: 860x missing, TS2583: 130x missing)
-- Name/module resolution (TS2304: 130x missing, TS2307)
-- Type assignability (check for extra errors)
+### Compat Layer Audit
 
-### 3. Expand Test Coverage
+Audit `compat` module against `TS_UNSOUNDNESS_CATALOG.md` to ensure all rules are wired and option-driven (weak types, template literal limits, rest bivariance, exactOptionalPropertyTypes).
 
-**Current: 60% of TypeScript/tests (12,093 files)**
+### Expand Test Coverage (After Solver is Solid)
 
 **Recommended additions:**
 - **Add `projects/` category** (175 files) - HIGH VALUE
@@ -75,23 +88,6 @@ Focus areas based on latest run (1000 tests):
   - Tests complex multi-file language features
   - Skip IDE-specific tests (completion, navigation)
   - Estimated effort: 8-16 hours for selective integration
-
-**See research findings below for detailed analysis.**
-
-### 4. Fix Transform Pipeline
-
-`src/transforms/` mixes AST manipulation with string emission. Transforms should produce a lowered AST, then the printer should emit strings.
-
-### 5. Compat Layer Audit
-
-Audit `compat` module against `TS_UNSOUNDNESS_CATALOG.md` to ensure all rules are wired and option-driven (weak types, template literal limits, rest bivariance, exactOptionalPropertyTypes).
-
-### 6. Code Hygiene
-
-* Remove `#![allow(dead_code)]` and fix unused code
-* Add proper tracing infrastructure (replace print statements)
-* Clean up Clippy ignores in `clippy.toml`
-* Test-awareness cleanup: sweep checker/binder for path heuristics or test-specific workarounds (per AGENTS rules)
 
 ***
 
