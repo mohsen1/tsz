@@ -40,6 +40,9 @@ use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transforms::class_es5::ClassES5Emitter;
+use crate::transforms::enum_es5::EnumES5Emitter;
+use crate::transforms::ir_printer::IRPrinter;
+use crate::transforms::namespace_es5_ir::NamespaceTransformContext;
 use crate::transforms::emit_utils;
 
 /// Namespace ES5 emitter
@@ -318,381 +321,223 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     /// Emit a function declaration in namespace context
     fn emit_function_in_namespace(&mut self, ns_name: &str, func_idx: NodeIndex) {
-        let Some(func_node) = self.arena.get(func_idx) else {
-            return;
-        };
-        let Some(func_data) = self.arena.get_function(func_node) else {
-            return;
-        };
-
-        // Skip declaration-only functions
-        if func_data.body.is_none() {
-            return;
-        }
-
-        let func_name = self.get_identifier_text(func_data.name);
-        let is_exported = self.has_export_modifier(&func_data.modifiers);
-
-        // function funcName(...) { ... }
-        self.write_indent();
-        self.write("function ");
-        self.write(&func_name);
-        self.write("(");
-        self.emit_parameters(&func_data.parameters);
-        self.write(") ");
-        self.emit_block(func_data.body);
-        self.write_line();
-
-        // Export assignment: ns.funcName = funcName;
-        if is_exported {
-            self.write_indent();
-            self.write(ns_name);
-            self.write(".");
-            self.write(&func_name);
-            self.write(" = ");
-            self.write(&func_name);
-            self.write(";");
-            self.write_line();
+        if let Some(output) = self.transform_namespace_member_ir(ns_name, func_idx) {
+            self.write_indented_ir(&output);
         }
     }
 
     /// Emit an exported function in namespace context
     fn emit_function_in_namespace_exported(&mut self, ns_name: &str, func_idx: NodeIndex) {
-        let Some(func_node) = self.arena.get(func_idx) else {
-            return;
-        };
-        let Some(func_data) = self.arena.get_function(func_node) else {
-            return;
-        };
-
-        // Skip declaration-only functions
-        if func_data.body.is_none() {
-            return;
+        if let Some(output) = self.transform_namespace_member_ir(ns_name, func_idx) {
+            self.write_indented_ir(&output);
         }
-
-        let func_name = self.get_identifier_text(func_data.name);
-
-        // function funcName(...) { ... }
-        self.write_indent();
-        self.write("function ");
-        self.write(&func_name);
-        self.write("(");
-        self.emit_parameters(&func_data.parameters);
-        self.write(") ");
-        self.emit_block(func_data.body);
-        self.write_line();
-
-        // Always export: ns.funcName = funcName;
-        self.write_indent();
-        self.write(ns_name);
-        self.write(".");
-        self.write(&func_name);
-        self.write(" = ");
-        self.write(&func_name);
-        self.write(";");
-        self.write_line();
     }
 
     /// Emit a class declaration in namespace context
     fn emit_class_in_namespace(&mut self, ns_name: &str, class_idx: NodeIndex) {
-        let Some(class_node) = self.arena.get(class_idx) else {
-            return;
-        };
-        let Some(class_data) = self.arena.get_class(class_node) else {
-            return;
-        };
-
-        let class_name = self.get_identifier_text(class_data.name);
-        let is_exported = self.has_export_modifier(&class_data.modifiers);
-
-        // Use ES5 class emitter
-        let mut class_emitter = ClassES5Emitter::new(self.arena);
-        let class_output = class_emitter.emit_class(class_idx);
-
-        // Write indented class output
-        self.write_indent();
-        self.write(&class_output);
-
-        // Export assignment: ns.ClassName = ClassName;
-        if is_exported {
-            self.write_indent();
-            self.write(ns_name);
-            self.write(".");
-            self.write(&class_name);
-            self.write(" = ");
-            self.write(&class_name);
-            self.write(";");
-            self.write_line();
+        if let Some(output) = self.transform_namespace_member_ir(ns_name, class_idx) {
+            self.write_indented_ir(&output);
         }
     }
 
     /// Emit an exported class in namespace context
     fn emit_class_in_namespace_exported(&mut self, ns_name: &str, class_idx: NodeIndex) {
-        let Some(class_node) = self.arena.get(class_idx) else {
-            return;
-        };
-        let Some(class_data) = self.arena.get_class(class_node) else {
-            return;
-        };
-
-        let class_name = self.get_identifier_text(class_data.name);
-
-        // Use ES5 class emitter
-        let mut class_emitter = ClassES5Emitter::new(self.arena);
-        let class_output = class_emitter.emit_class(class_idx);
-
-        // Write indented class output
-        self.write_indent();
-        self.write(&class_output);
-
-        // Always export: ns.ClassName = ClassName;
-        self.write_indent();
-        self.write(ns_name);
-        self.write(".");
-        self.write(&class_name);
-        self.write(" = ");
-        self.write(&class_name);
-        self.write(";");
-        self.write_line();
+        if let Some(output) = self.transform_namespace_member_ir(ns_name, class_idx) {
+            self.write_indented_ir(&output);
+        }
     }
 
     /// Emit a variable statement in namespace context
     fn emit_variable_in_namespace(&mut self, ns_name: &str, var_idx: NodeIndex) {
-        let Some(var_node) = self.arena.get(var_idx) else {
-            return;
-        };
-        let Some(var_data) = self.arena.get_variable(var_node) else {
-            return;
-        };
-
-        let is_exported = self.has_export_modifier(&var_data.modifiers);
-
-        // Emit variable declarations
-        self.write_indent();
-        self.write("var ");
-
-        let mut var_names = Vec::new();
-        let mut first = true;
-
-        for &decl_list_idx in &var_data.declarations.nodes {
-            if let Some(decl_list_node) = self.arena.get(decl_list_idx) {
-                if let Some(decl_list) = self.arena.get_variable(decl_list_node) {
-                    for &decl_idx in &decl_list.declarations.nodes {
-                        if let Some(decl_node) = self.arena.get(decl_idx) {
-                            if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                if !first {
-                                    self.write(", ");
-                                }
-                                first = false;
-
-                                let var_name = self.get_identifier_text(decl.name);
-                                self.write(&var_name);
-
-                                if !decl.initializer.is_none() {
-                                    self.write(" = ");
-                                    self.emit_expression(decl.initializer);
-                                }
-
-                                if is_exported {
-                                    var_names.push(var_name);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        self.write(";");
-        self.write_line();
-
-        // Export assignments
-        for var_name in var_names {
-            self.write_indent();
-            self.write(ns_name);
-            self.write(".");
-            self.write(&var_name);
-            self.write(" = ");
-            self.write(&var_name);
-            self.write(";");
-            self.write_line();
+        if let Some(output) = self.transform_namespace_member_ir(ns_name, var_idx) {
+            self.write_indented_ir(&output);
         }
     }
 
     /// Emit an exported variable statement in namespace context
     fn emit_variable_in_namespace_exported(&mut self, ns_name: &str, var_idx: NodeIndex) {
-        let Some(var_node) = self.arena.get(var_idx) else {
-            return;
-        };
-        let Some(var_data) = self.arena.get_variable(var_node) else {
-            return;
-        };
-
-        // Emit variable declarations
-        self.write_indent();
-        self.write("var ");
-
-        let mut var_names = Vec::new();
-        let mut first = true;
-
-        for &decl_list_idx in &var_data.declarations.nodes {
-            if let Some(decl_list_node) = self.arena.get(decl_list_idx) {
-                if let Some(decl_list) = self.arena.get_variable(decl_list_node) {
-                    for &decl_idx in &decl_list.declarations.nodes {
-                        if let Some(decl_node) = self.arena.get(decl_idx) {
-                            if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                if !first {
-                                    self.write(", ");
-                                }
-                                first = false;
-
-                                let var_name = self.get_identifier_text(decl.name);
-                                self.write(&var_name);
-
-                                if !decl.initializer.is_none() {
-                                    self.write(" = ");
-                                    self.emit_expression(decl.initializer);
-                                }
-
-                                var_names.push(var_name);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        self.write(";");
-        self.write_line();
-
-        // Always export
-        for var_name in var_names {
-            self.write_indent();
-            self.write(ns_name);
-            self.write(".");
-            self.write(&var_name);
-            self.write(" = ");
-            self.write(&var_name);
-            self.write(";");
-            self.write_line();
+        if let Some(output) = self.transform_namespace_member_ir(ns_name, var_idx) {
+            self.write_indented_ir(&output);
         }
     }
 
     /// Emit an exported enum in namespace context
     fn emit_enum_in_namespace_exported(&mut self, ns_name: &str, enum_idx: NodeIndex) {
-        let Some(enum_node) = self.arena.get(enum_idx) else {
-            return;
-        };
-        let Some(enum_data) = self.arena.get_enum(enum_node) else {
-            return;
-        };
-
-        let enum_name = self.get_identifier_text(enum_data.name);
-
-        // var EnumName;
-        self.write_indent();
-        self.write("var ");
-        self.write(&enum_name);
-        self.write(";");
-        self.write_line();
-
-        // (function (EnumName) { ... })(EnumName || (EnumName = {}));
-        self.write_indent();
-        self.write("(function (");
-        self.write(&enum_name);
-        self.write(") {");
-        self.write_line();
-        self.increase_indent();
-
-        // Emit enum members
-        let mut value = 0i64;
-        for &member_idx in &enum_data.members.nodes {
-            if let Some(member_node) = self.arena.get(member_idx) {
-                if let Some(member_data) = self.arena.get_enum_member(member_node) {
-                    let member_name = self.get_identifier_text(member_data.name);
-
-                    if !member_data.initializer.is_none() {
-                        self.write_indent();
-                        self.write(&enum_name);
-                        self.write("[");
-                        self.write(&enum_name);
-                        self.write("[\"");
-                        self.write(&member_name);
-                        self.write("\"] = ");
-                        self.emit_expression(member_data.initializer);
-                        self.write("] = \"");
-                        self.write(&member_name);
-                        self.write("\";");
-                        self.write_line();
-                    } else {
-                        self.write_indent();
-                        self.write(&enum_name);
-                        self.write("[");
-                        self.write(&enum_name);
-                        self.write("[\"");
-                        self.write(&member_name);
-                        self.write("\"] = ");
-                        self.write_i64(value);
-                        self.write("] = \"");
-                        self.write(&member_name);
-                        self.write("\";");
-                        self.write_line();
-                        value += 1;
-                    }
-                }
-            }
+        if let Some(output) = self.transform_namespace_member_ir(ns_name, enum_idx) {
+            self.write_indented_ir(&output);
         }
-
-        self.decrease_indent();
-        self.write_indent();
-        self.write("})(");
-        self.write(&enum_name);
-        self.write(" || (");
-        self.write(&enum_name);
-        self.write(" = {}));");
-        self.write_line();
-
-        // Always export
-        self.write_indent();
-        self.write(ns_name);
-        self.write(".");
-        self.write(&enum_name);
-        self.write(" = ");
-        self.write(&enum_name);
-        self.write(";");
-        self.write_line();
     }
 
     /// Emit an exported nested namespace
     fn emit_nested_namespace_exported(&mut self, parent_ns: &str, ns_idx: NodeIndex) {
-        let Some(ns_node) = self.arena.get(ns_idx) else {
-            return;
-        };
-        let Some(ns_data) = self.arena.get_module(ns_node) else {
-            return;
+        if let Some(output) = self.transform_namespace_member_ir(parent_ns, ns_idx) {
+            self.write_indented_ir(&output);
+        }
+    }
+
+    fn transform_namespace_member_ir(&self, ns_name: &str, member_idx: NodeIndex) -> Option<String> {
+        let transform_context =
+            NamespaceTransformContext::with_commonjs(self.arena, self.is_commonjs);
+        let mut output = String::new();
+        let mut printer = IRPrinter::with_arena(self.arena);
+        printer.set_indent_level(self.indent_level);
+        let mut push_ir = |ir: IRNode| {
+            output.push_str(printer.emit(&ir));
+            output.push('\n');
         };
 
-        // Skip ambient nested namespaces
-        if self.has_declare_modifier(&ns_data.modifiers) {
-            return;
+        let member_node = self.arena.get(member_idx)?;
+        match member_node.kind {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                let export_data = self.arena.get_export_decl(member_node)?;
+                let export_node = self.arena.get(export_data.export_clause)?;
+                match export_node.kind {
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        if let Some(class_output) =
+                            self.transform_namespace_class_string(ns_name, export_data.export_clause)
+                        {
+                            output.push_str(&class_output);
+                        }
+                    }
+                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                        if let Some(enum_output) =
+                            self.transform_namespace_enum_ir(ns_name, export_data.export_clause)
+                        {
+                            output.push_str(&enum_output);
+                        }
+                    }
+                    _ => {
+                        let inner_ir = transform_context
+                            .transform_namespace_member_exported(ns_name, export_data.export_clause)?;
+                        push_ir(inner_ir);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                let func_data = self.arena.get_function(member_node)?;
+                if func_data.body.is_none() {
+                    return None;
+                }
+                let inner_ir = transform_context.transform_function_in_namespace(ns_name, member_idx)?;
+                push_ir(inner_ir);
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class_output) = self.transform_namespace_class_string(ns_name, member_idx)
+                {
+                    output.push_str(&class_output);
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                let inner_ir = transform_context.transform_variable_in_namespace(ns_name, member_idx)?;
+                push_ir(inner_ir);
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                let inner_ir = transform_context.transform_nested_namespace(ns_name, member_idx)?;
+                push_ir(inner_ir);
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_ir) = self.transform_namespace_enum_ir(ns_name, member_idx) {
+                    output.push_str(&enum_ir);
+                }
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                return None;
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                return None;
+            }
+            _ => {
+                push_ir(IRNode::ASTRef(member_idx));
+            }
         }
 
-        // Handle qualified names
-        let name_parts = self.flatten_module_name(ns_data.name);
-        if name_parts.is_empty() {
-            return;
+        if output.trim().is_empty() {
+            None
+        } else {
+            Some(output)
         }
-        let nested_name = &name_parts[0];
+    }
 
-        // var bar;
-        self.write_indent();
-        self.write("var ");
-        self.write(nested_name);
-        self.write(";");
-        self.write_line();
+    fn transform_namespace_class_string(&self, ns_name: &str, class_idx: NodeIndex) -> Option<String> {
+        let class_node = self.arena.get(class_idx)?;
+        let class_data = self.arena.get_class(class_node)?;
+        let class_name = self.get_identifier_text(class_data.name);
+        if class_name.is_empty() {
+            return None;
+        }
+        let mut output = String::new();
 
-        // Emit nested IIFE with parent attachment
-        self.emit_nested_namespace_iife(parent_ns, &name_parts, 0, ns_data.body);
+        let mut class_emitter = ClassES5Emitter::new(self.arena);
+        class_emitter.set_indent_level(self.indent_level);
+        let class_output = class_emitter.emit_class(class_idx);
+        if !class_output.is_empty() {
+            output.push_str(&class_output);
+            if !class_output.ends_with('\n') {
+                output.push('\n');
+            }
+        }
+
+        if self.has_export_modifier(&class_data.modifiers) {
+            let mut printer = IRPrinter::new();
+            printer.set_indent_level(self.indent_level);
+            output.push_str(printer.emit(&IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: class_name.clone(),
+                value: Box::new(IRNode::id(class_name)),
+            }));
+            output.push('\n');
+        }
+
+        if output.trim().is_empty() {
+            None
+        } else {
+            Some(output)
+        }
+    }
+
+    fn transform_namespace_enum_ir(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<String> {
+        let enum_node = self.arena.get(enum_idx)?;
+        let enum_data = self.arena.get_enum(enum_node)?;
+        let enum_name = self.get_identifier_text(enum_data.name);
+        if enum_name.is_empty() {
+            return None;
+        }
+
+        let mut enum_emitter = EnumES5Emitter::new(self.arena);
+        enum_emitter.set_indent_level(self.indent_level);
+        let enum_output = enum_emitter.emit_enum(enum_idx);
+        let mut output = String::new();
+        if !enum_output.is_empty() {
+            output.push_str(&enum_output);
+            if !enum_output.ends_with('\n') {
+                output.push('\n');
+            }
+        }
+
+        if self.has_export_modifier(&enum_data.modifiers) {
+            let mut printer = IRPrinter::new();
+            printer.set_indent_level(self.indent_level);
+            output.push_str(printer.emit(&IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: enum_name.clone(),
+                value: Box::new(IRNode::id(enum_name)),
+            }));
+            output.push('\n');
+        }
+
+        if output.trim().is_empty() {
+            None
+        } else {
+            Some(output)
+        }
+    }
+
+    fn write_indented_ir(&mut self, output: &str) {
+        for line in output.lines() {
+            self.write_indent();
+            self.write(line);
+            self.write_line();
+        }
     }
 
     /// Emit a nested namespace
