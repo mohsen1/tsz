@@ -656,9 +656,10 @@ impl<'a> NarrowingContext<'a> {
             && matches!(
                 self.interner.lookup(source),
                 Some(TypeKey::TemplateLiteral(_))
-            ) {
-                return true;
-            }
+            )
+        {
+            return true;
+        }
 
         false
     }

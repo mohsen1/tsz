@@ -839,9 +839,9 @@ mixed;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .collect();
     assert_eq!(expr_stmts.len(), 2, "Expected two expression statements");
@@ -910,9 +910,9 @@ obj[key];
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -4429,7 +4429,6 @@ fn test_contextual_typing_for_function_parameters() {
 
     // Create a function type: (x: string, y: number) => boolean
     use crate::solver::{FunctionShape, ParamInfo};
-    
 
     let func_shape = FunctionShape {
         type_params: vec![],
@@ -4493,9 +4492,9 @@ takesHandler(function(this: { value: number }, x) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -4623,7 +4622,6 @@ fn test_contextual_typing_for_object_properties() {
 
     // Create an object type: { name: string, age: number }
     use crate::solver::PropertyInfo;
-    
 
     let obj_type = types.object(vec![
         PropertyInfo {
@@ -5252,7 +5250,6 @@ c.y;
 #[test]
 fn test_strict_null_checks_property_access() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
-    
 
     // Test property access on nullable types
     let types = TypeInterner::new();
@@ -5291,7 +5288,6 @@ fn test_strict_null_checks_property_access() {
 #[test]
 fn test_strict_null_checks_undefined_type() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
-    
 
     // Test property access on possibly undefined types
     let types = TypeInterner::new();
@@ -5328,7 +5324,6 @@ fn test_strict_null_checks_undefined_type() {
 #[test]
 fn test_strict_null_checks_both_null_and_undefined() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo, TypeKey};
-    
 
     // Test property access on type that is both null and undefined
     let types = TypeInterner::new();
@@ -5377,7 +5372,6 @@ fn test_strict_null_checks_both_null_and_undefined() {
 #[test]
 fn test_strict_null_checks_non_nullable_success() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, PropertyInfo};
-    
 
     // Test that non-nullable types succeed normally
     let types = TypeInterner::new();
@@ -5597,7 +5591,6 @@ fn test_variable_self_reference_no_2403() {
 #[test]
 fn test_symbol_property_access_description() {
     use crate::solver::{PropertyAccessEvaluator, PropertyAccessResult, TypeKey};
-    
 
     // Test accessing .description on symbol type
     let types = TypeInterner::new();
@@ -10214,7 +10207,6 @@ fn test_index_signature_at_solver_level() {
     use crate::solver::{
         IndexSignature, ObjectShape, PropertyAccessEvaluator, PropertyAccessResult,
     };
-    
 
     // Test that index signature resolution is tracked at solver level
     let types = TypeInterner::new();
@@ -12265,9 +12257,9 @@ x;
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("inner expression statement");
     let inner_expr = arena
@@ -12280,9 +12272,9 @@ x;
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("outer expression statement");
     let outer_expr = arena
@@ -12356,9 +12348,9 @@ if (typeof x === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt_node = arena.get(expr_stmt_idx).expect("expression node");
@@ -12462,9 +12454,9 @@ while (typeof x === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("inner expression statement");
     let expr_stmt = arena
@@ -12533,9 +12525,9 @@ for (; typeof x === "string"; ) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("inner expression statement");
     let expr_stmt = arena
@@ -12604,9 +12596,9 @@ for (const value of [x]) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("inner expression statement");
     let expr_stmt = arena
@@ -12679,9 +12671,9 @@ for (const key in { a: x }) {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("inner expression statement");
     let expr_stmt = arena
@@ -12778,9 +12770,9 @@ x;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .next_back()
         .expect("expression statement");
@@ -12841,9 +12833,9 @@ x;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .next_back()
         .expect("expression statement");
@@ -12902,9 +12894,9 @@ x;
         .iter()
         .copied()
         .filter(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .next_back()
         .expect("expression statement");
@@ -12977,9 +12969,9 @@ if (typeof Alias.value === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13046,9 +13038,9 @@ if (typeof Ns["value"] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13375,9 +13367,9 @@ if (typeof obj[key] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13451,9 +13443,9 @@ if (typeof obj[key] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13563,9 +13555,9 @@ if (typeof arr[idx] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13675,9 +13667,9 @@ if (typeof obj[key] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13748,9 +13740,9 @@ if (typeof arr[idx] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13822,9 +13814,9 @@ if (obj[key] === "a") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -13894,9 +13886,9 @@ if (typeof obj["prop"] === "string") {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
         })
         .expect("expression statement");
     let expr_stmt = arena
@@ -14022,9 +14014,9 @@ function f(x: number) { return x; }
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
         })
         .expect("function declaration");
     let func_node = arena.get(func_idx).expect("function node");
@@ -25210,7 +25202,6 @@ const arrowPromise = async (): Promise<string> => "test";
 
 #[test]
 fn test_duplicate_class_members() {
-    
     use crate::parser::ParserState;
 
     // Simplified test - just duplicate properties
@@ -25257,7 +25248,6 @@ class DuplicateProperties {
 
 #[test]
 fn test_duplicate_object_literal_properties() {
-    
     use crate::parser::ParserState;
 
     // Test duplicate properties in object literal
@@ -25302,7 +25292,6 @@ const obj = {
 
 #[test]
 fn test_duplicate_object_literal_mixed_properties() {
-    
     use crate::parser::ParserState;
 
     // Test duplicate properties with different syntax (shorthand, method)
@@ -27097,9 +27086,9 @@ namespace MyNamespace {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::MODULE_DECLARATION
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
         })
         .expect("namespace declaration");
 
@@ -27117,9 +27106,9 @@ namespace MyNamespace {
         .iter()
         .copied()
         .find(|&idx| {
-            arena.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            })
+            arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
         })
         .expect("function declaration inside namespace");
 
@@ -27161,9 +27150,9 @@ function topLevelFunc() {
         .iter()
         .copied()
         .find(|&idx| {
-            arena2.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            })
+            arena2
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
         })
         .expect("top-level function declaration");
 
@@ -27206,9 +27195,9 @@ module MyModule {
         .iter()
         .copied()
         .find(|&idx| {
-            arena3.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::MODULE_DECLARATION
-            })
+            arena3
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
         })
         .expect("module declaration");
 
@@ -27227,9 +27216,9 @@ module MyModule {
         .iter()
         .copied()
         .find(|&idx| {
-            arena3.get(idx).is_some_and(|node| {
-                node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            })
+            arena3
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
         })
         .expect("function declaration inside module");
 

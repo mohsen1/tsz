@@ -304,15 +304,18 @@ impl<'a> CheckerState<'a> {
             if let Some(name_node) = self.ctx.arena.get(param.name)
                 && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                     || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-                {
-                    continue;
-                }
+            {
+                continue;
+            }
 
             // If we already have a concrete cached type, keep it.
             if let Some(&cached) = self.ctx.symbol_types.get(&sym_id)
-                && cached != TypeId::UNKNOWN && cached != TypeId::ANY && cached != TypeId::ERROR {
-                    continue;
-                }
+                && cached != TypeId::UNKNOWN
+                && cached != TypeId::ANY
+                && cached != TypeId::ERROR
+            {
+                continue;
+            }
 
             // Use contextual typing by resolving the parameter's identifier in its function scope.
             let inferred = self.get_type_of_identifier(param.name);
@@ -879,9 +882,10 @@ impl<'a> CheckerState<'a> {
                     // Inside a class but no explicit this type on stack -
                     // return the class instance type (e.g., for constructor default params)
                     if let Some(class_node) = self.ctx.arena.get(class_info.class_idx)
-                        && let Some(class_data) = self.ctx.arena.get_class(class_node) {
-                            return self.get_class_instance_type(class_info.class_idx, class_data);
-                        }
+                        && let Some(class_data) = self.ctx.arena.get_class(class_node)
+                    {
+                        return self.get_class_instance_type(class_info.class_idx, class_data);
+                    }
                     TypeId::ANY
                 } else {
                     // Not in a class - check if we're in a NON-ARROW function
@@ -1156,228 +1160,224 @@ impl<'a> CheckerState<'a> {
 
         // Check if type_name is a qualified name (A.B)
         if let Some(name_node) = self.ctx.arena.get(type_name_idx)
-            && name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-                if has_type_args {
-                    let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) else {
-                        let _ = self.resolve_qualified_name(type_name_idx);
-                        return TypeId::ERROR;
-                    };
-                    if self.alias_resolves_to_value_only(sym_id)
-                        || self.symbol_is_value_only(sym_id)
-                    {
-                        let name = self
-                            .entity_name_text(type_name_idx)
-                            .unwrap_or_else(|| "<unknown>".to_string());
-                        self.error_value_only_type_at(&name, type_name_idx);
-                        return TypeId::ERROR;
-                    }
-                    if let Some(args) = &type_ref.type_arguments {
-                        if self.should_resolve_recursive_type_alias(sym_id, args) {
-                            // Ensure the base type symbol is resolved first so its type params
-                            // are available in the type_env for Application expansion
-                            let _ = self.get_type_of_symbol(sym_id);
-                        }
-                        for &arg_idx in &args.nodes {
-                            let _ = self.get_type_from_type_node(arg_idx);
-                        }
-                    }
-                    let type_param_bindings = self.get_type_param_bindings();
-                    let type_resolver =
-                        |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                    let value_resolver =
-                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                    let lowering = crate::solver::TypeLowering::with_resolvers(
-                        self.ctx.arena,
-                        self.ctx.types,
-                        &type_resolver,
-                        &value_resolver,
-                    )
-                    .with_type_param_bindings(type_param_bindings);
-                    return lowering.lower_type(idx);
+            && name_node.kind == syntax_kind_ext::QUALIFIED_NAME
+        {
+            if has_type_args {
+                let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) else {
+                    let _ = self.resolve_qualified_name(type_name_idx);
+                    return TypeId::ERROR;
+                };
+                if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
+                    let name = self
+                        .entity_name_text(type_name_idx)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    self.error_value_only_type_at(&name, type_name_idx);
+                    return TypeId::ERROR;
                 }
-                return self.resolve_qualified_name(type_name_idx);
+                if let Some(args) = &type_ref.type_arguments {
+                    if self.should_resolve_recursive_type_alias(sym_id, args) {
+                        // Ensure the base type symbol is resolved first so its type params
+                        // are available in the type_env for Application expansion
+                        let _ = self.get_type_of_symbol(sym_id);
+                    }
+                    for &arg_idx in &args.nodes {
+                        let _ = self.get_type_from_type_node(arg_idx);
+                    }
+                }
+                let type_param_bindings = self.get_type_param_bindings();
+                let type_resolver =
+                    |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                let value_resolver =
+                    |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let lowering = crate::solver::TypeLowering::with_resolvers(
+                    self.ctx.arena,
+                    self.ctx.types,
+                    &type_resolver,
+                    &value_resolver,
+                )
+                .with_type_param_bindings(type_param_bindings);
+                return lowering.lower_type(idx);
             }
+            return self.resolve_qualified_name(type_name_idx);
+        }
 
         // Get the identifier for the type name
         if let Some(name_node) = self.ctx.arena.get(type_name_idx)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                let name = ident.escaped_text.as_str();
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let name = ident.escaped_text.as_str();
 
-                if has_type_args {
-                    let is_builtin_array = name == "Array" || name == "ReadonlyArray";
-                    let type_param = self.lookup_type_parameter(name);
-                    let sym_id = self.resolve_identifier_symbol(type_name_idx);
-                    if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
-                        // Try resolving from lib binders before falling back to UNKNOWN
-                        if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                            // Still process type arguments for validation
-                            if let Some(args) = &type_ref.type_arguments {
-                                for &arg_idx in &args.nodes {
-                                    let _ = self.get_type_from_type_node(arg_idx);
-                                }
+            if has_type_args {
+                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
+                let type_param = self.lookup_type_parameter(name);
+                let sym_id = self.resolve_identifier_symbol(type_name_idx);
+                if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                    // Try resolving from lib binders before falling back to UNKNOWN
+                    if let Some(type_id) = self.resolve_lib_type_by_name(name) {
+                        // Still process type arguments for validation
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node(arg_idx);
                             }
-                            return type_id;
                         }
-                        if self.is_known_global_type_name(name) {
-                            // Check if this is a built-in mapped type utility (Record, Partial, etc.)
-                            // These are standard TypeScript utility types that should not emit errors
-                            // when used with type arguments - they represent type transformations
-                            if self.is_mapped_type_utility(name) {
-                                // Process type arguments but don't emit an error
-                                // Return ANY as a reasonable approximation for these utility types
-                                if let Some(args) = &type_ref.type_arguments {
-                                    for &arg_idx in &args.nodes {
-                                        let _ = self.get_type_from_type_node(arg_idx);
-                                    }
-                                }
-                                return TypeId::ANY;
-                            }
-
-                            // Emit TS2318/TS2583 for missing global types
-                            // TS2583 for ES2015+ types, TS2318 for other global types
-                            self.error_cannot_find_global_type(name, type_name_idx);
-
-                            // For Promise-like types with type arguments, create a proper TypeApplication
-                            // so that promise_like_return_type_argument can extract T from Promise<T>
-                            if self.is_promise_like_name(name)
-                                && let Some(args) = &type_ref.type_arguments {
-                                    let type_args: Vec<TypeId> = args
-                                        .nodes
-                                        .iter()
-                                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                                        .collect();
-                                    if !type_args.is_empty() {
-                                        // Create a Promise application with the type args
-                                        // We use PROMISE_BASE which is recognized as Promise-like
-                                        return self
-                                            .ctx
-                                            .types
-                                            .application(TypeId::PROMISE_BASE, type_args);
-                                    }
-                                }
-                            // For other known global types, just process args and return ERROR
-                            if let Some(args) = &type_ref.type_arguments {
-                                for &arg_idx in &args.nodes {
-                                    let _ = self.get_type_from_type_node(arg_idx);
-                                }
-                            }
-                            return TypeId::ERROR;
-                        }
-                        if name == "await" {
-                            self.error_cannot_find_name_did_you_mean_at(
-                                name,
-                                "Awaited",
-                                type_name_idx,
-                            );
-                            return TypeId::ERROR;
-                        }
-                        self.error_cannot_find_name_at(name, type_name_idx);
-                        return TypeId::ERROR;
-                    }
-                    if !is_builtin_array
-                        && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx) {
-                            if self.alias_resolves_to_value_only(sym_id)
-                                || self.symbol_is_value_only(sym_id)
-                            {
-                                self.error_value_only_type_at(name, type_name_idx);
-                                return TypeId::ERROR;
-                            }
-                            if let Some(args) = &type_ref.type_arguments
-                                && self.should_resolve_recursive_type_alias(sym_id, args) {
-                                    // Ensure the base type symbol is resolved first so its type params
-                                    // are available in the type_env for Application expansion
-                                    let _ = self.get_type_of_symbol(sym_id);
-                                }
-                        }
-                    // Also ensure type arguments are resolved and in type_env
-                    // This is needed so that when we evaluate the Application, we can
-                    // resolve Ref types in the arguments
-                    if let Some(args) = &type_ref.type_arguments {
-                        for &arg_idx in &args.nodes {
-                            // Recursively get type from the arg - this will add any referenced
-                            // symbols to type_env
-                            let _ = self.get_type_from_type_node(arg_idx);
-                        }
-                    }
-                    let type_param_bindings = self.get_type_param_bindings();
-                    let type_resolver =
-                        |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                    let value_resolver =
-                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                    let lowering = crate::solver::TypeLowering::with_resolvers(
-                        self.ctx.arena,
-                        self.ctx.types,
-                        &type_resolver,
-                        &value_resolver,
-                    )
-                    .with_type_param_bindings(type_param_bindings);
-                    return lowering.lower_type(idx);
-                }
-
-                if name == "Array" || name == "ReadonlyArray" {
-                    if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
                         return type_id;
                     }
-                    let elem_type = type_ref
-                        .type_arguments
-                        .as_ref()
-                        .and_then(|args| args.nodes.first().copied())
-                        .map(|idx| self.get_type_from_type_node(idx))
-                        .unwrap_or(TypeId::UNKNOWN);
-                    let array_type = self.ctx.types.array(elem_type);
-                    if name == "ReadonlyArray" {
-                        return self
-                            .ctx
-                            .types
-                            .intern(crate::solver::TypeKey::ReadonlyType(array_type));
-                    }
-                    return array_type;
-                }
-
-                // Check for built-in types (primitive keywords)
-                match name {
-                    "number" => return TypeId::NUMBER,
-                    "string" => return TypeId::STRING,
-                    "boolean" => return TypeId::BOOLEAN,
-                    "void" => return TypeId::VOID,
-                    "any" => return TypeId::ANY,
-                    "never" => return TypeId::NEVER,
-                    "unknown" => return TypeId::UNKNOWN,
-                    "undefined" => return TypeId::UNDEFINED,
-                    "null" => return TypeId::NULL,
-                    "object" => return TypeId::OBJECT,
-                    "bigint" => return TypeId::BIGINT,
-                    "symbol" => return TypeId::SYMBOL,
-                    _ => {}
-                }
-
-                // Check if this is a type parameter (generic type like T in function<T>)
-                if let Some(type_param) = self.lookup_type_parameter(name) {
-                    return type_param;
-                }
-
-                if name != "Array" && name != "ReadonlyArray"
-                    && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
-                        && (self.alias_resolves_to_value_only(sym_id)
-                            || self.symbol_is_value_only(sym_id))
-                        {
-                            self.error_value_only_type_at(name, type_name_idx);
-                            return TypeId::ERROR;
+                    if self.is_known_global_type_name(name) {
+                        // Check if this is a built-in mapped type utility (Record, Partial, etc.)
+                        // These are standard TypeScript utility types that should not emit errors
+                        // when used with type arguments - they represent type transformations
+                        if self.is_mapped_type_utility(name) {
+                            // Process type arguments but don't emit an error
+                            // Return ANY as a reasonable approximation for these utility types
+                            if let Some(args) = &type_ref.type_arguments {
+                                for &arg_idx in &args.nodes {
+                                    let _ = self.get_type_from_type_node(arg_idx);
+                                }
+                            }
+                            return TypeId::ANY;
                         }
 
+                        // Emit TS2318/TS2583 for missing global types
+                        // TS2583 for ES2015+ types, TS2318 for other global types
+                        self.error_cannot_find_global_type(name, type_name_idx);
+
+                        // For Promise-like types with type arguments, create a proper TypeApplication
+                        // so that promise_like_return_type_argument can extract T from Promise<T>
+                        if self.is_promise_like_name(name)
+                            && let Some(args) = &type_ref.type_arguments
+                        {
+                            let type_args: Vec<TypeId> = args
+                                .nodes
+                                .iter()
+                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                .collect();
+                            if !type_args.is_empty() {
+                                // Create a Promise application with the type args
+                                // We use PROMISE_BASE which is recognized as Promise-like
+                                return self.ctx.types.application(TypeId::PROMISE_BASE, type_args);
+                            }
+                        }
+                        // For other known global types, just process args and return ERROR
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node(arg_idx);
+                            }
+                        }
+                        return TypeId::ERROR;
+                    }
+                    if name == "await" {
+                        self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    self.error_cannot_find_name_at(name, type_name_idx);
+                    return TypeId::ERROR;
+                }
+                if !is_builtin_array
+                    && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
+                {
+                    if self.alias_resolves_to_value_only(sym_id)
+                        || self.symbol_is_value_only(sym_id)
+                    {
+                        self.error_value_only_type_at(name, type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    if let Some(args) = &type_ref.type_arguments
+                        && self.should_resolve_recursive_type_alias(sym_id, args)
+                    {
+                        // Ensure the base type symbol is resolved first so its type params
+                        // are available in the type_env for Application expansion
+                        let _ = self.get_type_of_symbol(sym_id);
+                    }
+                }
+                // Also ensure type arguments are resolved and in type_env
+                // This is needed so that when we evaluate the Application, we can
+                // resolve Ref types in the arguments
+                if let Some(args) = &type_ref.type_arguments {
+                    for &arg_idx in &args.nodes {
+                        // Recursively get type from the arg - this will add any referenced
+                        // symbols to type_env
+                        let _ = self.get_type_from_type_node(arg_idx);
+                    }
+                }
+                let type_param_bindings = self.get_type_param_bindings();
+                let type_resolver =
+                    |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                let value_resolver =
+                    |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let lowering = crate::solver::TypeLowering::with_resolvers(
+                    self.ctx.arena,
+                    self.ctx.types,
+                    &type_resolver,
+                    &value_resolver,
+                )
+                .with_type_param_bindings(type_param_bindings);
+                return lowering.lower_type(idx);
+            }
+
+            if name == "Array" || name == "ReadonlyArray" {
                 if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
                     return type_id;
                 }
-                if name == "await" {
-                    self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
-                    return TypeId::ERROR;
+                let elem_type = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.first().copied())
+                    .map(|idx| self.get_type_from_type_node(idx))
+                    .unwrap_or(TypeId::UNKNOWN);
+                let array_type = self.ctx.types.array(elem_type);
+                if name == "ReadonlyArray" {
+                    return self
+                        .ctx
+                        .types
+                        .intern(crate::solver::TypeKey::ReadonlyType(array_type));
                 }
-                if self.is_known_global_type_name(name) {
-                    return TypeId::UNKNOWN;
-                }
-                self.error_cannot_find_name_at(name, type_name_idx);
+                return array_type;
+            }
+
+            // Check for built-in types (primitive keywords)
+            match name {
+                "number" => return TypeId::NUMBER,
+                "string" => return TypeId::STRING,
+                "boolean" => return TypeId::BOOLEAN,
+                "void" => return TypeId::VOID,
+                "any" => return TypeId::ANY,
+                "never" => return TypeId::NEVER,
+                "unknown" => return TypeId::UNKNOWN,
+                "undefined" => return TypeId::UNDEFINED,
+                "null" => return TypeId::NULL,
+                "object" => return TypeId::OBJECT,
+                "bigint" => return TypeId::BIGINT,
+                "symbol" => return TypeId::SYMBOL,
+                _ => {}
+            }
+
+            // Check if this is a type parameter (generic type like T in function<T>)
+            if let Some(type_param) = self.lookup_type_parameter(name) {
+                return type_param;
+            }
+
+            if name != "Array"
+                && name != "ReadonlyArray"
+                && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
+                && (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
+            {
+                self.error_value_only_type_at(name, type_name_idx);
                 return TypeId::ERROR;
             }
+
+            if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
+                return type_id;
+            }
+            if name == "await" {
+                self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+                return TypeId::ERROR;
+            }
+            if self.is_known_global_type_name(name) {
+                return TypeId::UNKNOWN;
+            }
+            self.error_cannot_find_name_at(name, type_name_idx);
+            return TypeId::ERROR;
+        }
 
         // Unknown type name node kind - propagate error
         TypeId::ERROR
@@ -1542,9 +1542,10 @@ impl<'a> CheckerState<'a> {
             // instead of the instance type. This allows accessing namespace members via Foo.Bar.
             if symbol.flags & symbol_flags::CLASS != 0
                 && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
-                && let Some(instance_type) = self.class_instance_type_from_symbol(sym_id) {
-                    return instance_type;
-                }
+                && let Some(instance_type) = self.class_instance_type_from_symbol(sym_id)
+            {
+                return instance_type;
+            }
             if symbol.flags & symbol_flags::INTERFACE != 0 {
                 if !symbol.declarations.is_empty() {
                     let type_param_bindings = self.get_type_param_bindings();
@@ -1680,19 +1681,20 @@ impl<'a> CheckerState<'a> {
 
         // Check for global augmentations in the current file that should merge with this type
         if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
-            && !augmentation_decls.is_empty() {
-                // Lower the augmentation declarations from the current file's arena
-                let lowering = TypeLowering::new(self.ctx.arena, self.ctx.types);
-                let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
+            && !augmentation_decls.is_empty()
+        {
+            // Lower the augmentation declarations from the current file's arena
+            let lowering = TypeLowering::new(self.ctx.arena, self.ctx.types);
+            let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
 
-                // Merge lib type with augmentation using intersection
-                if let Some(lib_type) = lib_type_id {
-                    return Some(self.ctx.types.intersection2(lib_type, augmentation_type));
-                } else {
-                    // No lib type found, just return the augmentation
-                    return Some(augmentation_type);
-                }
+            // Merge lib type with augmentation using intersection
+            if let Some(lib_type) = lib_type_id {
+                return Some(self.ctx.types.intersection2(lib_type, augmentation_type));
+            } else {
+                // No lib type found, just return the augmentation
+                return Some(augmentation_type);
             }
+        }
 
         lib_type_id
     }
@@ -1923,10 +1925,11 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(&symbol.escaped_name);
             // Look up the exported symbol in module_exports
             if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
-                && let Some(target_sym_id) = exports.get(export_name) {
-                    // Recursively resolve if the target is also an alias
-                    return self.resolve_alias_symbol(target_sym_id, visited_aliases);
-                }
+                && let Some(target_sym_id) = exports.get(export_name)
+            {
+                // Recursively resolve if the target is also an alias
+                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+            }
             // For ES6 imports, if we can't find the export, return the alias symbol itself
             // This allows the type checker to use the symbol reference
             return Some(sym_id);
@@ -2633,12 +2636,13 @@ impl<'a> CheckerState<'a> {
         let mut member_sym_id_from_symbol = None;
         if let Some(left_node) = self.ctx.arena.get(qn.left)
             && left_node.kind == SyntaxKind::Identifier as u16
-                && let Some(sym_id) = self.resolve_identifier_symbol(qn.left)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && let Some(ref exports) = symbol.exports
-                            && let Some(member_id) = exports.get(&right_name) {
-                                member_sym_id_from_symbol = Some(member_id);
-                            }
+            && let Some(sym_id) = self.resolve_identifier_symbol(qn.left)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(ref exports) = symbol.exports
+            && let Some(member_id) = exports.get(&right_name)
+        {
+            member_sym_id_from_symbol = Some(member_id);
+        }
 
         // If found via symbol resolution, use it
         if let Some(member_sym_id) = member_sym_id_from_symbol {
@@ -2647,10 +2651,10 @@ impl<'a> CheckerState<'a> {
                 if !is_namespace
                     && (self.alias_resolves_to_value_only(member_sym_id)
                         || self.symbol_is_value_only(member_sym_id))
-                    {
-                        self.error_value_only_type_at(&right_name, qn.right);
-                        return TypeId::ERROR;
-                    }
+                {
+                    self.error_value_only_type_at(&right_name, qn.right);
+                    return TypeId::ERROR;
+                }
             }
             return self.type_reference_symbol_type(member_sym_id);
         }
@@ -2659,32 +2663,34 @@ impl<'a> CheckerState<'a> {
         // Look up the member in the left side's exports
         if let Some(crate::solver::TypeKey::Ref(crate::solver::SymbolRef(sym_id))) =
             self.ctx.types.lookup(left_type)
-            && let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_id)) {
-                // Check exports table
-                if let Some(ref exports) = symbol.exports
-                    && let Some(member_sym_id) = exports.get(&right_name) {
-                        // Check value-only, but skip for namespaces since they can be used
-                        // to navigate to types (e.g., Outer.Inner.Type)
-                        if let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id) {
-                            let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
-                            if !is_namespace
-                                && (self.alias_resolves_to_value_only(member_sym_id)
-                                    || self.symbol_is_value_only(member_sym_id))
-                                {
-                                    self.error_value_only_type_at(&right_name, qn.right);
-                                    return TypeId::ERROR;
-                                }
-                        }
-                        return self.type_reference_symbol_type(member_sym_id);
+            && let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_id))
+        {
+            // Check exports table
+            if let Some(ref exports) = symbol.exports
+                && let Some(member_sym_id) = exports.get(&right_name)
+            {
+                // Check value-only, but skip for namespaces since they can be used
+                // to navigate to types (e.g., Outer.Inner.Type)
+                if let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id) {
+                    let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
+                    if !is_namespace
+                        && (self.alias_resolves_to_value_only(member_sym_id)
+                            || self.symbol_is_value_only(member_sym_id))
+                    {
+                        self.error_value_only_type_at(&right_name, qn.right);
+                        return TypeId::ERROR;
                     }
-
-                // Not found - report TS2694
-                let namespace_name = self
-                    .entity_name_text(qn.left)
-                    .unwrap_or_else(|| symbol.escaped_name.clone());
-                self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
-                return TypeId::ERROR;
+                }
+                return self.type_reference_symbol_type(member_sym_id);
             }
+
+            // Not found - report TS2694
+            let namespace_name = self
+                .entity_name_text(qn.left)
+                .unwrap_or_else(|| symbol.escaped_name.clone());
+            self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
+            return TypeId::ERROR;
+        }
 
         // Left side wasn't a reference to a namespace/module
         TypeId::ANY
@@ -2827,10 +2833,10 @@ impl<'a> CheckerState<'a> {
                         .get(missing_idx)
                         .and_then(|node| self.ctx.arena.get_identifier(node))
                         .map(|ident| ident.escaped_text.clone())
-                    {
-                        self.error_cannot_find_name_at(&missing_name, missing_idx);
-                        return TypeId::ERROR;
-                    }
+                {
+                    self.error_cannot_find_name_at(&missing_name, missing_idx);
+                    return TypeId::ERROR;
+                }
                 if self.report_type_query_missing_member(type_query.expr_name) {
                     return TypeId::ERROR;
                 }
@@ -2848,14 +2854,15 @@ impl<'a> CheckerState<'a> {
             };
 
         if let Some(args) = &type_query.type_arguments
-            && !args.nodes.is_empty() {
-                let type_args = args
-                    .nodes
-                    .iter()
-                    .map(|&idx| self.get_type_from_type_node(idx))
-                    .collect();
-                return self.ctx.types.application(base, type_args);
-            }
+            && !args.nodes.is_empty()
+        {
+            let type_args = args
+                .nodes
+                .iter()
+                .map(|&idx| self.get_type_from_type_node(idx))
+                .collect();
+            return self.ctx.types.application(base, type_args);
+        }
 
         base
     }
@@ -2987,119 +2994,47 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|args| !args.nodes.is_empty());
 
         if let Some(name_node) = self.ctx.arena.get(type_name_idx)
-            && name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-                let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) else {
-                    let _ = self.resolve_qualified_name(type_name_idx);
-                    return TypeId::ERROR;
-                };
-                if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
-                    let name = self
-                        .entity_name_text(type_name_idx)
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    self.error_value_only_type_at(&name, type_name_idx);
-                    return TypeId::ERROR;
-                }
-                let base_type = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
-                if has_type_args {
-                    let type_args = type_ref
-                        .type_arguments
-                        .as_ref()
-                        .map(|args| {
-                            args.nodes
-                                .iter()
-                                .map(|&arg_idx| {
-                                    self.get_type_from_type_node_in_type_literal(arg_idx)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    return self.ctx.types.application(base_type, type_args);
-                }
-                return base_type;
+            && name_node.kind == syntax_kind_ext::QUALIFIED_NAME
+        {
+            let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) else {
+                let _ = self.resolve_qualified_name(type_name_idx);
+                return TypeId::ERROR;
+            };
+            if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
+                let name = self
+                    .entity_name_text(type_name_idx)
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                self.error_value_only_type_at(&name, type_name_idx);
+                return TypeId::ERROR;
             }
+            let base_type = self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+            if has_type_args {
+                let type_args = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .map(|args| {
+                        args.nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                return self.ctx.types.application(base_type, type_args);
+            }
+            return base_type;
+        }
 
         if let Some(name_node) = self.ctx.arena.get(type_name_idx)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                let name = ident.escaped_text.as_str();
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let name = ident.escaped_text.as_str();
 
-                if has_type_args {
-                    let is_builtin_array = name == "Array" || name == "ReadonlyArray";
-                    let type_param = self.lookup_type_parameter(name);
-                    let sym_id = self.resolve_identifier_symbol(type_name_idx);
+            if has_type_args {
+                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
+                let type_param = self.lookup_type_parameter(name);
+                let sym_id = self.resolve_identifier_symbol(type_name_idx);
 
-                    if is_builtin_array && type_param.is_none() && sym_id.is_none() {
-                        let elem_type = type_ref
-                            .type_arguments
-                            .as_ref()
-                            .and_then(|args| args.nodes.first().copied())
-                            .map(|idx| self.get_type_from_type_node_in_type_literal(idx))
-                            .unwrap_or(TypeId::UNKNOWN);
-                        let array_type = self.ctx.types.array(elem_type);
-                        if name == "ReadonlyArray" {
-                            return self.ctx.types.intern(TypeKey::ReadonlyType(array_type));
-                        }
-                        return array_type;
-                    }
-
-                    if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
-                        if self.is_known_global_type_name(name) {
-                            if let Some(args) = &type_ref.type_arguments {
-                                for &arg_idx in &args.nodes {
-                                    let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
-                                }
-                            }
-                            return TypeId::UNKNOWN;
-                        }
-                        if name == "await" {
-                            self.error_cannot_find_name_did_you_mean_at(
-                                name,
-                                "Awaited",
-                                type_name_idx,
-                            );
-                            return TypeId::ERROR;
-                        }
-                        self.error_cannot_find_name_at(name, type_name_idx);
-                        return TypeId::ERROR;
-                    }
-                    if !is_builtin_array
-                        && let Some(sym_id) = sym_id
-                            && (self.alias_resolves_to_value_only(sym_id)
-                                || self.symbol_is_value_only(sym_id))
-                            {
-                                self.error_value_only_type_at(name, type_name_idx);
-                                return TypeId::ERROR;
-                            }
-
-                    let base_type = if let Some(type_param) = type_param {
-                        type_param
-                    } else if let Some(sym_id) = sym_id {
-                        self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)))
-                    } else {
-                        TypeId::ERROR
-                    };
-
-                    let type_args = type_ref
-                        .type_arguments
-                        .as_ref()
-                        .map(|args| {
-                            args.nodes
-                                .iter()
-                                .map(|&arg_idx| {
-                                    self.get_type_from_type_node_in_type_literal(arg_idx)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    return self.ctx.types.application(base_type, type_args);
-                }
-
-                if name == "Array" || name == "ReadonlyArray" {
-                    if let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx) {
-                        return self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
-                    }
-                    if let Some(type_param) = self.lookup_type_parameter(name) {
-                        return type_param;
-                    }
+                if is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     let elem_type = type_ref
                         .type_arguments
                         .as_ref()
@@ -3113,48 +3048,114 @@ impl<'a> CheckerState<'a> {
                     return array_type;
                 }
 
-                match name {
-                    "number" => return TypeId::NUMBER,
-                    "string" => return TypeId::STRING,
-                    "boolean" => return TypeId::BOOLEAN,
-                    "void" => return TypeId::VOID,
-                    "any" => return TypeId::ANY,
-                    "never" => return TypeId::NEVER,
-                    "unknown" => return TypeId::UNKNOWN,
-                    "undefined" => return TypeId::UNDEFINED,
-                    "null" => return TypeId::NULL,
-                    "object" => return TypeId::OBJECT,
-                    "bigint" => return TypeId::BIGINT,
-                    "symbol" => return TypeId::SYMBOL,
-                    _ => {}
-                }
-
-                if name != "Array" && name != "ReadonlyArray"
-                    && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
-                        && (self.alias_resolves_to_value_only(sym_id)
-                            || self.symbol_is_value_only(sym_id))
-                        {
-                            self.error_value_only_type_at(name, type_name_idx);
-                            return TypeId::ERROR;
+                if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                    if self.is_known_global_type_name(name) {
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
+                            }
                         }
-
-                if let Some(type_param) = self.lookup_type_parameter(name) {
-                    return type_param;
+                        return TypeId::UNKNOWN;
+                    }
+                    if name == "await" {
+                        self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+                        return TypeId::ERROR;
+                    }
+                    self.error_cannot_find_name_at(name, type_name_idx);
+                    return TypeId::ERROR;
                 }
+                if !is_builtin_array
+                    && let Some(sym_id) = sym_id
+                    && (self.alias_resolves_to_value_only(sym_id)
+                        || self.symbol_is_value_only(sym_id))
+                {
+                    self.error_value_only_type_at(name, type_name_idx);
+                    return TypeId::ERROR;
+                }
+
+                let base_type = if let Some(type_param) = type_param {
+                    type_param
+                } else if let Some(sym_id) = sym_id {
+                    self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)))
+                } else {
+                    TypeId::ERROR
+                };
+
+                let type_args = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .map(|args| {
+                        args.nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node_in_type_literal(arg_idx))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                return self.ctx.types.application(base_type, type_args);
+            }
+
+            if name == "Array" || name == "ReadonlyArray" {
                 if let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx) {
                     return self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
                 }
+                if let Some(type_param) = self.lookup_type_parameter(name) {
+                    return type_param;
+                }
+                let elem_type = type_ref
+                    .type_arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.first().copied())
+                    .map(|idx| self.get_type_from_type_node_in_type_literal(idx))
+                    .unwrap_or(TypeId::UNKNOWN);
+                let array_type = self.ctx.types.array(elem_type);
+                if name == "ReadonlyArray" {
+                    return self.ctx.types.intern(TypeKey::ReadonlyType(array_type));
+                }
+                return array_type;
+            }
 
-                if name == "await" {
-                    self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
-                    return TypeId::ERROR;
-                }
-                if self.is_known_global_type_name(name) {
-                    return TypeId::UNKNOWN;
-                }
-                self.error_cannot_find_name_at(name, type_name_idx);
+            match name {
+                "number" => return TypeId::NUMBER,
+                "string" => return TypeId::STRING,
+                "boolean" => return TypeId::BOOLEAN,
+                "void" => return TypeId::VOID,
+                "any" => return TypeId::ANY,
+                "never" => return TypeId::NEVER,
+                "unknown" => return TypeId::UNKNOWN,
+                "undefined" => return TypeId::UNDEFINED,
+                "null" => return TypeId::NULL,
+                "object" => return TypeId::OBJECT,
+                "bigint" => return TypeId::BIGINT,
+                "symbol" => return TypeId::SYMBOL,
+                _ => {}
+            }
+
+            if name != "Array"
+                && name != "ReadonlyArray"
+                && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
+                && (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
+            {
+                self.error_value_only_type_at(name, type_name_idx);
                 return TypeId::ERROR;
             }
+
+            if let Some(type_param) = self.lookup_type_parameter(name) {
+                return type_param;
+            }
+            if let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx) {
+                return self.ctx.types.intern(TypeKey::Ref(SymbolRef(sym_id.0)));
+            }
+
+            if name == "await" {
+                self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
+                return TypeId::ERROR;
+            }
+            if self.is_known_global_type_name(name) {
+                return TypeId::UNKNOWN;
+            }
+            self.error_cannot_find_name_at(name, type_name_idx);
+            return TypeId::ERROR;
+        }
 
         TypeId::ANY
     }
@@ -3196,12 +3197,13 @@ impl<'a> CheckerState<'a> {
 
             let name_node = self.ctx.arena.get(param.name);
             if let Some(name_node) = name_node
-                && name_node.kind == SyntaxKind::ThisKeyword as u16 {
-                    if this_type.is_none() {
-                        this_type = Some(type_id);
-                    }
-                    continue;
+                && name_node.kind == SyntaxKind::ThisKeyword as u16
+            {
+                if this_type.is_none() {
+                    this_type = Some(type_id);
                 }
+                continue;
+            }
 
             let name: Option<Atom> = if let Some(name_node) = name_node {
                 if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
@@ -3217,12 +3219,13 @@ impl<'a> CheckerState<'a> {
             let rest = param.dot_dot_dot_token;
 
             if let Some(name_atom) = name
-                && name_atom == this_atom {
-                    if this_type.is_none() {
-                        this_type = Some(type_id);
-                    }
-                    continue;
+                && name_atom == this_atom
+            {
+                if this_type.is_none() {
+                    this_type = Some(type_id);
                 }
+                continue;
+            }
 
             params.push(ParamInfo {
                 name,
@@ -3537,14 +3540,14 @@ impl<'a> CheckerState<'a> {
                 // Validate that default satisfies constraint if present
                 if let Some(constraint_type) = constraint
                     && default_type != TypeId::ERROR
-                        && !self.is_assignable_to(default_type, constraint_type)
-                    {
-                        self.error_at_node(
+                    && !self.is_assignable_to(default_type, constraint_type)
+                {
+                    self.error_at_node(
                             data.default,
                             crate::checker::types::diagnostics::diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
                             crate::checker::types::diagnostics::diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
                         );
-                    }
+                }
                 if default_type == TypeId::ERROR {
                     None
                 } else {
@@ -3600,22 +3603,24 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::INFER_TYPE => {
                 if let Some(infer) = self.ctx.arena.get_infer_type(node)
                     && let Some(param_node) = self.ctx.arena.get(infer.type_parameter)
-                        && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
-                            && let Some(name_node) = self.ctx.arena.get(param.name)
-                                && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                    let name = ident.escaped_text.clone();
-                                    if !params.contains(&name) {
-                                        params.push(name);
-                                    }
-                                }
+                    && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
+                    && let Some(name_node) = self.ctx.arena.get(param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    let name = ident.escaped_text.clone();
+                    if !params.contains(&name) {
+                        params.push(name);
+                    }
+                }
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(ref args) = type_ref.type_arguments {
-                        for &arg_idx in &args.nodes {
-                            self.collect_infer_type_parameters_inner(arg_idx, params);
-                        }
+                    && let Some(ref args) = type_ref.type_arguments
+                {
+                    for &arg_idx in &args.nodes {
+                        self.collect_infer_type_parameters_inner(arg_idx, params);
                     }
+                }
             }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 if let Some(composite) = self.ctx.arena.get_composite_type(node) {
@@ -3629,12 +3634,10 @@ impl<'a> CheckerState<'a> {
                     for &param_idx in &func_type.parameters.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                                && !param.type_annotation.is_none() {
-                                    self.collect_infer_type_parameters_inner(
-                                        param.type_annotation,
-                                        params,
-                                    );
-                                }
+                            && !param.type_annotation.is_none()
+                        {
+                            self.collect_infer_type_parameters_inner(param.type_annotation, params);
+                        }
                     }
                     if !func_type.type_annotation.is_none() {
                         self.collect_infer_type_parameters_inner(func_type.type_annotation, params);
@@ -3789,22 +3792,23 @@ impl<'a> CheckerState<'a> {
                 // Extract property
                 if let Some(sig) = self.ctx.arena.get_signature(member_node)
                     && let Some(name_node) = self.ctx.arena.get(sig.name)
-                        && let Some(id_data) = self.ctx.arena.get_identifier(name_node) {
-                            let type_id = if !sig.type_annotation.is_none() {
-                                self.get_type_of_node(sig.type_annotation)
-                            } else {
-                                TypeId::ANY
-                            };
+                    && let Some(id_data) = self.ctx.arena.get_identifier(name_node)
+                {
+                    let type_id = if !sig.type_annotation.is_none() {
+                        self.get_type_of_node(sig.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    };
 
-                            properties.push(PropertyInfo {
-                                name: self.ctx.types.intern_string(&id_data.escaped_text),
-                                type_id,
-                                write_type: type_id,
-                                optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
-                                is_method: member_node.kind == METHOD_SIGNATURE,
-                            });
-                        }
+                    properties.push(PropertyInfo {
+                        name: self.ctx.types.intern_string(&id_data.escaped_text),
+                        type_id,
+                        write_type: type_id,
+                        optional: sig.question_token,
+                        readonly: self.has_readonly_modifier(&sig.modifiers),
+                        is_method: member_node.kind == METHOD_SIGNATURE,
+                    });
+                }
             } else if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
                 let param_idx = index_sig
                     .parameters
@@ -4295,12 +4299,13 @@ impl<'a> CheckerState<'a> {
             let rest = param.dot_dot_dot_token;
 
             if let Some(name_atom) = name
-                && name_atom == this_atom {
-                    if this_type.is_none() {
-                        this_type = Some(type_id);
-                    }
-                    continue;
+                && name_atom == this_atom
+            {
+                if this_type.is_none() {
+                    this_type = Some(type_id);
                 }
+                continue;
+            }
 
             params.push(ParamInfo {
                 name,
@@ -4340,12 +4345,13 @@ impl<'a> CheckerState<'a> {
 
             let name_node = self.ctx.arena.get(param.name);
             if let Some(name_node) = name_node
-                && name_node.kind == SyntaxKind::ThisKeyword as u16 {
-                    if this_type.is_none() {
-                        this_type = Some(type_id);
-                    }
-                    continue;
+                && name_node.kind == SyntaxKind::ThisKeyword as u16
+            {
+                if this_type.is_none() {
+                    this_type = Some(type_id);
                 }
+                continue;
+            }
 
             let name: Option<Atom> = if let Some(name_node) = name_node {
                 if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
@@ -4361,12 +4367,13 @@ impl<'a> CheckerState<'a> {
             let rest = param.dot_dot_dot_token;
 
             if let Some(name_atom) = name
-                && name_atom == this_atom {
-                    if this_type.is_none() {
-                        this_type = Some(type_id);
-                    }
-                    continue;
+                && name_atom == this_atom
+            {
+                if this_type.is_none() {
+                    this_type = Some(type_id);
                 }
+                continue;
+            }
 
             params.push(ParamInfo {
                 name,
@@ -4585,9 +4592,10 @@ impl<'a> CheckerState<'a> {
 
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
         if let Some(sym_id) = current_sym
-            && !visited.insert(sym_id) {
-                return TypeId::ERROR; // Circular reference - propagate error
-            }
+            && !visited.insert(sym_id)
+        {
+            return TypeId::ERROR; // Circular reference - propagate error
+        }
 
         struct MethodAggregate {
             overload_signatures: Vec<CallSignature>,
@@ -4945,17 +4953,19 @@ impl<'a> CheckerState<'a> {
                 let mut base_class_idx = None;
                 for &decl_idx in &base_symbol.declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some() {
-                            base_class_idx = Some(decl_idx);
-                            break;
-                        }
+                        && self.ctx.arena.get_class(node).is_some()
+                    {
+                        base_class_idx = Some(decl_idx);
+                        break;
+                    }
                 }
                 if base_class_idx.is_none() && !base_symbol.value_declaration.is_none() {
                     let decl_idx = base_symbol.value_declaration;
                     if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some() {
-                            base_class_idx = Some(decl_idx);
-                        }
+                        && self.ctx.arena.get_class(node).is_some()
+                    {
+                        base_class_idx = Some(decl_idx);
+                    }
                 }
                 let Some(base_class_idx) = base_class_idx else {
                     if let Some(base_instance_type) =
@@ -5120,61 +5130,61 @@ impl<'a> CheckerState<'a> {
 
         // Merge interface declarations for class/interface merging (class members take precedence).
         if let Some(sym_id) = current_sym
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                let interface_decls: Vec<NodeIndex> = symbol
-                    .declarations
-                    .iter()
-                    .copied()
-                    .filter(|&decl_idx| {
-                        self.ctx
-                            .arena
-                            .get(decl_idx)
-                            .and_then(|node| self.ctx.arena.get_interface(node))
-                            .is_some()
-                    })
-                    .collect();
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let interface_decls: Vec<NodeIndex> = symbol
+                .declarations
+                .iter()
+                .copied()
+                .filter(|&decl_idx| {
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|node| self.ctx.arena.get_interface(node))
+                        .is_some()
+                })
+                .collect();
 
-                if !interface_decls.is_empty() {
-                    let type_param_bindings = self.get_type_param_bindings();
-                    let type_resolver =
-                        |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                    let value_resolver =
-                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                    let lowering = TypeLowering::with_resolvers(
-                        self.ctx.arena,
-                        self.ctx.types,
-                        &type_resolver,
-                        &value_resolver,
-                    )
-                    .with_type_param_bindings(type_param_bindings);
-                    let interface_type = lowering.lower_interface_declarations(&interface_decls);
-                    let interface_type =
-                        self.merge_interface_heritage_types(&interface_decls, interface_type);
+            if !interface_decls.is_empty() {
+                let type_param_bindings = self.get_type_param_bindings();
+                let type_resolver =
+                    |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+                let value_resolver =
+                    |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let lowering = TypeLowering::with_resolvers(
+                    self.ctx.arena,
+                    self.ctx.types,
+                    &type_resolver,
+                    &value_resolver,
+                )
+                .with_type_param_bindings(type_param_bindings);
+                let interface_type = lowering.lower_interface_declarations(&interface_decls);
+                let interface_type =
+                    self.merge_interface_heritage_types(&interface_decls, interface_type);
 
-                    match self.ctx.types.lookup(interface_type) {
-                        Some(TypeKey::Object(shape_id))
-                        | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                            let shape = self.ctx.types.object_shape(shape_id);
-                            for prop in shape.properties.iter() {
-                                properties.entry(prop.name).or_insert_with(|| prop.clone());
-                            }
-                            if let Some(ref idx) = shape.string_index {
-                                Self::merge_index_signature(&mut string_index, idx.clone());
-                            }
-                            if let Some(ref idx) = shape.number_index {
-                                Self::merge_index_signature(&mut number_index, idx.clone());
-                            }
+                match self.ctx.types.lookup(interface_type) {
+                    Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                        let shape = self.ctx.types.object_shape(shape_id);
+                        for prop in shape.properties.iter() {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
                         }
-                        Some(TypeKey::Callable(shape_id)) => {
-                            let shape = self.ctx.types.callable_shape(shape_id);
-                            for prop in shape.properties.iter() {
-                                properties.entry(prop.name).or_insert_with(|| prop.clone());
-                            }
+                        if let Some(ref idx) = shape.string_index {
+                            Self::merge_index_signature(&mut string_index, idx.clone());
                         }
-                        _ => {}
+                        if let Some(ref idx) = shape.number_index {
+                            Self::merge_index_signature(&mut number_index, idx.clone());
+                        }
                     }
+                    Some(TypeKey::Callable(shape_id)) => {
+                        let shape = self.ctx.types.callable_shape(shape_id);
+                        for prop in shape.properties.iter() {
+                            properties.entry(prop.name).or_insert_with(|| prop.clone());
+                        }
+                    }
+                    _ => {}
                 }
             }
+        }
 
         // Classes inherit Object members (toString, hasOwnProperty, etc.).
         if let Some(object_type) = self.resolve_lib_type_by_name("Object") {
@@ -5551,17 +5561,19 @@ impl<'a> CheckerState<'a> {
                 let mut base_class_idx = None;
                 for &decl_idx in &base_symbol.declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some() {
-                            base_class_idx = Some(decl_idx);
-                            break;
-                        }
+                        && self.ctx.arena.get_class(node).is_some()
+                    {
+                        base_class_idx = Some(decl_idx);
+                        break;
+                    }
                 }
                 if base_class_idx.is_none() && !base_symbol.value_declaration.is_none() {
                     let decl_idx = base_symbol.value_declaration;
                     if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_class(node).is_some() {
-                            base_class_idx = Some(decl_idx);
-                        }
+                        && self.ctx.arena.get_class(node).is_some()
+                    {
+                        base_class_idx = Some(decl_idx);
+                    }
                 }
                 let Some(base_class_idx) = base_class_idx else {
                     if let Some(base_constructor_type) =
@@ -5633,18 +5645,19 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR
-                && let Some(ctor) = self.ctx.arena.get_constructor(member_node) {
-                    if self.has_private_modifier(&ctor.modifiers) {
-                        constructor_access = Some(MemberAccessLevel::Private);
-                    } else if self.has_protected_modifier(&ctor.modifiers)
-                        && constructor_access != Some(MemberAccessLevel::Private)
-                    {
-                        constructor_access = Some(MemberAccessLevel::Protected);
-                    }
-                    if ctor.body.is_none() {
-                        has_overloads = true;
-                    }
+                && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
+            {
+                if self.has_private_modifier(&ctor.modifiers) {
+                    constructor_access = Some(MemberAccessLevel::Private);
+                } else if self.has_protected_modifier(&ctor.modifiers)
+                    && constructor_access != Some(MemberAccessLevel::Private)
+                {
+                    constructor_access = Some(MemberAccessLevel::Protected);
                 }
+                if ctor.body.is_none() {
+                    has_overloads = true;
+                }
+            }
         }
 
         let mut construct_signatures = Vec::new();
@@ -5790,10 +5803,11 @@ impl<'a> CheckerState<'a> {
                 // Check if we're inside a class and the name matches a static member (error 2662)
                 // Clone values to avoid borrow issues
                 if let Some(ref class_info) = self.ctx.enclosing_class.clone()
-                    && self.is_static_member(&class_info.member_nodes, name) {
-                        self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
-                        return TypeId::ERROR;
-                    }
+                    && self.is_static_member(&class_info.member_nodes, name)
+                {
+                    self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
+                    return TypeId::ERROR;
+                }
                 // TS2524: 'await' in default parameter - emit specific error
                 if name == "await" && self.is_in_default_parameter(idx) {
                     use crate::checker::types::diagnostics::{
@@ -5931,12 +5945,13 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         // Check definite assignment for block-scoped variables without initializers
         if self.should_check_definite_assignment(sym_id, idx)
-            && !self.is_definitely_assigned_at(idx) {
-                // Report TS2454 error: Variable used before assignment
-                self.emit_definite_assignment_error(idx, sym_id);
-                // Return declared type to avoid cascading errors
-                return declared_type;
-            }
+            && !self.is_definitely_assigned_at(idx)
+        {
+            // Report TS2454 error: Variable used before assignment
+            self.emit_definite_assignment_error(idx, sym_id);
+            // Return declared type to avoid cascading errors
+            return declared_type;
+        }
 
         // Apply type narrowing based on control flow
         self.apply_flow_narrowing(idx, declared_type)
@@ -5989,9 +6004,10 @@ impl<'a> CheckerState<'a> {
             && matches!(
                 key,
                 TypeKey::Union(_) | TypeKey::TypeParameter(_) | TypeKey::Infer(_)
-            ) {
-                return true;
-            }
+            )
+        {
+            return true;
+        }
 
         // Could also check for types that include null/undefined
         // For now, only narrow unions
@@ -6096,16 +6112,18 @@ impl<'a> CheckerState<'a> {
             // Check if the variable statement has a declare modifier
             if let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx)
                 && let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx)
-                    && let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node)
-                        && self.has_declare_modifier(&var_stmt.modifiers) {
-                            return true;
-                        }
+                && let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node)
+                && self.has_declare_modifier(&var_stmt.modifiers)
+            {
+                return true;
+            }
 
             // Also check node flags for AMBIENT
             if let Some(node) = self.ctx.arena.get(decl_idx)
-                && (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0 {
-                    return true;
-                }
+                && (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
+            {
+                return true;
+            }
         }
 
         false
@@ -6141,9 +6159,10 @@ impl<'a> CheckerState<'a> {
         let mut current = idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current)
-                && node.is_function_like() {
-                    return Some(current);
-                }
+                && node.is_function_like()
+            {
+                return Some(current);
+            }
             let ext = self.ctx.arena.get_extended(current)?;
             if ext.parent.is_none() {
                 return None;
@@ -6263,9 +6282,10 @@ impl<'a> CheckerState<'a> {
         let mut current = idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                    return Some(current);
-                }
+                && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            {
+                return Some(current);
+            }
             let ext = self.ctx.arena.get_extended(current)?;
             if ext.parent.is_none() {
                 return None;
@@ -6396,16 +6416,17 @@ impl<'a> CheckerState<'a> {
             // Check if parent is a parameter and we're in its initializer
             if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
                 if parent_node.kind == syntax_kind_ext::PARAMETER
-                    && let Some(param) = self.ctx.arena.get_parameter(parent_node) {
-                        // Check if current node is within the initializer
-                        if !param.initializer.is_none() {
-                            let init_idx = param.initializer;
-                            // Check if idx is within the initializer subtree
-                            if self.is_node_within(idx, init_idx) {
-                                return true;
-                            }
+                    && let Some(param) = self.ctx.arena.get_parameter(parent_node)
+                {
+                    // Check if current node is within the initializer
+                    if !param.initializer.is_none() {
+                        let init_idx = param.initializer;
+                        // Check if idx is within the initializer subtree
+                        if self.is_node_within(idx, init_idx) {
+                            return true;
                         }
                     }
+                }
                 // Stop at function/arrow boundaries - parameters are only at the top level
                 if matches!(parent_node.kind,
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION ||
@@ -6462,11 +6483,11 @@ impl<'a> CheckerState<'a> {
             };
             if (parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
                 || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
-                && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node) {
-                    let analyzer =
-                        FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
-                    return analyzer.assignment_targets_reference(for_data.initializer, idx);
-                }
+                && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
+            {
+                let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
+                return analyzer.assignment_targets_reference(for_data.initializer, idx);
+            }
             current = parent;
         }
     }
@@ -6884,18 +6905,19 @@ impl<'a> CheckerState<'a> {
         // Handle cross-file symbol resolution: if this symbol's arena is different
         // from the current arena, delegate to a checker using the correct arena.
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
-            && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena) {
-                let mut checker = CheckerState::new(
-                    symbol_arena.as_ref(),
-                    self.ctx.binder,
-                    self.ctx.types,
-                    self.ctx.file_name.clone(),
-                    self.ctx.compiler_options.clone(),
-                );
-                // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
-                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-                return checker.compute_type_of_symbol(sym_id);
-            }
+            && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
+        {
+            let mut checker = CheckerState::new(
+                symbol_arena.as_ref(),
+                self.ctx.binder,
+                self.ctx.types,
+                self.ctx.file_name.clone(),
+                self.ctx.compiler_options.clone(),
+            );
+            // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            return checker.compute_type_of_symbol(sym_id);
+        }
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return (TypeId::UNKNOWN, Vec::new());
@@ -6917,17 +6939,15 @@ impl<'a> CheckerState<'a> {
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
-                    && let Some(class) = self.ctx.arena.get_class(node) {
-                        let ctor_type = self.get_class_constructor_type(decl_idx, class);
-                        if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                            != 0
-                        {
-                            let merged =
-                                self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
-                            return (merged, Vec::new());
-                        }
-                        return (ctor_type, Vec::new());
-                    }
+                && let Some(class) = self.ctx.arena.get_class(node)
+            {
+                let ctor_type = self.get_class_constructor_type(decl_idx, class);
+                if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+                    let merged = self.merge_namespace_exports_into_constructor(sym_id, ctor_type);
+                    return (merged, Vec::new());
+                }
+                return (ctor_type, Vec::new());
+            }
             return (TypeId::UNKNOWN, Vec::new());
         }
 
@@ -7073,15 +7093,15 @@ impl<'a> CheckerState<'a> {
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
-                    && let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
-                        let (params, updates) =
-                            self.push_type_parameters(&type_alias.type_parameters);
-                        let alias_type = self.get_type_from_type_node(type_alias.type_node);
-                        self.pop_type_parameters(updates);
-                        // Return the params that were used during lowering - this ensures
-                        // type_env gets the same TypeIds as the type body
-                        return (alias_type, params);
-                    }
+                && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+            {
+                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                let alias_type = self.get_type_from_type_node(type_alias.type_node);
+                self.pop_type_parameters(updates);
+                // Return the params that were used during lowering - this ensures
+                // type_env gets the same TypeIds as the type body
+                return (alias_type, params);
+            }
             return (TypeId::UNKNOWN, Vec::new());
         }
 
@@ -7091,29 +7111,30 @@ impl<'a> CheckerState<'a> {
         {
             if !value_decl.is_none()
                 && let Some(node) = self.ctx.arena.get(value_decl)
-                    && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
-                        // First try type annotation using type-node lowering (resolves through binder).
-                        if !var_decl.type_annotation.is_none() {
-                            return (
-                                self.get_type_from_type_node(var_decl.type_annotation),
-                                Vec::new(),
-                            );
-                        }
-                        if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
-                            return (jsdoc_type, Vec::new());
-                        }
-                        if !var_decl.initializer.is_none()
-                            && self.is_const_variable_declaration(value_decl)
-                            && let Some(literal_type) =
-                                self.literal_type_from_initializer(var_decl.initializer)
-                            {
-                                return (literal_type, Vec::new());
-                            }
-                        // Fall back to inferring from initializer
-                        if !var_decl.initializer.is_none() {
-                            return (self.get_type_of_node(var_decl.initializer), Vec::new());
-                        }
-                    }
+                && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+            {
+                // First try type annotation using type-node lowering (resolves through binder).
+                if !var_decl.type_annotation.is_none() {
+                    return (
+                        self.get_type_from_type_node(var_decl.type_annotation),
+                        Vec::new(),
+                    );
+                }
+                if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
+                    return (jsdoc_type, Vec::new());
+                }
+                if !var_decl.initializer.is_none()
+                    && self.is_const_variable_declaration(value_decl)
+                    && let Some(literal_type) =
+                        self.literal_type_from_initializer(var_decl.initializer)
+                {
+                    return (literal_type, Vec::new());
+                }
+                // Fall back to inferring from initializer
+                if !var_decl.initializer.is_none() {
+                    return (self.get_type_of_node(var_decl.initializer), Vec::new());
+                }
+            }
             // Variable without type annotation or initializer gets implicit 'any'
             // This prevents cascading TS2571 errors
             return (TypeId::ANY, Vec::new());
@@ -7122,55 +7143,56 @@ impl<'a> CheckerState<'a> {
         // Alias - resolve the aliased type (import x = ns.member or ES6 imports)
         if flags & symbol_flags::ALIAS != 0 {
             if !value_decl.is_none()
-                && let Some(node) = self.ctx.arena.get(value_decl) {
-                    // Handle Import Equals Declaration (import x = ns.member)
-                    if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                        && let Some(import) = self.ctx.arena.get_import_decl(node) {
-                            // module_specifier holds the reference (e.g., 'ns.member' or require("..."))
-                            // Use resolve_qualified_symbol to get the target symbol directly,
-                            // avoiding the value-only check that's inappropriate for import aliases.
-                            // Import aliases can legitimately reference value-only namespaces.
-                            if let Some(target_sym) =
-                                self.resolve_qualified_symbol(import.module_specifier)
-                            {
-                                return (self.get_type_of_symbol(target_sym), Vec::new());
+                && let Some(node) = self.ctx.arena.get(value_decl)
+            {
+                // Handle Import Equals Declaration (import x = ns.member)
+                if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    && let Some(import) = self.ctx.arena.get_import_decl(node)
+                {
+                    // module_specifier holds the reference (e.g., 'ns.member' or require("..."))
+                    // Use resolve_qualified_symbol to get the target symbol directly,
+                    // avoiding the value-only check that's inappropriate for import aliases.
+                    // Import aliases can legitimately reference value-only namespaces.
+                    if let Some(target_sym) = self.resolve_qualified_symbol(import.module_specifier)
+                    {
+                        return (self.get_type_of_symbol(target_sym), Vec::new());
+                    }
+                    // Check if this is a require() call - handle by creating module namespace type
+                    if let Some(module_specifier) =
+                        self.get_require_module_specifier(import.module_specifier)
+                    {
+                        // Try to resolve the module from module_exports
+                        if let Some(exports_table) =
+                            self.ctx.binder.module_exports.get(&module_specifier)
+                        {
+                            // Create an object type with all the module's exports
+                            use crate::solver::PropertyInfo;
+                            let mut props: Vec<PropertyInfo> = Vec::new();
+                            for (name, &sym_id) in exports_table.iter() {
+                                let prop_type = self.get_type_of_symbol(sym_id);
+                                let name_atom = self.ctx.types.intern_string(name);
+                                props.push(PropertyInfo {
+                                    name: name_atom,
+                                    type_id: prop_type,
+                                    write_type: prop_type,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                });
                             }
-                            // Check if this is a require() call - handle by creating module namespace type
-                            if let Some(module_specifier) =
-                                self.get_require_module_specifier(import.module_specifier)
-                            {
-                                // Try to resolve the module from module_exports
-                                if let Some(exports_table) =
-                                    self.ctx.binder.module_exports.get(&module_specifier)
-                                {
-                                    // Create an object type with all the module's exports
-                                    use crate::solver::PropertyInfo;
-                                    let mut props: Vec<PropertyInfo> = Vec::new();
-                                    for (name, &sym_id) in exports_table.iter() {
-                                        let prop_type = self.get_type_of_symbol(sym_id);
-                                        let name_atom = self.ctx.types.intern_string(name);
-                                        props.push(PropertyInfo {
-                                            name: name_atom,
-                                            type_id: prop_type,
-                                            write_type: prop_type,
-                                            optional: false,
-                                            readonly: false,
-                                            is_method: false,
-                                        });
-                                    }
-                                    let module_type = self.ctx.types.object(props);
-                                    return (module_type, Vec::new());
-                                }
-                                // Module not found - return ANY to allow property access
-                                return (TypeId::ANY, Vec::new());
-                            }
-                            // Fall back to get_type_of_node for simple identifiers
-                            return (self.get_type_of_node(import.module_specifier), Vec::new());
+                            let module_type = self.ctx.types.object(props);
+                            return (module_type, Vec::new());
                         }
-                    // Handle ES6 named imports (import { X } from './module')
-                    // Use the import_module field to resolve to the actual export
-                    // Check if this symbol has import tracking metadata
+                        // Module not found - return ANY to allow property access
+                        return (TypeId::ANY, Vec::new());
+                    }
+                    // Fall back to get_type_of_node for simple identifiers
+                    return (self.get_type_of_node(import.module_specifier), Vec::new());
                 }
+                // Handle ES6 named imports (import { X } from './module')
+                // Use the import_module field to resolve to the actual export
+                // Check if this symbol has import tracking metadata
+            }
 
             // For ES6 imports with import_module set, resolve using module_exports
             if let Some(ref module_name) = symbol.import_module {
@@ -7188,16 +7210,17 @@ impl<'a> CheckerState<'a> {
                 // Use import_name if set (for renamed imports), otherwise use escaped_name
                 let export_name = symbol.import_name.as_ref().unwrap_or(&symbol.escaped_name);
                 if let Some(exports_table) = self.ctx.binder.module_exports.get(module_name)
-                    && let Some(export_sym_id) = exports_table.get(export_name) {
-                        let result = self.get_type_of_symbol(export_sym_id);
-                        if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
-                            eprintln!(
-                                "[DEBUG] ALIAS '{}' from '{}': export_sym_id={}, result_type_id={}",
-                                export_name, module_name, export_sym_id.0, result.0
-                            );
-                        }
-                        return (result, Vec::new());
+                    && let Some(export_sym_id) = exports_table.get(export_name)
+                {
+                    let result = self.get_type_of_symbol(export_sym_id);
+                    if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
+                        eprintln!(
+                            "[DEBUG] ALIAS '{}' from '{}': export_sym_id={}, result_type_id={}",
+                            export_name, module_name, export_sym_id.0, result.0
+                        );
                     }
+                    return (result, Vec::new());
+                }
                 // Module not found in exports - return ANY to prevent cascading TS2571 errors
                 // TSC emits TS2307 for missing module but allows property access on the result
                 return (TypeId::ANY, Vec::new());
@@ -7351,13 +7374,14 @@ impl<'a> CheckerState<'a> {
                     env.get(symbol)
                 };
                 if let Some(resolved) = resolved
-                    && resolved != ctx_type {
-                        return self.contextual_type_allows_literal_inner(
-                            resolved,
-                            literal_type,
-                            visited,
-                        );
-                    }
+                    && resolved != ctx_type
+                {
+                    return self.contextual_type_allows_literal_inner(
+                        resolved,
+                        literal_type,
+                        visited,
+                    );
+                }
                 false
             }
             TypeKey::Application(_) => {
@@ -7421,16 +7445,17 @@ impl<'a> CheckerState<'a> {
 
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == SyntaxKind::Identifier as u16
-                && let Some(sym_id) = self.resolve_identifier_symbol(idx) {
-                    if self.alias_resolves_to_type_only(sym_id) {
-                        if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                            self.error_type_only_value_at(&ident.escaped_text, idx);
-                        }
-                        return TypeId::ERROR;
-                    }
-                    let declared_type = self.get_type_of_symbol(sym_id);
-                    return declared_type;
+            && let Some(sym_id) = self.resolve_identifier_symbol(idx)
+        {
+            if self.alias_resolves_to_type_only(sym_id) {
+                if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                    self.error_type_only_value_at(&ident.escaped_text, idx);
                 }
+                return TypeId::ERROR;
+            }
+            let declared_type = self.get_type_of_symbol(sym_id);
+            return declared_type;
+        }
 
         self.get_type_of_node(idx)
     }
@@ -7472,17 +7497,17 @@ impl<'a> CheckerState<'a> {
                     right_idx,
                 );
             } else if !self.is_assignable_to(right_type, left_type)
-                && !self.should_skip_weak_union_error(right_type, left_type, right_idx) {
-                    self.error_type_not_assignable_with_reason_at(right_type, left_type, right_idx);
-                }
+                && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
+            {
+                self.error_type_not_assignable_with_reason_at(right_type, left_type, right_idx);
+            }
 
             if left_type != TypeId::UNKNOWN
                 && let Some(right_node) = self.ctx.arena.get(right_idx)
-                    && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                        self.check_object_literal_excess_properties(
-                            right_type, left_type, right_idx,
-                        );
-                    }
+                && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+            }
         }
 
         right_type
@@ -7539,21 +7564,17 @@ impl<'a> CheckerState<'a> {
                     right_idx,
                 );
             } else if !self.is_assignable_to(assigned_type, left_type)
-                && !self.should_skip_weak_union_error(right_type, left_type, right_idx) {
-                    self.error_type_not_assignable_with_reason_at(
-                        assigned_type,
-                        left_type,
-                        right_idx,
-                    );
-                }
+                && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
+            {
+                self.error_type_not_assignable_with_reason_at(assigned_type, left_type, right_idx);
+            }
 
             if left_type != TypeId::UNKNOWN
                 && let Some(right_node) = self.ctx.arena.get(right_idx)
-                    && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                        self.check_object_literal_excess_properties(
-                            right_type, left_type, right_idx,
-                        );
-                    }
+                && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+            }
         }
 
         result_type
@@ -7678,9 +7699,10 @@ impl<'a> CheckerState<'a> {
             }
             if op_kind == SyntaxKind::InKeyword as u16 {
                 if let Some(left_node) = self.ctx.arena.get(left_idx)
-                    && left_node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                        self.check_private_identifier_in_expression(left_idx, right_type);
-                    }
+                    && left_node.kind == SyntaxKind::PrivateIdentifier as u16
+                {
+                    self.check_private_identifier_in_expression(left_idx, right_type);
+                }
                 type_stack.push(TypeId::BOOLEAN);
                 continue;
             }
@@ -7892,15 +7914,15 @@ impl<'a> CheckerState<'a> {
         if let Some(signatures) = overload_signatures.as_deref()
             && let Some(return_type) =
                 self.resolve_overloaded_call_with_signatures(args, signatures)
-            {
-                let return_type =
-                    self.apply_this_substitution_to_call_return(return_type, call.expression);
-                return if nullish_cause.is_some() {
-                    self.ctx.types.union(vec![return_type, TypeId::UNDEFINED])
-                } else {
-                    return_type
-                };
-            }
+        {
+            let return_type =
+                self.apply_this_substitution_to_call_return(return_type, call.expression);
+            return if nullish_cause.is_some() {
+                self.ctx.types.union(vec![return_type, TypeId::UNDEFINED])
+            } else {
+                return_type
+            };
+        }
 
         // Create contextual context from callee type
         let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, callee_type);
@@ -8091,9 +8113,9 @@ impl<'a> CheckerState<'a> {
             if let Some(ident) = self.ctx.arena.get_identifier(expr_node)
                 && let Some(class_idx) =
                     self.class_declaration_from_identifier_in_block(block, &ident.escaped_text)
-                {
-                    return Some(class_idx);
-                }
+            {
+                return Some(class_idx);
+            }
         }
         None
     }
@@ -8443,15 +8465,16 @@ impl<'a> CheckerState<'a> {
         for &arg_idx in args.iter() {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx)
                 && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node) {
-                        let spread_type = self.get_type_of_node(spread_data.expression);
-                        let spread_type = self.resolve_type_for_property_access(spread_type);
-                        if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
-                            let elems = self.ctx.types.tuple_list(elems_id);
-                            expanded_count += elems.len();
-                            continue;
-                        }
-                    }
+                && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+            {
+                let spread_type = self.get_type_of_node(spread_data.expression);
+                let spread_type = self.resolve_type_for_property_access(spread_type);
+                if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
+                    let elems = self.ctx.types.tuple_list(elems_id);
+                    expanded_count += elems.len();
+                    continue;
+                }
+            }
             expanded_count += 1;
         }
 
@@ -8462,33 +8485,33 @@ impl<'a> CheckerState<'a> {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
                 // Handle spread elements specially - expand tuple types
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node) {
-                        let spread_type = self.get_type_of_node(spread_data.expression);
-                        let spread_type = self.resolve_type_for_property_access(spread_type);
+                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+                {
+                    let spread_type = self.get_type_of_node(spread_data.expression);
+                    let spread_type = self.resolve_type_for_property_access(spread_type);
 
-                        // If it's a tuple type, expand its elements
-                        if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
-                            let elems = self.ctx.types.tuple_list(elems_id);
-                            for elem in elems.iter() {
-                                arg_types.push(elem.type_id);
-                                effective_index += 1;
-                            }
-                            continue;
-                        }
-
-                        // If it's an array type, push the element type (variadic handling)
-                        if let Some(TypeKey::Array(elem_type)) = self.ctx.types.lookup(spread_type)
-                        {
-                            arg_types.push(elem_type);
+                    // If it's a tuple type, expand its elements
+                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
+                        let elems = self.ctx.types.tuple_list(elems_id);
+                        for elem in elems.iter() {
+                            arg_types.push(elem.type_id);
                             effective_index += 1;
-                            continue;
                         }
+                        continue;
+                    }
 
-                        // Otherwise just push the spread type as-is
-                        arg_types.push(spread_type);
+                    // If it's an array type, push the element type (variadic handling)
+                    if let Some(TypeKey::Array(elem_type)) = self.ctx.types.lookup(spread_type) {
+                        arg_types.push(elem_type);
                         effective_index += 1;
                         continue;
                     }
+
+                    // Otherwise just push the spread type as-is
+                    arg_types.push(spread_type);
+                    effective_index += 1;
+                    continue;
+                }
             }
 
             // Regular (non-spread) argument
@@ -8502,13 +8525,13 @@ impl<'a> CheckerState<'a> {
 
             if check_excess_properties
                 && let Some(expected) = expected_type
-                    && expected != TypeId::ANY && expected != TypeId::UNKNOWN
-                        && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                            && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                                self.check_object_literal_excess_properties(
-                                    arg_type, expected, arg_idx,
-                                );
-                            }
+                && expected != TypeId::ANY
+                && expected != TypeId::UNKNOWN
+                && let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
+            }
 
             self.ctx.contextual_type = prev_context;
             effective_index += 1;
@@ -8529,14 +8552,14 @@ impl<'a> CheckerState<'a> {
         for (i, &arg_idx) in args.iter().enumerate() {
             let expected = expected_for_index(i, arg_count);
             if let Some(expected) = expected
-                && expected != TypeId::ANY && expected != TypeId::UNKNOWN
-                    && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                        && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                            let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
-                            self.check_object_literal_excess_properties(
-                                arg_type, expected, arg_idx,
-                            );
-                        }
+                && expected != TypeId::ANY
+                && expected != TypeId::UNKNOWN
+                && let Some(arg_node) = self.ctx.arena.get(arg_idx)
+                && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
+                self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
+            }
         }
     }
 
@@ -8634,17 +8657,18 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name));
 
                 if let Some(sym_id) = symbol_opt
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        // Check if it has the ABSTRACT flag
-                        if symbol.flags & symbol_flags::ABSTRACT != 0 {
-                            self.error_at_node(
-                                idx,
-                                "Cannot create an instance of an abstract class.",
-                                diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
-                            );
-                            return TypeId::ERROR;
-                        }
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    // Check if it has the ABSTRACT flag
+                    if symbol.flags & symbol_flags::ABSTRACT != 0 {
+                        self.error_at_node(
+                            idx,
+                            "Cannot create an instance of an abstract class.",
+                            diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
+                        );
+                        return TypeId::ERROR;
                     }
+                }
             }
         }
 
@@ -8746,9 +8770,9 @@ impl<'a> CheckerState<'a> {
         if let Some(signatures) = overload_signatures.as_deref()
             && let Some(return_type) =
                 self.resolve_overloaded_call_with_signatures(args, signatures)
-            {
-                return return_type;
-            }
+        {
+            return return_type;
+        }
 
         let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, construct_type);
         let check_excess_properties = overload_signatures.is_none();
@@ -8822,9 +8846,10 @@ impl<'a> CheckerState<'a> {
             // Since get_type_from_type_query now uses real SymbolIds, we can directly look up
             TypeKey::TypeQuery(SymbolRef(sym_id)) => {
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
-                    && symbol.flags & symbol_flags::ABSTRACT != 0 {
-                        return true;
-                    }
+                    && symbol.flags & symbol_flags::ABSTRACT != 0
+                {
+                    return true;
+                }
                 false
             }
             // Union type - check if ANY constituent is abstract
@@ -8875,9 +8900,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 if let Some(name) = self.get_property_name(member.name)
-                    && name == property_name {
-                        return Some(member_type);
-                    }
+                    && name == property_name
+                {
+                    return Some(member_type);
+                }
             }
         }
 
@@ -8901,22 +8927,23 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(exports) = symbol.exports.as_ref()
-            && let Some(member_id) = exports.get(property_name) {
-                if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
-                    && member_symbol.flags & symbol_flags::VALUE == 0
-                        && member_symbol.flags & symbol_flags::ALIAS == 0
-                    {
-                        return None;
-                    }
-                return Some(self.get_type_of_symbol(member_id));
+            && let Some(member_id) = exports.get(property_name)
+        {
+            if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
+                && member_symbol.flags & symbol_flags::VALUE == 0
+                && member_symbol.flags & symbol_flags::ALIAS == 0
+            {
+                return None;
             }
+            return Some(self.get_type_of_symbol(member_id));
+        }
 
         if symbol.flags & symbol_flags::ENUM != 0
             && let Some(member_type) =
                 self.enum_member_type_for_name(SymbolId(sym_id), property_name)
-            {
-                return Some(member_type);
-            }
+        {
+            return Some(member_type);
+        }
 
         None
     }
@@ -9044,9 +9071,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing name node - propagate error
         };
         if let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            && ident.escaped_text.is_empty() {
-                return TypeId::ERROR; // Empty identifier - propagate error
-            }
+            && ident.escaped_text.is_empty()
+        {
+            return TypeId::ERROR; // Empty identifier - propagate error
+        }
 
         // Check for abstract property access in constructor BEFORE evaluating types (error 2715)
         // This must happen even when `this` has type ANY
@@ -9055,15 +9083,15 @@ impl<'a> CheckerState<'a> {
 
             if self.is_this_expression(access.expression)
                 && let Some(ref class_info) = self.ctx.enclosing_class.clone()
-                    && class_info.in_constructor
-                        && self.is_abstract_member(&class_info.member_nodes, property_name)
-                    {
-                        self.error_abstract_property_in_constructor(
-                            property_name,
-                            &class_info.name,
-                            access.name_or_argument,
-                        );
-                    }
+                && class_info.in_constructor
+                && self.is_abstract_member(&class_info.member_nodes, property_name)
+            {
+                self.error_abstract_property_in_constructor(
+                    property_name,
+                    &class_info.name,
+                    access.name_or_argument,
+                );
+            }
         }
 
         // Get the type of the object
@@ -9124,28 +9152,31 @@ impl<'a> CheckerState<'a> {
             // For value access to merged symbols, check the exports directly
             // This is needed because the type system doesn't track which symbol a Callable came from
             if let Some(expr_node) = self.ctx.arena.get(access.expression)
-                && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node) {
-                    let expr_name = &expr_ident.escaped_text;
-                    // Try file_locals first (fast path for top-level symbols)
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            // Check if this is a merged symbol (has both MODULE and value constructor flags)
-                            let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
-                                && (symbol.flags
-                                    & (symbol_flags::CLASS
-                                        | symbol_flags::FUNCTION
-                                        | symbol_flags::REGULAR_ENUM))
-                                    != 0;
+                && let Some(expr_ident) = self.ctx.arena.get_identifier(expr_node)
+            {
+                let expr_name = &expr_ident.escaped_text;
+                // Try file_locals first (fast path for top-level symbols)
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    // Check if this is a merged symbol (has both MODULE and value constructor flags)
+                    let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
+                        && (symbol.flags
+                            & (symbol_flags::CLASS
+                                | symbol_flags::FUNCTION
+                                | symbol_flags::REGULAR_ENUM))
+                            != 0;
 
-                            if is_merged
-                                && let Some(exports) = symbol.exports.as_ref()
-                                    && let Some(member_id) = exports.get(property_name) {
-                                        // For merged symbols, we return the type for any exported member
-                                        let member_type = self.get_type_of_symbol(member_id);
-                                        return self.apply_flow_narrowing(idx, member_type);
-                                    }
-                        }
+                    if is_merged
+                        && let Some(exports) = symbol.exports.as_ref()
+                        && let Some(member_id) = exports.get(property_name)
+                    {
+                        // For merged symbols, we return the type for any exported member
+                        let member_type = self.get_type_of_symbol(member_id);
+                        return self.apply_flow_narrowing(idx, member_type);
+                    }
                 }
+            }
         }
 
         // If it's an identifier, look up the property
@@ -9611,14 +9642,15 @@ impl<'a> CheckerState<'a> {
             .or(numeric_string_index);
 
         if let Some(name) = literal_string.as_deref()
-            && self.is_global_this_expression(access.expression) {
-                let property_type =
-                    self.resolve_global_this_property_type(name, access.name_or_argument);
-                if property_type == TypeId::ERROR {
-                    return TypeId::ERROR;
-                }
-                return self.apply_flow_narrowing(idx, property_type);
+            && self.is_global_this_expression(access.expression)
+        {
+            let property_type =
+                self.resolve_global_this_property_type(name, access.name_or_argument);
+            if property_type == TypeId::ERROR {
+                return TypeId::ERROR;
             }
+            return self.apply_flow_narrowing(idx, property_type);
+        }
 
         if let Some(name) = literal_string.as_deref() {
             if !self.check_property_accessibility(
@@ -9687,84 +9719,86 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if result_type.is_none() && literal_index.is_none()
+        if result_type.is_none()
+            && literal_index.is_none()
             && let Some((string_keys, number_keys)) =
                 self.get_literal_key_union_from_type(index_type)
-            {
-                let total_keys = string_keys.len() + number_keys.len();
-                if total_keys > 1 || literal_string_is_none {
-                    if !string_keys.is_empty() && number_keys.is_empty() {
-                        use_index_signature_check = false;
-                    }
+        {
+            let total_keys = string_keys.len() + number_keys.len();
+            if total_keys > 1 || literal_string_is_none {
+                if !string_keys.is_empty() && number_keys.is_empty() {
+                    use_index_signature_check = false;
+                }
 
-                    let mut types = Vec::new();
-                    if !string_keys.is_empty() {
-                        match self.get_element_access_type_for_literal_keys(
-                            object_type_for_access,
-                            &string_keys,
-                        ) {
-                            Some(result) => types.push(result),
-                            None => report_no_index = true,
-                        }
-                    }
-
-                    if !number_keys.is_empty() {
-                        match self.get_element_access_type_for_literal_number_keys(
-                            object_type_for_access,
-                            &number_keys,
-                        ) {
-                            Some(result) => types.push(result),
-                            None => report_no_index = true,
-                        }
-                    }
-
-                    if report_no_index {
-                        result_type = Some(TypeId::ANY);
-                    } else if !types.is_empty() {
-                        result_type = Some(if types.len() == 1 {
-                            types[0]
-                        } else {
-                            self.ctx.types.union(types)
-                        });
+                let mut types = Vec::new();
+                if !string_keys.is_empty() {
+                    match self.get_element_access_type_for_literal_keys(
+                        object_type_for_access,
+                        &string_keys,
+                    ) {
+                        Some(result) => types.push(result),
+                        None => report_no_index = true,
                     }
                 }
+
+                if !number_keys.is_empty() {
+                    match self.get_element_access_type_for_literal_number_keys(
+                        object_type_for_access,
+                        &number_keys,
+                    ) {
+                        Some(result) => types.push(result),
+                        None => report_no_index = true,
+                    }
+                }
+
+                if report_no_index {
+                    result_type = Some(TypeId::ANY);
+                } else if !types.is_empty() {
+                    result_type = Some(if types.len() == 1 {
+                        types[0]
+                    } else {
+                        self.ctx.types.union(types)
+                    });
+                }
             }
+        }
 
         if result_type.is_none()
             && let Some(property_name) = self.get_literal_string_from_node(access.name_or_argument)
-                && numeric_string_index.is_none() {
-                    use_index_signature_check = false;
-                    let result = self
-                        .ctx
-                        .types
-                        .property_access_type(object_type_for_access, &property_name);
-                    result_type = Some(match result {
-                        PropertyAccessResult::Success { type_id, .. } => type_id,
-                        PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                            property_type.unwrap_or(TypeId::UNKNOWN)
-                        }
-                        PropertyAccessResult::IsUnknown => {
-                            // TS2571: Object is of type 'unknown'
-                            use crate::checker::types::diagnostics::diagnostic_codes;
-                            self.error_at_node(
-                                access.expression,
-                                "Object is of type 'unknown'.",
-                                diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
-                            );
-                            TypeId::ERROR
-                        }
-                        PropertyAccessResult::PropertyNotFound { .. } => {
-                            report_no_index = true;
-                            // Generate TS2339 for property not found during element access
-                            self.error_property_not_exist_at(
-                                &property_name.to_string(),
-                                object_type_for_access,
-                                access.name_or_argument,
-                            );
-                            TypeId::ERROR // Return ERROR instead of ANY to expose the error
-                        }
-                    });
+            && numeric_string_index.is_none()
+        {
+            use_index_signature_check = false;
+            let result = self
+                .ctx
+                .types
+                .property_access_type(object_type_for_access, &property_name);
+            result_type = Some(match result {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    property_type.unwrap_or(TypeId::UNKNOWN)
                 }
+                PropertyAccessResult::IsUnknown => {
+                    // TS2571: Object is of type 'unknown'
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        access.expression,
+                        "Object is of type 'unknown'.",
+                        diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+                    );
+                    TypeId::ERROR
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    report_no_index = true;
+                    // Generate TS2339 for property not found during element access
+                    self.error_property_not_exist_at(
+                        &property_name.to_string(),
+                        object_type_for_access,
+                        access.name_or_argument,
+                    );
+                    TypeId::ERROR // Return ERROR instead of ANY to expose the error
+                }
+            });
+        }
 
         let mut result_type = result_type.unwrap_or_else(|| {
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
@@ -9879,9 +9913,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if index_type == TypeId::STRING
-                    && let Some(string_index) = shape.string_index.as_ref() {
-                        return string_index.value_type;
-                    }
+                    && let Some(string_index) = shape.string_index.as_ref()
+                {
+                    return string_index.value_type;
+                }
 
                 TypeId::ANY
             }
@@ -9998,16 +10033,20 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                return self.get_literal_index_from_node(paren.expression);
-            }
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_literal_index_from_node(paren.expression);
+        }
 
         if node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.ctx.arena.get_literal(node)
-                && let Some(value) = lit.value
-                    && value.is_finite() && value.fract() == 0.0 && value >= 0.0 {
-                        return Some(value as usize);
-                    }
+            && let Some(value) = lit.value
+            && value.is_finite()
+            && value.fract() == 0.0
+            && value >= 0.0
+        {
+            return Some(value as usize);
+        }
 
         None
     }
@@ -10020,9 +10059,10 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                return self.get_literal_string_from_node(paren.expression);
-            }
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_literal_string_from_node(paren.expression);
+        }
 
         if let Some(symbol_name) = self.get_symbol_property_name_from_expr(idx) {
             return Some(symbol_name);
@@ -10116,13 +10156,12 @@ impl<'a> CheckerState<'a> {
 
         for &key in keys {
             let name = self.ctx.types.resolve_atom(key);
-            if numeric_as_index
-                && let Some(index) = self.get_numeric_index_from_string(&name) {
-                    let element_type =
-                        self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
-                    types.push(element_type);
-                    continue;
-                }
+            if numeric_as_index && let Some(index) = self.get_numeric_index_from_string(&name) {
+                let element_type =
+                    self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+                types.push(element_type);
+                continue;
+            }
 
             match self.ctx.types.property_access_type(object_type, &name) {
                 PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
@@ -10414,77 +10453,78 @@ impl<'a> CheckerState<'a> {
         let mut contextual_index = 0;
         for &param_idx in parameters.nodes.iter() {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
-                && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                    // Get parameter name
-                    let name = if let Some(name_node) = self.ctx.arena.get(param.name) {
-                        if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
-                            Some(self.ctx.types.intern_string(&name_data.escaped_text))
-                        } else {
-                            None
-                        }
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                // Get parameter name
+                let name = if let Some(name_node) = self.ctx.arena.get(param.name) {
+                    if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
+                        Some(self.ctx.types.intern_string(&name_data.escaped_text))
                     } else {
                         None
-                    };
-
-                    let is_this_param = name == Some(this_atom);
-
-                    let contextual_type = if let Some(ref helper) = ctx_helper {
-                        helper.get_parameter_type(contextual_index)
-                    } else {
-                        None
-                    };
-                    // TS7006: Only count as contextual type if it's not UNKNOWN
-                    // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
-                    let has_contextual_type = contextual_type.is_some_and(|t| t != TypeId::UNKNOWN);
-
-                    // Use type annotation if present, otherwise infer from context
-                    let type_id = if !param.type_annotation.is_none() {
-                        // Check parameter type for parameter properties in function types
-                        self.check_type_for_parameter_properties(param.type_annotation);
-                        self.get_type_from_type_node(param.type_annotation)
-                    } else if is_this_param {
-                        // For `this` parameter without type annotation:
-                        // - Arrow functions: inherit outer `this` type to preserve lexical scoping
-                        // - Regular functions: use ANY (will trigger TS2683 when used, not TS2571)
-                        // - Contextual type: if provided, use it (for function types with explicit `this`)
-                        if let Some(ref helper) = ctx_helper {
-                            helper
-                                .get_this_type()
-                                .or(outer_this_type)
-                                .unwrap_or(TypeId::ANY)
-                        } else {
-                            outer_this_type.unwrap_or(TypeId::ANY)
-                        }
-                    } else {
-                        // Infer from contextual type
-                        contextual_type.unwrap_or(TypeId::UNKNOWN)
-                    };
-
-                    if is_this_param {
-                        if this_type.is_none() {
-                            this_type = Some(type_id);
-                        }
-                        param_types.push(None);
-                        continue;
                     }
+                } else {
+                    None
+                };
 
-                    if !is_function_declaration {
-                        self.maybe_report_implicit_any_parameter(param, has_contextual_type);
+                let is_this_param = name == Some(this_atom);
+
+                let contextual_type = if let Some(ref helper) = ctx_helper {
+                    helper.get_parameter_type(contextual_index)
+                } else {
+                    None
+                };
+                // TS7006: Only count as contextual type if it's not UNKNOWN
+                // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
+                let has_contextual_type = contextual_type.is_some_and(|t| t != TypeId::UNKNOWN);
+
+                // Use type annotation if present, otherwise infer from context
+                let type_id = if !param.type_annotation.is_none() {
+                    // Check parameter type for parameter properties in function types
+                    self.check_type_for_parameter_properties(param.type_annotation);
+                    self.get_type_from_type_node(param.type_annotation)
+                } else if is_this_param {
+                    // For `this` parameter without type annotation:
+                    // - Arrow functions: inherit outer `this` type to preserve lexical scoping
+                    // - Regular functions: use ANY (will trigger TS2683 when used, not TS2571)
+                    // - Contextual type: if provided, use it (for function types with explicit `this`)
+                    if let Some(ref helper) = ctx_helper {
+                        helper
+                            .get_this_type()
+                            .or(outer_this_type)
+                            .unwrap_or(TypeId::ANY)
+                    } else {
+                        outer_this_type.unwrap_or(TypeId::ANY)
                     }
+                } else {
+                    // Infer from contextual type
+                    contextual_type.unwrap_or(TypeId::UNKNOWN)
+                };
 
-                    // Check if optional or has initializer
-                    let optional = param.question_token || !param.initializer.is_none();
-                    let rest = param.dot_dot_dot_token;
-
-                    params.push(ParamInfo {
-                        name,
-                        type_id,
-                        optional,
-                        rest,
-                    });
-                    param_types.push(Some(type_id));
-                    contextual_index += 1;
+                if is_this_param {
+                    if this_type.is_none() {
+                        this_type = Some(type_id);
+                    }
+                    param_types.push(None);
+                    continue;
                 }
+
+                if !is_function_declaration {
+                    self.maybe_report_implicit_any_parameter(param, has_contextual_type);
+                }
+
+                // Check if optional or has initializer
+                let optional = param.question_token || !param.initializer.is_none();
+                let rest = param.dot_dot_dot_token;
+
+                params.push(ParamInfo {
+                    name,
+                    type_id,
+                    optional,
+                    rest,
+                });
+                param_types.push(Some(type_id));
+                contextual_index += 1;
+            }
         }
 
         // Check for parameter properties (error 2369)
@@ -10791,12 +10831,12 @@ impl<'a> CheckerState<'a> {
 
         if let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()
-                && element_types
-                    .iter()
-                    .all(|&elem_type| self.is_assignable_to(elem_type, context_element_type))
-                {
-                    return self.ctx.types.array(context_element_type);
-                }
+            && element_types
+                .iter()
+                .all(|&elem_type| self.is_assignable_to(elem_type, context_element_type))
+        {
+            return self.ctx.types.array(context_element_type);
+        }
 
         // Choose a best common type if any element is a supertype of all others.
         let element_type = if element_types.len() == 1 {
@@ -11030,9 +11070,10 @@ impl<'a> CheckerState<'a> {
                 if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
                     for &param_idx in &accessor.parameters.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                                self.maybe_report_implicit_any_parameter(param, false);
-                            }
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.maybe_report_implicit_any_parameter(param, false);
+                        }
                     }
                 }
 
@@ -11147,31 +11188,32 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
-        )
-            && let Some(lit) = self.ctx.arena.get_literal(name_node)
-                && !lit.text.is_empty() {
-                    return Some(lit.text.clone());
-                }
+        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            return Some(lit.text.clone());
+        }
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-            && let Some(computed) = self.ctx.arena.get_computed_property(name_node) {
-                if let Some(symbol_name) =
-                    self.get_symbol_property_name_from_expr(computed.expression)
-                {
-                    return Some(symbol_name);
-                }
-                if let Some(expr_node) = self.ctx.arena.get(computed.expression)
-                    && matches!(
-                        expr_node.kind,
-                        k if k == SyntaxKind::StringLiteral as u16
-                            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                            || k == SyntaxKind::NumericLiteral as u16
-                    )
-                        && let Some(lit) = self.ctx.arena.get_literal(expr_node)
-                            && !lit.text.is_empty() {
-                                return Some(lit.text.clone());
-                            }
+            && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+        {
+            if let Some(symbol_name) = self.get_symbol_property_name_from_expr(computed.expression)
+            {
+                return Some(symbol_name);
             }
+            if let Some(expr_node) = self.ctx.arena.get(computed.expression)
+                && matches!(
+                    expr_node.kind,
+                    k if k == SyntaxKind::StringLiteral as u16
+                        || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        || k == SyntaxKind::NumericLiteral as u16
+                )
+                && let Some(lit) = self.ctx.arena.get_literal(expr_node)
+                && !lit.text.is_empty()
+            {
+                return Some(lit.text.clone());
+            }
+        }
 
         None
     }
@@ -11210,11 +11252,11 @@ impl<'a> CheckerState<'a> {
             name_node.kind,
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        )
-            && let Some(lit) = self.ctx.arena.get_literal(name_node)
-                && !lit.text.is_empty() {
-                    return Some(format!("Symbol.{}", lit.text));
-                }
+        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            return Some(format!("Symbol.{}", lit.text));
+        }
 
         None
     }
@@ -11240,9 +11282,10 @@ impl<'a> CheckerState<'a> {
             // Unary + and - return number unless contextual typing expects a numeric literal.
             k if k == SyntaxKind::PlusToken as u16 || k == SyntaxKind::MinusToken as u16 => {
                 if let Some(literal_type) = self.literal_type_from_initializer(idx)
-                    && self.contextual_literal_type(literal_type).is_some() {
-                        return literal_type;
-                    }
+                    && self.contextual_literal_type(literal_type).is_some()
+                {
+                    return literal_type;
+                }
                 TypeId::NUMBER
             }
             // ~ returns number
@@ -11505,30 +11548,30 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(source_enum) = source_enum
-            && self.enum_kind(source_enum) == Some(EnumKind::Numeric) {
-                if let Some(env) = env {
-                    let mut checker =
-                        crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
-                    return Some(checker.is_assignable(TypeId::NUMBER, target));
-                }
-                let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            && self.enum_kind(source_enum) == Some(EnumKind::Numeric)
+        {
+            if let Some(env) = env {
+                let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
                 checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 return Some(checker.is_assignable(TypeId::NUMBER, target));
             }
+            let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            return Some(checker.is_assignable(TypeId::NUMBER, target));
+        }
 
         if let Some(target_enum) = target_enum
-            && self.enum_kind(target_enum) == Some(EnumKind::Numeric) {
-                if let Some(env) = env {
-                    let mut checker =
-                        crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
-                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
-                    return Some(checker.is_assignable(source, TypeId::NUMBER));
-                }
-                let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            && self.enum_kind(target_enum) == Some(EnumKind::Numeric)
+        {
+            if let Some(env) = env {
+                let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, env);
                 checker.set_strict_null_checks(self.ctx.strict_null_checks());
                 return Some(checker.is_assignable(source, TypeId::NUMBER));
             }
+            let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            return Some(checker.is_assignable(source, TypeId::NUMBER));
+        }
 
         None
     }
@@ -11550,12 +11593,12 @@ impl<'a> CheckerState<'a> {
             for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
                 if cached_type == source
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && symbol.flags & symbol_flags::CLASS != 0
-                            && symbol.flags & symbol_flags::ABSTRACT != 0
-                        {
-                            found_abstract = true;
-                            break;
-                        }
+                    && symbol.flags & symbol_flags::CLASS != 0
+                    && symbol.flags & symbol_flags::ABSTRACT != 0
+                {
+                    found_abstract = true;
+                    break;
+                }
             }
             found_abstract
         } else {
@@ -11577,12 +11620,12 @@ impl<'a> CheckerState<'a> {
             for (&sym_id, &cached_type) in self.ctx.symbol_types.iter() {
                 if cached_type == target
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && symbol.flags & symbol_flags::CLASS != 0
-                            && symbol.flags & symbol_flags::ABSTRACT != 0
-                        {
-                            found_abstract = true;
-                            break;
-                        }
+                    && symbol.flags & symbol_flags::CLASS != 0
+                    && symbol.flags & symbol_flags::ABSTRACT != 0
+                {
+                    found_abstract = true;
+                    break;
+                }
             }
             found_abstract
         };
@@ -11800,13 +11843,14 @@ impl<'a> CheckerState<'a> {
         if !var_decl.type_annotation.is_none()
             && let Some(class_sym) =
                 self.class_symbol_from_type_annotation(var_decl.type_annotation)
-            {
-                return Some(class_sym);
-            }
+        {
+            return Some(class_sym);
+        }
         if !var_decl.initializer.is_none()
-            && let Some(class_sym) = self.class_symbol_from_expression(var_decl.initializer) {
-                return Some(class_sym);
-            }
+            && let Some(class_sym) = self.class_symbol_from_expression(var_decl.initializer)
+        {
+            return Some(class_sym);
+        }
         None
     }
 
@@ -11922,9 +11966,10 @@ impl<'a> CheckerState<'a> {
         let mut current = idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::SOURCE_FILE {
-                    return Some(current);
-                }
+                && node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return Some(current);
+            }
             if let Some(ext) = self.ctx.arena.get_extended(current) {
                 current = ext.parent;
             } else {
@@ -12113,9 +12158,10 @@ impl<'a> CheckerState<'a> {
                         };
                         if !decl_idx.is_none()
                             && let Some(node) = self.ctx.arena.get(decl_idx)
-                                && let Some(class) = self.ctx.arena.get_class(node) {
-                                    return self.has_abstract_modifier(&class.modifiers);
-                                }
+                            && let Some(class) = self.ctx.arena.get_class(node)
+                        {
+                            return self.has_abstract_modifier(&class.modifiers);
+                        }
                     }
                     false
                 } else {
@@ -12142,10 +12188,10 @@ impl<'a> CheckerState<'a> {
                         // Found a symbol with this type, check if it's an abstract class
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                             && symbol.flags & symbol_flags::CLASS != 0
-                                && symbol.flags & symbol_flags::ABSTRACT != 0
-                            {
-                                return true;
-                            }
+                            && symbol.flags & symbol_flags::ABSTRACT != 0
+                        {
+                            return true;
+                        }
                     }
                 }
                 false
@@ -12201,9 +12247,10 @@ impl<'a> CheckerState<'a> {
             TypeKey::TypeQuery(symbol) | TypeKey::Ref(symbol) => {
                 // First try to resolve via TypeEnvironment
                 if let Some(resolved) = self.resolve_type_env_symbol(symbol, env)
-                    && resolved != type_id {
-                        return self.is_concrete_constructor_target_inner(resolved, env, visited);
-                    }
+                    && resolved != type_id
+                {
+                    return self.is_concrete_constructor_target_inner(resolved, env, visited);
+                }
                 // Fallback: Check if the symbol is a non-abstract class or interface with construct signatures
                 // This handles `typeof ConcreteClass` and `typeof InterfaceWithConstructSig` when TypeEnvironment lookup fails
                 if let Some(sym) = self.ctx.binder.get_symbol(SymbolId(symbol.0)) {
@@ -12220,19 +12267,18 @@ impl<'a> CheckerState<'a> {
                         let decl_idx = sym.value_declaration;
                         if !decl_idx.is_none()
                             && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                && let Some(interface_data) =
-                                    self.ctx.arena.get_interface(decl_node)
-                                {
-                                    // Check members for construct signatures
-                                    for &member_idx in &interface_data.members.nodes {
-                                        if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                                            // CONSTRUCT_SIGNATURE = 194
-                                            if member_node.kind == 194 {
-                                                return true; // Interface has construct signature
-                                            }
-                                        }
+                            && let Some(interface_data) = self.ctx.arena.get_interface(decl_node)
+                        {
+                            // Check members for construct signatures
+                            for &member_idx in &interface_data.members.nodes {
+                                if let Some(member_node) = self.ctx.arena.get(member_idx) {
+                                    // CONSTRUCT_SIGNATURE = 194
+                                    if member_node.kind == 194 {
+                                        return true; // Interface has construct signature
                                     }
                                 }
+                            }
+                        }
                     }
                 }
                 false
@@ -12728,19 +12774,17 @@ impl<'a> CheckerState<'a> {
                 let sym_id = SymbolId(sym_id);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     && symbol.flags & symbol_flags::CLASS != 0
-                        && symbol.flags & symbol_flags::MODULE != 0
-                        && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
-                            && let Some(class_node) = self.ctx.arena.get(class_idx)
-                                && let Some(class_data) = self.ctx.arena.get_class(class_node) {
-                                    let ctor_type =
-                                        self.get_class_constructor_type(class_idx, class_data);
-                                    if ctor_type == type_id {
-                                        return type_id;
-                                    }
-                                    return self.resolve_type_for_property_access_inner(
-                                        ctor_type, visited,
-                                    );
-                                }
+                    && symbol.flags & symbol_flags::MODULE != 0
+                    && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+                    && let Some(class_node) = self.ctx.arena.get(class_idx)
+                    && let Some(class_data) = self.ctx.arena.get_class(class_node)
+                {
+                    let ctor_type = self.get_class_constructor_type(class_idx, class_data);
+                    if ctor_type == type_id {
+                        return type_id;
+                    }
+                    return self.resolve_type_for_property_access_inner(ctor_type, visited);
+                }
 
                 let resolved = self.type_reference_symbol_type(sym_id);
                 if resolved == type_id {
@@ -13539,9 +13583,10 @@ impl<'a> CheckerState<'a> {
                 }
                 self.ensure_application_symbols_resolved_inner(shape.return_type, visited);
                 if let Some(predicate) = &shape.type_predicate
-                    && let Some(type_id) = predicate.type_id {
-                        self.ensure_application_symbols_resolved_inner(type_id, visited);
-                    }
+                    && let Some(type_id) = predicate.type_id
+                {
+                    self.ensure_application_symbols_resolved_inner(type_id, visited);
+                }
             }
             TypeKey::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
@@ -13566,9 +13611,10 @@ impl<'a> CheckerState<'a> {
                     }
                     self.ensure_application_symbols_resolved_inner(sig.return_type, visited);
                     if let Some(predicate) = &sig.type_predicate
-                        && let Some(type_id) = predicate.type_id {
-                            self.ensure_application_symbols_resolved_inner(type_id, visited);
-                        }
+                        && let Some(type_id) = predicate.type_id
+                    {
+                        self.ensure_application_symbols_resolved_inner(type_id, visited);
+                    }
                 }
                 for prop in shape.properties.iter() {
                     self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
@@ -13668,16 +13714,17 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Vec<crate::solver::TypeParamInfo> {
         if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
-            && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena) {
-                let mut checker = CheckerState::new(
-                    symbol_arena.as_ref(),
-                    self.ctx.binder,
-                    self.ctx.types,
-                    self.ctx.file_name.clone(),
-                    self.ctx.compiler_options.clone(), // use current compiler options
-                );
-                return checker.get_type_params_for_symbol(sym_id);
-            }
+            && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
+        {
+            let mut checker = CheckerState::new(
+                symbol_arena.as_ref(),
+                self.ctx.binder,
+                self.ctx.types,
+                self.ctx.file_name.clone(),
+                self.ctx.compiler_options.clone(), // use current compiler options
+            );
+            return checker.get_type_params_for_symbol(sym_id);
+        }
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return Vec::new();
@@ -13699,12 +13746,12 @@ impl<'a> CheckerState<'a> {
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
-                    && let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
-                        let (params, updates) =
-                            self.push_type_parameters(&type_alias.type_parameters);
-                        self.pop_type_parameters(updates);
-                        return params;
-                    }
+                && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+            {
+                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
+                self.pop_type_parameters(updates);
+                return params;
+            }
         }
 
         // Class - get type parameters from declaration
@@ -13720,11 +13767,12 @@ impl<'a> CheckerState<'a> {
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
-                    && let Some(class) = self.ctx.arena.get_class(node) {
-                        let (params, updates) = self.push_type_parameters(&class.type_parameters);
-                        self.pop_type_parameters(updates);
-                        return params;
-                    }
+                && let Some(class) = self.ctx.arena.get_class(node)
+            {
+                let (params, updates) = self.push_type_parameters(&class.type_parameters);
+                self.pop_type_parameters(updates);
+                return params;
+            }
         }
 
         // Interface - get type parameters from first declaration
@@ -13740,11 +13788,12 @@ impl<'a> CheckerState<'a> {
             };
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
-                    && let Some(iface) = self.ctx.arena.get_interface(node) {
-                        let (params, updates) = self.push_type_parameters(&iface.type_parameters);
-                        self.pop_type_parameters(updates);
-                        return params;
-                    }
+                && let Some(iface) = self.ctx.arena.get_interface(node)
+            {
+                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                self.pop_type_parameters(updates);
+                return params;
+            }
         }
 
         Vec::new()
@@ -14173,11 +14222,12 @@ impl<'a> CheckerState<'a> {
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
         // Try to find similar identifiers in scope for better error messages
         if let Some(suggestions) = self.find_similar_identifiers(name, idx)
-            && !suggestions.is_empty() {
-                // Use the first suggestion for "Did you mean?" error
-                self.error_cannot_find_name_with_suggestions(name, &suggestions, idx);
-                return;
-            }
+            && !suggestions.is_empty()
+        {
+            // Use the first suggestion for "Did you mean?" error
+            self.error_cannot_find_name_with_suggestions(name, &suggestions, idx);
+            return;
+        }
 
         // Fall back to standard error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
@@ -14365,7 +14415,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let distance = self.levenshtein_distance(&a_lower, &b_lower);
-        
 
         1.0 - (distance as f64 / max_len as f64)
     }
@@ -14497,16 +14546,16 @@ impl<'a> CheckerState<'a> {
         if (existing_flags & symbol_flags::MODULE) != 0
             && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
                 != 0
-            {
-                return true;
-            }
+        {
+            return true;
+        }
         if (new_flags & symbol_flags::MODULE) != 0
             && (existing_flags
                 & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
                 != 0
-            {
-                return true;
-            }
+        {
+            return true;
+        }
 
         // Function overloads
         if (existing_flags & symbol_flags::FUNCTION) != 0
@@ -14779,10 +14828,11 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & symbol_flags::VALUE) == 0 {
-                    self.error_type_only_value_at(name, error_node);
-                    return TypeId::ERROR;
-                }
+                && (symbol.flags & symbol_flags::VALUE) == 0
+            {
+                self.error_type_only_value_at(name, error_node);
+                return TypeId::ERROR;
+            }
             return self.get_type_of_symbol(sym_id);
         }
 
@@ -15318,10 +15368,11 @@ impl<'a> CheckerState<'a> {
                 if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
                     && let Some(parent) =
                         self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
-                        && let Some(parent_node) = self.ctx.arena.get(parent)
-                            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                                decl_flags |= parent_node.flags as u32;
-                            }
+                    && let Some(parent_node) = self.ctx.arena.get(parent)
+                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                {
+                    decl_flags |= parent_node.flags as u32;
+                }
                 if (decl_flags & (node_flags::LET | node_flags::CONST)) != 0 {
                     Some(symbol_flags::BLOCK_SCOPED_VARIABLE)
                 } else {
@@ -15336,33 +15387,37 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::GET_ACCESSOR => {
                 let mut flags = symbol_flags::GET_ACCESSOR;
                 if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && self.has_static_modifier(&accessor.modifiers) {
-                        flags |= symbol_flags::STATIC;
-                    }
+                    && self.has_static_modifier(&accessor.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
                 Some(flags)
             }
             syntax_kind_ext::SET_ACCESSOR => {
                 let mut flags = symbol_flags::SET_ACCESSOR;
                 if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && self.has_static_modifier(&accessor.modifiers) {
-                        flags |= symbol_flags::STATIC;
-                    }
+                    && self.has_static_modifier(&accessor.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
                 Some(flags)
             }
             syntax_kind_ext::METHOD_DECLARATION => {
                 let mut flags = symbol_flags::METHOD;
                 if let Some(method) = self.ctx.arena.get_method_decl(node)
-                    && self.has_static_modifier(&method.modifiers) {
-                        flags |= symbol_flags::STATIC;
-                    }
+                    && self.has_static_modifier(&method.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
                 Some(flags)
             }
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 let mut flags = symbol_flags::PROPERTY;
                 if let Some(prop) = self.ctx.arena.get_property_decl(node)
-                    && self.has_static_modifier(&prop.modifiers) {
-                        flags |= symbol_flags::STATIC;
-                    }
+                    && self.has_static_modifier(&prop.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
                 Some(flags)
             }
             syntax_kind_ext::CONSTRUCTOR => Some(symbol_flags::CONSTRUCTOR),
@@ -15953,9 +16008,10 @@ impl<'a> CheckerState<'a> {
                     for &param_idx in &func.parameters.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                                && !param.type_annotation.is_none() {
-                                    self.check_type_for_parameter_properties(param.type_annotation);
-                                }
+                            && !param.type_annotation.is_none()
+                        {
+                            self.check_type_for_parameter_properties(param.type_annotation);
+                        }
                     }
 
                     for &param_idx in &func.parameters.nodes {
@@ -16103,25 +16159,26 @@ impl<'a> CheckerState<'a> {
                         let is_ambient = self.has_declare_modifier(&func.modifiers)
                             || self.ctx.file_name.ends_with(".d.ts");
                         if is_ambient
-                            && let Some(func_name) = self.get_function_name_from_node(stmt_idx) {
-                                use crate::checker::types::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages, format_message,
-                                };
-                                let message = format_message(
-                                    diagnostic_messages::IMPLICIT_ANY_RETURN,
-                                    &[&func_name, "any"],
-                                );
-                                let name_node = if !func.name.is_none() {
-                                    Some(func.name)
-                                } else {
-                                    None
-                                };
-                                self.error_at_node(
-                                    name_node.unwrap_or(stmt_idx),
-                                    &message,
-                                    diagnostic_codes::IMPLICIT_ANY_RETURN,
-                                );
-                            }
+                            && let Some(func_name) = self.get_function_name_from_node(stmt_idx)
+                        {
+                            use crate::checker::types::diagnostics::{
+                                diagnostic_codes, diagnostic_messages, format_message,
+                            };
+                            let message = format_message(
+                                diagnostic_messages::IMPLICIT_ANY_RETURN,
+                                &[&func_name, "any"],
+                            );
+                            let name_node = if !func.name.is_none() {
+                                Some(func.name)
+                            } else {
+                                None
+                            };
+                            self.error_at_node(
+                                name_node.unwrap_or(stmt_idx),
+                                &message,
+                                diagnostic_codes::IMPLICIT_ANY_RETURN,
+                            );
+                        }
                     }
 
                     self.pop_type_parameters(type_param_updates);
@@ -16186,12 +16243,13 @@ impl<'a> CheckerState<'a> {
                     self.check_statement(try_data.try_block);
                     if !try_data.catch_clause.is_none()
                         && let Some(catch_node) = self.ctx.arena.get(try_data.catch_clause)
-                            && let Some(catch) = self.ctx.arena.get_catch_clause(catch_node) {
-                                if !catch.variable_declaration.is_none() {
-                                    self.check_variable_declaration(catch.variable_declaration);
-                                }
-                                self.check_statement(catch.block);
-                            }
+                        && let Some(catch) = self.ctx.arena.get_catch_clause(catch_node)
+                    {
+                        if !catch.variable_declaration.is_none() {
+                            self.check_variable_declaration(catch.variable_declaration);
+                        }
+                        self.check_statement(catch.block);
+                    }
                     if !try_data.finally_block.is_none() {
                         self.check_statement(try_data.finally_block);
                     }
@@ -16373,9 +16431,9 @@ impl<'a> CheckerState<'a> {
             if let Some(name_node) = self.ctx.arena.get(var_decl.name)
                 && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                     || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-                {
-                    self.assign_binding_pattern_symbol_types(var_decl.name, declared);
-                }
+            {
+                self.assign_binding_pattern_symbol_types(var_decl.name, declared);
+            }
 
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
                 self.cache_symbol_type(sym_id, declared);
@@ -16397,7 +16455,10 @@ impl<'a> CheckerState<'a> {
 
         // Get the variable name for adding to local scope
         let var_name = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
-            self.ctx.arena.get_identifier(name_node).map(|ident| ident.escaped_text.clone())
+            self.ctx
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.clone())
         } else {
             None
         };
@@ -16414,10 +16475,11 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
             if !has_type_annotation
-                && let Some(jsdoc_type) = checker.jsdoc_type_annotation_for_node(decl_idx) {
-                    declared_type = jsdoc_type;
-                    has_type_annotation = true;
-                }
+                && let Some(jsdoc_type) = checker.jsdoc_type_annotation_for_node(decl_idx)
+            {
+                declared_type = jsdoc_type;
+                has_type_annotation = true;
+            }
 
             // If there's a type annotation, that determines the type (even for 'any')
             if has_type_annotation {
@@ -16447,23 +16509,25 @@ impl<'a> CheckerState<'a> {
                                 init_type,
                                 declared_type,
                                 var_decl.initializer,
-                            ) {
-                                checker.error_type_not_assignable_with_reason_at(
-                                    init_type,
-                                    declared_type,
-                                    var_decl.initializer,
-                                );
-                            }
+                            )
+                        {
+                            checker.error_type_not_assignable_with_reason_at(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            );
+                        }
 
                         // For object literals, also check for excess properties
                         if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
-                            && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                                checker.check_object_literal_excess_properties(
-                                    init_type,
-                                    declared_type,
-                                    var_decl.initializer,
-                                );
-                            }
+                            && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        {
+                            checker.check_object_literal_excess_properties(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            );
+                        }
                     }
                 }
                 // Type annotation determines the final type
@@ -16500,9 +16564,10 @@ impl<'a> CheckerState<'a> {
                 && var_decl.initializer.is_none()
                 && final_type == TypeId::ANY
                 && let Some(inferred) = self.ctx.symbol_types.get(&sym_id).copied()
-                    && inferred != TypeId::ERROR {
-                        final_type = inferred;
-                    }
+                && inferred != TypeId::ERROR
+            {
+                final_type = inferred;
+            }
 
             // TS7005: Variable implicitly has an 'any' type
             // Report this error when noImplicitAny is enabled and the variable has no type annotation
@@ -16517,25 +16582,19 @@ impl<'a> CheckerState<'a> {
             {
                 // Check if the variable name is a destructuring pattern
                 let is_destructuring_pattern =
-                    self.ctx
-                        .arena
-                        .get(var_decl.name)
-                        .is_some_and(|name_node| {
-                            name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                        });
+                    self.ctx.arena.get(var_decl.name).is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    });
 
-                if !is_destructuring_pattern
-                    && let Some(ref name) = var_name {
-                        use crate::checker::types::diagnostics::{
-                            diagnostic_codes, diagnostic_messages, format_message,
-                        };
-                        let message = format_message(
-                            diagnostic_messages::VARIABLE_IMPLICIT_ANY,
-                            &[name, "any"],
-                        );
-                        self.error_at_node(var_decl.name, &message, diagnostic_codes::IMPLICIT_ANY);
-                    }
+                if !is_destructuring_pattern && let Some(ref name) = var_name {
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let message =
+                        format_message(diagnostic_messages::VARIABLE_IMPLICIT_ANY, &[name, "any"]);
+                    self.error_at_node(var_decl.name, &message, diagnostic_codes::IMPLICIT_ANY);
+                }
             }
 
             // Check for variable redeclaration in the current scope (TS2403).
@@ -16589,24 +16648,24 @@ impl<'a> CheckerState<'a> {
         if let Some(name_node) = self.ctx.arena.get(var_decl.name)
             && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-            {
-                // Prefer explicit type annotation; otherwise infer from initializer (matching tsc).
-                // This type is used for both default-value checking and for assigning types to
-                // binding element symbols created by the binder.
-                let pattern_type = if !var_decl.type_annotation.is_none() {
-                    self.get_type_from_type_node(var_decl.type_annotation)
-                } else if !var_decl.initializer.is_none() {
-                    self.get_type_of_node(var_decl.initializer)
-                } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
-                    TypeId::UNKNOWN
-                } else {
-                    TypeId::ANY
-                };
+        {
+            // Prefer explicit type annotation; otherwise infer from initializer (matching tsc).
+            // This type is used for both default-value checking and for assigning types to
+            // binding element symbols created by the binder.
+            let pattern_type = if !var_decl.type_annotation.is_none() {
+                self.get_type_from_type_node(var_decl.type_annotation)
+            } else if !var_decl.initializer.is_none() {
+                self.get_type_of_node(var_decl.initializer)
+            } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
+                TypeId::UNKNOWN
+            } else {
+                TypeId::ANY
+            };
 
-                // Ensure binding element identifiers get the correct inferred types.
-                self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
-                self.check_binding_pattern(var_decl.name, pattern_type);
-            }
+            // Ensure binding element identifiers get the correct inferred types.
+            self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
+            self.check_binding_pattern(var_decl.name, pattern_type);
+        }
     }
 
     /// Check binding pattern elements and their default values for type correctness.
@@ -16660,26 +16719,25 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none()
-            && element_type != TypeId::ANY {
-                let default_value_type = self.get_type_of_node(element_data.initializer);
+        if !element_data.initializer.is_none() && element_type != TypeId::ANY {
+            let default_value_type = self.get_type_of_node(element_data.initializer);
 
-                if !self.is_assignable_to(default_value_type, element_type) {
-                    self.error_type_not_assignable_with_reason_at(
-                        default_value_type,
-                        element_type,
-                        element_data.initializer,
-                    );
-                }
+            if !self.is_assignable_to(default_value_type, element_type) {
+                self.error_type_not_assignable_with_reason_at(
+                    default_value_type,
+                    element_type,
+                    element_data.initializer,
+                );
             }
+        }
 
         // If the name is a nested binding pattern, recursively check it
         if let Some(name_node) = self.ctx.arena.get(element_data.name)
             && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-            {
-                self.check_binding_pattern(element_data.name, element_type);
-            }
+        {
+            self.check_binding_pattern(element_data.name, element_type);
+        }
     }
 
     /// Assign inferred types to binding element symbols (destructuring).
@@ -16724,9 +16782,10 @@ impl<'a> CheckerState<'a> {
 
             // Identifier binding: cache the inferred type on the symbol.
             if name_node.kind == SyntaxKind::Identifier as u16
-                && let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name) {
-                    self.cache_symbol_type(sym_id, element_type);
-                }
+                && let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name)
+            {
+                self.cache_symbol_type(sym_id, element_type);
+            }
 
             // Nested binding patterns: recurse with the element type.
             if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -16795,14 +16854,20 @@ impl<'a> CheckerState<'a> {
         let property_name = if !element_data.property_name.is_none() {
             // { x: a } - property_name is "x"
             if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                self.ctx.arena.get_identifier(prop_node).map(|ident| ident.escaped_text.clone())
+                self.ctx
+                    .arena
+                    .get_identifier(prop_node)
+                    .map(|ident| ident.escaped_text.clone())
             } else {
                 None
             }
         } else {
             // { x } - the name itself is the property name
             if let Some(name_node) = self.ctx.arena.get(element_data.name) {
-                self.ctx.arena.get_identifier(name_node).map(|ident| ident.escaped_text.clone())
+                self.ctx
+                    .arena
+                    .get_identifier(name_node)
+                    .map(|ident| ident.escaped_text.clone())
             } else {
                 None
             }
@@ -17034,9 +17099,10 @@ impl<'a> CheckerState<'a> {
         // Also check AST-level readonly on class properties
         // Get the class name from the object expression (for `c.ro`, get the type of `c`)
         if let Some(class_name) = self.get_class_name_from_expression(access.expression)
-            && self.is_class_property_readonly(&class_name, &prop_name) {
-                self.error_readonly_property_at(&prop_name, target_idx);
-            }
+            && self.is_class_property_readonly(&class_name, &prop_name)
+        {
+            self.error_readonly_property_at(&prop_name, target_idx);
+        }
     }
 
     /// Get the class name from an expression, if it's a class instance.
@@ -17047,18 +17113,19 @@ impl<'a> CheckerState<'a> {
 
         // If it's a simple identifier, look up its type from the binder
         if self.ctx.arena.get_identifier(node).is_some()
-            && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) {
-                let type_id = self.get_type_of_symbol(sym_id);
-                if let Some(class_name) = self.get_class_name_from_type(type_id) {
-                    return Some(class_name);
-                }
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    // Get the value declaration and check if it's a variable with new Class()
-                    if !symbol.value_declaration.is_none() {
-                        return self.get_class_name_from_var_decl(symbol.value_declaration);
-                    }
+            && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
+        {
+            let type_id = self.get_type_of_symbol(sym_id);
+            if let Some(class_name) = self.get_class_name_from_type(type_id) {
+                return Some(class_name);
+            }
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                // Get the value declaration and check if it's a variable with new Class()
+                if !symbol.value_declaration.is_none() {
+                    return self.get_class_name_from_var_decl(symbol.value_declaration);
                 }
             }
+        }
 
         None
     }
@@ -17108,16 +17175,18 @@ impl<'a> CheckerState<'a> {
         if !symbol.value_declaration.is_none() {
             let decl_idx = symbol.value_declaration;
             if let Some(node) = self.ctx.arena.get(decl_idx)
-                && self.ctx.arena.get_class(node).is_some() {
-                    return Some(decl_idx);
-                }
+                && self.ctx.arena.get_class(node).is_some()
+            {
+                return Some(decl_idx);
+            }
         }
 
         for &decl_idx in &symbol.declarations {
             if let Some(node) = self.ctx.arena.get(decl_idx)
-                && self.ctx.arena.get_class(node).is_some() {
-                    return Some(decl_idx);
-                }
+                && self.ctx.arena.get_class(node).is_some()
+            {
+                return Some(decl_idx);
+            }
         }
 
         None
@@ -17133,9 +17202,10 @@ impl<'a> CheckerState<'a> {
 
         if !class.name.is_none()
             && let Some(name_node) = self.ctx.arena.get(class.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    return ident.escaped_text.clone();
-                }
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            return ident.escaped_text.clone();
+        }
 
         "<anonymous>".to_string()
     }
@@ -17254,9 +17324,14 @@ impl<'a> CheckerState<'a> {
             return Some(candidates[0]);
         }
 
-        candidates.iter().find(|&&candidate| candidates
-                .iter()
-                .all(|&other| candidate == other || self.is_class_derived_from(candidate, other))).copied()
+        candidates
+            .iter()
+            .find(|&&candidate| {
+                candidates.iter().all(|&other| {
+                    candidate == other || self.is_class_derived_from(candidate, other)
+                })
+            })
+            .copied()
     }
 
     /// Get the class name from a TypeId if it represents a class instance.
@@ -17269,40 +17344,43 @@ impl<'a> CheckerState<'a> {
     fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
         // Find the class declaration by name
         if let Some(sym_id) = self.ctx.binder.file_locals.get(class_name)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                let decl_idx = if !symbol.value_declaration.is_none() {
-                    symbol.value_declaration
-                } else if let Some(&idx) = symbol.declarations.first() {
-                    idx
-                } else {
-                    return false;
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let decl_idx = if !symbol.value_declaration.is_none() {
+                symbol.value_declaration
+            } else if let Some(&idx) = symbol.declarations.first() {
+                idx
+            } else {
+                return false;
+            };
+
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+
+            let Some(class) = self.ctx.arena.get_class(node) else {
+                return false;
+            };
+
+            // Find the property in the class members
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
                 };
 
-                let Some(node) = self.ctx.arena.get(decl_idx) else {
-                    return false;
-                };
-
-                let Some(class) = self.ctx.arena.get_class(node) else {
-                    return false;
-                };
-
-                // Find the property in the class members
-                for &member_idx in &class.members.nodes {
-                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                        continue;
-                    };
-
-                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        && let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
-                            // Get the property name
-                            if let Some(pname) = self.get_property_name(prop.name)
-                                && pname == prop_name {
-                                    // Check if this property has readonly modifier
-                                    return self.has_readonly_modifier(&prop.modifiers);
-                                }
-                        }
+                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                    && let Some(prop) = self.ctx.arena.get_property_decl(member_node)
+                {
+                    // Get the property name
+                    if let Some(pname) = self.get_property_name(prop.name)
+                        && pname == prop_name
+                    {
+                        // Check if this property has readonly modifier
+                        return self.has_readonly_modifier(&prop.modifiers);
+                    }
                 }
             }
+        }
 
         false
     }
@@ -17313,9 +17391,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -17331,9 +17410,9 @@ impl<'a> CheckerState<'a> {
                         || mod_node.kind == SyntaxKind::PrivateKeyword as u16
                         || mod_node.kind == SyntaxKind::ProtectedKeyword as u16
                         || mod_node.kind == SyntaxKind::ReadonlyKeyword as u16)
-                    {
-                        return true;
-                    }
+                {
+                    return true;
+                }
             }
         }
         false
@@ -17398,9 +17477,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((wants_string, wants_number)) = self.get_index_key_kind(index_type)
-            && self.is_readonly_index_signature(object_type, wants_string, wants_number) {
-                return Some("index signature".to_string());
-            }
+            && self.is_readonly_index_signature(object_type, wants_string, wants_number)
+        {
+            return Some("index signature".to_string());
+        }
 
         None
     }
@@ -17472,13 +17552,14 @@ impl<'a> CheckerState<'a> {
             && expected_type != TypeId::UNKNOWN
             && !return_data.expression.is_none()
             && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
-                && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                    self.check_object_literal_excess_properties(
-                        return_type,
-                        expected_type,
-                        return_data.expression,
-                    );
-                }
+            && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            self.check_object_literal_excess_properties(
+                return_type,
+                expected_type,
+                return_data.expression,
+            );
+        }
     }
 
     /// Check an import equals declaration for ESM compatibility.
@@ -17531,11 +17612,12 @@ impl<'a> CheckerState<'a> {
 
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name) {
-                // Module exists, check if individual imports are exported
-                self.check_imported_members(import, module_name);
-                return;
-            }
+            && resolved.contains(module_name)
+        {
+            // Module exists, check if individual imports are exported
+            self.check_imported_members(import, module_name);
+            return;
+        }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         // This enables resolving imports from other files in the same compilation
@@ -17682,9 +17764,10 @@ impl<'a> CheckerState<'a> {
 
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name) {
-                return;
-            }
+            && resolved.contains(module_name)
+        {
+            return;
+        }
 
         // Emit TS2792 for unresolved export module specifiers
         let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
@@ -17841,14 +17924,15 @@ impl<'a> CheckerState<'a> {
         // Check for reserved class names (error 2414)
         if !class.name.is_none()
             && let Some(name_node) = self.ctx.arena.get(class.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text == "any" {
-                        self.error_at_node(
-                            class.name,
-                            "Class name cannot be 'any'.",
-                            diagnostic_codes::CLASS_NAME_CANNOT_BE_ANY,
-                        );
-                    }
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && ident.escaped_text == "any"
+        {
+            self.error_at_node(
+                class.name,
+                "Class name cannot be 'any'.",
+                diagnostic_codes::CLASS_NAME_CANNOT_BE_ANY,
+            );
+        }
 
         // Check if this is a declared class (ambient declaration)
         let is_declared = self.has_declare_modifier(&class.modifiers);
@@ -17887,17 +17971,16 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(name_idx) = member_name_idx
                         && !name_idx.is_none()
-                            && let Some(name_node) = self.ctx.arena.get(name_idx)
-                                && name_node.kind
-                                    == crate::scanner::SyntaxKind::PrivateIdentifier as u16
-                                {
-                                    use crate::checker::types::diagnostics::diagnostic_messages;
-                                    self.error_at_node(
-                                        name_idx,
-                                        diagnostic_messages::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
-                                        diagnostic_codes::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
-                                    );
-                                }
+                        && let Some(name_node) = self.ctx.arena.get(name_idx)
+                        && name_node.kind == crate::scanner::SyntaxKind::PrivateIdentifier as u16
+                    {
+                        use crate::checker::types::diagnostics::diagnostic_messages;
+                        self.error_at_node(
+                            name_idx,
+                            diagnostic_messages::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
+                            diagnostic_codes::PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT,
+                        );
+                    }
                 }
 
                 // Check for abstract members in non-abstract class
@@ -17942,7 +18025,10 @@ impl<'a> CheckerState<'a> {
         // Collect class name and static members for error 2662 suggestions
         let class_name = if !class.name.is_none() {
             if let Some(name_node) = self.ctx.arena.get(class.name) {
-                self.ctx.arena.get_identifier(name_node).map(|ident| ident.escaped_text.clone())
+                self.ctx
+                    .arena
+                    .get_identifier(name_node)
+                    .map(|ident| ident.escaped_text.clone())
             } else {
                 None
             }
@@ -18084,9 +18170,10 @@ impl<'a> CheckerState<'a> {
 
                 // Parameter properties have modifiers (public/private/protected/readonly)
                 if param.modifiers.is_some()
-                    && let Some(key) = self.property_key_from_name(param.name) {
-                        parameter_properties.insert(key.clone());
-                    }
+                    && let Some(key) = self.property_key_from_name(param.name)
+                {
+                    parameter_properties.insert(key.clone());
+                }
             }
         }
 
@@ -18409,13 +18496,14 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(ret_stmt) = self.ctx.arena.get_return_statement(node)
-                    && !ret_stmt.expression.is_none() {
-                        self.check_expression_for_early_property_access(
-                            ret_stmt.expression,
-                            assigned,
-                            tracked,
-                        );
-                    }
+                    && !ret_stmt.expression.is_none()
+                {
+                    self.check_expression_for_early_property_access(
+                        ret_stmt.expression,
+                        assigned,
+                        tracked,
+                    );
+                }
                 false
             }
             k if k == syntax_kind_ext::WHILE_STATEMENT
@@ -18445,13 +18533,14 @@ impl<'a> CheckerState<'a> {
                     for &decl_idx in &var_stmt.declarations.nodes {
                         if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                             && let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                                && !decl.initializer.is_none() {
-                                    self.check_expression_for_early_property_access(
-                                        decl.initializer,
-                                        assigned,
-                                        tracked,
-                                    );
-                                }
+                            && !decl.initializer.is_none()
+                        {
+                            self.check_expression_for_early_property_access(
+                                decl.initializer,
+                                assigned,
+                                tracked,
+                            );
+                        }
                     }
                 }
                 false
@@ -18628,9 +18717,10 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
                 if let Some(key) = self.property_key_from_access(target_idx)
-                    && tracked.contains(&key) {
-                        assigned.insert(key);
-                    }
+                    && tracked.contains(&key)
+                {
+                    assigned.insert(key);
+                }
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
@@ -18828,13 +18918,10 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 let mut assigned = assigned_in.clone();
                 if let Some(ret) = self.ctx.arena.get_return_statement(node)
-                    && !ret.expression.is_none() {
-                        self.collect_assignments_in_expression(
-                            ret.expression,
-                            &mut assigned,
-                            tracked,
-                        );
-                    }
+                    && !ret.expression.is_none()
+                {
+                    self.collect_assignments_in_expression(ret.expression, &mut assigned, tracked);
+                }
                 return FlowResult {
                     normal: None,
                     exits: Some(assigned),
@@ -18843,13 +18930,10 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::THROW_STATEMENT => {
                 let mut assigned = assigned_in.clone();
                 if let Some(ret) = self.ctx.arena.get_return_statement(node)
-                    && !ret.expression.is_none() {
-                        self.collect_assignments_in_expression(
-                            ret.expression,
-                            &mut assigned,
-                            tracked,
-                        );
-                    }
+                    && !ret.expression.is_none()
+                {
+                    self.collect_assignments_in_expression(ret.expression, &mut assigned, tracked);
+                }
                 return FlowResult {
                     normal: None,
                     exits: None,
@@ -18897,21 +18981,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     let mut assigned = assigned_in.clone();
                     if !loop_data.initializer.is_none()
-                        && let Some(init_node) = self.ctx.arena.get(loop_data.initializer) {
-                            if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                                self.collect_assignments_in_variable_decl_list(
-                                    loop_data.initializer,
-                                    &mut assigned,
-                                    tracked,
-                                );
-                            } else {
-                                self.collect_assignments_in_expression(
-                                    loop_data.initializer,
-                                    &mut assigned,
-                                    tracked,
-                                );
-                            }
+                        && let Some(init_node) = self.ctx.arena.get(loop_data.initializer)
+                    {
+                        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                            self.collect_assignments_in_variable_decl_list(
+                                loop_data.initializer,
+                                &mut assigned,
+                                tracked,
+                            );
+                        } else {
+                            self.collect_assignments_in_expression(
+                                loop_data.initializer,
+                                &mut assigned,
+                                tracked,
+                            );
                         }
+                    }
                     if !loop_data.condition.is_none() {
                         self.collect_assignments_in_expression(
                             loop_data.condition,
@@ -18961,21 +19046,22 @@ impl<'a> CheckerState<'a> {
                 if let Some(for_data) = self.ctx.arena.get_for_in_of(node) {
                     let mut assigned = assigned_in.clone();
                     if !for_data.initializer.is_none()
-                        && let Some(init_node) = self.ctx.arena.get(for_data.initializer) {
-                            if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                                self.collect_assignments_in_variable_decl_list(
-                                    for_data.initializer,
-                                    &mut assigned,
-                                    tracked,
-                                );
-                            } else {
-                                self.collect_assignments_in_expression(
-                                    for_data.initializer,
-                                    &mut assigned,
-                                    tracked,
-                                );
-                            }
+                        && let Some(init_node) = self.ctx.arena.get(for_data.initializer)
+                    {
+                        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                            self.collect_assignments_in_variable_decl_list(
+                                for_data.initializer,
+                                &mut assigned,
+                                tracked,
+                            );
+                        } else {
+                            self.collect_assignments_in_expression(
+                                for_data.initializer,
+                                &mut assigned,
+                                tracked,
+                            );
                         }
+                    }
                     if !for_data.expression.is_none() {
                         self.collect_assignments_in_expression(
                             for_data.expression,
@@ -19391,9 +19477,10 @@ impl<'a> CheckerState<'a> {
             // (This is less common but syntactically valid in destructuring)
             else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
                 if let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node)
-                    && let Some(key) = self.property_key_from_access(prop.name) {
-                        self.record_property_assignment(key, assigned, tracked);
-                    }
+                    && let Some(key) = self.property_key_from_access(prop.name)
+                {
+                    self.record_property_assignment(key, assigned, tracked);
+                }
             }
             // Handle nested destructuring (recursively)
             else if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
@@ -19486,23 +19573,24 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16
-        )
-            && let Some(lit) = self.ctx.arena.get_literal(name_node)
-                && !lit.text.is_empty() {
-                    let key = if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-                        PropertyKey::Computed(ComputedKey::Number(lit.text.clone()))
-                    } else {
-                        PropertyKey::Computed(ComputedKey::String(lit.text.clone()))
-                    };
-                    return Some(key);
-                }
+        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            let key = if name_node.kind == SyntaxKind::NumericLiteral as u16 {
+                PropertyKey::Computed(ComputedKey::Number(lit.text.clone()))
+            } else {
+                PropertyKey::Computed(ComputedKey::String(lit.text.clone()))
+            };
+            return Some(key);
+        }
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-            && let Some(computed) = self.ctx.arena.get_computed_property(name_node) {
-                return self
-                    .computed_key_from_expression(computed.expression)
-                    .map(PropertyKey::Computed);
-            }
+            && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+        {
+            return self
+                .computed_key_from_expression(computed.expression)
+                .map(PropertyKey::Computed);
+        }
 
         None
     }
@@ -19567,36 +19655,39 @@ impl<'a> CheckerState<'a> {
         }
 
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access_name) = self.qualified_name_from_property_access(expr_idx) {
-                return Some(ComputedKey::Qualified(access_name));
-            }
+            && let Some(access_name) = self.qualified_name_from_property_access(expr_idx)
+        {
+            return Some(ComputedKey::Qualified(access_name));
+        }
 
         // Handle call expressions like Symbol("key")
         if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
-            && let Some(call) = self.ctx.arena.get_call_expr(expr_node) {
-                // Check if callee is "Symbol"
-                if let Some(callee_node) = self.ctx.arena.get(call.expression)
-                    && let Some(callee_ident) = self.ctx.arena.get_identifier(callee_node)
-                        && callee_ident.escaped_text == "Symbol" {
-                            // Try to get the description argument if present
-                            let description = call
-                                .arguments
-                                .as_ref()
-                                .and_then(|args| args.nodes.first())
-                                .and_then(|&first_arg| self.ctx.arena.get(first_arg))
-                                .and_then(|arg_node| {
-                                    if arg_node.kind == SyntaxKind::StringLiteral as u16 {
-                                        self.ctx
-                                            .arena
-                                            .get_literal(arg_node)
-                                            .map(|lit| lit.text.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
-                            return Some(ComputedKey::Symbol(description));
+            && let Some(call) = self.ctx.arena.get_call_expr(expr_node)
+        {
+            // Check if callee is "Symbol"
+            if let Some(callee_node) = self.ctx.arena.get(call.expression)
+                && let Some(callee_ident) = self.ctx.arena.get_identifier(callee_node)
+                && callee_ident.escaped_text == "Symbol"
+            {
+                // Try to get the description argument if present
+                let description = call
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.nodes.first())
+                    .and_then(|&first_arg| self.ctx.arena.get(first_arg))
+                    .and_then(|arg_node| {
+                        if arg_node.kind == SyntaxKind::StringLiteral as u16 {
+                            self.ctx
+                                .arena
+                                .get_literal(arg_node)
+                                .map(|lit| lit.text.clone())
+                        } else {
+                            None
                         }
+                    });
+                return Some(ComputedKey::Symbol(description));
             }
+        }
 
         None
     }
@@ -19879,19 +19970,20 @@ impl<'a> CheckerState<'a> {
         // Check for reserved interface names (error 2427)
         if !iface.name.is_none()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    // Reserved type names that can't be used as interface names
-                    match ident.escaped_text.as_str() {
-                        "string" | "number" | "boolean" | "symbol" | "void" | "object" => {
-                            self.error_at_node(
-                                iface.name,
-                                &format!("Interface name cannot be '{}'.", ident.escaped_text),
-                                diagnostic_codes::INTERFACE_NAME_CANNOT_BE,
-                            );
-                        }
-                        _ => {}
-                    }
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            // Reserved type names that can't be used as interface names
+            match ident.escaped_text.as_str() {
+                "string" | "number" | "boolean" | "symbol" | "void" | "object" => {
+                    self.error_at_node(
+                        iface.name,
+                        &format!("Interface name cannot be '{}'.", ident.escaped_text),
+                        diagnostic_codes::INTERFACE_NAME_CANNOT_BE,
+                    );
                 }
+                _ => {}
+            }
+        }
 
         // Check heritage clauses for unresolved names (TS2304)
         self.check_heritage_clauses_for_unresolved_names(&iface.heritage_clauses);
@@ -19916,9 +20008,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -19930,9 +20023,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -20083,9 +20177,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ExportKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -20097,9 +20192,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -20111,9 +20207,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -20125,9 +20222,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::PrivateKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::PrivateKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -20139,9 +20237,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ProtectedKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::ProtectedKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -20340,27 +20439,32 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
     ) -> Option<(NodeIndex, bool)> {
         if self.is_this_expression(expr_idx)
-            && let Some(ref class_info) = self.ctx.enclosing_class {
-                return Some((class_info.class_idx, self.is_constructor_type(object_type)));
-            }
+            && let Some(ref class_info) = self.ctx.enclosing_class
+        {
+            return Some((class_info.class_idx, self.is_constructor_type(object_type)));
+        }
 
         if self.is_super_expression(expr_idx)
             && let Some(ref class_info) = self.ctx.enclosing_class
-                && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx) {
-                    return Some((base_idx, self.is_constructor_type(object_type)));
-                }
+            && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
+        {
+            return Some((base_idx, self.is_constructor_type(object_type)));
+        }
 
         if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && symbol.flags & symbol_flags::CLASS != 0
-                    && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id) {
-                        return Some((class_idx, true));
-                    }
+            && symbol.flags & symbol_flags::CLASS != 0
+            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+        {
+            return Some((class_idx, true));
+        }
 
-        if object_type != TypeId::ANY && object_type != TypeId::ERROR
-            && let Some(class_idx) = self.get_class_decl_from_type(object_type) {
-                return Some((class_idx, false));
-            }
+        if object_type != TypeId::ANY
+            && object_type != TypeId::ERROR
+            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
+        {
+            return Some((class_idx, false));
+        }
 
         None
     }
@@ -20376,14 +20480,17 @@ impl<'a> CheckerState<'a> {
 
         if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && symbol.flags & symbol_flags::CLASS != 0 {
-                    return self.get_class_declaration_from_symbol(sym_id);
-                }
+            && symbol.flags & symbol_flags::CLASS != 0
+        {
+            return self.get_class_declaration_from_symbol(sym_id);
+        }
 
-        if object_type != TypeId::ANY && object_type != TypeId::ERROR
-            && let Some(class_idx) = self.get_class_decl_from_type(object_type) {
-                return Some(class_idx);
-            }
+        if object_type != TypeId::ANY
+            && object_type != TypeId::ERROR
+            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
+        {
+            return Some(class_idx);
+        }
 
         None
     }
@@ -20469,9 +20576,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ConstKeyword as u16 {
-                        return Some(mod_idx);
-                    }
+                    && mod_node.kind == SyntaxKind::ConstKeyword as u16
+                {
+                    return Some(mod_idx);
+                }
             }
         }
         None
@@ -20485,12 +20593,13 @@ impl<'a> CheckerState<'a> {
         for &member_idx in member_nodes {
             // Get symbol for this member
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    // Check if name matches and symbol has STATIC flag
-                    if symbol.escaped_name == name && (symbol.flags & symbol_flags::STATIC != 0) {
-                        return true;
-                    }
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                // Check if name matches and symbol has STATIC flag
+                if symbol.escaped_name == name && (symbol.flags & symbol_flags::STATIC != 0) {
+                    return true;
                 }
+            }
         }
         false
     }
@@ -20503,15 +20612,16 @@ impl<'a> CheckerState<'a> {
         for &member_idx in member_nodes {
             // Get symbol for this member
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    // Check if name matches and symbol has ABSTRACT flag (property only)
-                    if symbol.escaped_name == name
-                        && (symbol.flags & symbol_flags::ABSTRACT != 0)
-                        && (symbol.flags & symbol_flags::PROPERTY != 0)
-                    {
-                        return true;
-                    }
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                // Check if name matches and symbol has ABSTRACT flag (property only)
+                if symbol.escaped_name == name
+                    && (symbol.flags & symbol_flags::ABSTRACT != 0)
+                    && (symbol.flags & symbol_flags::PROPERTY != 0)
+                {
+                    return true;
                 }
+            }
         }
         false
     }
@@ -20532,12 +20642,13 @@ impl<'a> CheckerState<'a> {
                 self.check_parameter_properties(&func_type.parameters.nodes);
                 for &param_idx in &func_type.parameters.nodes {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                            if !param.type_annotation.is_none() {
-                                self.check_type_for_parameter_properties(param.type_annotation);
-                            }
-                            self.maybe_report_implicit_any_parameter(param, false);
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                    {
+                        if !param.type_annotation.is_none() {
+                            self.check_type_for_parameter_properties(param.type_annotation);
                         }
+                        self.maybe_report_implicit_any_parameter(param, false);
+                    }
                 }
                 // Recursively check the return type
                 self.check_type_for_parameter_properties(func_type.type_annotation);
@@ -20565,9 +20676,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
         } else if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
-            && let Some(paren) = self.ctx.arena.get_wrapped_type(node) {
-                self.check_type_for_parameter_properties(paren.type_node);
-            }
+            && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
+        {
+            self.check_type_for_parameter_properties(paren.type_node);
+        }
     }
 
     /// Walk a type node and emit TS2304 for unresolved type names inside complex types.
@@ -20694,23 +20806,21 @@ impl<'a> CheckerState<'a> {
                     let mut param_binding: Option<(String, Option<TypeId>)> = None;
                     if let Some(param_node) = self.ctx.arena.get(mapped.type_parameter)
                         && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
-                            && let Some(name_node) = self.ctx.arena.get(param.name)
-                                && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                    let name = ident.escaped_text.clone();
-                                    let atom = self.ctx.types.intern_string(&name);
-                                    let type_id = self.ctx.types.intern(
-                                        crate::solver::TypeKey::TypeParameter(
-                                            crate::solver::TypeParamInfo {
-                                                name: atom,
-                                                constraint: None,
-                                                default: None,
-                                            },
-                                        ),
-                                    );
-                                    let previous =
-                                        self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-                                    param_binding = Some((name, previous));
-                                }
+                        && let Some(name_node) = self.ctx.arena.get(param.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let name = ident.escaped_text.clone();
+                        let atom = self.ctx.types.intern_string(&name);
+                        let type_id = self.ctx.types.intern(crate::solver::TypeKey::TypeParameter(
+                            crate::solver::TypeParamInfo {
+                                name: atom,
+                                constraint: None,
+                                default: None,
+                            },
+                        ));
+                        let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+                        param_binding = Some((name, previous));
+                    }
                     if !mapped.name_type.is_none() {
                         self.check_type_for_missing_names(mapped.name_type);
                     }
@@ -20733,9 +20843,10 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_PREDICATE => {
                 if let Some(pred) = self.ctx.arena.get_type_predicate(node)
-                    && !pred.type_node.is_none() {
-                        self.check_type_for_missing_names(pred.type_node);
-                    }
+                    && !pred.type_node.is_none()
+                {
+                    self.check_type_for_missing_names(pred.type_node);
+                }
             }
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
                 if let Some(template) = self.ctx.arena.get_template_literal_type(node) {
@@ -20889,12 +21000,13 @@ impl<'a> CheckerState<'a> {
                     self.check_parameter_properties(&params.nodes);
                     for &param_idx in &params.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                                if !param.type_annotation.is_none() {
-                                    self.check_type_for_parameter_properties(param.type_annotation);
-                                }
-                                self.maybe_report_implicit_any_parameter(param, false);
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            if !param.type_annotation.is_none() {
+                                self.check_type_for_parameter_properties(param.type_annotation);
                             }
+                            self.maybe_report_implicit_any_parameter(param, false);
+                        }
                     }
                 }
                 // Recursively check the return type
@@ -20908,30 +21020,27 @@ impl<'a> CheckerState<'a> {
                     self.check_parameter_properties(&params.nodes);
                     for &param_idx in &params.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                                if !param.type_annotation.is_none() {
-                                    self.check_type_for_parameter_properties(param.type_annotation);
-                                }
-                                self.maybe_report_implicit_any_parameter(param, false);
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            if !param.type_annotation.is_none() {
+                                self.check_type_for_parameter_properties(param.type_annotation);
                             }
+                            self.maybe_report_implicit_any_parameter(param, false);
+                        }
                     }
                 }
                 self.check_type_for_parameter_properties(sig.type_annotation);
-                if self.ctx.no_implicit_any() && sig.type_annotation.is_none()
-                    && let Some(name) = self.property_name_for_error(sig.name) {
-                        use crate::checker::types::diagnostics::{
-                            diagnostic_codes, diagnostic_messages, format_message,
-                        };
-                        let message = format_message(
-                            diagnostic_messages::IMPLICIT_ANY_RETURN,
-                            &[&name, "any"],
-                        );
-                        self.error_at_node(
-                            sig.name,
-                            &message,
-                            diagnostic_codes::IMPLICIT_ANY_RETURN,
-                        );
-                    }
+                if self.ctx.no_implicit_any()
+                    && sig.type_annotation.is_none()
+                    && let Some(name) = self.property_name_for_error(sig.name)
+                {
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let message =
+                        format_message(diagnostic_messages::IMPLICIT_ANY_RETURN, &[&name, "any"]);
+                    self.error_at_node(sig.name, &message, diagnostic_codes::IMPLICIT_ANY_RETURN);
+                }
             }
         }
         // Check property signatures for implicit any (error 7008)
@@ -20942,37 +21051,35 @@ impl<'a> CheckerState<'a> {
                 }
                 // Property signature without type annotation implicitly has 'any' type
                 if sig.type_annotation.is_none()
-                    && let Some(member_name) = self.get_property_name(sig.name) {
-                        use crate::checker::types::diagnostics::{
-                            diagnostic_codes, diagnostic_messages, format_message,
-                        };
-                        let message = format_message(
-                            diagnostic_messages::MEMBER_IMPLICIT_ANY,
-                            &[&member_name, "any"],
-                        );
-                        self.error_at_node(
-                            sig.name,
-                            &message,
-                            diagnostic_codes::IMPLICIT_ANY_MEMBER,
-                        );
-                    }
+                    && let Some(member_name) = self.get_property_name(sig.name)
+                {
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let message = format_message(
+                        diagnostic_messages::MEMBER_IMPLICIT_ANY,
+                        &[&member_name, "any"],
+                    );
+                    self.error_at_node(sig.name, &message, diagnostic_codes::IMPLICIT_ANY_MEMBER);
+                }
             }
         }
         // Check accessors in type literals/interfaces - cannot have body (error 1183)
         else if (node.kind == syntax_kind_ext::GET_ACCESSOR
             || node.kind == syntax_kind_ext::SET_ACCESSOR)
-            && let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                // Accessors in type literals and interfaces cannot have implementations
-                if !accessor.body.is_none() {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
-                    // Report error on the body
-                    self.error_at_node(
-                        accessor.body,
-                        "An implementation cannot be declared in ambient contexts.",
-                        diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
-                    );
-                }
+            && let Some(accessor) = self.ctx.arena.get_accessor(node)
+        {
+            // Accessors in type literals and interfaces cannot have implementations
+            if !accessor.body.is_none() {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                // Report error on the body
+                self.error_at_node(
+                    accessor.body,
+                    "An implementation cannot be declared in ambient contexts.",
+                    diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+                );
             }
+        }
     }
 
     /// Check that all method/constructor overload signatures have implementations.
@@ -20992,37 +21099,40 @@ impl<'a> CheckerState<'a> {
                 // TS1042: 'async' modifier cannot be used on getters/setters
                 syntax_kind_ext::GET_ACCESSOR => {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                        && self.has_async_modifier(&accessor.modifiers) {
-                            self.error_at_node(
-                                member_idx,
-                                "'async' modifier cannot be used here.",
-                                diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
-                            );
-                        }
+                        && self.has_async_modifier(&accessor.modifiers)
+                    {
+                        self.error_at_node(
+                            member_idx,
+                            "'async' modifier cannot be used here.",
+                            diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+                        );
+                    }
                 }
                 syntax_kind_ext::SET_ACCESSOR => {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                        && self.has_async_modifier(&accessor.modifiers) {
-                            self.error_at_node(
-                                member_idx,
-                                "'async' modifier cannot be used here.",
-                                diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
-                            );
-                        }
+                        && self.has_async_modifier(&accessor.modifiers)
+                    {
+                        self.error_at_node(
+                            member_idx,
+                            "'async' modifier cannot be used here.",
+                            diagnostic_codes::ASYNC_MODIFIER_CANNOT_BE_USED_HERE,
+                        );
+                    }
                 }
                 syntax_kind_ext::CONSTRUCTOR => {
                     if let Some(ctor) = self.ctx.arena.get_constructor(node)
-                        && ctor.body.is_none() {
-                            // Constructor overload signature - check for implementation
-                            let has_impl = self.find_constructor_impl(members, i + 1);
-                            if !has_impl {
-                                self.error_at_node(
-                                    member_idx,
-                                    "Constructor implementation is missing.",
-                                    diagnostic_codes::CONSTRUCTOR_IMPLEMENTATION_MISSING,
-                                );
-                            }
+                        && ctor.body.is_none()
+                    {
+                        // Constructor overload signature - check for implementation
+                        let has_impl = self.find_constructor_impl(members, i + 1);
+                        if !has_impl {
+                            self.error_at_node(
+                                member_idx,
+                                "Constructor implementation is missing.",
+                                diagnostic_codes::CONSTRUCTOR_IMPLEMENTATION_MISSING,
+                            );
                         }
+                    }
                 }
                 syntax_kind_ext::METHOD_DECLARATION => {
                     if let Some(method) = self.ctx.arena.get_method_decl(node) {
@@ -21041,17 +21151,18 @@ impl<'a> CheckerState<'a> {
                                         diagnostic_codes::FUNCTION_IMPLEMENTATION_MISSING
                                     );
                                 } else if let Some(actual_name) = impl_name
-                                    && actual_name != name {
-                                        // Implementation has wrong name
-                                        self.error_at_node(
-                                            members[i + 1],
-                                            &format!(
-                                                "Function implementation name must be '{}'.",
-                                                name
-                                            ),
-                                            diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
-                                        );
-                                    }
+                                    && actual_name != name
+                                {
+                                    // Implementation has wrong name
+                                    self.error_at_node(
+                                        members[i + 1],
+                                        &format!(
+                                            "Function implementation name must be '{}'.",
+                                            name
+                                        ),
+                                        diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
+                                    );
+                                }
                             }
                         }
                     }
@@ -21071,10 +21182,11 @@ impl<'a> CheckerState<'a> {
             };
             if node.kind == syntax_kind_ext::CONSTRUCTOR {
                 if let Some(ctor) = self.ctx.arena.get_constructor(node)
-                    && !ctor.body.is_none() {
-                        return true;
-                    }
-                    // Another constructor overload - keep looking
+                    && !ctor.body.is_none()
+                {
+                    return true;
+                }
+                // Another constructor overload - keep looking
             } else {
                 // Non-constructor member - no implementation found
                 return false;
@@ -21101,13 +21213,14 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == syntax_kind_ext::METHOD_DECLARATION
             && let Some(method) = self.ctx.arena.get_method_decl(node)
-                && !method.body.is_none() {
-                    // This is an implementation - check if name matches
-                    let impl_name = self.get_method_name_from_node(member_idx);
-                    if impl_name.is_some() {
-                        return (true, impl_name);
-                    }
-                }
+            && !method.body.is_none()
+        {
+            // This is an implementation - check if name matches
+            let impl_name = self.get_method_name_from_node(member_idx);
+            if impl_name.is_some() {
+                return (true, impl_name);
+            }
+        }
         (false, None)
     }
 
@@ -21133,38 +21246,40 @@ impl<'a> CheckerState<'a> {
 
             if (node.kind == syntax_kind_ext::GET_ACCESSOR
                 || node.kind == syntax_kind_ext::SET_ACCESSOR)
-                && let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                    let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
+                && let Some(accessor) = self.ctx.arena.get_accessor(node)
+            {
+                let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
 
-                    // Get accessor name
-                    if let Some(name) = self.get_property_name(accessor.name) {
-                        let pair = accessors.entry(name).or_default();
-                        if node.kind == syntax_kind_ext::GET_ACCESSOR {
-                            pair.getter = Some((member_idx, is_abstract));
-                        } else {
-                            pair.setter = Some((member_idx, is_abstract));
-                        }
+                // Get accessor name
+                if let Some(name) = self.get_property_name(accessor.name) {
+                    let pair = accessors.entry(name).or_default();
+                    if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        pair.getter = Some((member_idx, is_abstract));
+                    } else {
+                        pair.setter = Some((member_idx, is_abstract));
                     }
                 }
+            }
         }
 
         // Check for abstract mismatch
         for (_, pair) in accessors {
             if let (Some((getter_idx, getter_abstract)), Some((setter_idx, setter_abstract))) =
                 (pair.getter, pair.setter)
-                && getter_abstract != setter_abstract {
-                    // Report error on both accessors
-                    self.error_at_node(
-                        getter_idx,
-                        "Accessors must both be abstract or non-abstract.",
-                        diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NOT,
-                    );
-                    self.error_at_node(
-                        setter_idx,
-                        "Accessors must both be abstract or non-abstract.",
-                        diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NOT,
-                    );
-                }
+                && getter_abstract != setter_abstract
+            {
+                // Report error on both accessors
+                self.error_at_node(
+                    getter_idx,
+                    "Accessors must both be abstract or non-abstract.",
+                    diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NOT,
+                );
+                self.error_at_node(
+                    setter_idx,
+                    "Accessors must both be abstract or non-abstract.",
+                    diagnostic_codes::ACCESSORS_MUST_BOTH_BE_ABSTRACT_OR_NOT,
+                );
+            }
         }
     }
 
@@ -21191,64 +21306,65 @@ impl<'a> CheckerState<'a> {
 
             if node.kind == syntax_kind_ext::GET_ACCESSOR {
                 if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && let Some(name) = self.get_property_name(accessor.name) {
-                        // Check if this accessor is abstract or declared
-                        let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
-                        let is_declared = self.has_declare_modifier(&accessor.modifiers);
+                    && let Some(name) = self.get_property_name(accessor.name)
+                {
+                    // Check if this accessor is abstract or declared
+                    let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
+                    let is_declared = self.has_declare_modifier(&accessor.modifiers);
 
-                        // Get the return type - check explicit annotation first
-                        let return_type = if !accessor.type_annotation.is_none() {
-                            self.get_type_of_node(accessor.type_annotation)
-                        } else {
-                            // Infer from return statements in body
-                            self.infer_getter_return_type(accessor.body)
-                        };
+                    // Get the return type - check explicit annotation first
+                    let return_type = if !accessor.type_annotation.is_none() {
+                        self.get_type_of_node(accessor.type_annotation)
+                    } else {
+                        // Infer from return statements in body
+                        self.infer_getter_return_type(accessor.body)
+                    };
 
-                        // Find the position of the return statement for error reporting
-                        let error_pos = self
-                            .find_return_statement_pos(accessor.body)
-                            .unwrap_or(member_idx);
+                    // Find the position of the return statement for error reporting
+                    let error_pos = self
+                        .find_return_statement_pos(accessor.body)
+                        .unwrap_or(member_idx);
 
-                        let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
-                            getter: None,
-                            setter: None,
-                        });
-                        info.getter =
-                            Some((member_idx, return_type, error_pos, is_abstract, is_declared));
-                    }
+                    let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
+                        getter: None,
+                        setter: None,
+                    });
+                    info.getter =
+                        Some((member_idx, return_type, error_pos, is_abstract, is_declared));
+                }
             } else if node.kind == syntax_kind_ext::SET_ACCESSOR
                 && let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && let Some(name) = self.get_property_name(accessor.name) {
-                        // Check if this accessor is abstract or declared
-                        let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
-                        let is_declared = self.has_declare_modifier(&accessor.modifiers);
+                && let Some(name) = self.get_property_name(accessor.name)
+            {
+                // Check if this accessor is abstract or declared
+                let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
+                let is_declared = self.has_declare_modifier(&accessor.modifiers);
 
-                        // Get the parameter type from the setter's first parameter
-                        let param_type =
-                            if let Some(&first_param_idx) = accessor.parameters.nodes.first() {
-                                if let Some(param_node) = self.ctx.arena.get(first_param_idx) {
-                                    if let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                                        if !param.type_annotation.is_none() {
-                                            self.get_type_of_node(param.type_annotation)
-                                        } else {
-                                            TypeId::ANY
-                                        }
-                                    } else {
-                                        TypeId::ANY
-                                    }
-                                } else {
-                                    TypeId::ANY
-                                }
+                // Get the parameter type from the setter's first parameter
+                let param_type = if let Some(&first_param_idx) = accessor.parameters.nodes.first() {
+                    if let Some(param_node) = self.ctx.arena.get(first_param_idx) {
+                        if let Some(param) = self.ctx.arena.get_parameter(param_node) {
+                            if !param.type_annotation.is_none() {
+                                self.get_type_of_node(param.type_annotation)
                             } else {
                                 TypeId::ANY
-                            };
-
-                        let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
-                            getter: None,
-                            setter: None,
-                        });
-                        info.setter = Some((member_idx, param_type, is_abstract, is_declared));
+                            }
+                        } else {
+                            TypeId::ANY
+                        }
+                    } else {
+                        TypeId::ANY
                     }
+                } else {
+                    TypeId::ANY
+                };
+
+                let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
+                    getter: None,
+                    setter: None,
+                });
+                info.setter = Some((member_idx, param_type, is_abstract, is_declared));
+            }
         }
 
         // Check type compatibility for each accessor pair
@@ -21304,16 +21420,18 @@ impl<'a> CheckerState<'a> {
 
         // If it's a block, look for return statements
         if body_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(body_node) {
-                for &stmt_idx in &block.statements.nodes {
-                    if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                        && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
-                            && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
-                                && !ret.expression.is_none() {
-                                    return self.get_type_of_node(ret.expression);
-                                }
+            && let Some(block) = self.ctx.arena.get_block(body_node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                    && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                    && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
+                    && !ret.expression.is_none()
+                {
+                    return self.get_type_of_node(ret.expression);
                 }
             }
+        }
 
         // No return statements with values found - return void (not any)
         // This prevents false positive TS7010 errors for getters without return statements
@@ -21329,16 +21447,18 @@ impl<'a> CheckerState<'a> {
         let body_node = self.ctx.arena.get(body_idx)?;
 
         if body_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(body_node) {
-                for &stmt_idx in &block.statements.nodes {
-                    if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                        && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
-                            && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
-                                && !ret.expression.is_none() {
-                                    return Some(ret.expression);
-                                }
+            && let Some(block) = self.ctx.arena.get_block(body_node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                    && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
+                    && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
+                    && !ret.expression.is_none()
+                {
+                    return Some(ret.expression);
                 }
             }
+        }
 
         None
     }
@@ -21380,13 +21500,13 @@ impl<'a> CheckerState<'a> {
 
             // Get the first type in the extends clause (the base class)
             if let Some(&type_idx) = heritage.types.nodes.first()
-                && let Some(type_node) = self.ctx.arena.get(type_idx) {
-                    // Handle both cases:
-                    // 1. ExpressionWithTypeArguments (e.g., Base<T>)
-                    // 2. Simple Identifier (e.g., Base)
-                    let (expr_idx, type_arguments) = if let Some(expr_type_args) =
-                        self.ctx.arena.get_expr_type_args(type_node)
-                    {
+                && let Some(type_node) = self.ctx.arena.get(type_idx)
+            {
+                // Handle both cases:
+                // 1. ExpressionWithTypeArguments (e.g., Base<T>)
+                // 2. Simple Identifier (e.g., Base)
+                let (expr_idx, type_arguments) =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
                         (
                             expr_type_args.expression,
                             expr_type_args.type_arguments.as_ref(),
@@ -21395,27 +21515,29 @@ impl<'a> CheckerState<'a> {
                         // For simple identifiers without type arguments, the type_node itself is the identifier
                         (type_idx, None)
                     };
-                    if let Some(args) = type_arguments {
-                        base_type_argument_nodes = Some(args.nodes.clone());
-                    }
-
-                    // Get the class name from the expression (identifier)
-                    if let Some(expr_node) = self.ctx.arena.get(expr_idx)
-                        && let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-                            base_class_name = ident.escaped_text.clone();
-
-                            // Find the base class declaration via symbol lookup
-                            if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
-                                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                                    // Try value_declaration first, then declarations
-                                    if !symbol.value_declaration.is_none() {
-                                        base_class_idx = Some(symbol.value_declaration);
-                                    } else if let Some(&decl_idx) = symbol.declarations.first() {
-                                        base_class_idx = Some(decl_idx);
-                                    }
-                                }
-                        }
+                if let Some(args) = type_arguments {
+                    base_type_argument_nodes = Some(args.nodes.clone());
                 }
+
+                // Get the class name from the expression (identifier)
+                if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                {
+                    base_class_name = ident.escaped_text.clone();
+
+                    // Find the base class declaration via symbol lookup
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    {
+                        // Try value_declaration first, then declarations
+                        if !symbol.value_declaration.is_none() {
+                            base_class_idx = Some(symbol.value_declaration);
+                        } else if let Some(&decl_idx) = symbol.declarations.first() {
+                            base_class_idx = Some(decl_idx);
+                        }
+                    }
+                }
+            }
             break; // Only one extends clause is valid
         }
 
@@ -21743,16 +21865,18 @@ impl<'a> CheckerState<'a> {
                 let mut base_iface_indices = Vec::new();
                 for &decl_idx in &base_symbol.declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_interface(node).is_some() {
-                            base_iface_indices.push(decl_idx);
-                        }
+                        && self.ctx.arena.get_interface(node).is_some()
+                    {
+                        base_iface_indices.push(decl_idx);
+                    }
                 }
                 if base_iface_indices.is_empty() && !base_symbol.value_declaration.is_none() {
                     let decl_idx = base_symbol.value_declaration;
                     if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && self.ctx.arena.get_interface(node).is_some() {
-                            base_iface_indices.push(decl_idx);
-                        }
+                        && self.ctx.arena.get_interface(node).is_some()
+                    {
+                        base_iface_indices.push(decl_idx);
+                    }
                 }
 
                 let Some(&base_root_idx) = base_iface_indices.first() else {
@@ -21994,29 +22118,31 @@ impl<'a> CheckerState<'a> {
 
             // Get the base class
             if let Some(&type_idx) = heritage.types.nodes.first()
-                && let Some(type_node) = self.ctx.arena.get(type_idx) {
-                    let expr_idx = if let Some(expr_type_args) =
-                        self.ctx.arena.get_expr_type_args(type_node)
-                    {
+                && let Some(type_node) = self.ctx.arena.get(type_idx)
+            {
+                let expr_idx =
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
                         expr_type_args.expression
                     } else {
                         type_idx
                     };
 
-                    if let Some(expr_node) = self.ctx.arena.get(expr_idx)
-                        && let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-                            base_class_name = ident.escaped_text.clone();
+                if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                {
+                    base_class_name = ident.escaped_text.clone();
 
-                            if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
-                                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                                    if !symbol.value_declaration.is_none() {
-                                        base_class_idx = Some(symbol.value_declaration);
-                                    } else if let Some(&decl_idx) = symbol.declarations.first() {
-                                        base_class_idx = Some(decl_idx);
-                                    }
-                                }
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    {
+                        if !symbol.value_declaration.is_none() {
+                            base_class_idx = Some(symbol.value_declaration);
+                        } else if let Some(&decl_idx) = symbol.declarations.first() {
+                            base_class_idx = Some(decl_idx);
                         }
+                    }
                 }
+            }
             break;
         }
 
@@ -22048,9 +22174,10 @@ impl<'a> CheckerState<'a> {
         for &member_idx in &base_class.members.nodes {
             if self.member_is_abstract(member_idx)
                 && let Some(name) = self.get_member_name(member_idx)
-                    && !implemented_members.contains(&name) {
-                        missing_members.push(name);
-                    }
+                && !implemented_members.contains(&name)
+            {
+                missing_members.push(name);
+            }
         }
 
         // Report error if there are missing implementations
@@ -22218,66 +22345,64 @@ impl<'a> CheckerState<'a> {
                 // Get the interface symbol
                 if let Some(name) = self.heritage_name_text(expr_idx)
                     && let Some(sym_id) = self.ctx.binder.file_locals.get(&name)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            let interface_idx = if !symbol.value_declaration.is_none() {
-                                symbol.value_declaration
-                            } else if let Some(&decl_idx) = symbol.declarations.first() {
-                                decl_idx
-                            } else {
-                                continue;
-                            };
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    let interface_idx = if !symbol.value_declaration.is_none() {
+                        symbol.value_declaration
+                    } else if let Some(&decl_idx) = symbol.declarations.first() {
+                        decl_idx
+                    } else {
+                        continue;
+                    };
 
-                            let Some(interface_node) = self.ctx.arena.get(interface_idx) else {
-                                continue;
-                            };
+                    let Some(interface_node) = self.ctx.arena.get(interface_idx) else {
+                        continue;
+                    };
 
-                            // Check if it's actually an interface declaration
-                            if interface_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
-                                continue;
+                    // Check if it's actually an interface declaration
+                    if interface_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                        continue;
+                    }
+
+                    let Some(interface_decl) = self.ctx.arena.get_interface(interface_node) else {
+                        continue;
+                    };
+
+                    // Check that all interface members are implemented
+                    let mut missing_members: Vec<String> = Vec::new();
+
+                    for &member_idx in &interface_decl.members.nodes {
+                        if let Some(member_name) = self.get_member_name(member_idx) {
+                            // Check if class has this member
+                            if !class_members.contains_key(&member_name) {
+                                missing_members.push(member_name);
                             }
+                        }
+                    }
 
-                            let Some(interface_decl) = self.ctx.arena.get_interface(interface_node)
-                            else {
-                                continue;
-                            };
-
-                            // Check that all interface members are implemented
-                            let mut missing_members: Vec<String> = Vec::new();
-
-                            for &member_idx in &interface_decl.members.nodes {
-                                if let Some(member_name) = self.get_member_name(member_idx) {
-                                    // Check if class has this member
-                                    if !class_members.contains_key(&member_name) {
-                                        missing_members.push(member_name);
-                                    }
-                                }
-                            }
-
-                            // Report error if there are missing implementations
-                            if !missing_members.is_empty() {
-                                let class_name = if !class_data.name.is_none() {
-                                    if let Some(name_node) = self.ctx.arena.get(class_data.name) {
-                                        if let Some(ident) =
-                                            self.ctx.arena.get_identifier(name_node)
-                                        {
-                                            ident.escaped_text.clone()
-                                        } else {
-                                            String::from("<anonymous>")
-                                        }
-                                    } else {
-                                        String::from("<anonymous>")
-                                    }
+                    // Report error if there are missing implementations
+                    if !missing_members.is_empty() {
+                        let class_name = if !class_data.name.is_none() {
+                            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
+                                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                                    ident.escaped_text.clone()
                                 } else {
                                     String::from("<anonymous>")
-                                };
+                                }
+                            } else {
+                                String::from("<anonymous>")
+                            }
+                        } else {
+                            String::from("<anonymous>")
+                        };
 
-                                let missing_list = missing_members
-                                    .iter()
-                                    .map(|s| format!("'{}", s))
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
+                        let missing_list = missing_members
+                            .iter()
+                            .map(|s| format!("'{}", s))
+                            .collect::<Vec<_>>()
+                            .join(", ");
 
-                                self.error_at_node(
+                        self.error_at_node(
                                     clause_idx,
                                     &format!(
                                         "Class '{}' incorrectly implements interface '{}'. Missing members: {}.",
@@ -22285,8 +22410,8 @@ impl<'a> CheckerState<'a> {
                                     ),
                                     diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                 );
-                            }
-                        }
+                    }
+                }
             }
         }
     }
@@ -22306,51 +22431,49 @@ impl<'a> CheckerState<'a> {
 
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 && let Some(func) = self.ctx.arena.get_function(node)
-                    && func.body.is_none() {
-                        let is_declared = self.has_declare_modifier(&func.modifiers);
-                        // Use func.is_async as the parser stores async as a flag, not a modifier
-                        let is_async = func.is_async;
+                && func.body.is_none()
+            {
+                let is_declared = self.has_declare_modifier(&func.modifiers);
+                // Use func.is_async as the parser stores async as a flag, not a modifier
+                let is_async = func.is_async;
 
-                        // TS1040: 'async' modifier cannot be used in an ambient context
-                        if is_declared && is_async {
-                            self.error_at_node(
-                                stmt_idx,
-                                "'async' modifier cannot be used in an ambient context.",
-                                diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
-                            );
-                            i += 1;
-                            continue;
-                        }
+                // TS1040: 'async' modifier cannot be used in an ambient context
+                if is_declared && is_async {
+                    self.error_at_node(
+                        stmt_idx,
+                        "'async' modifier cannot be used in an ambient context.",
+                        diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
+                    );
+                    i += 1;
+                    continue;
+                }
 
-                        if is_declared {
-                            i += 1;
-                            continue;
-                        }
-                        // Function overload signature - check for implementation
-                        let func_name = self.get_function_name_from_node(stmt_idx);
-                        if let Some(name) = func_name {
-                            let (has_impl, impl_name) =
-                                self.find_function_impl(statements, i + 1, &name);
-                            if !has_impl {
-                                self.error_at_node(
+                if is_declared {
+                    i += 1;
+                    continue;
+                }
+                // Function overload signature - check for implementation
+                let func_name = self.get_function_name_from_node(stmt_idx);
+                if let Some(name) = func_name {
+                    let (has_impl, impl_name) = self.find_function_impl(statements, i + 1, &name);
+                    if !has_impl {
+                        self.error_at_node(
                                     stmt_idx,
                                     "Function implementation is missing or not immediately following the declaration.",
                                     diagnostic_codes::FUNCTION_IMPLEMENTATION_MISSING
                                 );
-                            } else if let Some(actual_name) = impl_name
-                                && actual_name != name {
-                                    // Implementation has wrong name
-                                    self.error_at_node(
-                                        statements[i + 1],
-                                        &format!(
-                                            "Function implementation name must be '{}'.",
-                                            name
-                                        ),
-                                        diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
-                                    );
-                                }
-                        }
+                    } else if let Some(actual_name) = impl_name
+                        && actual_name != name
+                    {
+                        // Implementation has wrong name
+                        self.error_at_node(
+                            statements[i + 1],
+                            &format!("Function implementation name must be '{}'.", name),
+                            diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
+                        );
                     }
+                }
+            }
             i += 1;
         }
     }
@@ -22372,22 +22495,23 @@ impl<'a> CheckerState<'a> {
         };
 
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            && let Some(func) = self.ctx.arena.get_function(node) {
-                // Check if this is an implementation (has body)
-                if !func.body.is_none() {
-                    // This is an implementation - check if name matches
-                    let impl_name = self.get_function_name_from_node(stmt_idx);
-                    return (true, impl_name);
-                } else {
-                    // Another overload signature without body - need to look further
-                    // but we should check if this is the same function name
-                    let overload_name = self.get_function_name_from_node(stmt_idx);
-                    if overload_name.as_ref() == Some(&name.to_string()) {
-                        // Same function, continue looking for implementation
-                        return self.find_function_impl(statements, start + 1, name);
-                    }
+            && let Some(func) = self.ctx.arena.get_function(node)
+        {
+            // Check if this is an implementation (has body)
+            if !func.body.is_none() {
+                // This is an implementation - check if name matches
+                let impl_name = self.get_function_name_from_node(stmt_idx);
+                return (true, impl_name);
+            } else {
+                // Another overload signature without body - need to look further
+                // but we should check if this is the same function name
+                let overload_name = self.get_function_name_from_node(stmt_idx);
+                if overload_name.as_ref() == Some(&name.to_string()) {
+                    // Same function, continue looking for implementation
+                    return self.find_function_impl(statements, start + 1, name);
                 }
             }
+        }
 
         (false, None)
     }
@@ -22399,14 +22523,15 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(func) = self.ctx.arena.get_function(node)
-            && !func.name.is_none() {
-                let Some(name_node) = self.ctx.arena.get(func.name) else {
-                    return None;
-                };
-                if let Some(id) = self.ctx.arena.get_identifier(name_node) {
-                    return Some(id.escaped_text.clone());
-                }
+            && !func.name.is_none()
+        {
+            let Some(name_node) = self.ctx.arena.get(func.name) else {
+                return None;
+            };
+            if let Some(id) = self.ctx.arena.get_identifier(name_node) {
+                return Some(id.escaped_text.clone());
             }
+        }
         None
     }
 
@@ -22419,14 +22544,15 @@ impl<'a> CheckerState<'a> {
         // Module body can be a MODULE_BLOCK or another MODULE_DECLARATION (for nested namespaces)
         if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
             if let Some(block) = self.ctx.arena.get_module_block(body_node)
-                && let Some(ref statements) = block.statements {
-                    // Check statements
-                    for &stmt_idx in &statements.nodes {
-                        self.check_statement(stmt_idx);
-                    }
-                    // Check for function overload implementations
-                    self.check_function_implementations(&statements.nodes);
+                && let Some(ref statements) = block.statements
+            {
+                // Check statements
+                for &stmt_idx in &statements.nodes {
+                    self.check_statement(stmt_idx);
                 }
+                // Check for function overload implementations
+                self.check_function_implementations(&statements.nodes);
+            }
         } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
             // Nested namespace - recurse
             self.check_statement(body_idx);
@@ -22473,13 +22599,14 @@ impl<'a> CheckerState<'a> {
 
         // Report error 2309 if there's an export assignment AND other exports
         if let Some(export_idx) = export_assignment_idx
-            && has_other_exports {
-                self.error_at_node(
-                    export_idx,
-                    "An export assignment cannot be used in a module with other exported elements.",
-                    diagnostic_codes::EXPORT_ASSIGNMENT_WITH_OTHER_EXPORTS,
-                );
-            }
+            && has_other_exports
+        {
+            self.error_at_node(
+                export_idx,
+                "An export assignment cannot be used in a module with other exported elements.",
+                diagnostic_codes::EXPORT_ASSIGNMENT_WITH_OTHER_EXPORTS,
+            );
+        }
     }
 
     /// Check if a statement has an export modifier.
@@ -22528,9 +22655,10 @@ impl<'a> CheckerState<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ExportKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                {
+                    return true;
+                }
             }
         }
 
@@ -22589,14 +22717,15 @@ impl<'a> CheckerState<'a> {
             // TS2372: Check if the initializer references the parameter itself
             // e.g., function f(x = x) { } or function f(await = await) { }
             if let Some(param_name) = self.get_parameter_name(param.name)
-                && self.initializer_references_name(param.initializer, &param_name) {
-                    use crate::checker::types::diagnostics::diagnostic_codes;
-                    self.error_at_node(
-                        param.initializer,
-                        &format!("Parameter '{}' cannot reference itself.", param_name),
-                        diagnostic_codes::PARAMETER_CANNOT_REFERENCE_ITSELF,
-                    );
-                }
+                && self.initializer_references_name(param.initializer, &param_name)
+            {
+                use crate::checker::types::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    param.initializer,
+                    &format!("Parameter '{}' cannot reference itself.", param_name),
+                    diagnostic_codes::PARAMETER_CANNOT_REFERENCE_ITSELF,
+                );
+            }
 
             // IMPORTANT: Always resolve the initializer expression to check for undefined identifiers (TS2304)
             // This must happen regardless of whether there's a type annotation.
@@ -22667,18 +22796,20 @@ impl<'a> CheckerState<'a> {
             if let Some(func) = self.ctx.arena.get_function(node) {
                 for &param_idx in &func.parameters.nodes {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                            // Nested functions in default values don't have contextual types
-                            self.maybe_report_implicit_any_parameter(param, false);
-                        }
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                    {
+                        // Nested functions in default values don't have contextual types
+                        self.maybe_report_implicit_any_parameter(param, false);
+                    }
                 }
             }
 
             // Recursively check the function body for more nested functions
             if let Some(func) = self.ctx.arena.get_function(node)
-                && !func.body.is_none() {
-                    self.check_for_nested_function_ts7006(func.body);
-                }
+                && !func.body.is_none()
+            {
+                self.check_for_nested_function_ts7006(func.body);
+            }
         } else {
             // Recursively check child nodes for function expressions
             match node.kind {
@@ -22917,52 +23048,52 @@ impl<'a> CheckerState<'a> {
         }
         // Handle array binding patterns: [ x, y, z ]
         else if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-            && let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
-                for &element_idx in &pattern.elements.nodes {
-                    if let Some(element_node) = self.ctx.arena.get(element_idx) {
-                        let element_kind = element_node.kind;
+            && let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
+        {
+            for &element_idx in &pattern.elements.nodes {
+                if let Some(element_node) = self.ctx.arena.get(element_idx) {
+                    let element_kind = element_node.kind;
 
-                        // Skip omitted expressions (holes in array patterns)
-                        if element_kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                            continue;
+                    // Skip omitted expressions (holes in array patterns)
+                    if element_kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                        continue;
+                    }
+
+                    // Check if this element is a binding element with initializer
+                    if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
+                        let has_initializer = !binding_elem.initializer.is_none();
+
+                        if !has_initializer {
+                            let binding_name = self.parameter_name_for_error(binding_elem.name);
+
+                            let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
+                            let message = format_message(
+                                diagnostic_messages::PARAMETER_IMPLICIT_ANY,
+                                &[&binding_name, implicit_type],
+                            );
+                            self.error_at_node(
+                                binding_elem.name,
+                                &message,
+                                diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                            );
                         }
 
-                        // Check if this element is a binding element with initializer
-                        if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
-                        {
-                            let has_initializer = !binding_elem.initializer.is_none();
-
-                            if !has_initializer {
-                                let binding_name = self.parameter_name_for_error(binding_elem.name);
-
-                                let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
-                                let message = format_message(
-                                    diagnostic_messages::PARAMETER_IMPLICIT_ANY,
-                                    &[&binding_name, implicit_type],
-                                );
-                                self.error_at_node(
+                        // Recursively check nested patterns
+                        if let Some(name_node) = self.ctx.arena.get(binding_elem.name) {
+                            let name_kind = name_node.kind;
+                            if name_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || name_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            {
+                                self.emit_implicit_any_parameter_for_pattern(
                                     binding_elem.name,
-                                    &message,
-                                    diagnostic_codes::IMPLICIT_ANY_PARAMETER,
+                                    is_rest_parameter,
                                 );
-                            }
-
-                            // Recursively check nested patterns
-                            if let Some(name_node) = self.ctx.arena.get(binding_elem.name) {
-                                let name_kind = name_node.kind;
-                                if name_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                    || name_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                {
-                                    self.emit_implicit_any_parameter_for_pattern(
-                                        binding_elem.name,
-                                        is_rest_parameter,
-                                    );
-                                }
                             }
                         }
                     }
                 }
             }
+        }
     }
 
     /// Report an error at a specific node.
@@ -23014,15 +23145,14 @@ impl<'a> CheckerState<'a> {
         };
 
         // If this is an await expression, check if we're in async context
-        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION
-            && !self.ctx.in_async_context() {
-                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    expr_idx,
-                    diagnostic_messages::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
-                    diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
-                );
-            }
+        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION && !self.ctx.in_async_context() {
+            use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                expr_idx,
+                diagnostic_messages::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
+                diagnostic_codes::AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION,
+            );
+        }
 
         // Recursively check child expressions
         match node.kind {
@@ -23251,9 +23381,10 @@ impl<'a> CheckerState<'a> {
         if !is_static {
             // Use the current class type parameters in scope for instance `this`.
             if let Some(node) = self.ctx.arena.get(class_idx)
-                && let Some(class) = self.ctx.arena.get_class(node) {
-                    return Some(self.get_class_instance_type(class_idx, class));
-                }
+                && let Some(class) = self.ctx.arena.get_class(node)
+            {
+                return Some(self.get_class_instance_type(class_idx, class));
+            }
         }
 
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_idx) {
@@ -23382,27 +23513,25 @@ impl<'a> CheckerState<'a> {
             // Find if this name refers to another property in the class
             for (target_pos, &target_idx) in class_info.member_nodes.iter().enumerate() {
                 if let Some(member_name) = self.get_member_name(target_idx)
-                    && member_name == name {
-                        // Check if target is an instance property (not static, not a method)
-                        if self.is_instance_property(target_idx) {
-                            // Report 2729 if:
-                            // 1. Target is declared after current property, OR
-                            // 2. Target is an abstract property (no initializer in this class)
-                            let should_error =
-                                target_pos > current_pos || self.is_abstract_property(target_idx);
-                            if should_error {
-                                self.error_at_node(
-                                    access_node_idx,
-                                    &format!(
-                                        "Property '{}' is used before its initialization.",
-                                        name
-                                    ),
-                                    diagnostic_codes::PROPERTY_USED_BEFORE_INITIALIZATION,
-                                );
-                            }
+                    && member_name == name
+                {
+                    // Check if target is an instance property (not static, not a method)
+                    if self.is_instance_property(target_idx) {
+                        // Report 2729 if:
+                        // 1. Target is declared after current property, OR
+                        // 2. Target is an abstract property (no initializer in this class)
+                        let should_error =
+                            target_pos > current_pos || self.is_abstract_property(target_idx);
+                        if should_error {
+                            self.error_at_node(
+                                access_node_idx,
+                                &format!("Property '{}' is used before its initialization.", name),
+                                diagnostic_codes::PROPERTY_USED_BEFORE_INITIALIZATION,
+                            );
                         }
-                        break;
                     }
+                    break;
+                }
             }
         }
     }
@@ -23461,9 +23590,10 @@ impl<'a> CheckerState<'a> {
                     if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
                         // Get the property name
                         if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-                            && let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                accesses.push((ident.escaped_text.clone(), node_idx));
-                            }
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            accesses.push((ident.escaped_text.clone(), node_idx));
+                        }
                     } else {
                         // Recurse into the expression part
                         self.collect_this_accesses_recursive(access.expression, accesses);
@@ -23588,16 +23718,17 @@ impl<'a> CheckerState<'a> {
         if self.ctx.no_implicit_any()
             && prop.type_annotation.is_none()
             && prop.initializer.is_none()
-            && let Some(member_name) = self.get_property_name(prop.name) {
-                use crate::checker::types::diagnostics::{
-                    diagnostic_codes, diagnostic_messages, format_message,
-                };
-                let message = format_message(
-                    diagnostic_messages::MEMBER_IMPLICIT_ANY,
-                    &[&member_name, "any"],
-                );
-                self.error_at_node(prop.name, &message, diagnostic_codes::IMPLICIT_ANY_MEMBER);
-            }
+            && let Some(member_name) = self.get_property_name(prop.name)
+        {
+            use crate::checker::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            let message = format_message(
+                diagnostic_messages::MEMBER_IMPLICIT_ANY,
+                &[&member_name, "any"],
+            );
+            self.error_at_node(prop.name, &message, diagnostic_codes::IMPLICIT_ANY_MEMBER);
+        }
     }
 
     /// Check a method declaration.
@@ -23625,13 +23756,14 @@ impl<'a> CheckerState<'a> {
         // Check if we're in a declared class and the method has a body
         if !method.body.is_none()
             && let Some(ref class_info) = self.ctx.enclosing_class
-                && class_info.is_declared {
-                    self.error_at_node(
-                        member_idx,
-                        "An implementation cannot be declared in ambient contexts.",
-                        diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
-                    );
-                }
+            && class_info.is_declared
+        {
+            self.error_at_node(
+                member_idx,
+                "An implementation cannot be declared in ambient contexts.",
+                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+            );
+        }
 
         // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
         let (_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
@@ -23644,16 +23776,17 @@ impl<'a> CheckerState<'a> {
 
             for (i, &param_idx) in method.parameters.nodes.iter().enumerate() {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
-                    && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                        let type_id = if !param.type_annotation.is_none() {
-                            // Use explicit type annotation if present
-                            Some(self.get_type_from_type_node(param.type_annotation))
-                        } else {
-                            // Infer from contextual type
-                            ctx_helper.get_parameter_type(i)
-                        };
-                        param_types.push(type_id);
-                    }
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    let type_id = if !param.type_annotation.is_none() {
+                        // Use explicit type annotation if present
+                        Some(self.get_type_from_type_node(param.type_annotation))
+                    } else {
+                        // Infer from contextual type
+                        ctx_helper.get_parameter_type(i)
+                    };
+                    param_types.push(type_id);
+                }
             }
         }
 
@@ -23685,12 +23818,13 @@ impl<'a> CheckerState<'a> {
         // Check parameter type annotations for parameter properties in function types
         for &param_idx in &method.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
-                && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                    if !param.type_annotation.is_none() {
-                        self.check_type_for_parameter_properties(param.type_annotation);
-                    }
-                    self.maybe_report_implicit_any_parameter(param, false);
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                if !param.type_annotation.is_none() {
+                    self.check_type_for_parameter_properties(param.type_annotation);
                 }
+                self.maybe_report_implicit_any_parameter(param, false);
+            }
         }
 
         // Check return type annotation for parameter properties in function types
@@ -23802,13 +23936,14 @@ impl<'a> CheckerState<'a> {
         // Check if we're in a declared class and the constructor has a body
         if !ctor.body.is_none()
             && let Some(ref class_info) = self.ctx.enclosing_class
-                && class_info.is_declared {
-                    self.error_at_node(
-                        member_idx,
-                        "An implementation cannot be declared in ambient contexts.",
-                        diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
-                    );
-                }
+            && class_info.is_declared
+        {
+            self.error_at_node(
+                member_idx,
+                "An implementation cannot be declared in ambient contexts.",
+                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+            );
+        }
 
         // Check for parameter properties in constructor overload signatures (error 2369)
         // Parameter properties are only allowed in constructor implementations (with body)
@@ -23819,12 +23954,13 @@ impl<'a> CheckerState<'a> {
         // Check parameter type annotations for parameter properties in function types
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
-                && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                    if !param.type_annotation.is_none() {
-                        self.check_type_for_parameter_properties(param.type_annotation);
-                    }
-                    self.maybe_report_implicit_any_parameter(param, false);
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                if !param.type_annotation.is_none() {
+                    self.check_type_for_parameter_properties(param.type_annotation);
                 }
+                self.maybe_report_implicit_any_parameter(param, false);
+            }
         }
 
         // Constructors don't have explicit return types, but they implicitly return the class instance type
@@ -23885,13 +24021,14 @@ impl<'a> CheckerState<'a> {
         // Check if we're in a declared class and the accessor has a body
         if !accessor.body.is_none()
             && let Some(ref class_info) = self.ctx.enclosing_class
-                && class_info.is_declared {
-                    self.error_at_node(
-                        member_idx,
-                        "An implementation cannot be declared in ambient contexts.",
-                        diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
-                    );
-                }
+            && class_info.is_declared
+        {
+            self.error_at_node(
+                member_idx,
+                "An implementation cannot be declared in ambient contexts.",
+                diagnostic_codes::IMPLEMENTATION_CANNOT_BE_IN_AMBIENT_CONTEXT,
+            );
+        }
 
         let is_getter = node.kind == syntax_kind_ext::GET_ACCESSOR;
         let has_type_annotation = is_getter && !accessor.type_annotation.is_none();
@@ -23920,9 +24057,10 @@ impl<'a> CheckerState<'a> {
         if is_getter {
             for &param_idx in &accessor.parameters.nodes {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
-                    && let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                        self.maybe_report_implicit_any_parameter(param, false);
-                    }
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                {
+                    self.maybe_report_implicit_any_parameter(param, false);
+                }
             }
         }
 
@@ -24081,10 +24219,9 @@ impl<'a> CheckerState<'a> {
             return TypeId::UNKNOWN; // Generator support not implemented - use UNKNOWN
         }
 
-        if is_async
-            && let Some(inner) = self.promise_like_return_type_argument(return_type) {
-                return inner;
-            }
+        if is_async && let Some(inner) = self.promise_like_return_type_argument(return_type) {
+            return inner;
+        }
 
         return_type
     }
@@ -24098,9 +24235,10 @@ impl<'a> CheckerState<'a> {
             // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
             // This allows us to extract T from Promise<T> even without full lib files
             if app.base == TypeId::PROMISE_BASE
-                && let Some(&first_arg) = app.args.first() {
-                    return Some(first_arg);
-                }
+                && let Some(&first_arg) = app.args.first()
+            {
+                return Some(first_arg);
+            }
 
             // Try to get the type argument from the base symbol
             if let Some(result) =
@@ -24115,10 +24253,11 @@ impl<'a> CheckerState<'a> {
             // promise_like_type_argument_from_base fails for other reasons
             if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base)
                 && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
-                    && self.is_promise_like_name(symbol.escaped_name.as_str())
-                        && let Some(&first_arg) = app.args.first() {
-                            return Some(first_arg);
-                        }
+                && self.is_promise_like_name(symbol.escaped_name.as_str())
+                && let Some(&first_arg) = app.args.first()
+            {
+                return Some(first_arg);
+            }
         }
 
         // If we can't extract the type argument from a Promise-like type,
@@ -24256,21 +24395,22 @@ impl<'a> CheckerState<'a> {
         // before lowering (e.g., Promise<T> where Promise is from lib and might not fully resolve)
         if let Some(type_node) = self.ctx.arena.get(type_alias.type_node)
             && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
-                && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        && self.is_promise_like_name(ident.escaped_text.as_str()) {
-                            // It's Promise<...> or PromiseLike<...>
-                            // Get the first type argument and substitute bindings
-                            if let Some(type_args) = &type_ref.type_arguments
-                                && let Some(&first_arg_idx) = type_args.nodes.first() {
-                                    // Try to substitute bindings in the type argument
-                                    let arg_type = self
-                                        .lower_type_with_bindings(first_arg_idx, bindings.clone());
-                                    return Some(arg_type);
-                                }
-                            // No type args means Promise (equivalent to Promise<any>)
-                            return Some(TypeId::ANY);
-                        }
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && self.is_promise_like_name(ident.escaped_text.as_str())
+        {
+            // It's Promise<...> or PromiseLike<...>
+            // Get the first type argument and substitute bindings
+            if let Some(type_args) = &type_ref.type_arguments
+                && let Some(&first_arg_idx) = type_args.nodes.first()
+            {
+                // Try to substitute bindings in the type argument
+                let arg_type = self.lower_type_with_bindings(first_arg_idx, bindings.clone());
+                return Some(arg_type);
+            }
+            // No type args means Promise (equivalent to Promise<any>)
+            return Some(TypeId::ANY);
+        }
 
         let lowered = self.lower_type_with_bindings(type_alias.type_node, bindings);
         if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(lowered) {
@@ -24385,10 +24525,11 @@ impl<'a> CheckerState<'a> {
 
             // If it extends Promise<X>, extract X and substitute type parameters
             if let Some(type_args) = type_arguments
-                && let Some(&first_arg_node) = type_args.nodes.first() {
-                    let lowered = self.lower_type_with_bindings(first_arg_node, bindings);
-                    return Some(lowered);
-                }
+                && let Some(&first_arg_node) = type_args.nodes.first()
+            {
+                let lowered = self.lower_type_with_bindings(first_arg_node, bindings);
+                return Some(lowered);
+            }
 
             // Promise with no type argument defaults to Promise<any>
             return Some(TypeId::ANY);
@@ -24441,9 +24582,10 @@ impl<'a> CheckerState<'a> {
                 // Also check for qualified names like SomeModule.Promise
                 if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node)
                     && let Some(right_node) = self.ctx.arena.get(qualified.right)
-                        && let Some(ident) = self.ctx.arena.get_identifier(right_node) {
-                            return self.is_promise_like_name(&ident.escaped_text);
-                        }
+                    && let Some(ident) = self.ctx.arena.get_identifier(right_node)
+                {
+                    return self.is_promise_like_name(&ident.escaped_text);
+                }
             }
         }
 
@@ -24463,9 +24605,10 @@ impl<'a> CheckerState<'a> {
 
         // Check for direct Promise or PromiseLike reference (this also handles type aliases)
         if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-                return self.is_promise_like_name(symbol.escaped_name.as_str());
-            }
+            && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
+        {
+            return self.is_promise_like_name(symbol.escaped_name.as_str());
+        }
 
         false
     }
@@ -24530,13 +24673,15 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 if let Some(ref index) = shape.string_index
-                    && self.type_contains_any_inner(index.value_type, visited) {
-                        return true;
-                    }
+                    && self.type_contains_any_inner(index.value_type, visited)
+                {
+                    return true;
+                }
                 if let Some(ref index) = shape.number_index
-                    && self.type_contains_any_inner(index.value_type, visited) {
-                        return true;
-                    }
+                    && self.type_contains_any_inner(index.value_type, visited)
+                {
+                    return true;
+                }
                 false
             }
             Some(TypeKey::Function(shape_id)) => {
@@ -24586,9 +24731,10 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 if let Some(name_type) = mapped.name_type
-                    && self.type_contains_any_inner(name_type, visited) {
-                        return true;
-                    }
+                    && self.type_contains_any_inner(name_type, visited)
+                {
+                    return true;
+                }
                 self.type_contains_any_inner(mapped.template, visited)
             }
             Some(TypeKey::IndexAccess(base, index)) => {
@@ -24611,24 +24757,28 @@ impl<'a> CheckerState<'a> {
             }
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint
-                    && self.type_contains_any_inner(constraint, visited) {
-                        return true;
-                    }
+                    && self.type_contains_any_inner(constraint, visited)
+                {
+                    return true;
+                }
                 if let Some(default) = info.default
-                    && self.type_contains_any_inner(default, visited) {
-                        return true;
-                    }
+                    && self.type_contains_any_inner(default, visited)
+                {
+                    return true;
+                }
                 false
             }
             Some(TypeKey::Infer(info)) => {
                 if let Some(constraint) = info.constraint
-                    && self.type_contains_any_inner(constraint, visited) {
-                        return true;
-                    }
+                    && self.type_contains_any_inner(constraint, visited)
+                {
+                    return true;
+                }
                 if let Some(default) = info.default
-                    && self.type_contains_any_inner(default, visited) {
-                        return true;
-                    }
+                    && self.type_contains_any_inner(default, visited)
+                {
+                    return true;
+                }
                 false
             }
             Some(TypeKey::TypeQuery(_))
@@ -24682,13 +24832,15 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 if let Some(ref index) = shape.string_index
-                    && self.type_contains_error_inner(index.value_type, visited) {
-                        return true;
-                    }
+                    && self.type_contains_error_inner(index.value_type, visited)
+                {
+                    return true;
+                }
                 if let Some(ref index) = shape.number_index
-                    && self.type_contains_error_inner(index.value_type, visited) {
-                        return true;
-                    }
+                    && self.type_contains_error_inner(index.value_type, visited)
+                {
+                    return true;
+                }
                 false
             }
             Some(TypeKey::Function(shape_id)) => {
@@ -24738,9 +24890,10 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 if let Some(name_type) = mapped.name_type
-                    && self.type_contains_error_inner(name_type, visited) {
-                        return true;
-                    }
+                    && self.type_contains_error_inner(name_type, visited)
+                {
+                    return true;
+                }
                 self.type_contains_error_inner(mapped.template, visited)
             }
             Some(TypeKey::IndexAccess(base, index)) => {
@@ -24763,24 +24916,28 @@ impl<'a> CheckerState<'a> {
             }
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint
-                    && self.type_contains_error_inner(constraint, visited) {
-                        return true;
-                    }
+                    && self.type_contains_error_inner(constraint, visited)
+                {
+                    return true;
+                }
                 if let Some(default) = info.default
-                    && self.type_contains_error_inner(default, visited) {
-                        return true;
-                    }
+                    && self.type_contains_error_inner(default, visited)
+                {
+                    return true;
+                }
                 false
             }
             Some(TypeKey::Infer(info)) => {
                 if let Some(constraint) = info.constraint
-                    && self.type_contains_error_inner(constraint, visited) {
-                        return true;
-                    }
+                    && self.type_contains_error_inner(constraint, visited)
+                {
+                    return true;
+                }
                 if let Some(default) = info.default
-                    && self.type_contains_error_inner(default, visited) {
-                        return true;
-                    }
+                    && self.type_contains_error_inner(default, visited)
+                {
+                    return true;
+                }
                 false
             }
             Some(TypeKey::Error) => true,
@@ -24857,9 +25014,10 @@ impl<'a> CheckerState<'a> {
             return true;
         };
         if body_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(body_node) {
-                return self.block_falls_through(&block.statements.nodes);
-            }
+            && let Some(block) = self.ctx.arena.get_block(body_node)
+        {
+            return self.block_falls_through(&block.statements.nodes);
+        }
         false
     }
 
@@ -25284,23 +25442,23 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::SWITCH_STATEMENT => {
                 if let Some(switch_data) = self.ctx.arena.get_switch(node)
                     && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
-                        && let Some(case_block) = self.ctx.arena.get_block(case_block_node) {
-                            for &clause_idx in &case_block.statements.nodes {
-                                if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                                    && let Some(clause) =
-                                        self.ctx.arena.get_case_clause(clause_node)
-                                    {
-                                        for &stmt_idx in &clause.statements.nodes {
-                                            self.collect_return_types_in_statement(
-                                                stmt_idx,
-                                                return_types,
-                                                saw_empty,
-                                                return_context,
-                                            );
-                                        }
-                                    }
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt_idx in &clause.statements.nodes {
+                                self.collect_return_types_in_statement(
+                                    stmt_idx,
+                                    return_types,
+                                    saw_empty,
+                                    return_context,
+                                );
                             }
                         }
+                    }
+                }
             }
             syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_data) = self.ctx.arena.get_try(node) {
@@ -25365,9 +25523,10 @@ impl<'a> CheckerState<'a> {
 
         // For block bodies, check all statements
         if node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(node) {
-                return self.statements_have_return_with_value(&block.statements.nodes);
-            }
+            && let Some(block) = self.ctx.arena.get_block(node)
+        {
+            return self.statements_have_return_with_value(&block.statements.nodes);
+        }
 
         false
     }
@@ -25417,21 +25576,20 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::SWITCH_STATEMENT => {
                 if let Some(switch_data) = self.ctx.arena.get_switch(node)
-                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block) {
-                        // Case block is stored as a Block containing case clauses
-                        if let Some(case_block) = self.ctx.arena.get_block(case_block_node) {
-                            for &clause_idx in &case_block.statements.nodes {
-                                if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                                    && let Some(clause) =
-                                        self.ctx.arena.get_case_clause(clause_node)
-                                        && self.statements_have_return_with_value(
-                                            &clause.statements.nodes,
-                                        ) {
-                                            return true;
-                                        }
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                {
+                    // Case block is stored as a Block containing case clauses
+                    if let Some(case_block) = self.ctx.arena.get_block(case_block_node) {
+                        for &clause_idx in &case_block.statements.nodes {
+                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                                && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                                && self.statements_have_return_with_value(&clause.statements.nodes)
+                            {
+                                return true;
                             }
                         }
                     }
+                }
                 false
             }
             syntax_kind_ext::TRY_STATEMENT => {
@@ -25480,15 +25638,16 @@ impl<'a> CheckerState<'a> {
         // Find the containing class for this member
         if let Some(class_idx) = self.find_containing_class(member_idx)
             && let Some(class_node) = self.ctx.arena.get(class_idx)
-                && let Some(class_data) = self.ctx.arena.get_class(class_node) {
-                    // Check if this class has a base class (extends clause)
-                    if self.class_has_base(class_data) {
-                        // In derived classes, properties need definite assignment
-                        // unless they have explicit initializers or definite assignment assertion
-                        // This catches cases like: class B extends A { property: any; }
-                        return true;
-                    }
-                }
+            && let Some(class_data) = self.ctx.arena.get_class(class_node)
+        {
+            // Check if this class has a base class (extends clause)
+            if self.class_has_base(class_data) {
+                // In derived classes, properties need definite assignment
+                // unless they have explicit initializers or definite assignment assertion
+                // This catches cases like: class B extends A { property: any; }
+                return true;
+            }
+        }
         false
     }
 
@@ -25563,24 +25722,28 @@ impl<'a> CheckerState<'a> {
                 // Check modifiers on various declaration types for DeclareKeyword
                 // Variable statements
                 if let Some(var_stmt) = self.ctx.arena.get_variable(node)
-                    && self.has_declare_modifier(&var_stmt.modifiers) {
-                        return true;
-                    }
+                    && self.has_declare_modifier(&var_stmt.modifiers)
+                {
+                    return true;
+                }
                 // Function declarations
                 if let Some(func) = self.ctx.arena.get_function(node)
-                    && self.has_declare_modifier(&func.modifiers) {
-                        return true;
-                    }
+                    && self.has_declare_modifier(&func.modifiers)
+                {
+                    return true;
+                }
                 // Class declarations
                 if let Some(class) = self.ctx.arena.get_class(node)
-                    && self.has_declare_modifier(&class.modifiers) {
-                        return true;
-                    }
+                    && self.has_declare_modifier(&class.modifiers)
+                {
+                    return true;
+                }
                 // Enum declarations
                 if let Some(enum_decl) = self.ctx.arena.get_enum(node)
-                    && self.has_declare_modifier(&enum_decl.modifiers) {
-                        return true;
-                    }
+                    && self.has_declare_modifier(&enum_decl.modifiers)
+                {
+                    return true;
+                }
                 // Interface declarations (interfaces are implicitly ambient)
                 if self.ctx.arena.get_interface(node).is_some() {
                     return true;
@@ -25591,9 +25754,10 @@ impl<'a> CheckerState<'a> {
                 }
                 // Module/namespace declarations
                 if let Some(module) = self.ctx.arena.get_module(node)
-                    && self.has_declare_modifier(&module.modifiers) {
-                        return true;
-                    }
+                    && self.has_declare_modifier(&module.modifiers)
+                {
+                    return true;
+                }
             }
 
             // Move to parent node

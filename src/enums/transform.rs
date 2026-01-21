@@ -385,9 +385,10 @@ impl<'a> EnumTransformer<'a> {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
                 if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::ConstKeyword as u16 {
-                        return true;
-                    }
+                    && node.kind == SyntaxKind::ConstKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -397,9 +398,10 @@ impl<'a> EnumTransformer<'a> {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
                 if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::DeclareKeyword as u16 {
-                        return true;
-                    }
+                    && node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -407,9 +409,10 @@ impl<'a> EnumTransformer<'a> {
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
         if let Some(node) = self.arena.get(idx)
-            && let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
+            && let Some(ident) = self.arena.get_identifier(node)
+        {
+            return ident.escaped_text.clone();
+        }
         String::new()
     }
 
@@ -462,9 +465,10 @@ impl<'a> ConstEnumInliner<'a> {
 
         for &stmt_idx in &source_file.statements.nodes {
             if let Some(stmt_node) = self.transformer.arena.get(stmt_idx)
-                && stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                    self.transformer.register_enum(stmt_idx);
-                }
+                && stmt_node.kind == syntax_kind_ext::ENUM_DECLARATION
+            {
+                self.transformer.register_enum(stmt_idx);
+            }
         }
     }
 
@@ -498,17 +502,18 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena);
-                    transformer.register_enum(enum_idx);
-                    let output = transformer.emit_enum_es5(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut transformer = EnumTransformer::new(&parser.arena);
+            transformer.register_enum(enum_idx);
+            let output = transformer.emit_enum_es5(enum_idx);
 
-                    assert!(output.contains("var E;"));
-                    assert!(output.contains("(function (E)"));
-                    assert!(output.contains("E[E[\"A\"] = 0] = \"A\""));
-                    assert!(output.contains("E[E[\"B\"] = 1] = \"B\""));
-                    assert!(output.contains("E[E[\"C\"] = 2] = \"C\""));
-                }
+            assert!(output.contains("var E;"));
+            assert!(output.contains("(function (E)"));
+            assert!(output.contains("E[E[\"A\"] = 0] = \"A\""));
+            assert!(output.contains("E[E[\"B\"] = 1] = \"B\""));
+            assert!(output.contains("E[E[\"C\"] = 2] = \"C\""));
+        }
     }
 
     #[test]
@@ -517,19 +522,20 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena);
-                    transformer.register_enum(enum_idx);
-                    let output = transformer.emit_enum_es5(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut transformer = EnumTransformer::new(&parser.arena);
+            transformer.register_enum(enum_idx);
+            let output = transformer.emit_enum_es5(enum_idx);
 
-                    // String enums should NOT have reverse mapping
-                    assert!(output.contains("S[\"A\"] = \"alpha\""));
-                    assert!(output.contains("S[\"B\"] = \"beta\""));
-                    assert!(
-                        !output.contains("S[S["),
-                        "String enum should not have reverse mapping"
-                    );
-                }
+            // String enums should NOT have reverse mapping
+            assert!(output.contains("S[\"A\"] = \"alpha\""));
+            assert!(output.contains("S[\"B\"] = \"beta\""));
+            assert!(
+                !output.contains("S[S["),
+                "String enum should not have reverse mapping"
+            );
+        }
     }
 
     #[test]
@@ -538,13 +544,14 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena);
-                    transformer.register_enum(enum_idx);
-                    let output = transformer.emit_enum_es5(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut transformer = EnumTransformer::new(&parser.arena);
+            transformer.register_enum(enum_idx);
+            let output = transformer.emit_enum_es5(enum_idx);
 
-                    assert!(output.is_empty(), "Const enum should be erased by default");
-                }
+            assert!(output.is_empty(), "Const enum should be erased by default");
+        }
     }
 
     #[test]
@@ -553,21 +560,22 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let options = EnumTransformOptions {
-                        preserve_const_enums: true,
-                        ..Default::default()
-                    };
-                    let mut transformer = EnumTransformer::with_options(&parser.arena, options);
-                    transformer.register_enum(enum_idx);
-                    let output = transformer.emit_enum_es5(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let options = EnumTransformOptions {
+                preserve_const_enums: true,
+                ..Default::default()
+            };
+            let mut transformer = EnumTransformer::with_options(&parser.arena, options);
+            transformer.register_enum(enum_idx);
+            let output = transformer.emit_enum_es5(enum_idx);
 
-                    assert!(
-                        !output.is_empty(),
-                        "Const enum should be preserved with option"
-                    );
-                    assert!(output.contains("var CE;"));
-                }
+            assert!(
+                !output.is_empty(),
+                "Const enum should be preserved with option"
+            );
+            assert!(output.contains("var CE;"));
+        }
     }
 
     #[test]
@@ -576,19 +584,19 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena);
-                    transformer.register_enum(enum_idx);
-                    transformer.evaluate_enum(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut transformer = EnumTransformer::new(&parser.arena);
+            transformer.register_enum(enum_idx);
+            transformer.evaluate_enum(enum_idx);
 
-                    // Try to inline
-                    let inlined_up = transformer.try_inline_const_enum_access("Direction", "Up");
-                    let inlined_down =
-                        transformer.try_inline_const_enum_access("Direction", "Down");
+            // Try to inline
+            let inlined_up = transformer.try_inline_const_enum_access("Direction", "Up");
+            let inlined_down = transformer.try_inline_const_enum_access("Direction", "Down");
 
-                    assert_eq!(inlined_up, Some("1".to_string()));
-                    assert_eq!(inlined_down, Some("2".to_string()));
-                }
+            assert_eq!(inlined_up, Some("1".to_string()));
+            assert_eq!(inlined_down, Some("2".to_string()));
+        }
     }
 
     #[test]
@@ -597,18 +605,19 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let options = EnumTransformOptions {
-                        emit_comments: true,
-                        ..Default::default()
-                    };
-                    let mut transformer = EnumTransformer::with_options(&parser.arena, options);
-                    transformer.register_enum(enum_idx);
-                    transformer.evaluate_enum(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let options = EnumTransformOptions {
+                emit_comments: true,
+                ..Default::default()
+            };
+            let mut transformer = EnumTransformer::with_options(&parser.arena, options);
+            transformer.register_enum(enum_idx);
+            transformer.evaluate_enum(enum_idx);
 
-                    let inlined = transformer.try_inline_const_enum_access("Flags", "Read");
-                    assert_eq!(inlined, Some("1 /* Read */".to_string()));
-                }
+            let inlined = transformer.try_inline_const_enum_access("Flags", "Read");
+            assert_eq!(inlined, Some("1 /* Read */".to_string()));
+        }
     }
 
     #[test]
@@ -617,13 +626,14 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena);
-                    transformer.register_enum(enum_idx);
-                    let output = transformer.emit_enum_es5(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut transformer = EnumTransformer::new(&parser.arena);
+            transformer.register_enum(enum_idx);
+            let output = transformer.emit_enum_es5(enum_idx);
 
-                    assert!(output.is_empty(), "Declare enum should be erased");
-                }
+            assert!(output.is_empty(), "Declare enum should be erased");
+        }
     }
 
     #[test]
@@ -632,13 +642,14 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root_idx)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumTransformer::new(&parser.arena);
-                    transformer.register_enum(enum_idx);
-                    let values = transformer.evaluate_enum(enum_idx);
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut transformer = EnumTransformer::new(&parser.arena);
+            transformer.register_enum(enum_idx);
+            let values = transformer.evaluate_enum(enum_idx);
 
-                    assert_eq!(values.get("A"), Some(&EnumValue::Number(4))); // 1 << 2
-                    assert_eq!(values.get("B"), Some(&EnumValue::Number(7))); // 3 | 4
-                }
+            assert_eq!(values.get("A"), Some(&EnumValue::Number(4))); // 1 << 2
+            assert_eq!(values.get("B"), Some(&EnumValue::Number(7))); // 3 | 4
+        }
     }
 }

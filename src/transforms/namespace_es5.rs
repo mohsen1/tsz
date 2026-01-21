@@ -141,9 +141,10 @@ impl<'a> NamespaceES5Emitter<'a> {
                 self.collect_name_parts(qn_data.right, parts);
             }
         } else if node.kind == SyntaxKind::Identifier as u16
-            && let Some(ident) = self.arena.get_identifier(node) {
-                parts.push(ident.escaped_text.clone());
-            }
+            && let Some(ident) = self.arena.get_identifier(node)
+        {
+            parts.push(ident.escaped_text.clone());
+        }
     }
 
     /// Emit nested IIFEs for qualified namespace names
@@ -451,7 +452,8 @@ impl<'a> NamespaceES5Emitter<'a> {
                     output.push_str(&format!("{}.{} = {};", ns_name, func_name, func_name));
                     output.push('\n');
                 } else {
-                    let inner_ir = transform_context.transform_function_in_namespace(ns_name, member_idx)?;
+                    let inner_ir =
+                        transform_context.transform_function_in_namespace(ns_name, member_idx)?;
                     push_ir(inner_ir);
                 }
             }
@@ -469,7 +471,9 @@ impl<'a> NamespaceES5Emitter<'a> {
                     }
                     output.push_str(&format!("{}.{} = {};", ns_name, class_name, class_name));
                     output.push('\n');
-                } else if let Some(class_output) = self.transform_namespace_class_string(ns_name, member_idx) {
+                } else if let Some(class_output) =
+                    self.transform_namespace_class_string(ns_name, member_idx)
+                {
                     output.push_str(&class_output);
                 }
             }
@@ -482,12 +486,13 @@ impl<'a> NamespaceES5Emitter<'a> {
                 let decl_list = &var_data.declarations;
                 for &decl_idx in &decl_list.nodes {
                     if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(var_decl) = self.arena.get_variable_declaration(decl_node) {
-                            let name = self.get_identifier_text(var_decl.name);
-                            if !name.is_empty() {
-                                var_names.push(name);
-                            }
+                        && let Some(var_decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        let name = self.get_identifier_text(var_decl.name);
+                        if !name.is_empty() {
+                            var_names.push(name);
                         }
+                    }
                 }
 
                 if is_exported {
@@ -502,7 +507,8 @@ impl<'a> NamespaceES5Emitter<'a> {
                         output.push('\n');
                     }
                 } else {
-                    let inner_ir = transform_context.transform_variable_in_namespace(ns_name, member_idx)?;
+                    let inner_ir =
+                        transform_context.transform_variable_in_namespace(ns_name, member_idx)?;
                     push_ir(inner_ir);
                 }
             }
@@ -524,7 +530,8 @@ impl<'a> NamespaceES5Emitter<'a> {
                     }
                     output.push_str(&format!("{}.{} = {};", ns_name, enum_name, enum_name));
                     output.push('\n');
-                } else if let Some(enum_ir) = self.transform_namespace_enum_ir(ns_name, member_idx) {
+                } else if let Some(enum_ir) = self.transform_namespace_enum_ir(ns_name, member_idx)
+                {
                     output.push_str(&enum_ir);
                 }
             }
@@ -809,40 +816,41 @@ impl<'a> NamespaceES5Emitter<'a> {
         let mut value = 0i64;
         for &member_idx in &enum_data.members.nodes {
             if let Some(member_node) = self.arena.get(member_idx)
-                && let Some(member_data) = self.arena.get_enum_member(member_node) {
-                    let member_name = self.get_identifier_text(member_data.name);
+                && let Some(member_data) = self.arena.get_enum_member(member_node)
+            {
+                let member_name = self.get_identifier_text(member_data.name);
 
-                    // Check for initializer
-                    if !member_data.initializer.is_none() {
-                        // EnumName[EnumName["Name"] = value] = "Name";
-                        self.write_indent();
-                        self.write(&enum_name);
-                        self.write("[");
-                        self.write(&enum_name);
-                        self.write("[\"");
-                        self.write(&member_name);
-                        self.write("\"] = ");
-                        self.emit_expression(member_data.initializer);
-                        self.write("] = \"");
-                        self.write(&member_name);
-                        self.write("\";");
-                        self.write_line();
-                    } else {
-                        self.write_indent();
-                        self.write(&enum_name);
-                        self.write("[");
-                        self.write(&enum_name);
-                        self.write("[\"");
-                        self.write(&member_name);
-                        self.write("\"] = ");
-                        self.write_i64(value);
-                        self.write("] = \"");
-                        self.write(&member_name);
-                        self.write("\";");
-                        self.write_line();
-                        value += 1;
-                    }
+                // Check for initializer
+                if !member_data.initializer.is_none() {
+                    // EnumName[EnumName["Name"] = value] = "Name";
+                    self.write_indent();
+                    self.write(&enum_name);
+                    self.write("[");
+                    self.write(&enum_name);
+                    self.write("[\"");
+                    self.write(&member_name);
+                    self.write("\"] = ");
+                    self.emit_expression(member_data.initializer);
+                    self.write("] = \"");
+                    self.write(&member_name);
+                    self.write("\";");
+                    self.write_line();
+                } else {
+                    self.write_indent();
+                    self.write(&enum_name);
+                    self.write("[");
+                    self.write(&enum_name);
+                    self.write("[\"");
+                    self.write(&member_name);
+                    self.write("\"] = ");
+                    self.write_i64(value);
+                    self.write("] = \"");
+                    self.write(&member_name);
+                    self.write("\";");
+                    self.write_line();
+                    value += 1;
                 }
+            }
         }
 
         self.decrease_indent();
@@ -938,10 +946,11 @@ impl<'a> NamespaceES5Emitter<'a> {
             first = false;
 
             if let Some(param_node) = self.arena.get(param_idx)
-                && let Some(param) = self.arena.get_parameter(param_node) {
-                    let name = self.get_identifier_text(param.name);
-                    self.write(&name);
-                }
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                let name = self.get_identifier_text(param.name);
+                self.write(&name);
+            }
         }
     }
 
@@ -1033,9 +1042,10 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
         if let Some(node) = self.arena.get(idx)
-            && let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
+            && let Some(ident) = self.arena.get_identifier(node)
+        {
+            return ident.escaped_text.clone();
+        }
         String::new()
     }
 
@@ -1043,9 +1053,10 @@ impl<'a> NamespaceES5Emitter<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ExportKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -1068,7 +1079,11 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     /// Get the export modifier status, either from modifiers or source text
-    fn get_export_status(&self, modifiers: &Option<NodeList>, node: &crate::parser::node::Node) -> bool {
+    fn get_export_status(
+        &self,
+        modifiers: &Option<NodeList>,
+        node: &crate::parser::node::Node,
+    ) -> bool {
         self.has_export_modifier(modifiers) || self.has_export_in_source(node)
     }
 
@@ -1113,11 +1128,12 @@ mod tests {
         // Find the namespace declaration
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&ns_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = NamespaceES5Emitter::new(&parser.arena);
-                    emitter.set_source_text(source);
-                    return emitter.emit_namespace(ns_idx);
-                }
+            && let Some(&ns_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = NamespaceES5Emitter::new(&parser.arena);
+            emitter.set_source_text(source);
+            return emitter.emit_namespace(ns_idx);
+        }
         String::new()
     }
 

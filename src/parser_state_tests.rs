@@ -76,8 +76,12 @@ fn test_parser_numeric_separator_invalid_diagnostic() {
     let diag = diagnostics
         .iter()
         .find(|diag| diag.code == diagnostic_codes::NUMERIC_SEPARATORS_NOT_ALLOWED_HERE)
-        .unwrap_or_else(|| panic!("Expected numeric separator diagnostic, got: {:?}",
-            diagnostics));
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected numeric separator diagnostic, got: {:?}",
+                diagnostics
+            )
+        });
     let underscore_pos = source.find('_').expect("underscore not found") as u32;
     assert_eq!(diag.start, underscore_pos);
     assert_eq!(diag.length, 1);
@@ -95,8 +99,12 @@ fn test_parser_numeric_separator_consecutive_diagnostic() {
         .find(|diag| {
             diag.code == diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED
         })
-        .unwrap_or_else(|| panic!("Expected consecutive separator diagnostic, got: {:?}",
-            diagnostics));
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected consecutive separator diagnostic, got: {:?}",
+                diagnostics
+            )
+        });
     let underscore_pos = source.find("__").expect("double underscore not found") as u32 + 1;
     assert_eq!(diag.start, underscore_pos);
     assert_eq!(diag.length, 1);

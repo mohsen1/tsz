@@ -283,9 +283,10 @@ impl ModuleResolver {
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Step 1: Try path mappings first (if configured)
         if !self.path_mappings.is_empty()
-            && let Some(resolved) = self.try_path_mappings(specifier, containing_dir) {
-                return Ok(resolved);
-            }
+            && let Some(resolved) = self.try_path_mappings(specifier, containing_dir)
+        {
+            return Ok(resolved);
+        }
 
         // Step 2: Handle relative imports
         if specifier.starts_with("./") || specifier.starts_with("../") {
@@ -443,9 +444,10 @@ impl ModuleResolver {
                     specifier,
                     containing_file,
                     specifier_span,
-                ) {
-                    return Ok(resolved);
-                }
+                )
+            {
+                return Ok(resolved);
+            }
         }
 
         Err(ResolutionFailure::NotFound {
@@ -480,19 +482,17 @@ impl ModuleResolver {
                 ModuleResolutionKind::Node16
                     | ModuleResolutionKind::NodeNext
                     | ModuleResolutionKind::Bundler
-            )
-                && let Some(exports) = &package_json.exports
-                    && let Some(resolved) =
-                        self.resolve_package_exports(package_dir, exports, subpath)
-                    {
-                        return Ok(ResolvedModule {
-                            resolved_path: resolved.clone(),
-                            is_external: true,
-                            package_name: Some(package_json.name.clone().unwrap_or_default()),
-                            original_specifier: original_specifier.to_string(),
-                            extension: ModuleExtension::from_path(&resolved),
-                        });
-                    }
+            ) && let Some(exports) = &package_json.exports
+                && let Some(resolved) = self.resolve_package_exports(package_dir, exports, subpath)
+            {
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    is_external: true,
+                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    original_specifier: original_specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
 
             // Fall back to direct file resolution
             let file_path = package_dir.join(subpath);
@@ -521,17 +521,17 @@ impl ModuleResolver {
             ModuleResolutionKind::Node16
                 | ModuleResolutionKind::NodeNext
                 | ModuleResolutionKind::Bundler
-        )
-            && let Some(exports) = &package_json.exports
-                && let Some(resolved) = self.resolve_package_exports(package_dir, exports, ".") {
-                    return Ok(ResolvedModule {
-                        resolved_path: resolved.clone(),
-                        is_external: true,
-                        package_name: Some(package_json.name.clone().unwrap_or_default()),
-                        original_specifier: original_specifier.to_string(),
-                        extension: ModuleExtension::from_path(&resolved),
-                    });
-                }
+        ) && let Some(exports) = &package_json.exports
+            && let Some(resolved) = self.resolve_package_exports(package_dir, exports, ".")
+        {
+            return Ok(ResolvedModule {
+                resolved_path: resolved.clone(),
+                is_external: true,
+                package_name: Some(package_json.name.clone().unwrap_or_default()),
+                original_specifier: original_specifier.to_string(),
+                extension: ModuleExtension::from_path(&resolved),
+            });
+        }
 
         // Try types/typings field
         if let Some(types) = package_json.types.or(package_json.typings) {
@@ -605,15 +605,16 @@ impl ModuleResolver {
                 // Try pattern matching (e.g., "./*" or "./lib/*")
                 for (pattern, value) in map {
                     if let Some(matched) = match_export_pattern(pattern, subpath)
-                        && let Some(resolved) = self.resolve_export_value(package_dir, value) {
-                            // Substitute wildcard
-                            let resolved_str = resolved.to_string_lossy();
-                            if resolved_str.contains('*') {
-                                let substituted = resolved_str.replace('*', &matched);
-                                return Some(PathBuf::from(substituted));
-                            }
-                            return Some(resolved);
+                        && let Some(resolved) = self.resolve_export_value(package_dir, value)
+                    {
+                        // Substitute wildcard
+                        let resolved_str = resolved.to_string_lossy();
+                        if resolved_str.contains('*') {
+                            let substituted = resolved_str.replace('*', &matched);
+                            return Some(PathBuf::from(substituted));
                         }
+                        return Some(resolved);
+                    }
                 }
 
                 None
@@ -634,9 +635,9 @@ impl ModuleResolver {
                     if let Some(value) = conditions.get(condition)
                         && let Some(resolved) =
                             self.resolve_package_exports(package_dir, value, subpath)
-                        {
-                            return Some(resolved);
-                        }
+                    {
+                        return Some(resolved);
+                    }
                 }
 
                 None

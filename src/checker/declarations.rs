@@ -295,9 +295,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 )),
                 k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                     // For computed properties, try to get the identifier
-                    self.ctx.arena.get_identifier(name_node).map(|ident| PropertyKey::Computed(ComputedKey::Ident(
-                            ident.escaped_text.clone(),
-                        )))
+                    self.ctx.arena.get_identifier(name_node).map(|ident| {
+                        PropertyKey::Computed(ComputedKey::Ident(ident.escaped_text.clone()))
+                    })
                 }
                 _ => None,
             }
@@ -541,18 +541,20 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Check for binary expression assignment (this.prop = value)
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin_expr) = self.ctx.arena.get_binary_expr(node)
-                && bin_expr.operator_token == SyntaxKind::EqualsToken as u16 {
-                    // Check if left side is a property access (this.prop)
-                    if self.is_this_property_access(bin_expr.left)
-                        && let Some(prop_key) = self.extract_property_key(bin_expr.left) {
-                            // Only track if this property is in our tracked set
-                            if tracked.contains(&prop_key) {
-                                let mut assigned = assigned_in.clone();
-                                assigned.insert(prop_key);
-                                return assigned;
-                            }
-                        }
+            && bin_expr.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            // Check if left side is a property access (this.prop)
+            if self.is_this_property_access(bin_expr.left)
+                && let Some(prop_key) = self.extract_property_key(bin_expr.left)
+            {
+                // Only track if this property is in our tracked set
+                if tracked.contains(&prop_key) {
+                    let mut assigned = assigned_in.clone();
+                    assigned.insert(prop_key);
+                    return assigned;
                 }
+            }
+        }
 
         assigned_in.clone()
     }
@@ -597,7 +599,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return None;
         };
 
-        self.ctx.arena.get_identifier(name_node).map(|ident| PropertyKey::Ident(ident.escaped_text.clone()))
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .map(|ident| PropertyKey::Ident(ident.escaped_text.clone()))
     }
 
     /// Analyze an if statement.
@@ -711,9 +716,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // Finally block always runs, so we can just update current
         if let Some(finally_res) = finally_result
-            && let Some(finally_set) = finally_res.normal {
-                current = finally_set;
-            }
+            && let Some(finally_set) = finally_res.normal
+        {
+            current = finally_set;
+        }
 
         FlowResult {
             normal: Some(current),
@@ -780,20 +786,21 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // Check if this is an ambient external module (declare module "string")
             // inside another namespace/module
             if let Some(name_node) = self.ctx.arena.get(module.name)
-                && name_node.kind == SyntaxKind::StringLiteral as u16 {
-                    // This is an ambient external module with a string name
-                    // Check if it's nested inside a namespace
-                    if self.is_inside_namespace(module_idx) {
-                        self.ctx.error(
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                            "Ambient modules cannot be nested in other modules or namespaces."
-                                .to_string(),
-                            diagnostic_codes::AMBIENT_MODULES_CANNOT_BE_NESTED,
-                        );
-                        return; // Don't emit other errors for nested ambient modules
-                    }
+                && name_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                // This is an ambient external module with a string name
+                // Check if it's nested inside a namespace
+                if self.is_inside_namespace(module_idx) {
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        "Ambient modules cannot be nested in other modules or namespaces."
+                            .to_string(),
+                        diagnostic_codes::AMBIENT_MODULES_CANNOT_BE_NESTED,
+                    );
+                    return; // Don't emit other errors for nested ambient modules
                 }
+            }
 
             // TS5061: Check for relative module names in ambient declarations
             // declare module "./foo" { } -> Error
@@ -801,40 +808,41 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 .ctx
                 .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16)
                 && let Some(name_node) = self.ctx.arena.get(module.name)
-                    && name_node.kind == SyntaxKind::StringLiteral as u16
-                        && let Some(lit) = self.ctx.arena.get_literal(name_node) {
-                            // Check TS5061 first
-                            if self.is_relative_module_name(&lit.text) {
-                                self.ctx.error(
+                && name_node.kind == SyntaxKind::StringLiteral as u16
+                && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            {
+                // Check TS5061 first
+                if self.is_relative_module_name(&lit.text) {
+                    self.ctx.error(
                                     name_node.pos,
                                     name_node.end - name_node.pos,
                                     diagnostic_messages::AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME.to_string(),
                                     diagnostic_codes::AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME,
                                 );
-                            }
-                            // TS2664: Check if the module being augmented exists
-                            // declare module "nonexistent" { } -> Error if module doesn't exist
-                            // Only emit TS2664 if:
-                            // 1. The file is a module file (has import/export statements)
-                            // 2. The file is not a .d.ts file
-                            // In script files (no imports/exports), declare module "xxx" declares
-                            // an ambient external module, which is always valid.
-                            else if !self.module_exists(&lit.text)
-                                && !self.is_declaration_file()
-                                && self.is_external_module()
-                            {
-                                let message = format_message(
-                                    diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION,
-                                    &[&lit.text],
-                                );
-                                self.ctx.error(
-                                    name_node.pos,
-                                    name_node.end - name_node.pos,
-                                    message,
-                                    diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION,
-                                );
-                            }
-                        }
+                }
+                // TS2664: Check if the module being augmented exists
+                // declare module "nonexistent" { } -> Error if module doesn't exist
+                // Only emit TS2664 if:
+                // 1. The file is a module file (has import/export statements)
+                // 2. The file is not a .d.ts file
+                // In script files (no imports/exports), declare module "xxx" declares
+                // an ambient external module, which is always valid.
+                else if !self.module_exists(&lit.text)
+                    && !self.is_declaration_file()
+                    && self.is_external_module()
+                {
+                    let message = format_message(
+                        diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION,
+                        &[&lit.text],
+                    );
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        message,
+                        diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION,
+                    );
+                }
+            }
 
             if !module.body.is_none() {
                 // Check module body (which can be a block or nested module)
@@ -860,9 +868,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn module_exists(&self, module_name: &str) -> bool {
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name) {
-                return true;
-            }
+            && resolved.contains(module_name)
+        {
+            return true;
+        }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
@@ -920,13 +929,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         if node.kind == syntax_kind_ext::MODULE_BLOCK {
             if let Some(block) = self.ctx.arena.get_module_block(node)
-                && let Some(ref stmts) = block.statements {
-                    for &stmt_idx in &stmts.nodes {
-                        // Dispatch to statement/declaration checking
-                        // Currently a no-op - will call StatementChecker
-                        let _ = stmt_idx;
-                    }
+                && let Some(ref stmts) = block.statements
+            {
+                for &stmt_idx in &stmts.nodes {
+                    // Dispatch to statement/declaration checking
+                    // Currently a no-op - will call StatementChecker
+                    let _ = stmt_idx;
                 }
+            }
         } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
             // Nested module
             self.check_module_declaration(body_idx);
@@ -946,15 +956,16 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // If parameter has accessibility modifiers (public/private/protected/readonly)
                 // and we're not in a constructor, report error
                 if param.modifiers.is_some()
-                    && let Some((pos, end)) = self.ctx.get_node_span(param_idx) {
-                        self.ctx.error(
-                            pos,
-                            end - pos,
-                            "A parameter property is only allowed in a constructor implementation."
-                                .to_string(),
-                            diagnostic_codes::PARAMETER_PROPERTY_NOT_ALLOWED,
-                        );
-                    }
+                    && let Some((pos, end)) = self.ctx.get_node_span(param_idx)
+                {
+                    self.ctx.error(
+                        pos,
+                        end - pos,
+                        "A parameter property is only allowed in a constructor implementation."
+                            .to_string(),
+                        diagnostic_codes::PARAMETER_PROPERTY_NOT_ALLOWED,
+                    );
+                }
             }
         }
     }
@@ -995,11 +1006,12 @@ mod tests {
         // Get the variable statement
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
-                    // Test passes if no panic
-                }
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
+            // Test passes if no panic
+        }
     }
 
     #[test]
@@ -1033,33 +1045,34 @@ class Foo {
         // Get the class declaration
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have one TS2564 error for property 'x'
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have one TS2564 error for property 'x'
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        1,
-                        "Expected 1 TS2564 error, got {}",
-                        ts2564_errors.len()
-                    );
+            assert_eq!(
+                ts2564_errors.len(),
+                1,
+                "Expected 1 TS2564 error, got {}",
+                ts2564_errors.len()
+            );
 
-                    // Verify the error message contains 'x'
-                    if let Some(err) = ts2564_errors.first() {
-                        assert!(
-                            err.message_text.contains("x"),
-                            "Error message should contain 'x', got: {}",
-                            err.message_text
-                        );
-                    }
-                }
+            // Verify the error message contains 'x'
+            if let Some(err) = ts2564_errors.first() {
+                assert!(
+                    err.message_text.contains("x"),
+                    "Error message should contain 'x', got: {}",
+                    err.message_text
+                );
+            }
+        }
     }
 
     #[test]
@@ -1092,24 +1105,25 @@ class Foo {
         // Get the class declaration
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have NO TS2564 errors
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have NO TS2564 errors
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        0,
-                        "Expected 0 TS2564 errors, got {}",
-                        ts2564_errors.len()
-                    );
-                }
+            assert_eq!(
+                ts2564_errors.len(),
+                0,
+                "Expected 0 TS2564 errors, got {}",
+                ts2564_errors.len()
+            );
+        }
     }
 
     #[test]
@@ -1142,24 +1156,25 @@ class Foo {
         // Get the class declaration
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have NO TS2564 errors
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have NO TS2564 errors
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        0,
-                        "Expected 0 TS2564 errors, got {}",
-                        ts2564_errors.len()
-                    );
-                }
+            assert_eq!(
+                ts2564_errors.len(),
+                0,
+                "Expected 0 TS2564 errors, got {}",
+                ts2564_errors.len()
+            );
+        }
     }
 
     #[test]
@@ -1188,24 +1203,25 @@ class Foo {
         // Get the class declaration
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have NO TS2564 errors (strict mode disabled)
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have NO TS2564 errors (strict mode disabled)
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        0,
-                        "Expected 0 TS2564 errors when strict mode disabled, got {}",
-                        ts2564_errors.len()
-                    );
-                }
+            assert_eq!(
+                ts2564_errors.len(),
+                0,
+                "Expected 0 TS2564 errors when strict mode disabled, got {}",
+                ts2564_errors.len()
+            );
+        }
     }
 
     // ========== Phase 2 Tests: Control Flow Analysis ==========
@@ -1242,24 +1258,25 @@ class Foo {
 
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have NO TS2564 errors (property initialized in constructor)
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have NO TS2564 errors (property initialized in constructor)
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        0,
-                        "Expected 0 TS2564 errors for constructor-initialized property, got {}",
-                        ts2564_errors.len()
-                    );
-                }
+            assert_eq!(
+                ts2564_errors.len(),
+                0,
+                "Expected 0 TS2564 errors for constructor-initialized property, got {}",
+                ts2564_errors.len()
+            );
+        }
     }
 
     #[test]
@@ -1298,24 +1315,25 @@ class Foo {
 
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have NO TS2564 errors (property initialized on all paths)
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have NO TS2564 errors (property initialized on all paths)
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        0,
-                        "Expected 0 TS2564 errors for property initialized on all paths, got {}",
-                        ts2564_errors.len()
-                    );
-                }
+            assert_eq!(
+                ts2564_errors.len(),
+                0,
+                "Expected 0 TS2564 errors for property initialized on all paths, got {}",
+                ts2564_errors.len()
+            );
+        }
     }
 
     #[test]
@@ -1353,24 +1371,25 @@ class Foo {
 
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have 1 TS2564 error (property not initialized on all paths)
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have 1 TS2564 error (property not initialized on all paths)
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        1,
-                        "Expected 1 TS2564 error for property not initialized on all paths, got {}",
-                        ts2564_errors.len()
-                    );
-                }
+            assert_eq!(
+                ts2564_errors.len(),
+                1,
+                "Expected 1 TS2564 error for property not initialized on all paths, got {}",
+                ts2564_errors.len()
+            );
+        }
     }
 
     #[test]
@@ -1408,24 +1427,25 @@ class Foo {
 
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have 1 TS2564 error (property not initialized on all exit paths)
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have 1 TS2564 error (property not initialized on all exit paths)
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        1,
-                        "Expected 1 TS2564 error for property not initialized before early return, got {}",
-                        ts2564_errors.len()
-                    );
-                }
+            assert_eq!(
+                ts2564_errors.len(),
+                1,
+                "Expected 1 TS2564 error for property not initialized before early return, got {}",
+                ts2564_errors.len()
+            );
+        }
     }
 
     #[test]
@@ -1462,31 +1482,32 @@ class Foo {
 
         if let Some(root_node) = parser.get_arena().get(root)
             && let Some(sf_data) = parser.get_arena().get_source_file(root_node)
-                && let Some(&stmt_idx) = sf_data.statements.nodes.first() {
-                    let mut checker = DeclarationChecker::new(&mut ctx);
-                    checker.check(stmt_idx);
+            && let Some(&stmt_idx) = sf_data.statements.nodes.first()
+        {
+            let mut checker = DeclarationChecker::new(&mut ctx);
+            checker.check(stmt_idx);
 
-                    // Should have 1 TS2564 error for 'y'
-                    let ts2564_errors: Vec<_> = ctx
-                        .diagnostics
-                        .iter()
-                        .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
-                        .collect();
+            // Should have 1 TS2564 error for 'y'
+            let ts2564_errors: Vec<_> = ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code == diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER)
+                .collect();
 
-                    assert_eq!(
-                        ts2564_errors.len(),
-                        1,
-                        "Expected 1 TS2564 error for property 'y', got {}",
-                        ts2564_errors.len()
-                    );
+            assert_eq!(
+                ts2564_errors.len(),
+                1,
+                "Expected 1 TS2564 error for property 'y', got {}",
+                ts2564_errors.len()
+            );
 
-                    if let Some(err) = ts2564_errors.first() {
-                        assert!(
-                            err.message_text.contains("y"),
-                            "Error message should contain 'y', got: {}",
-                            err.message_text
-                        );
-                    }
-                }
+            if let Some(err) = ts2564_errors.first() {
+                assert!(
+                    err.message_text.contains("y"),
+                    "Error message should contain 'y', got: {}",
+                    err.message_text
+                );
+            }
+        }
     }
 }

@@ -267,10 +267,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 target_type: target,
             });
         }
-        if self.is_empty_object_target(target)
-            && self.is_assignable_to_empty_object(source) {
-                return None;
-            }
+        if self.is_empty_object_target(target) && self.is_assignable_to_empty_object(source) {
+            return None;
+        }
 
         self.configure_subtype(self.strict_function_types);
         self.subtype.explain_failure(source, target)

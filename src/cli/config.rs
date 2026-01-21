@@ -74,8 +74,7 @@ pub struct CompilerOptions {
 // Re-export CheckerOptions from checker::context for unified API
 pub use crate::checker::context::CheckerOptions;
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ResolvedCompilerOptions {
     pub printer: PrinterOptions,
     pub checker: CheckerOptions,
@@ -164,7 +163,6 @@ impl ResolvedCompilerOptions {
     }
 }
 
-
 pub fn resolve_compiler_options(
     options: Option<&CompilerOptions>,
 ) -> Result<ResolvedCompilerOptions> {
@@ -237,9 +235,10 @@ pub fn resolve_compiler_options(
 
     let base_url = options.base_url.as_deref().map(str::trim);
     if let Some(base_url) = base_url
-        && !base_url.is_empty() {
-            resolved.base_url = Some(PathBuf::from(base_url));
-        }
+        && !base_url.is_empty()
+    {
+        resolved.base_url = Some(PathBuf::from(base_url));
+    }
 
     if let Some(paths) = options.paths.as_ref() {
         let has_base_url = options
@@ -256,24 +255,28 @@ pub fn resolve_compiler_options(
     }
 
     if let Some(root_dir) = options.root_dir.as_deref()
-        && !root_dir.is_empty() {
-            resolved.root_dir = Some(PathBuf::from(root_dir));
-        }
+        && !root_dir.is_empty()
+    {
+        resolved.root_dir = Some(PathBuf::from(root_dir));
+    }
 
     if let Some(out_dir) = options.out_dir.as_deref()
-        && !out_dir.is_empty() {
-            resolved.out_dir = Some(PathBuf::from(out_dir));
-        }
+        && !out_dir.is_empty()
+    {
+        resolved.out_dir = Some(PathBuf::from(out_dir));
+    }
 
     if let Some(out_file) = options.out_file.as_deref()
-        && !out_file.is_empty() {
-            resolved.out_file = Some(PathBuf::from(out_file));
-        }
+        && !out_file.is_empty()
+    {
+        resolved.out_file = Some(PathBuf::from(out_file));
+    }
 
     if let Some(declaration_dir) = options.declaration_dir.as_deref()
-        && !declaration_dir.is_empty() {
-            resolved.declaration_dir = Some(PathBuf::from(declaration_dir));
-        }
+        && !declaration_dir.is_empty()
+    {
+        resolved.declaration_dir = Some(PathBuf::from(declaration_dir));
+    }
 
     if let Some(declaration) = options.declaration {
         resolved.emit_declarations = declaration;
@@ -288,9 +291,10 @@ pub fn resolve_compiler_options(
     }
 
     if let Some(ts_build_info_file) = options.ts_build_info_file.as_deref()
-        && !ts_build_info_file.is_empty() {
-            resolved.ts_build_info_file = Some(PathBuf::from(ts_build_info_file));
-        }
+        && !ts_build_info_file.is_empty()
+    {
+        resolved.ts_build_info_file = Some(PathBuf::from(ts_build_info_file));
+    }
 
     if let Some(incremental) = options.incremental {
         resolved.incremental = incremental;
@@ -704,18 +708,19 @@ fn strip_jsonc(input: &str) -> String {
         }
 
         if ch == '/'
-            && let Some(&next) = chars.peek() {
-                if next == '/' {
-                    chars.next();
-                    in_line_comment = true;
-                    continue;
-                }
-                if next == '*' {
-                    chars.next();
-                    in_block_comment = true;
-                    continue;
-                }
+            && let Some(&next) = chars.peek()
+        {
+            if next == '/' {
+                chars.next();
+                in_line_comment = true;
+                continue;
             }
+            if next == '*' {
+                chars.next();
+                in_block_comment = true;
+                continue;
+            }
+        }
 
         out.push(ch);
     }
@@ -762,9 +767,10 @@ fn remove_trailing_commas(input: &str) -> String {
             }
 
             if let Some(next) = lookahead.peek().copied()
-                && (next == '}' || next == ']') {
-                    continue;
-                }
+                && (next == '}' || next == ']')
+            {
+                continue;
+            }
         }
 
         out.push(ch);

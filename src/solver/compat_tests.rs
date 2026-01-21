@@ -1,7 +1,7 @@
 use super::*;
 use crate::solver::subtype::SubtypeFailureReason;
 use crate::solver::{
-    CallableShape, CallSignature, ConditionalType, FunctionShape, IndexSignature, MappedType,
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
     ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement, TypeEnvironment,
     TypeParamInfo, TypeSubstitution, instantiate_type,
 };

@@ -1720,15 +1720,17 @@ fn test_source_map_es5_transform_async_try_catch_only_await_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("bar") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("bar")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -8053,19 +8055,20 @@ fn test_source_map_es5_transform_async_nested_arrow_capture_mapping() {
         });
 
         if let Some(mapping) = direct_mapping
-            && mapping.source_index == 0 {
-                let output_line_text = output.lines().nth(mapping.generated_line as usize);
-                let output_slice =
-                    output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-                if let Some(output_slice) = output_slice
-                    && prefixes
-                        .iter()
-                        .any(|prefix| output_slice.starts_with(prefix))
-                    {
-                        mapped = true;
-                        break;
-                    }
+            && mapping.source_index == 0
+        {
+            let output_line_text = output.lines().nth(mapping.generated_line as usize);
+            let output_slice =
+                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+            if let Some(output_slice) = output_slice
+                && prefixes
+                    .iter()
+                    .any(|prefix| output_slice.starts_with(prefix))
+            {
+                mapped = true;
+                break;
             }
+        }
     }
 
     if !mapped {
@@ -8147,19 +8150,20 @@ fn test_source_map_es5_transform_async_try_catch_nested_arrow_mapping() {
         });
 
         if let Some(mapping) = direct_mapping
-            && mapping.source_index == 0 {
-                let output_line_text = output.lines().nth(mapping.generated_line as usize);
-                let output_slice =
-                    output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-                if let Some(output_slice) = output_slice
-                    && prefixes
-                        .iter()
-                        .any(|prefix| output_slice.starts_with(prefix))
-                    {
-                        mapped = true;
-                        break;
-                    }
+            && mapping.source_index == 0
+        {
+            let output_line_text = output.lines().nth(mapping.generated_line as usize);
+            let output_slice =
+                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+            if let Some(output_slice) = output_slice
+                && prefixes
+                    .iter()
+                    .any(|prefix| output_slice.starts_with(prefix))
+            {
+                mapped = true;
+                break;
             }
+        }
     }
 
     if !mapped {
@@ -8236,19 +8240,20 @@ fn test_source_map_es5_transform_async_object_literal_arrow_mapping() {
         });
 
         if let Some(mapping) = direct_mapping
-            && mapping.source_index == 0 {
-                let output_line_text = output.lines().nth(mapping.generated_line as usize);
-                let output_slice =
-                    output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-                if let Some(output_slice) = output_slice
-                    && prefixes
-                        .iter()
-                        .any(|prefix| output_slice.starts_with(prefix))
-                    {
-                        mapped = true;
-                        break;
-                    }
+            && mapping.source_index == 0
+        {
+            let output_line_text = output.lines().nth(mapping.generated_line as usize);
+            let output_slice =
+                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+            if let Some(output_slice) = output_slice
+                && prefixes
+                    .iter()
+                    .any(|prefix| output_slice.starts_with(prefix))
+            {
+                mapped = true;
+                break;
             }
+        }
     }
 
     if !mapped {
@@ -8326,19 +8331,20 @@ fn test_source_map_es5_transform_async_switch_mapping() {
         });
 
         if let Some(mapping) = direct_mapping
-            && mapping.source_index == 0 {
-                let output_line_text = output.lines().nth(mapping.generated_line as usize);
-                let output_slice =
-                    output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-                if let Some(output_slice) = output_slice
-                    && prefixes
-                        .iter()
-                        .any(|prefix| output_slice.starts_with(prefix))
-                    {
-                        mapped = true;
-                        break;
-                    }
+            && mapping.source_index == 0
+        {
+            let output_line_text = output.lines().nth(mapping.generated_line as usize);
+            let output_slice =
+                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+            if let Some(output_slice) = output_slice
+                && prefixes
+                    .iter()
+                    .any(|prefix| output_slice.starts_with(prefix))
+            {
+                mapped = true;
+                break;
             }
+        }
     }
 
     if !mapped {
@@ -8412,15 +8418,17 @@ fn test_source_map_es5_transform_async_for_loop_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -8493,15 +8501,17 @@ fn test_source_map_es5_transform_async_for_loop_await_condition_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -8579,15 +8589,17 @@ fn test_source_map_es5_transform_async_for_loop_await_condition_list_mapping() {
 
         let mut mapped = false;
         if let Some(mapping) = direct_mapping
-            && mapping.source_index == 0 {
-                let output_line_text = output.lines().nth(mapping.generated_line as usize);
-                let output_slice =
-                    output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-                if let Some(output_slice) = output_slice
-                    && output_slice.starts_with(label) {
-                        mapped = true;
-                    }
+            && mapping.source_index == 0
+        {
+            let output_line_text = output.lines().nth(mapping.generated_line as usize);
+            let output_slice =
+                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+            if let Some(output_slice) = output_slice
+                && output_slice.starts_with(label)
+            {
+                mapped = true;
             }
+        }
 
         if !mapped {
             let (func_line, _) = find_line_col(source, "async function run");
@@ -8661,15 +8673,17 @@ fn test_source_map_es5_transform_async_for_loop_await_initializer_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -8748,15 +8762,17 @@ fn test_source_map_es5_transform_async_for_loop_await_initializer_list_mapping()
 
         let mut mapped = false;
         if let Some(mapping) = direct_mapping
-            && mapping.source_index == 0 {
-                let output_line_text = output.lines().nth(mapping.generated_line as usize);
-                let output_slice =
-                    output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-                if let Some(output_slice) = output_slice
-                    && output_slice.starts_with(label) {
-                        mapped = true;
-                    }
+            && mapping.source_index == 0
+        {
+            let output_line_text = output.lines().nth(mapping.generated_line as usize);
+            let output_slice =
+                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+            if let Some(output_slice) = output_slice
+                && output_slice.starts_with(label)
+            {
+                mapped = true;
             }
+        }
 
         if !mapped {
             let (func_line, _) = find_line_col(source, "async function run");
@@ -8835,15 +8851,17 @@ fn test_source_map_es5_transform_async_for_loop_await_update_list_mapping() {
 
         let mut mapped = false;
         if let Some(mapping) = direct_mapping
-            && mapping.source_index == 0 {
-                let output_line_text = output.lines().nth(mapping.generated_line as usize);
-                let output_slice =
-                    output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-                if let Some(output_slice) = output_slice
-                    && output_slice.starts_with(label) {
-                        mapped = true;
-                    }
+            && mapping.source_index == 0
+        {
+            let output_line_text = output.lines().nth(mapping.generated_line as usize);
+            let output_slice =
+                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+            if let Some(output_slice) = output_slice
+                && output_slice.starts_with(label)
+            {
+                mapped = true;
             }
+        }
 
         if !mapped {
             let (func_line, _) = find_line_col(source, "async function run");
@@ -8917,15 +8935,17 @@ fn test_source_map_es5_transform_async_for_loop_await_update_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9077,15 +9097,17 @@ fn test_source_map_es5_transform_async_while_loop_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9158,15 +9180,17 @@ fn test_source_map_es5_transform_async_do_while_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9239,15 +9263,17 @@ fn test_source_map_es5_transform_async_do_while_await_condition_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9480,15 +9506,17 @@ fn test_source_map_es5_transform_async_for_of_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9561,15 +9589,17 @@ fn test_source_map_es5_transform_async_for_of_await_rhs_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9642,15 +9672,17 @@ fn test_source_map_es5_transform_async_for_in_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9723,15 +9755,17 @@ fn test_source_map_es5_transform_async_for_in_await_rhs_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("foo") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("foo")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9805,15 +9839,17 @@ fn test_source_map_es5_transform_async_switch_default_await_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("bar") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("bar")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9886,15 +9922,17 @@ fn test_source_map_es5_transform_async_switch_default_only_await_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("bar") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("bar")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -9967,15 +10005,17 @@ fn test_source_map_es5_transform_async_switch_case_await_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("bar") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("bar")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");
@@ -10137,15 +10177,17 @@ fn test_source_map_es5_transform_async_switch_await_discriminant_mapping() {
 
     let mut mapped = false;
     if let Some(mapping) = direct_mapping
-        && mapping.source_index == 0 {
-            let output_line_text = output.lines().nth(mapping.generated_line as usize);
-            let output_slice =
-                output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
-            if let Some(output_slice) = output_slice
-                && output_slice.starts_with("payload") {
-                    mapped = true;
-                }
+        && mapping.source_index == 0
+    {
+        let output_line_text = output.lines().nth(mapping.generated_line as usize);
+        let output_slice =
+            output_line_text.and_then(|line| line.get(mapping.generated_column as usize..));
+        if let Some(output_slice) = output_slice
+            && output_slice.starts_with("payload")
+        {
+            mapped = true;
         }
+    }
 
     if !mapped {
         let (func_line, _) = find_line_col(source, "async function run");

@@ -359,9 +359,10 @@ impl<'a> ContextualTypeContext<'a> {
                     if index < elements.len() {
                         return Some(elements[index].type_id);
                     } else if let Some(last_elem) = elements.last()
-                        && last_elem.rest {
-                            return Some(last_elem.type_id);
-                        }
+                        && last_elem.rest
+                    {
+                        return Some(last_elem.type_id);
+                    }
                 }
             }
             Some(param.type_id)
@@ -393,9 +394,10 @@ impl<'a> ContextualTypeContext<'a> {
                     if index < elements.len() {
                         return Some(elements[index].type_id);
                     } else if let Some(last_elem) = elements.last()
-                        && last_elem.rest {
-                            return Some(last_elem.type_id);
-                        }
+                        && last_elem.rest
+                    {
+                        return Some(last_elem.type_id);
+                    }
                 }
             }
             None

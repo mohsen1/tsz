@@ -317,31 +317,33 @@ impl<'a> JsxChecker<'a> {
 
         // Get opening element tag name
         if let Some(opening_node) = self.arena.get(jsx.opening_element)
-            && let Some(opening) = self.arena.get_jsx_opening(opening_node) {
-                let opening_tag = self.get_tag_name(opening.tag_name);
-                let opening_tag_clone = opening_tag.clone();
+            && let Some(opening) = self.arena.get_jsx_opening(opening_node)
+        {
+            let opening_tag = self.get_tag_name(opening.tag_name);
+            let opening_tag_clone = opening_tag.clone();
 
-                // Check closing element tag matches
-                if let Some(closing_node) = self.arena.get(jsx.closing_element)
-                    && let Some(closing) = self.arena.get_jsx_closing(closing_node) {
-                        let closing_tag = self.get_tag_name(closing.tag_name);
+            // Check closing element tag matches
+            if let Some(closing_node) = self.arena.get(jsx.closing_element)
+                && let Some(closing) = self.arena.get_jsx_closing(closing_node)
+            {
+                let closing_tag = self.get_tag_name(closing.tag_name);
 
-                        if opening_tag != closing_tag {
-                            errors.push(JsxError::MismatchedClosingTag {
-                                opening: opening_tag.unwrap_or_default(),
-                                closing: closing_tag.unwrap_or_default(),
-                                pos: closing_node.pos,
-                            });
-                        }
-                    }
-
-                // Check attributes
-                self.check_jsx_attributes(
-                    opening.attributes,
-                    &opening_tag_clone.unwrap_or_default(),
-                    errors,
-                );
+                if opening_tag != closing_tag {
+                    errors.push(JsxError::MismatchedClosingTag {
+                        opening: opening_tag.unwrap_or_default(),
+                        closing: closing_tag.unwrap_or_default(),
+                        pos: closing_node.pos,
+                    });
+                }
             }
+
+            // Check attributes
+            self.check_jsx_attributes(
+                opening.attributes,
+                &opening_tag_clone.unwrap_or_default(),
+                errors,
+            );
+        }
 
         // Check children
         for &child_idx in &jsx.children.nodes {
@@ -399,16 +401,17 @@ impl<'a> JsxChecker<'a> {
 
             if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
                 && let Some(attr) = self.arena.get_jsx_attribute(attr_node)
-                    && let Some(name) = self.get_tag_name(attr.name) {
-                        // Check for duplicate attributes
-                        if seen_keys.contains(&name) {
-                            errors.push(JsxError::DuplicateAttribute {
-                                name: name.clone(),
-                                pos: attr_node.pos,
-                            });
-                        }
-                        seen_keys.insert(name);
-                    }
+                && let Some(name) = self.get_tag_name(attr.name)
+            {
+                // Check for duplicate attributes
+                if seen_keys.contains(&name) {
+                    errors.push(JsxError::DuplicateAttribute {
+                        name: name.clone(),
+                        pos: attr_node.pos,
+                    });
+                }
+                seen_keys.insert(name);
+            }
         }
     }
 

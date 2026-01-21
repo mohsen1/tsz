@@ -461,15 +461,16 @@ fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
 
     // Namespace can merge with class, function, or enum
     if (existing_flags & symbol_flags::MODULE) != 0
-        && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM)) != 0 {
-            return true;
-        }
+        && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM)) != 0
+    {
+        return true;
+    }
     if (new_flags & symbol_flags::MODULE) != 0
         && (existing_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
             != 0
-        {
-            return true;
-        }
+    {
+        return true;
+    }
 
     // Enum can merge with enum
     if (existing_flags & symbol_flags::ENUM) != 0 && (new_flags & symbol_flags::ENUM) != 0 {
@@ -568,63 +569,68 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         for (name, &sym_id) in result.file_locals.iter() {
             if let Some(sym) = result.symbols.get(sym_id)
                 && sym.is_exported
-                    && let Some(&remapped_id) = id_remap.get(&sym_id) {
-                        exports.set(name.clone(), remapped_id);
-                    }
+                && let Some(&remapped_id) = id_remap.get(&sym_id)
+            {
+                exports.set(name.clone(), remapped_id);
+            }
         }
 
         // 2) Default export: add `"default"` entry when present.
         let mut default_export_old: Option<SymbolId> = None;
         if let Some(root_node) = result.arena.get(result.source_file)
-            && let Some(source) = result.arena.get_source_file(root_node) {
-                for &stmt_idx in &source.statements.nodes {
-                    let Some(stmt_node) = result.arena.get(stmt_idx) else {
-                        continue;
-                    };
-                    if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                        continue;
-                    }
-                    let Some(export_decl) = result.arena.get_export_decl(stmt_node) else {
-                        continue;
-                    };
-                    if !export_decl.is_default_export {
-                        continue;
-                    }
-
-                    // `export default <expr>;`
-                    let Some(clause_node) = result.arena.get(export_decl.export_clause) else {
-                        continue;
-                    };
-
-                    // Best-effort: if the default export is a reference to a named declaration
-                    // (identifier/class/function), map `"default"` to that symbol.
-                    //
-                    // This matches the needs of `import X from "./mod"` and keeps the symbol ID
-                    // stable across files without synthesizing a new symbol.
-                    if clause_node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
-                        if let Some(ident) = result.arena.get_identifier(clause_node) {
-                            default_export_old = result.file_locals.get(&ident.escaped_text);
-                        }
-                    } else if let Some(func) = result.arena.get_function(clause_node) {
-                        if let Some(name_node) = result.arena.get(func.name)
-                            && let Some(ident) = result.arena.get_identifier(name_node) {
-                                default_export_old = result.file_locals.get(&ident.escaped_text);
-                            }
-                    } else if let Some(class) = result.arena.get_class(clause_node)
-                        && let Some(name_node) = result.arena.get(class.name)
-                            && let Some(ident) = result.arena.get_identifier(name_node) {
-                                default_export_old = result.file_locals.get(&ident.escaped_text);
-                            }
-
-                    // Only one default export per module.
-                    break;
+            && let Some(source) = result.arena.get_source_file(root_node)
+        {
+            for &stmt_idx in &source.statements.nodes {
+                let Some(stmt_node) = result.arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                    continue;
                 }
+                let Some(export_decl) = result.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                if !export_decl.is_default_export {
+                    continue;
+                }
+
+                // `export default <expr>;`
+                let Some(clause_node) = result.arena.get(export_decl.export_clause) else {
+                    continue;
+                };
+
+                // Best-effort: if the default export is a reference to a named declaration
+                // (identifier/class/function), map `"default"` to that symbol.
+                //
+                // This matches the needs of `import X from "./mod"` and keeps the symbol ID
+                // stable across files without synthesizing a new symbol.
+                if clause_node.kind == crate::scanner::SyntaxKind::Identifier as u16 {
+                    if let Some(ident) = result.arena.get_identifier(clause_node) {
+                        default_export_old = result.file_locals.get(&ident.escaped_text);
+                    }
+                } else if let Some(func) = result.arena.get_function(clause_node) {
+                    if let Some(name_node) = result.arena.get(func.name)
+                        && let Some(ident) = result.arena.get_identifier(name_node)
+                    {
+                        default_export_old = result.file_locals.get(&ident.escaped_text);
+                    }
+                } else if let Some(class) = result.arena.get_class(clause_node)
+                    && let Some(name_node) = result.arena.get(class.name)
+                    && let Some(ident) = result.arena.get_identifier(name_node)
+                {
+                    default_export_old = result.file_locals.get(&ident.escaped_text);
+                }
+
+                // Only one default export per module.
+                break;
             }
+        }
 
         if let Some(old_sym_id) = default_export_old
-            && let Some(&remapped_id) = id_remap.get(&old_sym_id) {
-                exports.set("default".to_string(), remapped_id);
-            }
+            && let Some(&remapped_id) = id_remap.get(&old_sym_id)
+        {
+            exports.set("default".to_string(), remapped_id);
+        }
 
         if !exports.is_empty() {
             module_exports.insert(result.file_name.clone(), exports);
@@ -873,17 +879,19 @@ fn collect_functions_from_node(
             functions.push(node_idx);
             // Also collect nested functions in the body
             if let Some(func) = arena.get_function(node)
-                && !func.body.is_none() {
-                    collect_functions_from_node(arena, func.body, functions);
-                }
+                && !func.body.is_none()
+            {
+                collect_functions_from_node(arena, func.body, functions);
+            }
         }
         k if k == syntax_kind_ext::METHOD_DECLARATION => {
             functions.push(node_idx);
             // Also collect nested functions in the body
             if let Some(method) = arena.get_method_decl(node)
-                && !method.body.is_none() {
-                    collect_functions_from_node(arena, method.body, functions);
-                }
+                && !method.body.is_none()
+            {
+                collect_functions_from_node(arena, method.body, functions);
+            }
         }
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
             if let Some(class) = arena.get_class(node) {
@@ -911,13 +919,10 @@ fn collect_functions_from_node(
                             for &decl_idx in &decl_list.declarations.nodes {
                                 if let Some(decl_node) = arena.get(decl_idx)
                                     && let Some(decl) = arena.get_variable_declaration(decl_node)
-                                        && !decl.initializer.is_none() {
-                                            collect_functions_from_node(
-                                                arena,
-                                                decl.initializer,
-                                                functions,
-                                            );
-                                        }
+                                    && !decl.initializer.is_none()
+                                {
+                                    collect_functions_from_node(arena, decl.initializer, functions);
+                                }
                             }
                         }
                     }
@@ -927,9 +932,10 @@ fn collect_functions_from_node(
         k if k == syntax_kind_ext::EXPORT_DECLARATION => {
             // Export declarations may contain function/class declarations
             if let Some(export) = arena.get_export_decl(node)
-                && !export.export_clause.is_none() {
-                    collect_functions_from_node(arena, export.export_clause, functions);
-                }
+                && !export.export_clause.is_none()
+            {
+                collect_functions_from_node(arena, export.export_clause, functions);
+            }
         }
         _ => {}
     }

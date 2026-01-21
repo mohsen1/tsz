@@ -338,12 +338,13 @@ impl ModuleGraph {
                 // Check for self-loop
                 let id = scc[0];
                 if let Some(m) = self.modules.get(&id)
-                    && m.dependencies.contains(&id) {
-                        self.circular_dependencies.push(CircularDependency {
-                            cycle: scc,
-                            paths: vec![m.path.clone()],
-                        });
-                    }
+                    && m.dependencies.contains(&id)
+                {
+                    self.circular_dependencies.push(CircularDependency {
+                        cycle: scc,
+                        paths: vec![m.path.clone()],
+                    });
+                }
             }
         }
     }
@@ -367,9 +368,10 @@ impl ModuleGraph {
                     &mut temp_visited,
                     &mut result,
                     &mut cycle_path,
-                ) {
-                    return Err(CircularDependencyError { cycle: cycle_path });
-                }
+                )
+            {
+                return Err(CircularDependencyError { cycle: cycle_path });
+            }
         }
 
         // Post-order DFS naturally produces dependencies before dependents,
@@ -427,13 +429,14 @@ impl ModuleGraph {
 
         while let Some(current) = queue.pop_front() {
             if result.insert(current)
-                && let Some(module) = self.modules.get(&current) {
-                    for &dep in &module.dependents {
-                        if !result.contains(&dep) {
-                            queue.push_back(dep);
-                        }
+                && let Some(module) = self.modules.get(&current)
+            {
+                for &dep in &module.dependents {
+                    if !result.contains(&dep) {
+                        queue.push_back(dep);
                     }
                 }
+            }
         }
 
         result
@@ -452,13 +455,14 @@ impl ModuleGraph {
 
         while let Some(current) = queue.pop_front() {
             if result.insert(current)
-                && let Some(module) = self.modules.get(&current) {
-                    for &dep in &module.dependencies {
-                        if !result.contains(&dep) {
-                            queue.push_back(dep);
-                        }
+                && let Some(module) = self.modules.get(&current)
+            {
+                for &dep in &module.dependencies {
+                    if !result.contains(&dep) {
+                        queue.push_back(dep);
                     }
                 }
+            }
         }
 
         result

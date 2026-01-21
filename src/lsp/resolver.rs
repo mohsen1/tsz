@@ -240,13 +240,14 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::MODULE_BLOCK => {
                 if let Some(mod_block) = self.arena.get_module_block(node)
-                    && let Some(ref stmts) = mod_block.statements {
-                        for &stmt in &stmts.nodes {
-                            if let Some(res) = f(self, stmt) {
-                                return Some(res);
-                            }
+                    && let Some(ref stmts) = mod_block.statements
+                {
+                    for &stmt in &stmts.nodes {
+                        if let Some(res) = f(self, stmt) {
+                            return Some(res);
                         }
                     }
+                }
             }
 
             // --- Declarations ---
@@ -263,9 +264,10 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !func.name.is_none()
-                        && let Some(res) = f(self, func.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, func.name)
+                    {
+                        return Some(res);
+                    }
                     if let Some(ref type_params) = func.type_parameters {
                         for &param in &type_params.nodes {
                             if let Some(res) = f(self, param) {
@@ -279,13 +281,15 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !func.type_annotation.is_none()
-                        && let Some(res) = f(self, func.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, func.type_annotation)
+                    {
+                        return Some(res);
+                    }
                     if !func.body.is_none()
-                        && let Some(res) = f(self, func.body) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, func.body)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -298,9 +302,10 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !method.name.is_none()
-                        && let Some(res) = f(self, method.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, method.name)
+                    {
+                        return Some(res);
+                    }
                     if let Some(ref type_params) = method.type_parameters {
                         for &param in &type_params.nodes {
                             if let Some(res) = f(self, param) {
@@ -314,13 +319,15 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !method.type_annotation.is_none()
-                        && let Some(res) = f(self, method.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, method.type_annotation)
+                    {
+                        return Some(res);
+                    }
                     if !method.body.is_none()
-                        && let Some(res) = f(self, method.body) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, method.body)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::CONSTRUCTOR => {
@@ -345,9 +352,10 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !ctor.body.is_none()
-                        && let Some(res) = f(self, ctor.body) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, ctor.body)
+                    {
+                        return Some(res);
+                    }
                 }
             }
 
@@ -363,9 +371,10 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !class.name.is_none()
-                        && let Some(res) = f(self, class.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, class.name)
+                    {
+                        return Some(res);
+                    }
                     if let Some(ref type_params) = class.type_parameters {
                         for &param in &type_params.nodes {
                             if let Some(res) = f(self, param) {
@@ -412,13 +421,15 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !decl.type_annotation.is_none()
-                        && let Some(res) = f(self, decl.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, decl.type_annotation)
+                    {
+                        return Some(res);
+                    }
                     if !decl.initializer.is_none()
-                        && let Some(res) = f(self, decl.initializer) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, decl.initializer)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::PARAMETER => {
@@ -434,13 +445,15 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !param.type_annotation.is_none()
-                        && let Some(res) = f(self, param.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, param.type_annotation)
+                    {
+                        return Some(res);
+                    }
                     if !param.initializer.is_none()
-                        && let Some(res) = f(self, param.initializer) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, param.initializer)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -456,20 +469,23 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !prop.type_annotation.is_none()
-                        && let Some(res) = f(self, prop.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, prop.type_annotation)
+                    {
+                        return Some(res);
+                    }
                     if !prop.initializer.is_none()
-                        && let Some(res) = f(self, prop.initializer) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, prop.initializer)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::DECORATOR => {
                 if let Some(decorator) = self.arena.get_decorator(node)
-                    && let Some(res) = f(self, decorator.expression) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, decorator.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 if let Some(accessor) = self.arena.get_accessor(node) {
@@ -496,22 +512,25 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !accessor.type_annotation.is_none()
-                        && let Some(res) = f(self, accessor.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, accessor.type_annotation)
+                    {
+                        return Some(res);
+                    }
                     if !accessor.body.is_none()
-                        && let Some(res) = f(self, accessor.body) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, accessor.body)
+                    {
+                        return Some(res);
+                    }
                 }
             }
 
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 if let Some(iface) = self.arena.get_interface(node) {
                     if !iface.name.is_none()
-                        && let Some(res) = f(self, iface.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, iface.name)
+                    {
+                        return Some(res);
+                    }
                     if let Some(ref type_params) = iface.type_parameters {
                         for &param in &type_params.nodes {
                             if let Some(res) = f(self, param) {
@@ -536,9 +555,10 @@ impl<'a> ScopeWalker<'a> {
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 if let Some(alias) = self.arena.get_type_alias(node) {
                     if !alias.name.is_none()
-                        && let Some(res) = f(self, alias.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, alias.name)
+                    {
+                        return Some(res);
+                    }
                     if let Some(ref type_params) = alias.type_parameters {
                         for &param in &type_params.nodes {
                             if let Some(res) = f(self, param) {
@@ -547,17 +567,19 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !alias.type_node.is_none()
-                        && let Some(res) = f(self, alias.type_node) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, alias.type_node)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
                     if !enum_decl.name.is_none()
-                        && let Some(res) = f(self, enum_decl.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, enum_decl.name)
+                    {
+                        return Some(res);
+                    }
                     for &member in &enum_decl.members.nodes {
                         if let Some(res) = f(self, member) {
                             return Some(res);
@@ -568,29 +590,33 @@ impl<'a> ScopeWalker<'a> {
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
                     if !module.name.is_none()
-                        && let Some(res) = f(self, module.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, module.name)
+                    {
+                        return Some(res);
+                    }
                     if !module.body.is_none()
-                        && let Some(res) = f(self, module.body) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, module.body)
+                    {
+                        return Some(res);
+                    }
                 }
             }
 
             k if k == syntax_kind_ext::IMPORT_DECLARATION => {
                 if let Some(import) = self.arena.get_import_decl(node)
                     && !import.import_clause.is_none()
-                        && let Some(res) = f(self, import.import_clause) {
-                            return Some(res);
-                        }
+                    && let Some(res) = f(self, import.import_clause)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export) = self.arena.get_export_decl(node)
                     && !export.export_clause.is_none()
-                        && let Some(res) = f(self, export.export_clause) {
-                            return Some(res);
-                        }
+                    && let Some(res) = f(self, export.export_clause)
+                {
+                    return Some(res);
+                }
             }
 
             // --- Statements ---
@@ -603,38 +629,44 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !stmt.else_statement.is_none()
-                        && let Some(res) = f(self, stmt.else_statement) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, stmt.else_statement)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(ret) = self.arena.get_return_statement(node)
                     && !ret.expression.is_none()
-                        && let Some(res) = f(self, ret.expression) {
-                            return Some(res);
-                        }
+                    && let Some(res) = f(self, ret.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr) = self.arena.get_expression_statement(node)
-                    && let Some(res) = f(self, expr.expression) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, expr.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::FOR_STATEMENT => {
                 if let Some(loop_data) = self.arena.get_loop(node) {
                     if !loop_data.initializer.is_none()
-                        && let Some(res) = f(self, loop_data.initializer) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, loop_data.initializer)
+                    {
+                        return Some(res);
+                    }
                     if !loop_data.condition.is_none()
-                        && let Some(res) = f(self, loop_data.condition) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, loop_data.condition)
+                    {
+                        return Some(res);
+                    }
                     if !loop_data.incrementor.is_none()
-                        && let Some(res) = f(self, loop_data.incrementor) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, loop_data.incrementor)
+                    {
+                        return Some(res);
+                    }
                     if let Some(res) = f(self, loop_data.statement) {
                         return Some(res);
                     }
@@ -658,9 +690,10 @@ impl<'a> ScopeWalker<'a> {
             k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::DO_STATEMENT => {
                 if let Some(loop_data) = self.arena.get_loop(node) {
                     if !loop_data.condition.is_none()
-                        && let Some(res) = f(self, loop_data.condition) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, loop_data.condition)
+                    {
+                        return Some(res);
+                    }
                     if let Some(res) = f(self, loop_data.statement) {
                         return Some(res);
                     }
@@ -695,21 +728,21 @@ impl<'a> ScopeWalker<'a> {
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 if node.has_data()
                     && let Some(tagged) = self.arena.tagged_templates.get(node.data_index as usize)
-                    {
-                        if let Some(res) = f(self, tagged.tag) {
-                            return Some(res);
-                        }
-                        if let Some(ref type_args) = tagged.type_arguments {
-                            for &arg in &type_args.nodes {
-                                if let Some(res) = f(self, arg) {
-                                    return Some(res);
-                                }
+                {
+                    if let Some(res) = f(self, tagged.tag) {
+                        return Some(res);
+                    }
+                    if let Some(ref type_args) = tagged.type_arguments {
+                        for &arg in &type_args.nodes {
+                            if let Some(res) = f(self, arg) {
+                                return Some(res);
                             }
                         }
-                        if let Some(res) = f(self, tagged.template) {
-                            return Some(res);
-                        }
                     }
+                    if let Some(res) = f(self, tagged.template) {
+                        return Some(res);
+                    }
+                }
             }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
@@ -725,9 +758,10 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.arena.get_parenthesized(node)
-                    && let Some(res) = f(self, paren.expression) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, paren.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::TYPE_ASSERTION
                 || k == syntax_kind_ext::AS_EXPRESSION
@@ -736,15 +770,16 @@ impl<'a> ScopeWalker<'a> {
                 if node.has_data()
                     && let Some(assertion) =
                         self.arena.type_assertions.get(node.data_index as usize)
-                    {
-                        if let Some(res) = f(self, assertion.expression) {
-                            return Some(res);
-                        }
-                        if !assertion.type_node.is_none()
-                            && let Some(res) = f(self, assertion.type_node) {
-                                return Some(res);
-                            }
+                {
+                    if let Some(res) = f(self, assertion.expression) {
+                        return Some(res);
                     }
+                    if !assertion.type_node.is_none()
+                        && let Some(res) = f(self, assertion.type_node)
+                    {
+                        return Some(res);
+                    }
+                }
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
@@ -785,24 +820,27 @@ impl<'a> ScopeWalker<'a> {
                 if let Some(binding) = self.arena.get_binding_element(node) {
                     if !binding.property_name.is_none()
                         && let Some(prop_node) = self.arena.get(binding.property_name)
-                            && prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                                && let Some(res) = f(self, binding.property_name) {
-                                    return Some(res);
-                                }
+                        && prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && let Some(res) = f(self, binding.property_name)
+                    {
+                        return Some(res);
+                    }
                     if let Some(res) = f(self, binding.name) {
                         return Some(res);
                     }
                     if !binding.initializer.is_none()
-                        && let Some(res) = f(self, binding.initializer) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, binding.initializer)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                 if let Some(computed) = self.arena.get_computed_property(node)
-                    && let Some(res) = f(self, computed.expression) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, computed.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
                 if let Some(cond) = self.arena.get_conditional_expr(node) {
@@ -875,9 +913,10 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::JSX_CLOSING_ELEMENT => {
                 if let Some(closing) = self.arena.get_jsx_closing(node)
-                    && let Some(res) = f(self, closing.tag_name) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, closing.tag_name)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::JSX_FRAGMENT => {
                 if let Some(fragment) = self.arena.get_jsx_fragment(node) {
@@ -909,23 +948,26 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !attr.initializer.is_none()
-                        && let Some(res) = f(self, attr.initializer) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, attr.initializer)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE => {
                 if let Some(spread) = self.arena.get_jsx_spread_attribute(node)
-                    && let Some(res) = f(self, spread.expression) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, spread.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::JSX_EXPRESSION => {
                 if let Some(expr) = self.arena.get_jsx_expression(node)
                     && !expr.expression.is_none()
-                        && let Some(res) = f(self, expr.expression) {
-                            return Some(res);
-                        }
+                    && let Some(res) = f(self, expr.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::JSX_NAMESPACED_NAME => {
                 if let Some(ns) = self.arena.get_jsx_namespaced_name(node) {
@@ -941,9 +983,10 @@ impl<'a> ScopeWalker<'a> {
                 || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
             {
                 if let Some(unary) = self.arena.get_unary_expr(node)
-                    && let Some(res) = f(self, unary.operand) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, unary.operand)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::AWAIT_EXPRESSION
                 || k == syntax_kind_ext::YIELD_EXPRESSION
@@ -951,9 +994,10 @@ impl<'a> ScopeWalker<'a> {
             {
                 if node.has_data()
                     && let Some(unary) = self.arena.unary_exprs_ex.get(node.data_index as usize)
-                        && let Some(res) = f(self, unary.expression) {
-                            return Some(res);
-                        }
+                    && let Some(res) = f(self, unary.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 if let Some(prop) = self.arena.get_shorthand_property(node) {
@@ -961,18 +1005,20 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !prop.object_assignment_initializer.is_none()
-                        && let Some(res) = f(self, prop.object_assignment_initializer) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, prop.object_assignment_initializer)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::SPREAD_ELEMENT
                 || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
             {
                 if let Some(spread) = self.arena.get_spread(node)
-                    && let Some(res) = f(self, spread.expression) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, spread.expression)
+                {
+                    return Some(res);
+                }
             }
 
             // --- Types ---
@@ -1039,9 +1085,10 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 if let Some(op) = self.arena.get_type_operator(node)
-                    && let Some(res) = f(self, op.type_node) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, op.type_node)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::TYPE_PREDICATE => {
                 if let Some(pred) = self.arena.get_type_predicate(node) {
@@ -1049,9 +1096,10 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !pred.type_node.is_none()
-                        && let Some(res) = f(self, pred.type_node) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, pred.type_node)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::TYPE_PARAMETER => {
@@ -1060,13 +1108,15 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !param.constraint.is_none()
-                        && let Some(res) = f(self, param.constraint) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, param.constraint)
+                    {
+                        return Some(res);
+                    }
                     if !param.default.is_none()
-                        && let Some(res) = f(self, param.default) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, param.default)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -1084,9 +1134,10 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !func_type.type_annotation.is_none()
-                        && let Some(res) = f(self, func_type.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, func_type.type_annotation)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -1105,9 +1156,10 @@ impl<'a> ScopeWalker<'a> {
             {
                 if let Some(sig) = self.arena.get_signature(node) {
                     if !sig.name.is_none()
-                        && let Some(res) = f(self, sig.name) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, sig.name)
+                    {
+                        return Some(res);
+                    }
                     if let Some(ref type_params) = sig.type_parameters {
                         for &param in &type_params.nodes {
                             if let Some(res) = f(self, param) {
@@ -1123,9 +1175,10 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !sig.type_annotation.is_none()
-                        && let Some(res) = f(self, sig.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, sig.type_annotation)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::INDEX_SIGNATURE => {
@@ -1136,16 +1189,18 @@ impl<'a> ScopeWalker<'a> {
                         }
                     }
                     if !sig.type_annotation.is_none()
-                        && let Some(res) = f(self, sig.type_annotation) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, sig.type_annotation)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(array) = self.arena.get_array_type(node)
-                    && let Some(res) = f(self, array.element_type) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, array.element_type)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 if let Some(tuple) = self.arena.get_tuple_type(node) {
@@ -1196,15 +1251,17 @@ impl<'a> ScopeWalker<'a> {
                 || k == syntax_kind_ext::REST_TYPE =>
             {
                 if let Some(wrapped) = self.arena.get_wrapped_type(node)
-                    && let Some(res) = f(self, wrapped.type_node) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, wrapped.type_node)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::INFER_TYPE => {
                 if let Some(infer) = self.arena.get_infer_type(node)
-                    && let Some(res) = f(self, infer.type_parameter) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, infer.type_parameter)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 if let Some(indexed) = self.arena.get_indexed_access_type(node) {
@@ -1222,13 +1279,15 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !mapped.name_type.is_none()
-                        && let Some(res) = f(self, mapped.name_type) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, mapped.name_type)
+                    {
+                        return Some(res);
+                    }
                     if !mapped.type_node.is_none()
-                        && let Some(res) = f(self, mapped.type_node) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, mapped.type_node)
+                    {
+                        return Some(res);
+                    }
                     if let Some(ref members) = mapped.members {
                         for &member in &members.nodes {
                             if let Some(res) = f(self, member) {
@@ -1240,9 +1299,10 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::LITERAL_TYPE => {
                 if let Some(lit) = self.arena.get_literal_type(node)
-                    && let Some(res) = f(self, lit.literal) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, lit.literal)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
                 if let Some(template) = self.arena.get_template_literal_type(node) {
@@ -1274,21 +1334,24 @@ impl<'a> ScopeWalker<'a> {
                         return Some(res);
                     }
                     if !try_stmt.catch_clause.is_none()
-                        && let Some(res) = f(self, try_stmt.catch_clause) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, try_stmt.catch_clause)
+                    {
+                        return Some(res);
+                    }
                     if !try_stmt.finally_block.is_none()
-                        && let Some(res) = f(self, try_stmt.finally_block) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, try_stmt.finally_block)
+                    {
+                        return Some(res);
+                    }
                 }
             }
             k if k == syntax_kind_ext::CATCH_CLAUSE => {
                 if let Some(catch) = self.arena.get_catch_clause(node) {
                     if !catch.variable_declaration.is_none()
-                        && let Some(res) = f(self, catch.variable_declaration) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, catch.variable_declaration)
+                    {
+                        return Some(res);
+                    }
                     if let Some(res) = f(self, catch.block) {
                         return Some(res);
                     }
@@ -1306,9 +1369,10 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
                 if let Some(assign) = self.arena.get_export_assignment(node)
-                    && let Some(res) = f(self, assign.expression) {
-                        return Some(res);
-                    }
+                    && let Some(res) = f(self, assign.expression)
+                {
+                    return Some(res);
+                }
             }
             k if k == syntax_kind_ext::LABELED_STATEMENT => {
                 if let Some(labeled) = self.arena.get_labeled_statement(node) {
@@ -1333,9 +1397,10 @@ impl<'a> ScopeWalker<'a> {
             k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
                 if let Some(case) = self.arena.get_case_clause(node) {
                     if !case.expression.is_none()
-                        && let Some(res) = f(self, case.expression) {
-                            return Some(res);
-                        }
+                        && let Some(res) = f(self, case.expression)
+                    {
+                        return Some(res);
+                    }
                     for &stmt in &case.statements.nodes {
                         if let Some(res) = f(self, stmt) {
                             return Some(res);
@@ -1380,9 +1445,10 @@ impl<'a> ScopeWalker<'a> {
 
         // Optimization: Don't descend if target is not within current node's range
         if let Some(target_node) = self.arena.get(target)
-            && (target_node.pos < node.pos || target_node.pos >= node.end) {
-                return None;
-            }
+            && (target_node.pos < node.pos || target_node.pos >= node.end)
+        {
+            return None;
+        }
 
         // Check if this node creates a new scope
         let creates_scope = self.node_creates_scope(current);
@@ -1522,9 +1588,10 @@ impl<'a> ScopeWalker<'a> {
             };
             for &decl_idx in &list.declarations.nodes {
                 if let Some(decl_node) = self.arena.get(decl_idx)
-                    && let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                        self.register_binding_declarations_in_function_scope(decl.name);
-                    }
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.register_binding_declarations_in_function_scope(decl.name);
+                }
             }
         }
     }
@@ -1563,9 +1630,10 @@ impl<'a> ScopeWalker<'a> {
                     || k == syntax_kind_ext::CLASS_EXPRESSION =>
                 {
                     if let Some(&sym_id) = self.binder.node_symbols.get(&container.0)
-                        && let Some(symbol) = self.binder.symbols.get(sym_id) {
-                            self.declare_local(symbol.escaped_name.clone(), sym_id);
-                        }
+                        && let Some(symbol) = self.binder.symbols.get(sym_id)
+                    {
+                        self.declare_local(symbol.escaped_name.clone(), sym_id);
+                    }
                     // Class members are not lexically scoped identifiers.
                     return;
                 }
@@ -1586,15 +1654,17 @@ impl<'a> ScopeWalker<'a> {
         // Iterate over direct children to find declarations
         self.for_each_child(container, |walker, child_idx| {
             if let Some(skip_idx) = skip_name
-                && child_idx == skip_idx {
-                    return None::<()>;
-                }
+                && child_idx == skip_idx
+            {
+                return None::<()>;
+            }
 
             if let Some(node) = walker.arena.get(child_idx) {
                 if node.kind == syntax_kind_ext::PARAMETER
-                    && let Some(param) = walker.arena.get_parameter(node) {
-                        walker.register_binding_declarations(param.name);
-                    }
+                    && let Some(param) = walker.arena.get_parameter(node)
+                {
+                    walker.register_binding_declarations(param.name);
+                }
                 if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                     if let Some(decl) = walker.arena.get_variable_declaration(node) {
                         if walker.is_var_declaration(child_idx) {
@@ -1609,39 +1679,37 @@ impl<'a> ScopeWalker<'a> {
                     walker.for_each_child(child_idx, |w, list_idx| {
                         // Inside VariableStatement is VariableDeclarationList
                         if let Some(list_node) = w.arena.get(list_idx)
-                            && list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                                let is_var = w.is_var_declaration_list(list_node);
-                                w.for_each_child(list_idx, |w2, decl_idx| {
-                                    // Inside List is VariableDeclaration - this has the symbol!
-                                    if let Some(&sym_id) = w2.binder.node_symbols.get(&decl_idx.0)
-                                        && let Some(symbol) = w2.binder.symbols.get(sym_id) {
-                                            if is_var {
-                                                w2.declare_function_scoped(
-                                                    symbol.escaped_name.clone(),
-                                                    sym_id,
-                                                );
-                                            } else {
-                                                w2.declare_local(
-                                                    symbol.escaped_name.clone(),
-                                                    sym_id,
-                                                );
-                                            }
-                                        }
-                                    if let Some(decl_node) = w2.arena.get(decl_idx)
-                                        && let Some(decl) =
-                                            w2.arena.get_variable_declaration(decl_node)
-                                        {
-                                            if is_var {
-                                                w2.register_binding_declarations_in_function_scope(
-                                                    decl.name,
-                                                );
-                                            } else {
-                                                w2.register_binding_declarations(decl.name);
-                                            }
-                                        }
-                                    None::<()>
-                                });
-                            }
+                            && list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                        {
+                            let is_var = w.is_var_declaration_list(list_node);
+                            w.for_each_child(list_idx, |w2, decl_idx| {
+                                // Inside List is VariableDeclaration - this has the symbol!
+                                if let Some(&sym_id) = w2.binder.node_symbols.get(&decl_idx.0)
+                                    && let Some(symbol) = w2.binder.symbols.get(sym_id)
+                                {
+                                    if is_var {
+                                        w2.declare_function_scoped(
+                                            symbol.escaped_name.clone(),
+                                            sym_id,
+                                        );
+                                    } else {
+                                        w2.declare_local(symbol.escaped_name.clone(), sym_id);
+                                    }
+                                }
+                                if let Some(decl_node) = w2.arena.get(decl_idx)
+                                    && let Some(decl) = w2.arena.get_variable_declaration(decl_node)
+                                {
+                                    if is_var {
+                                        w2.register_binding_declarations_in_function_scope(
+                                            decl.name,
+                                        );
+                                    } else {
+                                        w2.register_binding_declarations(decl.name);
+                                    }
+                                }
+                                None::<()>
+                            });
+                        }
                         None::<()>
                     });
                     return None::<()>;
@@ -1649,42 +1717,44 @@ impl<'a> ScopeWalker<'a> {
                 // For ExportDeclaration, unwrap to find the inner declaration
                 else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     if let Some(export) = walker.arena.get_export_decl(node)
-                        && !export.export_clause.is_none() {
-                            // Check if export_clause is a declaration (e.g., export const x = 1)
-                            if let Some(_export_clause_node) =
-                                walker.arena.get(export.export_clause)
-                            {
-                                // Recurse into the export_clause to find the actual declaration
-                                walker.for_each_child(export.export_clause, |w, inner_idx| {
-                                    if let Some(&sym_id) = w.binder.node_symbols.get(&inner_idx.0)
-                                        && let Some(symbol) = w.binder.symbols.get(sym_id) {
-                                            w.declare_local(symbol.escaped_name.clone(), sym_id);
-                                        }
-                                    None::<()>
-                                });
-                            }
+                        && !export.export_clause.is_none()
+                    {
+                        // Check if export_clause is a declaration (e.g., export const x = 1)
+                        if let Some(_export_clause_node) = walker.arena.get(export.export_clause) {
+                            // Recurse into the export_clause to find the actual declaration
+                            walker.for_each_child(export.export_clause, |w, inner_idx| {
+                                if let Some(&sym_id) = w.binder.node_symbols.get(&inner_idx.0)
+                                    && let Some(symbol) = w.binder.symbols.get(sym_id)
+                                {
+                                    w.declare_local(symbol.escaped_name.clone(), sym_id);
+                                }
+                                None::<()>
+                            });
                         }
+                    }
                 }
                 // For VariableDeclarationList (direct child), we need to go one level deeper
                 else if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
                     let is_var = walker.is_var_declaration_list(node);
                     walker.for_each_child(child_idx, |w, decl_idx| {
                         if let Some(&sym_id) = w.binder.node_symbols.get(&decl_idx.0)
-                            && let Some(symbol) = w.binder.symbols.get(sym_id) {
-                                if is_var {
-                                    w.declare_function_scoped(symbol.escaped_name.clone(), sym_id);
-                                } else {
-                                    w.declare_local(symbol.escaped_name.clone(), sym_id);
-                                }
+                            && let Some(symbol) = w.binder.symbols.get(sym_id)
+                        {
+                            if is_var {
+                                w.declare_function_scoped(symbol.escaped_name.clone(), sym_id);
+                            } else {
+                                w.declare_local(symbol.escaped_name.clone(), sym_id);
                             }
+                        }
                         if let Some(decl_node) = w.arena.get(decl_idx)
-                            && let Some(decl) = w.arena.get_variable_declaration(decl_node) {
-                                if is_var {
-                                    w.register_binding_declarations_in_function_scope(decl.name);
-                                } else {
-                                    w.register_binding_declarations(decl.name);
-                                }
+                            && let Some(decl) = w.arena.get_variable_declaration(decl_node)
+                        {
+                            if is_var {
+                                w.register_binding_declarations_in_function_scope(decl.name);
+                            } else {
+                                w.register_binding_declarations(decl.name);
                             }
+                        }
                         None::<()> // Continue iteration
                     });
                     return None::<()>;
@@ -1693,9 +1763,10 @@ impl<'a> ScopeWalker<'a> {
 
             // Check if this child has a symbol associated in the binder
             if let Some(&sym_id) = walker.binder.node_symbols.get(&child_idx.0)
-                && let Some(symbol) = walker.binder.symbols.get(sym_id) {
-                    walker.declare_local(symbol.escaped_name.clone(), sym_id);
-                }
+                && let Some(symbol) = walker.binder.symbols.get(sym_id)
+            {
+                walker.declare_local(symbol.escaped_name.clone(), sym_id);
+            }
 
             None::<()> // Continue iteration
         });
@@ -1760,9 +1831,10 @@ impl<'a> ScopeWalker<'a> {
 
         // Optimization: Don't descend if target is not within current node's range
         if let Some(target_node) = self.arena.get(target)
-            && (target_node.pos < node.pos || target_node.pos >= node.end) {
-                return false;
-            }
+            && (target_node.pos < node.pos || target_node.pos >= node.end)
+        {
+            return false;
+        }
 
         // Check if this node creates a new scope
         let creates_scope = self.node_creates_scope(current);
@@ -1840,26 +1912,28 @@ impl<'a> ScopeWalker<'a> {
         if (node.kind == SyntaxKind::Identifier as u16
             || node.kind == SyntaxKind::PrivateIdentifier as u16)
             && let Some(text) = self.arena.get_identifier_text(current)
-                && text == target_name {
-                    // Check if this is a declaration
-                    if let Some(&sym_id) = self.binder.node_symbols.get(&current.0) {
-                        // This is a declaration, check if it's the right symbol
-                        if sym_id == target_symbol {
-                            refs.push(current);
-                        }
-                    } else {
-                        // It's a usage - resolve using CURRENT scope stack (O(1))
-                        let resolved_sym = if node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                            self.binder.resolve_identifier(self.arena, current)
-                        } else {
-                            self.resolve_name(text)
-                        };
-                        if let Some(resolved_sym) = resolved_sym
-                            && resolved_sym == target_symbol {
-                                refs.push(current);
-                            }
-                    }
+            && text == target_name
+        {
+            // Check if this is a declaration
+            if let Some(&sym_id) = self.binder.node_symbols.get(&current.0) {
+                // This is a declaration, check if it's the right symbol
+                if sym_id == target_symbol {
+                    refs.push(current);
                 }
+            } else {
+                // It's a usage - resolve using CURRENT scope stack (O(1))
+                let resolved_sym = if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                    self.binder.resolve_identifier(self.arena, current)
+                } else {
+                    self.resolve_name(text)
+                };
+                if let Some(resolved_sym) = resolved_sym
+                    && resolved_sym == target_symbol
+                {
+                    refs.push(current);
+                }
+            }
+        }
 
         // 3. Recurse into children
         self.for_each_child(current, |walker, child_idx| {
@@ -1876,7 +1950,7 @@ impl<'a> ScopeWalker<'a> {
 
 #[cfg(test)]
 mod resolver_tests {
-    
+
     use crate::binder::BinderState;
     use crate::parser::ParserState;
 

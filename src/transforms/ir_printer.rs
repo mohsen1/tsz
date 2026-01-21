@@ -216,13 +216,15 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                if *is_expression_body && body.len() == 1
-                    && let IRNode::ReturnStatement(Some(expr)) = &body[0] {
-                        self.write("{ return ");
-                        self.emit_node(expr);
-                        self.write("; }");
-                        return;
-                    }
+                if *is_expression_body
+                    && body.len() == 1
+                    && let IRNode::ReturnStatement(Some(expr)) = &body[0]
+                {
+                    self.write("{ return ");
+                    self.emit_node(expr);
+                    self.write("; }");
+                    return;
+                }
                 self.emit_block(body);
             }
             IRNode::LogicalOr { left, right } => {
@@ -694,14 +696,15 @@ impl<'a> IRPrinter<'a> {
                 // Fallback: emit a placeholder or use the arena if available
                 if let Some(arena) = self.arena
                     && let Some(text) = self.source_text
-                        && let Some(node) = arena.get(*idx) {
-                            let start = node.pos as usize;
-                            let end = node.end as usize;
-                            if start < end && end <= text.len() {
-                                self.write(&text[start..end]);
-                                return;
-                            }
-                        }
+                    && let Some(node) = arena.get(*idx)
+                {
+                    let start = node.pos as usize;
+                    let end = node.end as usize;
+                    if start < end && end <= text.len() {
+                        self.write(&text[start..end]);
+                        return;
+                    }
+                }
                 self.write("/* ASTRef */");
             }
 

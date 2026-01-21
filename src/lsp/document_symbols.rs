@@ -267,19 +267,20 @@ impl<'a> DocumentSymbolProvider<'a> {
                                     if let Some(decl_node) = self.arena.get(decl_idx)
                                         && let Some(decl) =
                                             self.arena.get_variable_declaration(decl_node)
-                                            && let Some(name) = self.get_name(decl.name) {
-                                                let range = self.get_range(decl_idx);
-                                                let selection_range = self.get_range(decl.name);
+                                        && let Some(name) = self.get_name(decl.name)
+                                    {
+                                        let range = self.get_range(decl_idx);
+                                        let selection_range = self.get_range(decl.name);
 
-                                                symbols.push(DocumentSymbol {
-                                                    name,
-                                                    detail: None,
-                                                    kind,
-                                                    range,
-                                                    selection_range,
-                                                    children: vec![],
-                                                });
-                                            }
+                                        symbols.push(DocumentSymbol {
+                                            name,
+                                            detail: None,
+                                            kind,
+                                            range,
+                                            selection_range,
+                                            children: vec![],
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -472,15 +473,16 @@ impl<'a> DocumentSymbolProvider<'a> {
             // Export Declaration - recurse into the exported clause
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export) = self.arena.get_export_decl(node)
-                    && !export.export_clause.is_none() {
-                        // Check if this is an exported declaration (export function foo() {})
-                        if let Some(clause_node) = self.arena.get(export.export_clause) {
-                            // If it's a declaration, collect it
-                            if self.is_declaration(clause_node.kind) {
-                                return self.collect_symbols(export.export_clause);
-                            }
+                    && !export.export_clause.is_none()
+                {
+                    // Check if this is an exported declaration (export function foo() {})
+                    if let Some(clause_node) = self.arena.get(export.export_clause) {
+                        // If it's a declaration, collect it
+                        if self.is_declaration(clause_node.kind) {
+                            return self.collect_symbols(export.export_clause);
                         }
                     }
+                }
                 vec![]
             }
 
@@ -499,17 +501,18 @@ impl<'a> DocumentSymbolProvider<'a> {
 
         if let Some(node) = self.arena.get(block_idx)
             && node.kind == syntax_kind_ext::BLOCK
-                && let Some(block) = self.arena.get_block(node) {
-                    for &stmt in &block.statements.nodes {
-                        // Only collect declarations (functions, classes) - not variables
-                        if let Some(stmt_node) = self.arena.get(stmt)
-                            && (stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                                || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION)
-                            {
-                                symbols.extend(self.collect_symbols(stmt));
-                            }
-                    }
+            && let Some(block) = self.arena.get_block(node)
+        {
+            for &stmt in &block.statements.nodes {
+                // Only collect declarations (functions, classes) - not variables
+                if let Some(stmt_node) = self.arena.get(stmt)
+                    && (stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION)
+                {
+                    symbols.extend(self.collect_symbols(stmt));
                 }
+            }
+        }
         symbols
     }
 

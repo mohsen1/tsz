@@ -4,14 +4,32 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 ## Current Test Status
 
-**Note**: Conformance tests default to **native binary** (fast). Use `--wasm` for WASM+Docker:
+**Docker-isolated by default** for safety. Tests run in parallel across all CPU cores.
+
 ```bash
-# Native (default, faster)
+# Docker + Native Binary (default: fast, stable)
 ./conformance/run-conformance.sh --all
 
-# WASM (Docker-isolated, slower)
+# Docker + WASM (slower, for WASM-specific testing)
 ./conformance/run-conformance.sh --wasm --all
+
+# No Docker (unsafe: vulnerable to infinite loops/OOM)
+./conformance/run-conformance.sh --no-sandbox --all
 ```
+
+**Performance (1000 tests, 14 CPU cores):**
+- Native: ~26 tests/sec (38.8s total)
+- WASM: ~22 tests/sec (45.7s total)
+- Native is ~18% faster but both run in parallel across all cores
+
+**Test Coverage:**
+- Currently testing: 12,093 files (60% of TypeScript/tests)
+  - `conformance/`: 5,691 files
+  - `compiler/`: 6,402 files
+- Not testing: 7,975 files (40%)
+  - `fourslash/`: 6,563 files (IDE features)
+  - `projects/`: 175 files (module resolution - HIGH VALUE)
+  - `transpile/`: 22 files (JS output)
 
 ## Gaps / Risks
 
@@ -39,26 +57,109 @@ Run tests to get current metrics and identify top issues:
 ./conformance/run-conformance.sh --all
 ```
 
-Focus areas based on latest run:
-- Library loading (TS2318: ~8K missing, TS2583: ~1.4K missing)
-- Type assignability (TS2322: ~12K extra - we're too strict)
-- Name/module resolution (TS2304, TS2307)
-- Duplicate identifier handling (TS2300: ~1.5K extra)
+Focus areas based on latest run (1000 tests):
+- Library loading (TS2318: 860x missing, TS2583: 130x missing)
+- Name/module resolution (TS2304: 130x missing, TS2307)
+- Type assignability (check for extra errors)
 
-### 3. Fix Transform Pipeline
+### 3. Expand Test Coverage
+
+**Current: 60% of TypeScript/tests (12,093 files)**
+
+**Recommended additions:**
+- **Add `projects/` category** (175 files) - HIGH VALUE
+  - Tests module resolution, compiler options, multi-file projects
+  - Validates real-world project scenarios
+  - Estimated effort: 2-4 hours
+- **Evaluate `fourslash/` subset** (selective from 6,563 files)
+  - Tests complex multi-file language features
+  - Skip IDE-specific tests (completion, navigation)
+  - Estimated effort: 8-16 hours for selective integration
+
+**See research findings below for detailed analysis.**
+
+### 4. Fix Transform Pipeline
 
 `src/transforms/` mixes AST manipulation with string emission. Transforms should produce a lowered AST, then the printer should emit strings.
 
-### 4. Compat Layer Audit
+### 5. Compat Layer Audit
 
 Audit `compat` module against `TS_UNSOUNDNESS_CATALOG.md` to ensure all rules are wired and option-driven (weak types, template literal limits, rest bivariance, exactOptionalPropertyTypes).
 
-### 5. Code Hygiene
+### 6. Code Hygiene
 
 * Remove `#![allow(dead_code)]` and fix unused code
 * Add proper tracing infrastructure (replace print statements)
 * Clean up Clippy ignores in `clippy.toml`
 * Test-awareness cleanup: sweep checker/binder for path heuristics or test-specific workarounds (per AGENTS rules)
+
+***
+
+## Test Coverage Research Findings
+
+### TypeScript/tests Directory Structure
+
+| Category | Files | Purpose | Status |
+|----------|-------|---------|--------|
+| `conformance/` | 5,691 | Language spec compliance (52 categories) | ✅ Testing |
+| `compiler/` | 6,402 | Compiler behavior and API | ✅ Testing |
+| `fourslash/` | 6,563 | IDE features (completion, navigation, refactor) | ⚠️ Not tested |
+| `projects/` | 175 | Module resolution, project configuration | ⚠️ Not tested |
+| `transpile/` | 22 | JavaScript output generation | ❌ Not relevant |
+
+### Fourslash Tests Analysis
+
+**Purpose:** Specialized framework for testing IDE/editor functionality
+
+**Format:**
+- Uses `////` markers and `@Filename` directives
+- DSL with verification API (`goTo.marker()`, `verify.quickInfoAt()`)
+- Supports multi-file test scenarios
+
+**Capabilities:**
+- Code completion, navigation, refactoring
+- Incremental edit testing
+- Complex multi-file language features
+- Error diagnostics and suggestions
+
+**Recommendation:** Selective integration
+- ✅ Extract language feature tests (multi-file scenarios)
+- ❌ Skip IDE-specific tests (completion, navigation)
+- ⚠️ Requires implementing fourslash DSL parser
+- Estimated effort: 8-16 hours
+
+### Projects Tests Analysis
+
+**Purpose:** Module resolution and project configuration validation
+
+**Format:** JSON configuration + multi-file project directories
+
+**Capabilities:**
+- Circular import handling
+- Reference path resolution (`/// <reference>`)
+- Module resolution algorithms (Node16, NodeNext, bundler)
+- Compiler options validation (rootDir, outDir, declarationDir)
+- Source map generation
+- Declaration file organization
+
+**Recommendation:** HIGH VALUE - Add this category
+- ✅ Tests critical real-world scenarios
+- ✅ Validates module resolution (essential for TypeScript)
+- ✅ Multi-file project testing
+- ⚠️ Requires JSON parser and project setup
+- Estimated effort: 2-4 hours
+
+### Implementation Priority
+
+1. **Add `projects/` category** (175 files)
+   - High value, medium effort
+   - Tests essential module resolution features
+   - Complements existing conformance tests
+
+2. **Evaluate fourslash subset** (selective from 6,563)
+   - Medium-high value, high effort
+   - Focus on multi-file language feature tests
+   - Skip IDE/editor-specific tests
 
 ***
 
@@ -82,8 +183,14 @@ cargo build                              # Build
 cargo test --lib                         # Run all tests
 cargo test --lib solver::                # Run specific module
 wasm-pack build --target nodejs          # Build WASM
-./conformance/run-conformance.sh --max=500   # Run 500 conformance tests
-./conformance/run-conformance.sh --all       # Run all conformance tests
+
+# Conformance tests (Docker-isolated by default)
+./conformance/run-conformance.sh --max=500       # Run 500 tests
+./conformance/run-conformance.sh --all           # Run all tests
+./conformance/run-conformance.sh --native        # Use native binary (faster)
+./conformance/run-conformance.sh --wasm          # Use WASM (slower)
+./conformance/run-conformance.sh --no-sandbox    # No Docker (unsafe)
+./conformance/run-conformance.sh --workers=N     # Set worker count
 ```
 
 ***

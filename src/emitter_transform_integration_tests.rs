@@ -242,10 +242,11 @@ fn test_lowering_pass_es5_class_heritage_clause() {
             continue;
         };
         if let Some(clauses) = &class_data.heritage_clauses
-            && !clauses.nodes.is_empty() {
-                derived_idx = Some(stmt_idx);
-                break;
-            }
+            && !clauses.nodes.is_empty()
+        {
+            derived_idx = Some(stmt_idx);
+            break;
+        }
     }
 
     let derived_idx = derived_idx.expect("expected derived class declaration");

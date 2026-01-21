@@ -538,9 +538,10 @@ impl<'a> TypeFormatter<'a> {
             TypeKey::Ref(sym) => {
                 // Try to look up the symbol name
                 if let Some(arena) = self.symbol_arena
-                    && let Some(symbol) = arena.get(SymbolId(sym.0)) {
-                        return symbol.escaped_name.to_string();
-                    }
+                    && let Some(symbol) = arena.get(SymbolId(sym.0))
+                {
+                    return symbol.escaped_name.to_string();
+                }
                 format!("Ref({})", sym.0)
             }
             TypeKey::Application(app) => {

@@ -1228,8 +1228,6 @@ fn test_correlated_union_index_access_subtyping() {
 
 #[test]
 fn test_object_subtyping() {
-    
-
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -1396,8 +1394,6 @@ fn test_type_environment() {
 
 #[test]
 fn test_ref_resolution_with_environment() {
-    
-
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
@@ -1420,8 +1416,6 @@ fn test_ref_resolution_with_environment() {
 
 #[test]
 fn test_ref_to_ref_resolution() {
-    
-
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
@@ -1440,8 +1434,6 @@ fn test_ref_to_ref_resolution() {
 
 #[test]
 fn test_ref_to_object_resolution() {
-    
-
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
 
@@ -1502,8 +1494,6 @@ fn test_unresolved_ref_behavior() {
 
 #[test]
 fn test_function_rest_parameter_subtyping() {
-    
-
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2563,7 +2553,7 @@ fn test_never_array_to_variadic_tuple() {
 #[test]
 fn test_number_index_signature_numeric_property() {
     // CRITICAL: { 0: string } should match { [x: number]: string }
-    
+
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2596,7 +2586,7 @@ fn test_number_index_signature_numeric_property() {
 #[test]
 fn test_number_index_signature_type_mismatch() {
     // { 0: number } should NOT match { [x: number]: string }
-    
+
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2771,7 +2761,7 @@ fn test_string_index_signature_method_bivariant_property() {
 #[test]
 fn test_number_index_signature_multiple_numeric_props() {
     // { 0: string, 1: string, 2: string } should match { [x: number]: string }
-    
+
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -2822,7 +2812,7 @@ fn test_number_index_signature_multiple_numeric_props() {
 #[test]
 fn test_number_and_string_index_signatures() {
     // { 0: string, foo: string } should match { [x: number]: string; [y: string]: string }
-    
+
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -3478,7 +3468,6 @@ fn test_conditional_tuple_wrapper_no_distribution_subtyping() {
 
 #[test]
 fn test_strict_function_variance() {
-    
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
     // Ensure strict mode is on (default)
@@ -5030,8 +5019,6 @@ fn test_class_like_subtyping_this_param_covariant() {
 
 #[test]
 fn test_function_fixed_to_rest_subtyping() {
-    
-
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -5106,8 +5093,6 @@ fn test_function_fixed_to_rest_subtyping() {
 
 #[test]
 fn test_function_fixed_to_rest_extra_param_accepts_undefined() {
-    
-
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -5165,8 +5150,6 @@ fn test_function_fixed_to_rest_extra_param_accepts_undefined() {
 
 #[test]
 fn test_function_fixed_to_rest_extra_param_rejects_undefined() {
-    
-
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -5222,8 +5205,6 @@ fn test_function_fixed_to_rest_extra_param_rejects_undefined() {
 
 #[test]
 fn test_function_rest_tuple_to_rest_array_subtyping() {
-    
-
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 

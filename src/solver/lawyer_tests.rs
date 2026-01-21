@@ -3,9 +3,7 @@
 use super::*;
 use crate::TypeInterner;
 use crate::interner::Atom;
-use crate::solver::{
-    FunctionShape, ParamInfo, PropertyInfo, TupleElement,
-};
+use crate::solver::{FunctionShape, ParamInfo, PropertyInfo, TupleElement};
 
 /// Helper function to create an object type with properties
 fn make_test_object(interner: &TypeInterner, props: Vec<(Atom, TypeId)>) -> TypeId {

@@ -426,38 +426,31 @@ impl<'a> TypeInstantiator<'a> {
                 if cond.is_distributive
                     && let Some(TypeKey::TypeParameter(info)) =
                         self.interner.lookup(cond.check_type)
-                        && !self.is_shadowed(info.name)
-                            && let Some(substituted) = self.substitution.get(info.name) {
-                                // When substituting with `never`, the result is `never`
-                                if substituted == crate::solver::types::TypeId::NEVER {
-                                    return substituted;
-                                }
-                                // For `any`, we need to let evaluation handle it properly
-                                // so it can distribute to both branches
-                                if let Some(TypeKey::Union(members)) =
-                                    self.interner.lookup(substituted)
-                                {
-                                    let members = self.interner.type_list(members);
-                                    let cond_type =
-                                        self.interner.conditional(cond.as_ref().clone());
-                                    let mut results = Vec::with_capacity(members.len());
-                                    for &member in members.iter() {
-                                        let mut member_subst = self.substitution.clone();
-                                        member_subst.insert(info.name, member);
-                                        let instantiated = instantiate_type(
-                                            self.interner,
-                                            cond_type,
-                                            &member_subst,
-                                        );
-                                        let evaluated = crate::solver::evaluate::evaluate_type(
-                                            self.interner,
-                                            instantiated,
-                                        );
-                                        results.push(evaluated);
-                                    }
-                                    return self.interner.union(results);
-                                }
-                            }
+                    && !self.is_shadowed(info.name)
+                    && let Some(substituted) = self.substitution.get(info.name)
+                {
+                    // When substituting with `never`, the result is `never`
+                    if substituted == crate::solver::types::TypeId::NEVER {
+                        return substituted;
+                    }
+                    // For `any`, we need to let evaluation handle it properly
+                    // so it can distribute to both branches
+                    if let Some(TypeKey::Union(members)) = self.interner.lookup(substituted) {
+                        let members = self.interner.type_list(members);
+                        let cond_type = self.interner.conditional(cond.as_ref().clone());
+                        let mut results = Vec::with_capacity(members.len());
+                        for &member in members.iter() {
+                            let mut member_subst = self.substitution.clone();
+                            member_subst.insert(info.name, member);
+                            let instantiated =
+                                instantiate_type(self.interner, cond_type, &member_subst);
+                            let evaluated =
+                                crate::solver::evaluate::evaluate_type(self.interner, instantiated);
+                            results.push(evaluated);
+                        }
+                        return self.interner.union(results);
+                    }
+                }
                 let instantiated = ConditionalType {
                     check_type: self.instantiate(cond.check_type),
                     extends_type: self.instantiate(cond.extends_type),
@@ -527,10 +520,12 @@ impl<'a> TypeInstantiator<'a> {
 
             // Infer: keep as-is unless explicitly substituting inference variables
             TypeKey::Infer(info) => {
-                if self.substitute_infer && !self.is_shadowed(info.name)
-                    && let Some(substituted) = self.substitution.get(info.name) {
-                        return substituted;
-                    }
+                if self.substitute_infer
+                    && !self.is_shadowed(info.name)
+                    && let Some(substituted) = self.substitution.get(info.name)
+                {
+                    return substituted;
+                }
                 self.interner.intern(TypeKey::Infer(info.clone()))
             }
         }

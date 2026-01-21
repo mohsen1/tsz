@@ -1,8 +1,5 @@
 use super::*;
-use crate::solver::{
-    AssignabilityChecker, CompatChecker, ConditionalType,
-    infer_generic_function,
-};
+use crate::solver::{AssignabilityChecker, CompatChecker, ConditionalType, infer_generic_function};
 
 #[test]
 fn test_inference_basic() {

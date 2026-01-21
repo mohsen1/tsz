@@ -7,18 +7,19 @@ fn parse_and_emit_async(source: &str) -> String {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let has_await = emitter.body_contains_await(func.body);
-                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                        if has_await {
-                            return emitter.emit_generator_body_with_await(func.body);
-                        } else {
-                            return emitter.emit_simple_generator_body(func.body);
-                        }
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let has_await = emitter.body_contains_await(func.body);
+        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+        if has_await {
+            return emitter.emit_generator_body_with_await(func.body);
+        } else {
+            return emitter.emit_simple_generator_body(func.body);
+        }
+    }
     String::new()
 }
 
@@ -131,15 +132,16 @@ fn test_body_contains_await_detection() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await"
+        );
+    }
 }
 
 #[test]
@@ -153,15 +155,16 @@ fn test_body_contains_await_ignores_nested_async() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should ignore nested await"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should ignore nested await"
+        );
+    }
 }
 
 #[test]
@@ -175,15 +178,16 @@ fn test_body_contains_await_in_conditional_property_access() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in conditional property/element access"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in conditional property/element access"
+        );
+    }
 }
 
 #[test]
@@ -196,15 +200,16 @@ fn test_body_contains_await_in_object_literal_computed_name() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in computed object literal name"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in computed object literal name"
+        );
+    }
 }
 
 #[test]
@@ -217,15 +222,16 @@ fn test_body_contains_await_in_try_finally() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in try/finally"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in try/finally"
+        );
+    }
 }
 
 #[test]
@@ -238,15 +244,16 @@ fn test_no_await_in_simple_function() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should not detect await"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should not detect await"
+        );
+    }
 }
 
 #[test]
@@ -322,19 +329,20 @@ fn test_body_contains_await_detects_for_await_of_array_destructuring() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        // for-await-of is async iteration, so we expect the function to need await handling
-                        // Even if body_contains_await doesn't detect it yet, the function parses successfully
-                        let _has_await = emitter.body_contains_await(func.body);
-                        // Test passes if parsing succeeds - detection is a separate concern
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with array destructuring"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        // for-await-of is async iteration, so we expect the function to need await handling
+        // Even if body_contains_await doesn't detect it yet, the function parses successfully
+        let _has_await = emitter.body_contains_await(func.body);
+        // Test passes if parsing succeeds - detection is a separate concern
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with array destructuring"
+        );
+    }
 }
 
 #[test]
@@ -348,16 +356,17 @@ fn test_body_contains_await_detects_for_await_of_object_destructuring() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with object destructuring"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with object destructuring"
+        );
+    }
 }
 
 #[test]
@@ -371,16 +380,17 @@ fn test_body_contains_await_detects_for_await_of_nested_destructuring() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with nested destructuring"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with nested destructuring"
+        );
+    }
 }
 
 #[test]
@@ -395,16 +405,17 @@ fn test_body_contains_await_detects_for_await_of_with_defaults() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with default values"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with default values"
+        );
+    }
 }
 
 #[test]
@@ -418,16 +429,17 @@ fn test_body_contains_await_detects_for_await_of_rest_element() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with rest element"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with rest element"
+        );
+    }
 }
 
 #[test]
@@ -441,16 +453,17 @@ fn test_body_contains_await_detects_for_await_of_computed_property() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with computed property"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with computed property"
+        );
+    }
 }
 
 #[test]
@@ -465,16 +478,17 @@ fn test_body_contains_await_detects_for_await_of_renamed_properties() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with renamed properties"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with renamed properties"
+        );
+    }
 }
 
 #[test]
@@ -489,16 +503,17 @@ fn test_body_contains_await_detects_for_await_of_mixed_nested() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with mixed nested patterns"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with mixed nested patterns"
+        );
+    }
 }
 
 #[test]
@@ -513,16 +528,17 @@ fn test_body_contains_await_detects_for_await_of_with_await_in_body() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with await in body"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with await in body"
+        );
+    }
 }
 
 #[test]
@@ -537,16 +553,17 @@ fn test_body_contains_await_detects_for_await_of_let_binding() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with let binding"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with let binding"
+        );
+    }
 }
 
 #[test]
@@ -560,16 +577,17 @@ fn test_body_contains_await_detects_for_await_of_skipped_elements() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with skipped elements"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with skipped elements"
+        );
+    }
 }
 
 #[test]
@@ -583,16 +601,17 @@ fn test_body_contains_await_detects_for_await_of_deep_nesting() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let _has_await = emitter.body_contains_await(func.body);
-                        assert!(
-                            func.body.is_some(),
-                            "Function body should be parsed for for-await-of with deep nesting"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let _has_await = emitter.body_contains_await(func.body);
+        assert!(
+            func.body.is_some(),
+            "Function body should be parsed for for-await-of with deep nesting"
+        );
+    }
 }
 
 // ============================================================================
@@ -656,15 +675,16 @@ fn test_body_contains_await_in_if_statement() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in if statement body"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in if statement body"
+        );
+    }
 }
 
 #[test]
@@ -677,15 +697,16 @@ fn test_body_contains_await_in_else_branch() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in else branch"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in else branch"
+        );
+    }
 }
 
 #[test]
@@ -698,15 +719,16 @@ fn test_body_contains_await_in_if_condition() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in if condition"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in if condition"
+        );
+    }
 }
 
 #[test]
@@ -719,15 +741,16 @@ fn test_body_contains_await_in_while_body() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in while loop body"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in while loop body"
+        );
+    }
 }
 
 #[test]
@@ -740,15 +763,16 @@ fn test_body_contains_await_in_for_body() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in for loop body"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in for loop body"
+        );
+    }
 }
 
 #[test]
@@ -761,15 +785,16 @@ fn test_body_contains_await_in_do_while_body() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in do-while loop body"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in do-while loop body"
+        );
+    }
 }
 
 #[test]
@@ -782,15 +807,16 @@ fn test_body_contains_await_in_switch_case() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in switch case"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in switch case"
+        );
+    }
 }
 
 #[test]
@@ -804,15 +830,16 @@ fn test_body_contains_await_in_catch_block() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in catch block"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in catch block"
+        );
+    }
 }
 
 #[test]
@@ -825,15 +852,16 @@ fn test_body_contains_await_in_finally_block() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in finally block"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in finally block"
+        );
+    }
 }
 
 // ============================================================================
@@ -851,15 +879,16 @@ fn test_body_contains_await_ignores_nested_async_function_declaration() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should NOT detect await in nested async function declaration"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should NOT detect await in nested async function declaration"
+        );
+    }
 }
 
 #[test]
@@ -873,15 +902,16 @@ fn test_body_contains_await_ignores_nested_async_arrow() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should NOT detect await in nested async arrow"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should NOT detect await in nested async arrow"
+        );
+    }
 }
 
 #[test]
@@ -896,15 +926,16 @@ fn test_body_contains_await_ignores_nested_async_function_expression() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should NOT detect await in nested async function expression"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should NOT detect await in nested async function expression"
+        );
+    }
 }
 
 #[test]
@@ -920,15 +951,16 @@ fn test_body_contains_await_with_sync_closure_containing_await() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await at outer level with sync closure"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await at outer level with sync closure"
+        );
+    }
 }
 
 #[test]
@@ -942,15 +974,16 @@ fn test_body_contains_await_ignores_deeply_nested_async() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should NOT detect await in deeply nested async functions"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should NOT detect await in deeply nested async functions"
+        );
+    }
 }
 
 #[test]
@@ -964,15 +997,16 @@ fn test_body_contains_await_mixed_nested_sync_and_async() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await at outer level with mixed nested functions"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await at outer level with mixed nested functions"
+        );
+    }
 }
 
 #[test]
@@ -1022,16 +1056,17 @@ fn test_async_method_in_object_literal() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        // Await in async method should not affect outer function
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should NOT detect await in nested async method"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        // Await in async method should not affect outer function
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should NOT detect await in nested async method"
+        );
+    }
 }
 
 #[test]
@@ -1045,15 +1080,16 @@ fn test_async_arrow_in_array() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should NOT detect await in async arrows within array"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should NOT detect await in async arrows within array"
+        );
+    }
 }
 
 #[test]
@@ -1067,15 +1103,16 @@ fn test_async_arrow_as_argument() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect outer await with async arrow as argument"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect outer await with async arrow as argument"
+        );
+    }
 }
 
 #[test]
@@ -1089,15 +1126,16 @@ fn test_async_closure_capturing_variable() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            !emitter.body_contains_await(func.body),
-                            "Should NOT detect await in closure that captures outer variable"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            !emitter.body_contains_await(func.body),
+            "Should NOT detect await in closure that captures outer variable"
+        );
+    }
 }
 
 // ============================================================================
@@ -1307,15 +1345,16 @@ fn test_async_promise_all_in_try_catch() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await Promise.all in try block"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await Promise.all in try block"
+        );
+    }
 }
 
 #[test]
@@ -1429,15 +1468,16 @@ fn test_async_nested_try_catch() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in nested try/catch"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in nested try/catch"
+        );
+    }
 }
 
 #[test]
@@ -1504,15 +1544,16 @@ fn test_async_try_catch_with_type_guard() {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        assert!(
-                            emitter.body_contains_await(func.body),
-                            "Should detect await in try with type guard catch"
-                        );
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        assert!(
+            emitter.body_contains_await(func.body),
+            "Should detect await in try with type guard catch"
+        );
+    }
 }
 
 #[test]
@@ -1565,30 +1606,27 @@ fn parse_and_emit_async_class_method(source: &str) -> String {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&class_idx) = source_file.statements.nodes.first()
-                && let Some(class_node) = parser.arena.get(class_idx)
-                    && let Some(class_data) = parser.arena.get_class(class_node) {
-                        // Find the first method declaration
-                        for &member_idx in &class_data.members.nodes {
-                            if let Some(member_node) = parser.arena.get(member_idx)
-                                && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                    && let Some(method_data) =
-                                        parser.arena.get_method_decl(member_node)
-                                    {
-                                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                                        let has_await =
-                                            emitter.body_contains_await(method_data.body);
-                                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                        if has_await {
-                                            return emitter
-                                                .emit_generator_body_with_await(method_data.body);
-                                        } else {
-                                            return emitter
-                                                .emit_simple_generator_body(method_data.body);
-                                        }
-                                    }
-                        }
-                    }
+        && let Some(&class_idx) = source_file.statements.nodes.first()
+        && let Some(class_node) = parser.arena.get(class_idx)
+        && let Some(class_data) = parser.arena.get_class(class_node)
+    {
+        // Find the first method declaration
+        for &member_idx in &class_data.members.nodes {
+            if let Some(member_node) = parser.arena.get(member_idx)
+                && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method_data) = parser.arena.get_method_decl(member_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(method_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(method_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(method_data.body);
+                }
+            }
+        }
+    }
     String::new()
 }
 
@@ -1601,20 +1639,20 @@ fn class_method_contains_await(source: &str) -> bool {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&class_idx) = source_file.statements.nodes.first()
-                && let Some(class_node) = parser.arena.get(class_idx)
-                    && let Some(class_data) = parser.arena.get_class(class_node) {
-                        for &member_idx in &class_data.members.nodes {
-                            if let Some(member_node) = parser.arena.get(member_idx)
-                                && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                    && let Some(method_data) =
-                                        parser.arena.get_method_decl(member_node)
-                                    {
-                                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                                        return emitter.body_contains_await(method_data.body);
-                                    }
-                        }
-                    }
+        && let Some(&class_idx) = source_file.statements.nodes.first()
+        && let Some(class_node) = parser.arena.get(class_idx)
+        && let Some(class_data) = parser.arena.get_class(class_node)
+    {
+        for &member_idx in &class_data.members.nodes {
+            if let Some(member_node) = parser.arena.get(member_idx)
+                && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method_data) = parser.arena.get_method_decl(member_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(method_data.body);
+            }
+        }
+    }
     false
 }
 
@@ -1784,51 +1822,38 @@ fn parse_and_emit_async_arrow(source: &str) -> String {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx) {
-                    // Variable statement -> declaration list -> declaration -> initializer (arrow)
-                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(var_stmt) = parser.arena.get_variable(stmt_node) {
-                            // First level: declarations contains VariableDeclarationList
-                            if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
-                                && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
-                                    && let Some(decl_list) =
-                                        parser.arena.get_variable(decl_list_node)
-                                    {
-                                        // Second level: get the actual VariableDeclaration
-                                        if let Some(&decl_idx) =
-                                            decl_list.declarations.nodes.first()
-                                            && let Some(decl_node) = parser.arena.get(decl_idx)
-                                                && let Some(var_decl) =
-                                                    parser.arena.get_variable_declaration(decl_node)
-                                                    && let Some(init_node) =
-                                                        parser.arena.get(var_decl.initializer)
-                                                        && init_node.kind
-                                                            == syntax_kind_ext::ARROW_FUNCTION
-                                                            && let Some(func) =
-                                                                parser.arena.get_function(init_node)
-                                                            {
-                                                                let emitter = AsyncES5Emitter::new(
-                                                                    &parser.arena,
-                                                                );
-                                                                let has_await = emitter
-                                                                    .body_contains_await(func.body);
-                                                                let mut emitter =
-                                                                    AsyncES5Emitter::new(
-                                                                        &parser.arena,
-                                                                    );
-                                                                if has_await {
-                                                                    return emitter.emit_generator_body_with_await(func.body);
-                                                                } else {
-                                                                    return emitter
-                                                                        .emit_simple_generator_body(
-                                                                            func.body,
-                                                                        );
-                                                                }
-                                                            }
-                                    }
-                        }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+    {
+        // Variable statement -> declaration list -> declaration -> initializer (arrow)
+        if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = parser.arena.get_variable(stmt_node)
+        {
+            // First level: declarations contains VariableDeclarationList
+            if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
+                && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
+                && let Some(decl_list) = parser.arena.get_variable(decl_list_node)
+            {
+                // Second level: get the actual VariableDeclaration
+                if let Some(&decl_idx) = decl_list.declarations.nodes.first()
+                    && let Some(decl_node) = parser.arena.get(decl_idx)
+                    && let Some(var_decl) = parser.arena.get_variable_declaration(decl_node)
+                    && let Some(init_node) = parser.arena.get(var_decl.initializer)
+                    && init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    && let Some(func) = parser.arena.get_function(init_node)
+                {
+                    let emitter = AsyncES5Emitter::new(&parser.arena);
+                    let has_await = emitter.body_contains_await(func.body);
+                    let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                    if has_await {
+                        return emitter.emit_generator_body_with_await(func.body);
+                    } else {
+                        return emitter.emit_simple_generator_body(func.body);
+                    }
                 }
+            }
+        }
+    }
     String::new()
 }
 
@@ -1841,39 +1866,29 @@ fn arrow_body_contains_await(source: &str) -> bool {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(var_stmt) = parser.arena.get_variable(stmt_node) {
-                            // First level: declarations contains VariableDeclarationList
-                            if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
-                                && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
-                                    && let Some(decl_list) =
-                                        parser.arena.get_variable(decl_list_node)
-                                    {
-                                        // Second level: get the actual VariableDeclaration
-                                        if let Some(&decl_idx) =
-                                            decl_list.declarations.nodes.first()
-                                            && let Some(decl_node) = parser.arena.get(decl_idx)
-                                                && let Some(var_decl) =
-                                                    parser.arena.get_variable_declaration(decl_node)
-                                                    && let Some(init_node) =
-                                                        parser.arena.get(var_decl.initializer)
-                                                        && init_node.kind
-                                                            == syntax_kind_ext::ARROW_FUNCTION
-                                                            && let Some(func) =
-                                                                parser.arena.get_function(init_node)
-                                                            {
-                                                                let emitter = AsyncES5Emitter::new(
-                                                                    &parser.arena,
-                                                                );
-                                                                return emitter
-                                                                    .body_contains_await(
-                                                                        func.body,
-                                                                    );
-                                                            }
-                                    }
-                        }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+        && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+        && let Some(var_stmt) = parser.arena.get_variable(stmt_node)
+    {
+        // First level: declarations contains VariableDeclarationList
+        if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
+            && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
+            && let Some(decl_list) = parser.arena.get_variable(decl_list_node)
+        {
+            // Second level: get the actual VariableDeclaration
+            if let Some(&decl_idx) = decl_list.declarations.nodes.first()
+                && let Some(decl_node) = parser.arena.get(decl_idx)
+                && let Some(var_decl) = parser.arena.get_variable_declaration(decl_node)
+                && let Some(init_node) = parser.arena.get(var_decl.initializer)
+                && init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                && let Some(func) = parser.arena.get_function(init_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func.body);
+            }
+        }
+    }
     false
 }
 
@@ -2030,41 +2045,40 @@ fn parse_and_emit_async_method_expr(source: &str) -> String {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx) {
-                    // Variable statement -> declaration list -> declaration -> initializer (object literal)
-                    if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(var_stmt) = parser.arena.get_variable(stmt_node)
-                            && let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
-                                && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
-                                    && let Some(decl_list) =
-                                        parser.arena.get_variable(decl_list_node)
-                                        && let Some(&decl_idx) =
-                                            decl_list.declarations.nodes.first()
-                                            && let Some(decl_node) = parser.arena.get(decl_idx)
-                                                && let Some(var_decl) =
-                                                    parser.arena.get_variable_declaration(decl_node)
-                                                    && let Some(init_node) =
-                                                        parser.arena.get(var_decl.initializer)
-                                                        && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                                            && let Some(obj_lit) = parser.arena.get_literal_expr(init_node) {
-                                                                // Find the first method declaration
-                                                                for &elem_idx in &obj_lit.elements.nodes {
-                                                                    if let Some(elem_node) = parser.arena.get(elem_idx)
-                                                                        && elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                                                            && let Some(method_data) = parser.arena.get_method_decl(elem_node) {
-                                                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                                                let has_await = emitter.body_contains_await(method_data.body);
-                                                                                let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                                                                if has_await {
-                                                                                    return emitter.emit_generator_body_with_await(method_data.body);
-                                                                                } else {
-                                                                                    return emitter.emit_simple_generator_body(method_data.body);
-                                                                                }
-                                                                            }
-                                                                }
-                                                            }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+    {
+        // Variable statement -> declaration list -> declaration -> initializer (object literal)
+        if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = parser.arena.get_variable(stmt_node)
+            && let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
+            && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
+            && let Some(decl_list) = parser.arena.get_variable(decl_list_node)
+            && let Some(&decl_idx) = decl_list.declarations.nodes.first()
+            && let Some(decl_node) = parser.arena.get(decl_idx)
+            && let Some(var_decl) = parser.arena.get_variable_declaration(decl_node)
+            && let Some(init_node) = parser.arena.get(var_decl.initializer)
+            && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && let Some(obj_lit) = parser.arena.get_literal_expr(init_node)
+        {
+            // Find the first method declaration
+            for &elem_idx in &obj_lit.elements.nodes {
+                if let Some(elem_node) = parser.arena.get(elem_idx)
+                    && elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                    && let Some(method_data) = parser.arena.get_method_decl(elem_node)
+                {
+                    let emitter = AsyncES5Emitter::new(&parser.arena);
+                    let has_await = emitter.body_contains_await(method_data.body);
+                    let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                    if has_await {
+                        return emitter.emit_generator_body_with_await(method_data.body);
+                    } else {
+                        return emitter.emit_simple_generator_body(method_data.body);
+                    }
                 }
+            }
+        }
+    }
     String::new()
 }
 
@@ -2077,32 +2091,30 @@ fn method_expr_body_contains_await(source: &str) -> bool {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(var_stmt) = parser.arena.get_variable(stmt_node)
-                            && let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
-                                && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
-                                    && let Some(decl_list) =
-                                        parser.arena.get_variable(decl_list_node)
-                                        && let Some(&decl_idx) =
-                                            decl_list.declarations.nodes.first()
-                                            && let Some(decl_node) = parser.arena.get(decl_idx)
-                                                && let Some(var_decl) =
-                                                    parser.arena.get_variable_declaration(decl_node)
-                                                    && let Some(init_node) =
-                                                        parser.arena.get(var_decl.initializer)
-                                                        && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                                            && let Some(obj_lit) = parser.arena.get_literal_expr(init_node) {
-                                                                for &elem_idx in &obj_lit.elements.nodes {
-                                                                    if let Some(elem_node) = parser.arena.get(elem_idx)
-                                                                        && elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                                                            && let Some(method_data) = parser.arena.get_method_decl(elem_node) {
-                                                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                                                return emitter.body_contains_await(method_data.body);
-                                                                            }
-                                                                }
-                                                            }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+        && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+        && let Some(var_stmt) = parser.arena.get_variable(stmt_node)
+        && let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
+        && let Some(decl_list_node) = parser.arena.get(decl_list_idx)
+        && let Some(decl_list) = parser.arena.get_variable(decl_list_node)
+        && let Some(&decl_idx) = decl_list.declarations.nodes.first()
+        && let Some(decl_node) = parser.arena.get(decl_idx)
+        && let Some(var_decl) = parser.arena.get_variable_declaration(decl_node)
+        && let Some(init_node) = parser.arena.get(var_decl.initializer)
+        && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        && let Some(obj_lit) = parser.arena.get_literal_expr(init_node)
+    {
+        for &elem_idx in &obj_lit.elements.nodes {
+            if let Some(elem_node) = parser.arena.get(elem_idx)
+                && elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method_data) = parser.arena.get_method_decl(elem_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(method_data.body);
+            }
+        }
+    }
     false
 }
 
@@ -2284,19 +2296,20 @@ fn parse_and_emit_async_generator(source: &str) -> String {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        // Async generators have both is_async and asterisk_token
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        let has_await = emitter.body_contains_await(func.body);
-                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                        if has_await {
-                            return emitter.emit_generator_body_with_await(func.body);
-                        } else {
-                            return emitter.emit_simple_generator_body(func.body);
-                        }
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        // Async generators have both is_async and asterisk_token
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        let has_await = emitter.body_contains_await(func.body);
+        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+        if has_await {
+            return emitter.emit_generator_body_with_await(func.body);
+        } else {
+            return emitter.emit_simple_generator_body(func.body);
+        }
+    }
     String::new()
 }
 
@@ -2307,12 +2320,13 @@ fn async_generator_body_contains_await(source: &str) -> bool {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&func_idx) = source_file.statements.nodes.first()
-                && let Some(func_node) = parser.arena.get(func_idx)
-                    && let Some(func) = parser.arena.get_function(func_node) {
-                        let emitter = AsyncES5Emitter::new(&parser.arena);
-                        return emitter.body_contains_await(func.body);
-                    }
+        && let Some(&func_idx) = source_file.statements.nodes.first()
+        && let Some(func_node) = parser.arena.get(func_idx)
+        && let Some(func) = parser.arena.get_function(func_node)
+    {
+        let emitter = AsyncES5Emitter::new(&parser.arena);
+        return emitter.body_contains_await(func.body);
+    }
     false
 }
 
@@ -2468,37 +2482,35 @@ fn parse_and_emit_async_iife(source: &str) -> String {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx) {
-                    // ExpressionStatement -> CallExpression -> ParenthesizedExpression -> Function
-                    if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-                        && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
-                            && let Some(call_node) = parser.arena.get(expr_stmt.expression)
-                                && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                    && let Some(call_data) = parser.arena.get_call_expr(call_node)
-                                        && let Some(paren_node) =
-                                            parser.arena.get(call_data.expression)
-                                            && paren_node.kind
-                                                == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                                                && let Some(paren_data) =
-                                                    parser.arena.get_parenthesized(paren_node)
-                                                    && let Some(func_node) =
-                                                        parser.arena.get(paren_data.expression)
-                                                    {
-                                                        if (func_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                                            || func_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                                            && let Some(func) = parser.arena.get_function(func_node) {
-                                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                                let has_await = emitter.body_contains_await(func.body);
-                                                                let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                                                if has_await {
-                                                                    return emitter.emit_generator_body_with_await(func.body);
-                                                                } else {
-                                                                    return emitter.emit_simple_generator_body(func.body);
-                                                                }
-                                                            }
-                                                    }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+    {
+        // ExpressionStatement -> CallExpression -> ParenthesizedExpression -> Function
+        if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
+            && let Some(call_node) = parser.arena.get(expr_stmt.expression)
+            && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call_data) = parser.arena.get_call_expr(call_node)
+            && let Some(paren_node) = parser.arena.get(call_data.expression)
+            && paren_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren_data) = parser.arena.get_parenthesized(paren_node)
+            && let Some(func_node) = parser.arena.get(paren_data.expression)
+        {
+            if (func_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || func_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                && let Some(func) = parser.arena.get_function(func_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func.body);
                 }
+            }
+        }
+    }
     String::new()
 }
 
@@ -2511,29 +2523,26 @@ fn iife_body_contains_await(source: &str) -> bool {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-                        && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
-                            && let Some(call_node) = parser.arena.get(expr_stmt.expression)
-                                && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                    && let Some(call_data) = parser.arena.get_call_expr(call_node)
-                                        && let Some(paren_node) =
-                                            parser.arena.get(call_data.expression)
-                                            && paren_node.kind
-                                                == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                                                && let Some(paren_data) =
-                                                    parser.arena.get_parenthesized(paren_node)
-                                                    && let Some(func_node) =
-                                                        parser.arena.get(paren_data.expression)
-                                                    {
-                                                        if (func_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                                            || func_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                                            && let Some(func) = parser.arena.get_function(func_node) {
-                                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                                return emitter.body_contains_await(func.body);
-                                                            }
-                                                    }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+        && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+        && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
+        && let Some(call_node) = parser.arena.get(expr_stmt.expression)
+        && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
+        && let Some(call_data) = parser.arena.get_call_expr(call_node)
+        && let Some(paren_node) = parser.arena.get(call_data.expression)
+        && paren_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        && let Some(paren_data) = parser.arena.get_parenthesized(paren_node)
+        && let Some(func_node) = parser.arena.get(paren_data.expression)
+    {
+        if (func_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || func_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            && let Some(func) = parser.arena.get_function(func_node)
+        {
+            let emitter = AsyncES5Emitter::new(&parser.arena);
+            return emitter.body_contains_await(func.body);
+        }
+    }
     false
 }
 
@@ -2689,44 +2698,34 @@ fn parse_and_emit_async_callback(source: &str) -> String {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx) {
-                    // ExpressionStatement -> CallExpression -> arguments[0] (async function)
-                    if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-                        && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
-                            && let Some(call_node) = parser.arena.get(expr_stmt.expression)
-                                && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                    && let Some(call_data) = parser.arena.get_call_expr(call_node)
-                                        && let Some(args) = &call_data.arguments
-                                            && let Some(&arg_idx) = args.nodes.first()
-                                                && let Some(arg_node) = parser.arena.get(arg_idx) {
-                                                    if (arg_node.kind
-                                                        == syntax_kind_ext::ARROW_FUNCTION
-                                                        || arg_node.kind
-                                                            == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                                        && let Some(func) =
-                                                            parser.arena.get_function(arg_node)
-                                                        {
-                                                            let emitter =
-                                                                AsyncES5Emitter::new(&parser.arena);
-                                                            let has_await = emitter
-                                                                .body_contains_await(func.body);
-                                                            let mut emitter =
-                                                                AsyncES5Emitter::new(&parser.arena);
-                                                            if has_await {
-                                                                return emitter
-                                                                    .emit_generator_body_with_await(
-                                                                        func.body,
-                                                                    );
-                                                            } else {
-                                                                return emitter
-                                                                    .emit_simple_generator_body(
-                                                                        func.body,
-                                                                    );
-                                                            }
-                                                        }
-                                                }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+    {
+        // ExpressionStatement -> CallExpression -> arguments[0] (async function)
+        if stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
+            && let Some(call_node) = parser.arena.get(expr_stmt.expression)
+            && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call_data) = parser.arena.get_call_expr(call_node)
+            && let Some(args) = &call_data.arguments
+            && let Some(&arg_idx) = args.nodes.first()
+            && let Some(arg_node) = parser.arena.get(arg_idx)
+        {
+            if (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                && let Some(func) = parser.arena.get_function(arg_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func.body);
                 }
+            }
+        }
+    }
     String::new()
 }
 
@@ -2739,29 +2738,25 @@ fn callback_body_contains_await(source: &str) -> bool {
 
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
-            && let Some(&stmt_idx) = source_file.statements.nodes.first()
-                && let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
-                        && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
-                            && let Some(call_node) = parser.arena.get(expr_stmt.expression)
-                                && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                    && let Some(call_data) = parser.arena.get_call_expr(call_node)
-                                        && let Some(args) = &call_data.arguments
-                                            && let Some(&arg_idx) = args.nodes.first()
-                                                && let Some(arg_node) = parser.arena.get(arg_idx) {
-                                                    if (arg_node.kind
-                                                        == syntax_kind_ext::ARROW_FUNCTION
-                                                        || arg_node.kind
-                                                            == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                                        && let Some(func) =
-                                                            parser.arena.get_function(arg_node)
-                                                        {
-                                                            let emitter =
-                                                                AsyncES5Emitter::new(&parser.arena);
-                                                            return emitter
-                                                                .body_contains_await(func.body);
-                                                        }
-                                                }
+        && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(stmt_node) = parser.arena.get(stmt_idx)
+        && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+        && let Some(expr_stmt) = parser.arena.get_expression_statement(stmt_node)
+        && let Some(call_node) = parser.arena.get(expr_stmt.expression)
+        && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
+        && let Some(call_data) = parser.arena.get_call_expr(call_node)
+        && let Some(args) = &call_data.arguments
+        && let Some(&arg_idx) = args.nodes.first()
+        && let Some(arg_node) = parser.arena.get(arg_idx)
+    {
+        if (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            && let Some(func) = parser.arena.get_function(arg_node)
+        {
+            let emitter = AsyncES5Emitter::new(&parser.arena);
+            return emitter.body_contains_await(func.body);
+        }
+    }
     false
 }
 
@@ -2918,41 +2913,36 @@ fn parse_and_emit_async_super_method(source: &str) -> String {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            // Find the derived class (second class declaration, or first if only one)
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            // Check if this class has an extends clause (derived class)
-                            if class_data.heritage_clauses.is_some() {
-                                // Find the first async method
-                                for &member_idx in &class_data.members.nodes {
-                                    if let Some(member_node) = parser.arena.get(member_idx)
-                                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                            && let Some(method_data) =
-                                                parser.arena.get_method_decl(member_node)
-                                            {
-                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                let has_await =
-                                                    emitter.body_contains_await(method_data.body);
-                                                let mut emitter =
-                                                    AsyncES5Emitter::new(&parser.arena);
-                                                if has_await {
-                                                    return emitter.emit_generator_body_with_await(
-                                                        method_data.body,
-                                                    );
-                                                } else {
-                                                    return emitter.emit_simple_generator_body(
-                                                        method_data.body,
-                                                    );
-                                                }
-                                            }
-                                }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        // Find the derived class (second class declaration, or first if only one)
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                // Check if this class has an extends clause (derived class)
+                if class_data.heritage_clauses.is_some() {
+                    // Find the first async method
+                    for &member_idx in &class_data.members.nodes {
+                        if let Some(member_node) = parser.arena.get(member_idx)
+                            && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                            && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                        {
+                            let emitter = AsyncES5Emitter::new(&parser.arena);
+                            let has_await = emitter.body_contains_await(method_data.body);
+                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                            if has_await {
+                                return emitter.emit_generator_body_with_await(method_data.body);
+                            } else {
+                                return emitter.emit_simple_generator_body(method_data.body);
                             }
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -2964,26 +2954,26 @@ fn super_method_contains_await(source: &str) -> bool {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node)
-                            && class_data.heritage_clauses.is_some() {
-                                for &member_idx in &class_data.members.nodes {
-                                    if let Some(member_node) = parser.arena.get(member_idx)
-                                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                            && let Some(method_data) =
-                                                parser.arena.get_method_decl(member_node)
-                                            {
-                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                return emitter
-                                                    .body_contains_await(method_data.body);
-                                            }
-                                }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+                && class_data.heritage_clauses.is_some()
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -3152,35 +3142,32 @@ fn parse_and_emit_async_private_field(source: &str) -> String {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            // Find the first async method
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                // Find the first async method
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -3192,24 +3179,25 @@ fn private_field_method_contains_await(source: &str) -> bool {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -3370,35 +3358,32 @@ fn parse_and_emit_async_decorated(source: &str) -> String {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            // Find the first method declaration
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                // Find the first method declaration
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -3410,24 +3395,25 @@ fn decorated_method_contains_await(source: &str) -> bool {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -3581,36 +3567,33 @@ fn parse_and_emit_async_computed_prop(source: &str) -> String {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx) {
-                    // Handle class declarations
-                    if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx) {
+                // Handle class declarations
+                if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    && let Some(class_data) = parser.arena.get_class(stmt_node)
+                {
+                    for &member_idx in &class_data.members.nodes {
+                        if let Some(member_node) = parser.arena.get(member_idx)
+                            && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                            && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                        {
+                            let emitter = AsyncES5Emitter::new(&parser.arena);
+                            let has_await = emitter.body_contains_await(method_data.body);
+                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                            if has_await {
+                                return emitter.emit_generator_body_with_await(method_data.body);
+                            } else {
+                                return emitter.emit_simple_generator_body(method_data.body);
                             }
                         }
+                    }
                 }
             }
         }
+    }
     String::new()
 }
 
@@ -3622,24 +3605,25 @@ fn computed_prop_method_contains_await(source: &str) -> bool {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -3795,50 +3779,40 @@ fn parse_and_emit_async_field_initializer(source: &str) -> String {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                                        && let Some(prop_data) =
-                                            parser.arena.get_property_decl(member_node)
-                                        {
-                                            let init_idx = prop_data.initializer;
-                                            if let Some(init_node) = parser.arena.get(init_idx) {
-                                                // Check for arrow function or function expression
-                                                if (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                                    || init_node.kind
-                                                        == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                                    && let Some(func) =
-                                                        parser.arena.get_function(init_node)
-                                                    {
-                                                        let emitter =
-                                                            AsyncES5Emitter::new(&parser.arena);
-                                                        let has_await =
-                                                            emitter.body_contains_await(func.body);
-                                                        let mut emitter =
-                                                            AsyncES5Emitter::new(&parser.arena);
-                                                        if has_await {
-                                                            return emitter
-                                                                .emit_generator_body_with_await(
-                                                                    func.body,
-                                                                );
-                                                        } else {
-                                                            return emitter
-                                                                .emit_simple_generator_body(
-                                                                    func.body,
-                                                                );
-                                                        }
-                                                    }
-                                            }
-                                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && let Some(prop_data) = parser.arena.get_property_decl(member_node)
+                    {
+                        let init_idx = prop_data.initializer;
+                        if let Some(init_node) = parser.arena.get(init_idx) {
+                            // Check for arrow function or function expression
+                            if (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                && let Some(func) = parser.arena.get_function(init_node)
+                            {
+                                let emitter = AsyncES5Emitter::new(&parser.arena);
+                                let has_await = emitter.body_contains_await(func.body);
+                                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                                if has_await {
+                                    return emitter.emit_generator_body_with_await(func.body);
+                                } else {
+                                    return emitter.emit_simple_generator_body(func.body);
+                                }
                             }
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -3850,36 +3824,33 @@ fn async_field_initializer_contains_await(source: &str) -> bool {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                                        && let Some(prop_data) =
-                                            parser.arena.get_property_decl(member_node)
-                                        {
-                                            let init_idx = prop_data.initializer;
-                                            if let Some(init_node) = parser.arena.get(init_idx) {
-                                                if (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                                    || init_node.kind
-                                                        == syntax_kind_ext::FUNCTION_EXPRESSION)
-                                                    && let Some(func) =
-                                                        parser.arena.get_function(init_node)
-                                                    {
-                                                        let emitter =
-                                                            AsyncES5Emitter::new(&parser.arena);
-                                                        return emitter
-                                                            .body_contains_await(func.body);
-                                                    }
-                                            }
-                                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && let Some(prop_data) = parser.arena.get_property_decl(member_node)
+                    {
+                        let init_idx = prop_data.initializer;
+                        if let Some(init_node) = parser.arena.get(init_idx) {
+                            if (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                                && let Some(func) = parser.arena.get_function(init_node)
+                            {
+                                let emitter = AsyncES5Emitter::new(&parser.arena);
+                                return emitter.body_contains_await(func.body);
                             }
                         }
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -4036,39 +4007,34 @@ fn parse_and_emit_async_super_property(source: &str) -> String {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            // Check if this class has an extends clause (derived class)
-                            if class_data.heritage_clauses.is_some() {
-                                for &member_idx in &class_data.members.nodes {
-                                    if let Some(member_node) = parser.arena.get(member_idx)
-                                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                            && let Some(method_data) =
-                                                parser.arena.get_method_decl(member_node)
-                                            {
-                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                let has_await =
-                                                    emitter.body_contains_await(method_data.body);
-                                                let mut emitter =
-                                                    AsyncES5Emitter::new(&parser.arena);
-                                                if has_await {
-                                                    return emitter.emit_generator_body_with_await(
-                                                        method_data.body,
-                                                    );
-                                                } else {
-                                                    return emitter.emit_simple_generator_body(
-                                                        method_data.body,
-                                                    );
-                                                }
-                                            }
-                                }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                // Check if this class has an extends clause (derived class)
+                if class_data.heritage_clauses.is_some() {
+                    for &member_idx in &class_data.members.nodes {
+                        if let Some(member_node) = parser.arena.get(member_idx)
+                            && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                            && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                        {
+                            let emitter = AsyncES5Emitter::new(&parser.arena);
+                            let has_await = emitter.body_contains_await(method_data.body);
+                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                            if has_await {
+                                return emitter.emit_generator_body_with_await(method_data.body);
+                            } else {
+                                return emitter.emit_simple_generator_body(method_data.body);
                             }
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -4080,26 +4046,26 @@ fn super_property_method_contains_await(source: &str) -> bool {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node)
-                            && class_data.heritage_clauses.is_some() {
-                                for &member_idx in &class_data.members.nodes {
-                                    if let Some(member_node) = parser.arena.get(member_idx)
-                                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                            && let Some(method_data) =
-                                                parser.arena.get_method_decl(member_node)
-                                            {
-                                                let emitter = AsyncES5Emitter::new(&parser.arena);
-                                                return emitter
-                                                    .body_contains_await(method_data.body);
-                                            }
-                                }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+                && class_data.heritage_clauses.is_some()
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -4256,34 +4222,31 @@ fn parse_and_emit_async_private_access(source: &str) -> String {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -4295,24 +4258,25 @@ fn private_access_method_contains_await(source: &str) -> bool {
     let root = parser.parse_source_file();
 
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -4467,34 +4431,31 @@ fn parse_and_emit_async_static_access(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -4503,24 +4464,25 @@ fn static_access_method_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &class_idx in &source_file.statements.nodes {
-                if let Some(class_node) = parser.arena.get(class_idx)
-                    && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(class_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &class_idx in &source_file.statements.nodes {
+            if let Some(class_node) = parser.arena.get(class_idx)
+                && class_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(class_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -4674,22 +4636,24 @@ fn parse_and_emit_async_optional_chaining(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -4698,16 +4662,18 @@ fn optional_chaining_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -4859,22 +4825,24 @@ fn parse_and_emit_async_nullish_coalescing(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -4883,16 +4851,18 @@ fn nullish_coalescing_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -5046,22 +5016,24 @@ fn parse_and_emit_async_logical_assignment(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -5070,16 +5042,18 @@ fn logical_assignment_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -5233,22 +5207,24 @@ fn parse_and_emit_async_spread(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -5257,16 +5233,18 @@ fn spread_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -5417,22 +5395,24 @@ fn parse_and_emit_async_destructuring(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -5441,16 +5421,18 @@ fn destructuring_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -5604,22 +5586,24 @@ fn parse_and_emit_async_template_literal(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -5628,16 +5612,18 @@ fn template_literal_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -5787,22 +5773,24 @@ fn parse_and_emit_async_class_expression(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -5811,16 +5799,18 @@ fn class_expression_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -5974,22 +5964,24 @@ fn parse_and_emit_async_object_method(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -5998,16 +5990,18 @@ fn object_method_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -6161,22 +6155,24 @@ fn parse_and_emit_async_generator_method(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -6185,16 +6181,18 @@ fn async_generator_method_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -6348,22 +6346,24 @@ fn parse_and_emit_async_arrow_expression(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -6372,16 +6372,18 @@ fn async_arrow_expression_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -6535,22 +6537,24 @@ fn parse_and_emit_async_function_expression(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -6559,16 +6563,18 @@ fn async_function_expression_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -6724,34 +6730,31 @@ fn parse_and_emit_async_method_decorator(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -6760,24 +6763,25 @@ fn async_method_decorator_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -6925,34 +6929,31 @@ fn parse_and_emit_async_class_method_extra(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -6961,24 +6962,25 @@ fn async_class_method_extra_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -7127,34 +7129,31 @@ fn parse_and_emit_async_with_accessor(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -7163,24 +7162,25 @@ fn async_with_accessor_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -7329,34 +7329,31 @@ fn parse_and_emit_async_static_method(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -7365,24 +7362,25 @@ fn async_static_method_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -7530,22 +7528,24 @@ fn parse_and_emit_async_generator_delegation(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -7554,16 +7554,18 @@ fn async_generator_delegation_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -7710,22 +7712,24 @@ fn parse_and_emit_async_error_propagation(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -7734,16 +7738,18 @@ fn async_error_propagation_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -7888,34 +7894,31 @@ fn parse_and_emit_async_class_inheritance(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            let has_await =
-                                                emitter.body_contains_await(method_data.body);
-                                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                                            if has_await {
-                                                return emitter.emit_generator_body_with_await(
-                                                    method_data.body,
-                                                );
-                                            } else {
-                                                return emitter
-                                                    .emit_simple_generator_body(method_data.body);
-                                            }
-                                        }
-                            }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        let has_await = emitter.body_contains_await(method_data.body);
+                        let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                        if has_await {
+                            return emitter.emit_generator_body_with_await(method_data.body);
+                        } else {
+                            return emitter.emit_simple_generator_body(method_data.body);
                         }
+                    }
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -7924,24 +7927,25 @@ fn async_class_inheritance_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(class_data) = parser.arena.get_class(stmt_node) {
-                            for &member_idx in &class_data.members.nodes {
-                                if let Some(member_node) = parser.arena.get(member_idx)
-                                    && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                                        && let Some(method_data) =
-                                            parser.arena.get_method_decl(member_node)
-                                        {
-                                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                                            return emitter.body_contains_await(method_data.body);
-                                        }
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                && let Some(class_data) = parser.arena.get_class(stmt_node)
+            {
+                for &member_idx in &class_data.members.nodes {
+                    if let Some(member_node) = parser.arena.get(member_idx)
+                        && member_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        && let Some(method_data) = parser.arena.get_method_decl(member_node)
+                    {
+                        let emitter = AsyncES5Emitter::new(&parser.arena);
+                        return emitter.body_contains_await(method_data.body);
+                    }
+                }
             }
         }
+    }
     false
 }
 
@@ -8089,22 +8093,24 @@ fn parse_and_emit_async_for_of_loop(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -8113,16 +8119,18 @@ fn async_for_of_loop_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -8269,22 +8277,24 @@ fn parse_and_emit_async_while_loop(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -8293,16 +8303,18 @@ fn async_while_loop_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -8452,22 +8464,24 @@ fn parse_and_emit_async_do_while_loop(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -8476,16 +8490,18 @@ fn async_do_while_loop_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -8635,22 +8651,24 @@ fn parse_and_emit_async_switch_statement(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -8659,16 +8677,18 @@ fn async_switch_statement_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -8816,22 +8836,24 @@ fn parse_and_emit_async_conditional_expression(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -8840,16 +8862,18 @@ fn async_conditional_expression_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -8993,22 +9017,24 @@ fn parse_and_emit_async_labeled_statement(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            let has_await = emitter.body_contains_await(func_data.body);
-                            let mut emitter = AsyncES5Emitter::new(&parser.arena);
-                            if has_await {
-                                return emitter.emit_generator_body_with_await(func_data.body);
-                            } else {
-                                return emitter.emit_simple_generator_body(func_data.body);
-                            }
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                let has_await = emitter.body_contains_await(func_data.body);
+                let mut emitter = AsyncES5Emitter::new(&parser.arena);
+                if has_await {
+                    return emitter.emit_generator_body_with_await(func_data.body);
+                } else {
+                    return emitter.emit_simple_generator_body(func_data.body);
+                }
             }
         }
+    }
     String::new()
 }
 
@@ -9017,16 +9043,18 @@ fn async_labeled_statement_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 
@@ -9150,16 +9178,18 @@ fn async_with_statement_contains_await(source: &str) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     if let Some(root_node) = parser.arena.get(root)
-        && let Some(source_file) = parser.arena.get_source_file(root_node) {
-            for &stmt_idx in &source_file.statements.nodes {
-                if let Some(stmt_node) = parser.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        && let Some(func_data) = parser.arena.get_function(stmt_node) {
-                            let emitter = AsyncES5Emitter::new(&parser.arena);
-                            return emitter.body_contains_await(func_data.body);
-                        }
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(stmt_node) = parser.arena.get(stmt_idx)
+                && stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func_data) = parser.arena.get_function(stmt_node)
+            {
+                let emitter = AsyncES5Emitter::new(&parser.arena);
+                return emitter.body_contains_await(func_data.body);
             }
         }
+    }
     false
 }
 

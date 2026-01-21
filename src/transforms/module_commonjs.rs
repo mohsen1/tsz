@@ -101,9 +101,10 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
             if let Some(import_decl) = arena.get_import_decl(decl_node)
-                && let Some(name) = get_identifier_text(arena, import_decl.import_clause) {
-                    exports.push(name);
-                }
+                && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
+            {
+                exports.push(name);
+            }
         }
         _ => {
             // Interface, Type Alias, etc. don't need runtime exports
@@ -137,29 +138,26 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
 
                     // Only pre-initialize local exports (no module specifier)
                     if export_decl.module_specifier.is_none()
-                        && let Some(clause_node) = arena.get(export_decl.export_clause) {
-                            if let Some(named_exports) = arena.get_named_imports(clause_node) {
-                                for &spec_idx in &named_exports.elements.nodes {
-                                    if let Some(spec) =
-                                        arena.get(spec_idx).and_then(|n| arena.get_specifier(n))
-                                    {
-                                        if spec.is_type_only {
-                                            continue;
-                                        }
-                                        // Use the exported name (name), not the local name (property_name)
-                                        if let Some(name) = get_identifier_text(arena, spec.name) {
-                                            exports.push(name);
-                                        }
+                        && let Some(clause_node) = arena.get(export_decl.export_clause)
+                    {
+                        if let Some(named_exports) = arena.get_named_imports(clause_node) {
+                            for &spec_idx in &named_exports.elements.nodes {
+                                if let Some(spec) =
+                                    arena.get(spec_idx).and_then(|n| arena.get_specifier(n))
+                                {
+                                    if spec.is_type_only {
+                                        continue;
+                                    }
+                                    // Use the exported name (name), not the local name (property_name)
+                                    if let Some(name) = get_identifier_text(arena, spec.name) {
+                                        exports.push(name);
                                     }
                                 }
-                            } else {
-                                collect_export_name_from_declaration(
-                                    arena,
-                                    clause_node,
-                                    &mut exports,
-                                );
                             }
+                        } else {
+                            collect_export_name_from_declaration(arena, clause_node, &mut exports);
                         }
+                    }
                 }
             }
             // export const foo = ...
@@ -168,49 +166,53 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node)
                     && has_export_modifier_from_list(arena, &var_stmt.modifiers)
-                        && !has_declare_modifier_from_list(arena, &var_stmt.modifiers)
-                    {
-                        for &decl_idx in &var_stmt.declarations.nodes {
-                            collect_declaration_names(arena, decl_idx, &mut exports);
-                        }
+                    && !has_declare_modifier_from_list(arena, &var_stmt.modifiers)
+                {
+                    for &decl_idx in &var_stmt.declarations.nodes {
+                        collect_declaration_names(arena, decl_idx, &mut exports);
                     }
+                }
             }
             // export function foo() {}
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
                     && has_export_modifier_from_list(arena, &func.modifiers)
-                        && !has_declare_modifier_from_list(arena, &func.modifiers)
-                        && let Some(name) = get_identifier_text(arena, func.name) {
-                            exports.push(name);
-                        }
+                    && !has_declare_modifier_from_list(arena, &func.modifiers)
+                    && let Some(name) = get_identifier_text(arena, func.name)
+                {
+                    exports.push(name);
+                }
             }
             // export class Foo {}
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = arena.get_class(node)
                     && has_export_modifier_from_list(arena, &class.modifiers)
-                        && !has_declare_modifier_from_list(arena, &class.modifiers)
-                        && let Some(name) = get_identifier_text(arena, class.name) {
-                            exports.push(name);
-                        }
+                    && !has_declare_modifier_from_list(arena, &class.modifiers)
+                    && let Some(name) = get_identifier_text(arena, class.name)
+                {
+                    exports.push(name);
+                }
             }
             // export enum E {}
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node)
                     && has_export_modifier_from_list(arena, &enum_decl.modifiers)
-                        && !has_declare_modifier_from_list(arena, &enum_decl.modifiers)
-                        && !has_const_modifier_from_list(arena, &enum_decl.modifiers)
-                        && let Some(name) = get_identifier_text(arena, enum_decl.name) {
-                            exports.push(name);
-                        }
+                    && !has_declare_modifier_from_list(arena, &enum_decl.modifiers)
+                    && !has_const_modifier_from_list(arena, &enum_decl.modifiers)
+                    && let Some(name) = get_identifier_text(arena, enum_decl.name)
+                {
+                    exports.push(name);
+                }
             }
             // export namespace N {}
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = arena.get_module(node)
                     && has_export_modifier_from_list(arena, &module.modifiers)
-                        && !has_declare_modifier_from_list(arena, &module.modifiers)
-                        && let Some(name) = get_identifier_text(arena, module.name) {
-                            exports.push(name);
-                        }
+                    && !has_declare_modifier_from_list(arena, &module.modifiers)
+                    && let Some(name) = get_identifier_text(arena, module.name)
+                {
+                    exports.push(name);
+                }
             }
             _ => {}
         }
@@ -312,47 +314,49 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
 
     // Default import: import foo from "..."
     if !clause.name.is_none()
-        && let Some(name) = get_identifier_text(arena, clause.name) {
-            bindings.push(format!("var {} = {}.default;", name, module_var));
-        }
+        && let Some(name) = get_identifier_text(arena, clause.name)
+    {
+        bindings.push(format!("var {} = {}.default;", name, module_var));
+    }
 
     // Named bindings: import { a, b as c } from "..." or import * as ns from "..."
     if !clause.named_bindings.is_none()
-        && let Some(named_node) = arena.get(clause.named_bindings) {
-            // NamedImportsData handles both namespace and named imports
-            if let Some(named_imports) = arena.get_named_imports(named_node) {
-                // Check if it's a namespace import: import * as ns from "..."
-                // Namespace imports have a name but no elements
-                if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
-                    if let Some(name) = get_identifier_text(arena, named_imports.name) {
-                        // Use __importStar helper for namespace imports
-                        bindings.push(format!("var {} = __importStar({});", name, module_var));
-                    }
-                } else {
-                    // Named imports: import { a, b } from "..."
-                    for &spec_idx in &named_imports.elements.nodes {
-                        if let Some(spec_node) = arena.get(spec_idx)
-                            && let Some(spec) = arena.get_specifier(spec_node) {
-                                if spec.is_type_only {
-                                    continue;
-                                }
-                                let local_name =
-                                    get_identifier_text(arena, spec.name).unwrap_or_default();
-                                let import_name = if !spec.property_name.is_none() {
-                                    get_identifier_text(arena, spec.property_name)
-                                        .unwrap_or(local_name.clone())
-                                } else {
-                                    local_name.clone()
-                                };
-                                bindings.push(format!(
-                                    "var {} = {}.{};",
-                                    local_name, module_var, import_name
-                                ));
-                            }
+        && let Some(named_node) = arena.get(clause.named_bindings)
+    {
+        // NamedImportsData handles both namespace and named imports
+        if let Some(named_imports) = arena.get_named_imports(named_node) {
+            // Check if it's a namespace import: import * as ns from "..."
+            // Namespace imports have a name but no elements
+            if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
+                if let Some(name) = get_identifier_text(arena, named_imports.name) {
+                    // Use __importStar helper for namespace imports
+                    bindings.push(format!("var {} = __importStar({});", name, module_var));
+                }
+            } else {
+                // Named imports: import { a, b } from "..."
+                for &spec_idx in &named_imports.elements.nodes {
+                    if let Some(spec_node) = arena.get(spec_idx)
+                        && let Some(spec) = arena.get_specifier(spec_node)
+                    {
+                        if spec.is_type_only {
+                            continue;
+                        }
+                        let local_name = get_identifier_text(arena, spec.name).unwrap_or_default();
+                        let import_name = if !spec.property_name.is_none() {
+                            get_identifier_text(arena, spec.property_name)
+                                .unwrap_or(local_name.clone())
+                        } else {
+                            local_name.clone()
+                        };
+                        bindings.push(format!(
+                            "var {} = {}.{};",
+                            local_name, module_var, import_name
+                        ));
                     }
                 }
             }
         }
+    }
 
     bindings
 }
@@ -392,9 +396,10 @@ fn has_modifier(arena: &NodeArena, modifiers: &Option<crate::parser::NodeList>, 
     if let Some(mods) = modifiers {
         for &mod_idx in &mods.nodes {
             if let Some(mod_node) = arena.get(mod_idx)
-                && mod_node.kind == kind {
-                    return true;
-                }
+                && mod_node.kind == kind
+            {
+                return true;
+            }
         }
     }
     false

@@ -2194,20 +2194,21 @@ const result = add(1, 2);
     let arena = parser.get_arena();
 
     if let Some(source_file) = arena.get(root)
-        && let Some(sf) = arena.get_source_file(source_file) {
-            let mut builder = FlowGraphBuilder::new(arena);
-            let graph = builder.build_source_file(&sf.statements);
+        && let Some(sf) = arena.get_source_file(source_file)
+    {
+        let mut builder = FlowGraphBuilder::new(arena);
+        let graph = builder.build_source_file(&sf.statements);
 
-            // Verify flow graph exists and has nodes
-            assert!(!graph.nodes.is_empty(), "Flow graph should have nodes");
+        // Verify flow graph exists and has nodes
+        assert!(!graph.nodes.is_empty(), "Flow graph should have nodes");
 
-            // Verify that we can query flow for arrow function
-            let arrow_func_idx = *sf.statements.nodes.get(1).expect("arrow function");
-            assert!(
-                graph.has_flow_at_node(arrow_func_idx),
-                "Flow should be recorded for arrow function"
-            );
-        }
+        // Verify that we can query flow for arrow function
+        let arrow_func_idx = *sf.statements.nodes.get(1).expect("arrow function");
+        assert!(
+            graph.has_flow_at_node(arrow_func_idx),
+            "Flow should be recorded for arrow function"
+        );
+    }
 }
 
 /// Test callback with filter method (another common array method).
@@ -2571,7 +2572,7 @@ class Foo {
 fn test_ts2454_variable_used_before_assigned() {
     use crate::binder::BinderState;
     use crate::checker::CheckerState;
-    
+
     use crate::parser::ParserState;
 
     let source = r#"

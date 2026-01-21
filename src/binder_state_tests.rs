@@ -1767,9 +1767,10 @@ function test() {
     for i in 0..symbols.len() {
         let id = crate::binder::SymbolId(i as u32);
         if let Some(sym) = symbols.get(id)
-            && sym.escaped_name == "x" {
-                x_count += 1;
-            }
+            && sym.escaped_name == "x"
+        {
+            x_count += 1;
+        }
     }
 
     assert_eq!(x_count, 2);

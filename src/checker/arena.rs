@@ -539,9 +539,10 @@ impl TypeArena {
             for (i, text) in texts.iter().enumerate() {
                 result.push_str(text);
                 if i < string_values.len()
-                    && let Some(s) = &string_values[i] {
-                        result.push_str(s);
-                    }
+                    && let Some(s) = &string_values[i]
+                {
+                    result.push_str(s);
+                }
             }
             return self.create_string_literal(result);
         }

@@ -293,19 +293,21 @@ impl ExportTracker {
     pub fn resolve_export(&self, name: &str) -> ExportResolution {
         // Check direct exports first
         if let Some(binding) = self.bindings_by_name.get(name)
-            && binding.source_module.is_none() {
-                return ExportResolution::Direct(binding.clone());
-            }
+            && binding.source_module.is_none()
+        {
+            return ExportResolution::Direct(binding.clone());
+        }
 
         // Check named re-exports
         if let Some(binding) = self.reexports.get(name)
-            && let Some(ref source) = binding.source_module {
-                let original = binding.original_name.as_deref().unwrap_or(name);
-                return ExportResolution::ReExport {
-                    source_module: source.clone(),
-                    original_name: original.to_string(),
-                };
-            }
+            && let Some(ref source) = binding.source_module
+        {
+            let original = binding.original_name.as_deref().unwrap_or(name);
+            return ExportResolution::ReExport {
+                source_module: source.clone(),
+                original_name: original.to_string(),
+            };
+        }
 
         // Check namespace re-exports (export * from)
         if !self.namespace_reexports.is_empty() {

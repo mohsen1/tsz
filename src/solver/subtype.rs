@@ -483,22 +483,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 for &member in members.iter() {
                     if let Some(TypeKey::TypeParameter(param_info))
                     | Some(TypeKey::Infer(param_info)) = self.interner.lookup(member)
-                        && let Some(constraint) = param_info.constraint {
-                            // Create intersection of constraint with other members
-                            let other_members: Vec<TypeId> =
-                                members.iter().filter(|&&m| m != member).copied().collect();
+                        && let Some(constraint) = param_info.constraint
+                    {
+                        // Create intersection of constraint with other members
+                        let other_members: Vec<TypeId> =
+                            members.iter().filter(|&&m| m != member).copied().collect();
 
-                            if !other_members.is_empty() {
-                                let mut all_members = vec![constraint];
-                                all_members.extend(other_members);
-                                let narrowed_constraint = self.interner.intersection(all_members);
+                        if !other_members.is_empty() {
+                            let mut all_members = vec![constraint];
+                            all_members.extend(other_members);
+                            let narrowed_constraint = self.interner.intersection(all_members);
 
-                                // Check if the narrowed constraint is a subtype of target
-                                if self.check_subtype(narrowed_constraint, target).is_true() {
-                                    return SubtypeResult::True;
-                                }
+                            // Check if the narrowed constraint is a subtype of target
+                            if self.check_subtype(narrowed_constraint, target).is_true() {
+                                return SubtypeResult::True;
                             }
                         }
+                    }
                 }
 
                 SubtypeResult::False
@@ -593,9 +594,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             }
                         }
                         if let Some(variadic) = expansion.variadic
-                            && !self.check_subtype(variadic, *t_elem).is_true() {
-                                return SubtypeResult::False;
-                            }
+                            && !self.check_subtype(variadic, *t_elem).is_true()
+                        {
+                            return SubtypeResult::False;
+                        }
                     } else {
                         // Regular element: T <: U
                         if !self.check_subtype(elem.type_id, *t_elem).is_true() {
@@ -933,9 +935,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // (prevents infinite recursion on self-referential types)
             let resolved_key = self.interner.lookup(resolved);
             if let Some(TypeKey::Application(resolved_app_id)) = resolved_key
-                && resolved_app_id == app_id {
-                    return None;
-                }
+                && resolved_app_id == app_id
+            {
+                return None;
+            }
 
             // Create substitution and instantiate
             let substitution = TypeSubstitution::from_args(&type_params, &app.args);
@@ -1859,10 +1862,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !self
                 .check_subtype(s_number_idx.value_type, s_string_idx.value_type)
                 .is_true()
-            {
-                // This is a constraint violation in the source itself
-                return SubtypeResult::False;
-            }
+        {
+            // This is a constraint violation in the source itself
+            return SubtypeResult::False;
+        }
 
         SubtypeResult::True
     }
@@ -1930,22 +1933,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_type = self.optional_property_type(target_prop);
 
         if self.is_numeric_property_name(target_prop.name)
-            && let Some(number_idx) = &source.number_index {
-                checked = true;
-                if number_idx.readonly && !target_prop.readonly {
-                    return SubtypeResult::False;
-                }
-                if !self
-                    .check_subtype_with_method_variance(
-                        number_idx.value_type,
-                        target_type,
-                        target_prop.is_method,
-                    )
-                    .is_true()
-                {
-                    return SubtypeResult::False;
-                }
+            && let Some(number_idx) = &source.number_index
+        {
+            checked = true;
+            if number_idx.readonly && !target_prop.readonly {
+                return SubtypeResult::False;
             }
+            if !self
+                .check_subtype_with_method_variance(
+                    number_idx.value_type,
+                    target_type,
+                    target_prop.is_method,
+                )
+                .is_true()
+            {
+                return SubtypeResult::False;
+            }
+        }
 
         if let Some(string_idx) = &source.string_index {
             checked = true;
@@ -2218,15 +2222,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some(index) = &shape.string_index
                     && (self.type_contains_this_type_inner(index.key_type, visited)
                         || self.type_contains_this_type_inner(index.value_type, visited))
-                    {
-                        return true;
-                    }
+                {
+                    return true;
+                }
                 if let Some(index) = &shape.number_index
                     && (self.type_contains_this_type_inner(index.key_type, visited)
                         || self.type_contains_this_type_inner(index.value_type, visited))
-                    {
-                        return true;
-                    }
+                {
+                    return true;
+                }
                 false
             }
             TypeKey::Function(shape_id) => {
@@ -3585,24 +3589,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check number index signature
         if let Some(ref t_number_idx) = target_shape.number_index
-            && let Some(ref s_number_idx) = source_shape.number_index {
-                if s_number_idx.readonly && !t_number_idx.readonly {
-                    return Some(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    });
-                }
-                if !self
-                    .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
-                    .is_true()
-                {
-                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                        index_kind: "number",
-                        source_value_type: s_number_idx.value_type,
-                        target_value_type: t_number_idx.value_type,
-                    });
-                }
+            && let Some(ref s_number_idx) = source_shape.number_index
+        {
+            if s_number_idx.readonly && !t_number_idx.readonly {
+                return Some(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
             }
+            if !self
+                .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
+                .is_true()
+            {
+                return Some(SubtypeFailureReason::IndexSignatureMismatch {
+                    index_kind: "number",
+                    source_value_type: s_number_idx.value_type,
+                    target_value_type: t_number_idx.value_type,
+                });
+            }
+        }
 
         if let Some(reason) =
             self.explain_properties_against_index_signatures(&source_shape.properties, target_shape)
@@ -3688,28 +3693,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let target_type = self.optional_property_type(t_prop);
 
             if self.is_numeric_property_name(t_prop.name)
-                && let Some(number_idx) = &source_shape.number_index {
-                    checked = true;
-                    if number_idx.readonly && !t_prop.readonly {
-                        return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
-                            property_name: t_prop.name,
-                        });
-                    }
-                    if !self
-                        .check_subtype_with_method_variance(
-                            number_idx.value_type,
-                            target_type,
-                            t_prop.is_method,
-                        )
-                        .is_true()
-                    {
-                        return Some(SubtypeFailureReason::IndexSignatureMismatch {
-                            index_kind: "number",
-                            source_value_type: number_idx.value_type,
-                            target_value_type: target_type,
-                        });
-                    }
+                && let Some(number_idx) = &source_shape.number_index
+            {
+                checked = true;
+                if number_idx.readonly && !t_prop.readonly {
+                    return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
+                        property_name: t_prop.name,
+                    });
                 }
+                if !self
+                    .check_subtype_with_method_variance(
+                        number_idx.value_type,
+                        target_type,
+                        t_prop.is_method,
+                    )
+                    .is_true()
+                {
+                    return Some(SubtypeFailureReason::IndexSignatureMismatch {
+                        index_kind: "number",
+                        source_value_type: number_idx.value_type,
+                        target_value_type: target_type,
+                    });
+                }
+            }
 
             if let Some(string_idx) = &source_shape.string_index {
                 checked = true;
@@ -3820,10 +3826,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &FunctionShape,
     ) -> Option<SubtypeFailureReason> {
         // Check return type
-        if !(
-            self.check_subtype(source.return_type, target.return_type).is_true()
-                || self.allow_void_return && target.return_type == TypeId::VOID
-        ) {
+        if !(self
+            .check_subtype(source.return_type, target.return_type)
+            .is_true()
+            || self.allow_void_return && target.return_type == TypeId::VOID)
+        {
             let nested = self.explain_failure(source.return_type, target.return_type);
             return Some(SubtypeFailureReason::ReturnTypeMismatch {
                 source_return: source.return_type,

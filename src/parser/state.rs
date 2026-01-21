@@ -341,7 +341,9 @@ impl ParserState {
                                 true
                             }
                             // If there's a line break, give the user benefit of doubt
-                            else { self.scanner.has_preceding_line_break() }
+                            else {
+                                self.scanner.has_preceding_line_break()
+                            }
                         }
                         _ => false,
                     }
@@ -4485,10 +4487,9 @@ impl ParserState {
             },
         );
 
-        if is_global
-            && let Some(node) = self.arena.get_mut(module_idx) {
-                node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
-            }
+        if is_global && let Some(node) = self.arena.get_mut(module_idx) {
+            node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
+        }
 
         module_idx
     }
@@ -4567,10 +4568,9 @@ impl ParserState {
             },
         );
 
-        if is_global
-            && let Some(node) = self.arena.get_mut(module_idx) {
-                node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
-            }
+        if is_global && let Some(node) = self.arena.get_mut(module_idx) {
+            node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
+        }
 
         module_idx
     }
@@ -5886,14 +5886,16 @@ impl ParserState {
         };
 
         // Error recovery: try without catch or finally is invalid
-        if catch_clause.is_none() && finally_block.is_none()
-            && self.token_pos() != self.last_error_pos {
-                use crate::checker::types::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token(
-                    "catch or finally expected.",
-                    diagnostic_codes::CATCH_OR_FINALLY_EXPECTED,
-                );
-            }
+        if catch_clause.is_none()
+            && finally_block.is_none()
+            && self.token_pos() != self.last_error_pos
+        {
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "catch or finally expected.",
+                diagnostic_codes::CATCH_OR_FINALLY_EXPECTED,
+            );
+        }
 
         let end_pos = self.token_end();
         self.arena.add_try(
@@ -5947,11 +5949,8 @@ impl ParserState {
         self.parse_semicolon();
         let end_pos = self.token_end();
 
-        self.arena.add_token(
-            syntax_kind_ext::DEBUGGER_STATEMENT,
-            start_pos,
-            end_pos,
-        )
+        self.arena
+            .add_token(syntax_kind_ext::DEBUGGER_STATEMENT, start_pos, end_pos)
     }
 
     /// Parse expression statement
@@ -6761,21 +6760,21 @@ impl ParserState {
         if !self.scanner.has_preceding_line_break()
             && (self.is_token(SyntaxKind::PlusPlusToken)
                 || self.is_token(SyntaxKind::MinusMinusToken))
-            {
-                let operator = self.token() as u16;
-                self.next_token();
-                let end_pos = self.token_end();
+        {
+            let operator = self.token() as u16;
+            self.next_token();
+            let end_pos = self.token_end();
 
-                expr = self.arena.add_unary_expr(
-                    syntax_kind_ext::POSTFIX_UNARY_EXPRESSION,
-                    start_pos,
-                    end_pos,
-                    UnaryExprData {
-                        operator,
-                        operand: expr,
-                    },
-                );
-            }
+            expr = self.arena.add_unary_expr(
+                syntax_kind_ext::POSTFIX_UNARY_EXPRESSION,
+                start_pos,
+                end_pos,
+                UnaryExprData {
+                    operator,
+                    operand: expr,
+                },
+            );
+        }
 
         expr
     }
@@ -6854,10 +6853,9 @@ impl ParserState {
                             arguments: Some(arguments),
                         },
                     );
-                    if is_optional_chain
-                        && let Some(call_node) = self.arena.get_mut(call_expr) {
-                            call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
-                        }
+                    if is_optional_chain && let Some(call_node) = self.arena.get_mut(call_expr) {
+                        call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
+                    }
                     expr = call_expr;
                 }
                 // Tagged template literals: tag`template` or tag`head${expr}tail`
@@ -6880,48 +6878,49 @@ impl ParserState {
                 SyntaxKind::QuestionDotToken => {
                     self.next_token();
                     if self.is_token(SyntaxKind::LessThanToken)
-                        && let Some(type_args) = self.try_parse_type_arguments_for_call() {
-                            if self.is_token(SyntaxKind::OpenParenToken) {
-                                // expr?.<T>()
-                                self.next_token();
-                                let arguments = self.parse_argument_list();
-                                let end_pos = self.token_end();
-                                self.parse_expected(SyntaxKind::CloseParenToken);
+                        && let Some(type_args) = self.try_parse_type_arguments_for_call()
+                    {
+                        if self.is_token(SyntaxKind::OpenParenToken) {
+                            // expr?.<T>()
+                            self.next_token();
+                            let arguments = self.parse_argument_list();
+                            let end_pos = self.token_end();
+                            self.parse_expected(SyntaxKind::CloseParenToken);
 
-                                let call_expr = self.arena.add_call_expr(
-                                    syntax_kind_ext::CALL_EXPRESSION,
-                                    start_pos,
-                                    end_pos,
-                                    CallExprData {
-                                        expression: expr,
-                                        type_arguments: Some(type_args),
-                                        arguments: Some(arguments),
-                                    },
-                                );
-                                if let Some(call_node) = self.arena.get_mut(call_expr) {
-                                    call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
-                                }
-                                expr = call_expr;
-                                continue;
-                            } else if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
-                                || self.is_token(SyntaxKind::TemplateHead)
-                            {
-                                let template = self.parse_template_literal();
-                                let end_pos = self.token_end();
-
-                                expr = self.arena.add_tagged_template(
-                                    syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
-                                    start_pos,
-                                    end_pos,
-                                    TaggedTemplateData {
-                                        tag: expr,
-                                        type_arguments: Some(type_args),
-                                        template,
-                                    },
-                                );
-                                continue;
+                            let call_expr = self.arena.add_call_expr(
+                                syntax_kind_ext::CALL_EXPRESSION,
+                                start_pos,
+                                end_pos,
+                                CallExprData {
+                                    expression: expr,
+                                    type_arguments: Some(type_args),
+                                    arguments: Some(arguments),
+                                },
+                            );
+                            if let Some(call_node) = self.arena.get_mut(call_expr) {
+                                call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
                             }
+                            expr = call_expr;
+                            continue;
+                        } else if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
+                            || self.is_token(SyntaxKind::TemplateHead)
+                        {
+                            let template = self.parse_template_literal();
+                            let end_pos = self.token_end();
+
+                            expr = self.arena.add_tagged_template(
+                                syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION,
+                                start_pos,
+                                end_pos,
+                                TaggedTemplateData {
+                                    tag: expr,
+                                    type_arguments: Some(type_args),
+                                    template,
+                                },
+                            );
+                            continue;
                         }
+                    }
                     if self.is_token(SyntaxKind::OpenBracketToken) {
                         // expr?.[index]
                         self.next_token();
@@ -8488,9 +8487,10 @@ impl ParserState {
         };
         if let Some(type_args) = type_arguments.as_ref()
             && let Some(last) = type_args.nodes.last()
-                && let Some(node) = self.arena.get(*last) {
-                    end_pos = end_pos.max(node.end);
-                }
+            && let Some(node) = self.arena.get(*last)
+        {
+            end_pos = end_pos.max(node.end);
+        }
 
         let arguments = if self.is_token(SyntaxKind::OpenParenToken) {
             self.next_token();

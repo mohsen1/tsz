@@ -178,12 +178,7 @@ impl<'a> SignatureHelpProvider<'a> {
         // 4. Resolve the symbol being called using ScopeWalker
         let mut walker = crate::lsp::resolver::ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
-            walker.resolve_node_cached(
-                root,
-                call_expr.expression,
-                scope_cache,
-                scope_stats,
-            )
+            walker.resolve_node_cached(root, call_expr.expression, scope_cache, scope_stats)
         } else {
             walker.resolve_node(root, call_expr.expression)
         };
@@ -279,14 +274,15 @@ impl<'a> SignatureHelpProvider<'a> {
             if let Some(node) = self.arena.get(current) {
                 if (node.kind == syntax_kind_ext::CALL_EXPRESSION
                     || node.kind == syntax_kind_ext::NEW_EXPRESSION)
-                    && let Some(data) = self.arena.get_call_expr(node) {
-                        let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
-                            CallKind::New
-                        } else {
-                            CallKind::Call
-                        };
-                        return Some((current, data, kind));
-                    }
+                    && let Some(data) = self.arena.get_call_expr(node)
+                {
+                    let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                        CallKind::New
+                    } else {
+                        CallKind::Call
+                    };
+                    return Some((current, data, kind));
+                }
 
                 // Move up to parent
                 if let Some(extended) = self.arena.get_extended(current) {
@@ -345,19 +341,18 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         if let Some(&last_arg_idx) = args.nodes.last()
-            && let Some(last_arg_node) = self.arena.get(last_arg_idx) {
-                let call_end = self
-                    .arena
-                    .get(call_idx)
-                    .map(|node| node.end)
-                    .unwrap_or(cursor_offset);
-                let scan_end = cursor_offset.min(call_end);
-                if scan_end > last_arg_node.end
-                    && self.has_comma_between(last_arg_node.end, scan_end)
-                {
-                    return args.nodes.len() as u32;
-                }
+            && let Some(last_arg_node) = self.arena.get(last_arg_idx)
+        {
+            let call_end = self
+                .arena
+                .get(call_idx)
+                .map(|node| node.end)
+                .unwrap_or(cursor_offset);
+            let scan_end = cursor_offset.min(call_end);
+            if scan_end > last_arg_node.end && self.has_comma_between(last_arg_node.end, scan_end) {
+                return args.nodes.len() as u32;
             }
+        }
 
         // Cursor is after all arguments - return the last argument index.
         (args.nodes.len().saturating_sub(1)) as u32
@@ -664,9 +659,10 @@ impl<'a> SignatureHelpProvider<'a> {
                 continue;
             };
             if let Some(param_info) = sig.info.parameters.get_mut(idx)
-                && (overwrite || param_info.documentation.is_none()) {
-                    param_info.documentation = Some(param_doc.clone());
-                }
+                && (overwrite || param_info.documentation.is_none())
+            {
+                param_info.documentation = Some(param_doc.clone());
+            }
         }
     }
 
@@ -1115,9 +1111,10 @@ impl<'a> SignatureHelpProvider<'a> {
                     continue;
                 }
                 if let Some(ident) = self.arena.get_identifier(name_node)
-                    && ident.escaped_text == "this" {
-                        continue;
-                    }
+                    && ident.escaped_text == "this"
+                {
+                    continue;
+                }
             }
 
             total_params += 1;

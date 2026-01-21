@@ -188,10 +188,11 @@ impl<'a> SemanticTokensProvider<'a> {
 
         // Check if this declaration node has a symbol
         if let Some(sym_id) = self.binder.get_node_symbol(node_idx)
-            && let Some(symbol) = self.binder.get_symbol(sym_id) {
-                // This is a declaration - emit token for its name
-                self.emit_token_for_declaration(node_idx, symbol);
-            }
+            && let Some(symbol) = self.binder.get_symbol(sym_id)
+        {
+            // This is a declaration - emit token for its name
+            self.emit_token_for_declaration(node_idx, symbol);
+        }
 
         // Recurse into children
         self.visit_children(node_idx);
@@ -595,9 +596,10 @@ impl<'a> SemanticTokensProvider<'a> {
         };
 
         if let Some(name_idx) = name_idx
-            && !name_idx.is_none() {
-                self.emit_token_for_name(name_idx, symbol, true);
-            }
+            && !name_idx.is_none()
+        {
+            self.emit_token_for_name(name_idx, symbol, true);
+        }
     }
 
     /// Emit a semantic token for a name identifier.
@@ -655,9 +657,10 @@ impl<'a> SemanticTokensProvider<'a> {
             // Check if it's a parameter
             if symbol.value_declaration.is_some()
                 && let Some(decl_node) = self.arena.get(symbol.value_declaration)
-                    && decl_node.kind == syntax_kind_ext::PARAMETER {
-                        return (SemanticTokenType::Parameter, modifiers);
-                    }
+                && decl_node.kind == syntax_kind_ext::PARAMETER
+            {
+                return (SemanticTokenType::Parameter, modifiers);
+            }
             SemanticTokenType::Variable
         } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
             SemanticTokenType::Variable

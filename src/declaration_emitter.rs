@@ -160,9 +160,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Type parameters
         if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         // Parameters
         self.write("(");
@@ -205,9 +206,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Type parameters
         if let Some(ref type_params) = class.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         // Heritage clauses (extends, implements)
         if let Some(ref heritage) = class.heritage_clauses {
@@ -306,9 +308,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Type parameters
         if let Some(ref type_params) = method.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         // Parameters
         self.write("(");
@@ -424,9 +427,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Type parameters
         if let Some(ref type_params) = iface.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         // Heritage (extends)
         if let Some(ref heritage) = iface.heritage_clauses {
@@ -559,9 +563,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Type parameters
         if let Some(ref type_params) = alias.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         self.write(" = ");
         self.emit_type(alias.type_node);
@@ -599,13 +604,14 @@ impl<'a> DeclarationEmitter<'a> {
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
             self.write_indent();
             if let Some(member_node) = self.arena.get(member_idx)
-                && let Some(member) = self.arena.get_enum_member(member_node) {
-                    self.emit_node(member.name);
-                    if !member.initializer.is_none() {
-                        self.write(" = ");
-                        self.emit_expression(member.initializer);
-                    }
+                && let Some(member) = self.arena.get_enum_member(member_node)
+            {
+                self.emit_node(member.name);
+                if !member.initializer.is_none() {
+                    self.write(" = ");
+                    self.emit_expression(member.initializer);
                 }
+            }
             if i < enum_data.members.nodes.len() - 1 {
                 self.write(",");
             }
@@ -634,39 +640,41 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                && let Some(decl_list) = self.arena.get_variable(decl_list_node) {
-                    // Determine let/const/var
-                    let flags = decl_list_node.flags as u32;
-                    let keyword = if flags & crate::parser::node_flags::CONST != 0 {
-                        "const"
-                    } else if flags & crate::parser::node_flags::LET != 0 {
-                        "let"
-                    } else {
-                        "var"
-                    };
+                && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+            {
+                // Determine let/const/var
+                let flags = decl_list_node.flags as u32;
+                let keyword = if flags & crate::parser::node_flags::CONST != 0 {
+                    "const"
+                } else if flags & crate::parser::node_flags::LET != 0 {
+                    "let"
+                } else {
+                    "var"
+                };
 
-                    for &decl_idx in &decl_list.declarations.nodes {
-                        self.write_indent();
-                        if is_exported {
-                            self.write("export ");
-                        }
-                        self.write("declare ");
-                        self.write(keyword);
-                        self.write(" ");
-
-                        if let Some(decl_node) = self.arena.get(decl_idx)
-                            && let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                self.emit_node(decl.name);
-                                if !decl.type_annotation.is_none() {
-                                    self.write(": ");
-                                    self.emit_type(decl.type_annotation);
-                                }
-                            }
-
-                        self.write(";");
-                        self.write_line();
+                for &decl_idx in &decl_list.declarations.nodes {
+                    self.write_indent();
+                    if is_exported {
+                        self.write("export ");
                     }
+                    self.write("declare ");
+                    self.write(keyword);
+                    self.write(" ");
+
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        self.emit_node(decl.name);
+                        if !decl.type_annotation.is_none() {
+                            self.write(": ");
+                            self.emit_type(decl.type_annotation);
+                        }
+                    }
+
+                    self.write(";");
+                    self.write_line();
                 }
+            }
         }
     }
 
@@ -680,19 +688,20 @@ impl<'a> DeclarationEmitter<'a> {
 
         if export.is_default_export {
             if !export.export_clause.is_none()
-                && let Some(clause_node) = self.arena.get(export.export_clause) {
-                    match clause_node.kind {
-                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                            self.emit_export_default_function(export.export_clause);
-                            return;
-                        }
-                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                            self.emit_export_default_class(export.export_clause);
-                            return;
-                        }
-                        _ => {}
+                && let Some(clause_node) = self.arena.get(export.export_clause)
+            {
+                match clause_node.kind {
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.emit_export_default_function(export.export_clause);
+                        return;
                     }
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        self.emit_export_default_class(export.export_clause);
+                        return;
+                    }
+                    _ => {}
                 }
+            }
 
             self.emit_export_default_expression(export.export_clause);
             return;
@@ -700,36 +709,37 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Check if export_clause is a declaration (interface, class, function, type, enum)
         if !export.export_clause.is_none()
-            && let Some(clause_node) = self.arena.get(export.export_clause) {
-                match clause_node.kind {
-                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                        // Emit: export interface Foo {...}
-                        self.emit_exported_interface(export.export_clause);
-                        return;
-                    }
-                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                        self.emit_exported_class(export.export_clause);
-                        return;
-                    }
-                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                        self.emit_exported_function(export.export_clause);
-                        return;
-                    }
-                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                        self.emit_exported_type_alias(export.export_clause);
-                        return;
-                    }
-                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                        self.emit_exported_enum(export.export_clause);
-                        return;
-                    }
-                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                        self.emit_exported_variable(export.export_clause);
-                        return;
-                    }
-                    _ => {}
+            && let Some(clause_node) = self.arena.get(export.export_clause)
+        {
+            match clause_node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    // Emit: export interface Foo {...}
+                    self.emit_exported_interface(export.export_clause);
+                    return;
                 }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    self.emit_exported_class(export.export_clause);
+                    return;
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    self.emit_exported_function(export.export_clause);
+                    return;
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    self.emit_exported_type_alias(export.export_clause);
+                    return;
+                }
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    self.emit_exported_enum(export.export_clause);
+                    return;
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.emit_exported_variable(export.export_clause);
+                    return;
+                }
+                _ => {}
             }
+        }
 
         // Handle named exports: export { a, b } from "mod"
         // or star exports: export * from "mod"
@@ -795,9 +805,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(func.name);
 
         if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         self.write("(");
         self.emit_parameters(&func.parameters);
@@ -831,9 +842,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(class.name);
 
         if let Some(ref type_params) = class.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         if let Some(ref heritage) = class.heritage_clauses {
             self.emit_heritage_clauses(heritage);
@@ -927,9 +939,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(iface.name);
 
         if let Some(ref type_params) = iface.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         if let Some(ref heritage) = iface.heritage_clauses {
             self.emit_heritage_clauses(heritage);
@@ -962,9 +975,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(class.name);
 
         if let Some(ref type_params) = class.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         if let Some(ref heritage) = class.heritage_clauses {
             self.emit_heritage_clauses(heritage);
@@ -997,9 +1011,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(func.name);
 
         if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         self.write("(");
         self.emit_parameters(&func.parameters);
@@ -1027,9 +1042,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(alias.name);
 
         if let Some(ref type_params) = alias.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        }
 
         self.write(" = ");
         self.emit_type(alias.type_node);
@@ -1056,13 +1072,14 @@ impl<'a> DeclarationEmitter<'a> {
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
             self.write_indent();
             if let Some(member_node) = self.arena.get(member_idx)
-                && let Some(member) = self.arena.get_enum_member(member_node) {
-                    self.emit_node(member.name);
-                    if !member.initializer.is_none() {
-                        self.write(" = ");
-                        self.emit_expression(member.initializer);
-                    }
+                && let Some(member) = self.arena.get_enum_member(member_node)
+            {
+                self.emit_node(member.name);
+                if !member.initializer.is_none() {
+                    self.write(" = ");
+                    self.emit_expression(member.initializer);
                 }
+            }
             if i < enum_data.members.nodes.len() - 1 {
                 self.write(",");
             }
@@ -1089,35 +1106,37 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                && let Some(decl_list) = self.arena.get_variable(decl_list_node) {
-                    let flags = decl_list_node.flags as u32;
-                    let keyword = if flags & crate::parser::node_flags::CONST != 0 {
-                        "const"
-                    } else if flags & crate::parser::node_flags::LET != 0 {
-                        "let"
-                    } else {
-                        "var"
-                    };
+                && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+            {
+                let flags = decl_list_node.flags as u32;
+                let keyword = if flags & crate::parser::node_flags::CONST != 0 {
+                    "const"
+                } else if flags & crate::parser::node_flags::LET != 0 {
+                    "let"
+                } else {
+                    "var"
+                };
 
-                    for &decl_idx in &decl_list.declarations.nodes {
-                        self.write_indent();
-                        self.write("export declare ");
-                        self.write(keyword);
-                        self.write(" ");
+                for &decl_idx in &decl_list.declarations.nodes {
+                    self.write_indent();
+                    self.write("export declare ");
+                    self.write(keyword);
+                    self.write(" ");
 
-                        if let Some(decl_node) = self.arena.get(decl_idx)
-                            && let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                self.emit_node(decl.name);
-                                if !decl.type_annotation.is_none() {
-                                    self.write(": ");
-                                    self.emit_type(decl.type_annotation);
-                                }
-                            }
-
-                        self.write(";");
-                        self.write_line();
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        self.emit_node(decl.name);
+                        if !decl.type_annotation.is_none() {
+                            self.write(": ");
+                            self.emit_type(decl.type_annotation);
+                        }
                     }
+
+                    self.write(";");
+                    self.write_line();
                 }
+            }
         }
     }
 
@@ -1134,29 +1153,30 @@ impl<'a> DeclarationEmitter<'a> {
 
         if !import.import_clause.is_none()
             && let Some(clause_node) = self.arena.get(import.import_clause)
-                && let Some(clause) = self.arena.get_import_clause(clause_node) {
-                    if clause.is_type_only {
-                        self.write("type ");
-                    }
+            && let Some(clause) = self.arena.get_import_clause(clause_node)
+        {
+            if clause.is_type_only {
+                self.write("type ");
+            }
 
-                    let mut has_default = false;
+            let mut has_default = false;
 
-                    // Default import
-                    if !clause.name.is_none() {
-                        self.emit_node(clause.name);
-                        has_default = true;
-                    }
+            // Default import
+            if !clause.name.is_none() {
+                self.emit_node(clause.name);
+                has_default = true;
+            }
 
-                    // Named imports
-                    if !clause.named_bindings.is_none() {
-                        if has_default {
-                            self.write(", ");
-                        }
-                        self.emit_named_imports(clause.named_bindings, !clause.is_type_only);
-                    }
-
-                    self.write(" from ");
+            // Named imports
+            if !clause.named_bindings.is_none() {
+                if has_default {
+                    self.write(", ");
                 }
+                self.emit_named_imports(clause.named_bindings, !clause.is_type_only);
+            }
+
+            self.write(" from ");
+        }
 
         self.emit_node(import.module_specifier);
         self.write(";");
@@ -1234,11 +1254,12 @@ impl<'a> DeclarationEmitter<'a> {
             self.increase_indent();
 
             if let Some(body_node) = self.arena.get(module.body)
-                && let Some(block) = self.arena.get_block(body_node) {
-                    for &stmt_idx in &block.statements.nodes {
-                        self.emit_statement(stmt_idx);
-                    }
+                && let Some(block) = self.arena.get_block(body_node)
+            {
+                for &stmt_idx in &block.statements.nodes {
+                    self.emit_statement(stmt_idx);
                 }
+            }
 
             self.decrease_indent();
             self.write_indent();
@@ -1259,29 +1280,30 @@ impl<'a> DeclarationEmitter<'a> {
             first = false;
 
             if let Some(param_node) = self.arena.get(param_idx)
-                && let Some(param) = self.arena.get_parameter(param_node) {
-                    // Modifiers (public, private, etc for constructor parameters)
-                    self.emit_member_modifiers(&param.modifiers);
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                // Modifiers (public, private, etc for constructor parameters)
+                self.emit_member_modifiers(&param.modifiers);
 
-                    // Rest parameter
-                    if param.dot_dot_dot_token {
-                        self.write("...");
-                    }
-
-                    // Name
-                    self.emit_node(param.name);
-
-                    // Optional
-                    if param.question_token {
-                        self.write("?");
-                    }
-
-                    // Type
-                    if !param.type_annotation.is_none() {
-                        self.write(": ");
-                        self.emit_type(param.type_annotation);
-                    }
+                // Rest parameter
+                if param.dot_dot_dot_token {
+                    self.write("...");
                 }
+
+                // Name
+                self.emit_node(param.name);
+
+                // Optional
+                if param.question_token {
+                    self.write("?");
+                }
+
+                // Type
+                if !param.type_annotation.is_none() {
+                    self.write(": ");
+                    self.emit_type(param.type_annotation);
+                }
+            }
         }
     }
 
@@ -1295,19 +1317,20 @@ impl<'a> DeclarationEmitter<'a> {
             first = false;
 
             if let Some(param_node) = self.arena.get(param_idx)
-                && let Some(param) = self.arena.get_type_parameter(param_node) {
-                    self.emit_node(param.name);
+                && let Some(param) = self.arena.get_type_parameter(param_node)
+            {
+                self.emit_node(param.name);
 
-                    if !param.constraint.is_none() {
-                        self.write(" extends ");
-                        self.emit_type(param.constraint);
-                    }
-
-                    if !param.default.is_none() {
-                        self.write(" = ");
-                        self.emit_type(param.default);
-                    }
+                if !param.constraint.is_none() {
+                    self.write(" extends ");
+                    self.emit_type(param.constraint);
                 }
+
+                if !param.default.is_none() {
+                    self.write(" = ");
+                    self.emit_type(param.default);
+                }
+            }
         }
         self.write(">");
     }
@@ -1406,18 +1429,19 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(expr) = self.arena.get_expr_type_args(type_node) {
                     self.emit_entity_name(expr.expression);
                     if let Some(ref type_args) = expr.type_arguments
-                        && !type_args.nodes.is_empty() {
-                            self.write("<");
-                            let mut first = true;
-                            for &arg_idx in &type_args.nodes {
-                                if !first {
-                                    self.write(", ");
-                                }
-                                first = false;
-                                self.emit_type(arg_idx);
+                        && !type_args.nodes.is_empty()
+                    {
+                        self.write("<");
+                        let mut first = true;
+                        for &arg_idx in &type_args.nodes {
+                            if !first {
+                                self.write(", ");
                             }
-                            self.write(">");
+                            first = false;
+                            self.emit_type(arg_idx);
                         }
+                        self.write(">");
+                    }
                 }
             }
 
@@ -1636,9 +1660,10 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == kind {
-                        return true;
-                    }
+                    && mod_node.kind == kind
+                {
+                    return true;
+                }
             }
         }
         false
