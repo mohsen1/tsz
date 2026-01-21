@@ -223,9 +223,10 @@ impl<'a> HoverProvider<'a> {
 
         let mut sections = Vec::new();
         if let Some(summary) = parsed.summary.as_ref()
-            && !summary.is_empty() {
-                sections.push(summary.clone());
-            }
+            && !summary.is_empty()
+        {
+            sections.push(summary.clone());
+        }
 
         if !parsed.params.is_empty() {
             let mut names: Vec<&String> = parsed.params.keys().collect();

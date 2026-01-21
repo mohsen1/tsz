@@ -209,9 +209,10 @@ impl<'a> ES5SpreadTransformer<'a> {
 
                 // Add spread element
                 if let Some(spread) = self.arena.get_unary_expr_ex(elem_node)
-                    && let Some(expr) = self.transform_expression(spread.expression) {
-                        segments.push(ArraySegment::Spread(expr));
-                    }
+                    && let Some(expr) = self.transform_expression(spread.expression)
+                {
+                    segments.push(ArraySegment::Spread(expr));
+                }
             } else {
                 // Regular element
                 if let Some(elem_ir) = self.transform_expression(elem_idx) {
@@ -322,9 +323,10 @@ impl<'a> ES5SpreadTransformer<'a> {
         if args.nodes.len() == 1 {
             let first_node = self.arena.get(args.nodes[0])?;
             if first_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread) = self.arena.get_unary_expr_ex(first_node) {
-                    return self.transform_expression(spread.expression);
-                }
+                && let Some(spread) = self.arena.get_unary_expr_ex(first_node)
+            {
+                return self.transform_expression(spread.expression);
+            }
         }
 
         // Need to build concat chain
@@ -341,9 +343,10 @@ impl<'a> ES5SpreadTransformer<'a> {
                     segments.push(ArraySegment::Literal(std::mem::take(&mut current_elements)));
                 }
                 if let Some(spread) = self.arena.get_unary_expr_ex(arg_node)
-                    && let Some(expr) = self.transform_expression(spread.expression) {
-                        segments.push(ArraySegment::Spread(expr));
-                    }
+                    && let Some(expr) = self.transform_expression(spread.expression)
+                {
+                    segments.push(ArraySegment::Spread(expr));
+                }
             } else if let Some(arg_ir) = self.transform_expression(arg_idx) {
                 current_elements.push(arg_ir);
             }
@@ -430,9 +433,10 @@ impl<'a> ES5SpreadTransformer<'a> {
 
                 // Add spread
                 if let Some(spread) = self.arena.get_unary_expr_ex(elem_node)
-                    && let Some(expr) = self.transform_expression(spread.expression) {
-                        segments.push(ObjectSegment::Spread(expr));
-                    }
+                    && let Some(expr) = self.transform_expression(spread.expression)
+                {
+                    segments.push(ObjectSegment::Spread(expr));
+                }
             } else if let Some(prop) = self.transform_object_property(elem_idx) {
                 current_props.push(prop);
             }

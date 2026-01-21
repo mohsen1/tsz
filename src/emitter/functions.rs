@@ -176,17 +176,18 @@ impl<'a> Printer<'a> {
             first = false;
 
             if let Some(param_node) = self.arena.get(param_idx)
-                && let Some(param) = self.arena.get_parameter(param_node) {
-                    if param.dot_dot_dot_token {
-                        self.write("...");
-                    }
-                    self.emit(param.name);
-                    // Skip type annotations and defaults for JS emit
-                    if !param.initializer.is_none() {
-                        self.write(" = ");
-                        self.emit(param.initializer);
-                    }
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                if param.dot_dot_dot_token {
+                    self.write("...");
                 }
+                self.emit(param.name);
+                // Skip type annotations and defaults for JS emit
+                if !param.initializer.is_none() {
+                    self.write(" = ");
+                    self.emit(param.initializer);
+                }
+            }
         }
     }
 

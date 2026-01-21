@@ -276,9 +276,10 @@ impl<'a> EnumChecker<'a> {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
                 if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::ConstKeyword as u16 {
-                        return true;
-                    }
+                    && node.kind == SyntaxKind::ConstKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -289,9 +290,10 @@ impl<'a> EnumChecker<'a> {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
                 if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::DeclareKeyword as u16 {
-                        return true;
-                    }
+                    && node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -358,11 +360,12 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut checker = EnumChecker::new(&parser.arena);
-                    checker.check_enum_declaration(enum_idx);
-                    return checker.take_diagnostics();
-                }
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut checker = EnumChecker::new(&parser.arena);
+            checker.check_enum_declaration(enum_idx);
+            return checker.take_diagnostics();
+        }
         Vec::new()
     }
 

@@ -14,11 +14,12 @@ impl<'a> Printer<'a> {
         self.emit(type_ref.type_name);
 
         if let Some(ref type_args) = type_ref.type_arguments
-            && !type_args.nodes.is_empty() {
-                self.write("<");
-                self.emit_comma_separated(&type_args.nodes);
-                self.write(">");
-            }
+            && !type_args.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_args.nodes);
+            self.write(">");
+        }
     }
 
     pub(super) fn emit_union_type(&mut self, node: &Node) {
@@ -78,11 +79,12 @@ impl<'a> Printer<'a> {
 
         // Type parameters
         if let Some(ref type_params) = func_type.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.write("<");
-                self.emit_comma_separated(&type_params.nodes);
-                self.write(">");
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
 
         // Parameters
         self.write("(");
@@ -203,11 +205,12 @@ impl<'a> Printer<'a> {
         };
 
         if let Some(ref type_params) = sig.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.write("<");
-                self.emit_comma_separated(&type_params.nodes);
-                self.write(">");
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
 
         self.write("(");
         if let Some(ref params) = sig.parameters {
@@ -229,11 +232,12 @@ impl<'a> Printer<'a> {
         self.write("new ");
 
         if let Some(ref type_params) = sig.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.write("<");
-                self.emit_comma_separated(&type_params.nodes);
-                self.write(">");
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
 
         self.write("(");
         if let Some(ref params) = sig.parameters {

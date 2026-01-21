@@ -702,12 +702,13 @@ impl ProjectFile {
 
             if !clause.name.is_none()
                 && let Some(name) = arena.get_identifier_text(clause.name)
-                    && name == local_name {
-                        targets.push(ImportTarget {
-                            module_specifier: module_specifier.clone(),
-                            kind: ImportKind::Default,
-                        });
-                    }
+                && name == local_name
+            {
+                targets.push(ImportTarget {
+                    module_specifier: module_specifier.clone(),
+                    kind: ImportKind::Default,
+                });
+            }
 
             if clause.named_bindings.is_none() {
                 continue;
@@ -718,12 +719,13 @@ impl ProjectFile {
             };
             if bindings_node.kind == SyntaxKind::Identifier as u16 {
                 if let Some(name) = arena.get_identifier_text(clause.named_bindings)
-                    && name == local_name {
-                        targets.push(ImportTarget {
-                            module_specifier: module_specifier.clone(),
-                            kind: ImportKind::Namespace,
-                        });
-                    }
+                    && name == local_name
+                {
+                    targets.push(ImportTarget {
+                        module_specifier: module_specifier.clone(),
+                        kind: ImportKind::Namespace,
+                    });
+                }
                 continue;
             }
             let Some(named) = arena.get_named_imports(bindings_node) else {
@@ -732,12 +734,13 @@ impl ProjectFile {
 
             if !named.name.is_none()
                 && let Some(name) = arena.get_identifier_text(named.name)
-                    && name == local_name {
-                        targets.push(ImportTarget {
-                            module_specifier: module_specifier.clone(),
-                            kind: ImportKind::Namespace,
-                        });
-                    }
+                && name == local_name
+            {
+                targets.push(ImportTarget {
+                    module_specifier: module_specifier.clone(),
+                    kind: ImportKind::Namespace,
+                });
+            }
 
             for &spec_idx in &named.elements.nodes {
                 let Some(spec_node) = arena.get(spec_idx) else {
@@ -929,11 +932,12 @@ impl ProjectFile {
 
         if (node.kind == syntax_kind_ext::VARIABLE_STATEMENT
             || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
-            && let Some(var) = arena.get_variable(node) {
-                for &child in &var.declarations.nodes {
-                    self.collect_variable_declarations(child, output);
-                }
+            && let Some(var) = arena.get_variable(node)
+        {
+            for &child in &var.declarations.nodes {
+                self.collect_variable_declarations(child, output);
             }
+        }
     }
 }
 
@@ -1200,24 +1204,26 @@ impl Project {
         };
 
         if let Some(missing_name) = missing_name
-            && !skip_auto_import && !existing.contains(&missing_name) {
-                let file = self.files.get(file_name)?;
-                let mut candidates = Vec::new();
-                let mut seen = FxHashSet::default();
-                self.collect_import_candidates_for_name(
-                    file,
-                    &missing_name,
-                    &mut candidates,
-                    &mut seen,
-                );
+            && !skip_auto_import
+            && !existing.contains(&missing_name)
+        {
+            let file = self.files.get(file_name)?;
+            let mut candidates = Vec::new();
+            let mut seen = FxHashSet::default();
+            self.collect_import_candidates_for_name(
+                file,
+                &missing_name,
+                &mut candidates,
+                &mut seen,
+            );
 
-                for candidate in candidates {
-                    if existing.contains(&candidate.local_name) {
-                        continue;
-                    }
-                    completions.push(self.completion_from_import_candidate(&candidate));
+            for candidate in candidates {
+                if existing.contains(&candidate.local_name) {
+                    continue;
                 }
+                completions.push(self.completion_from_import_candidate(&candidate));
             }
+        }
 
         let result = if completions.is_empty() {
             None
@@ -1706,13 +1712,14 @@ impl Project {
                 };
                 if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
                     if clause_node.kind == SyntaxKind::Identifier as u16
-                        && let Some(ns_name) = arena.get_identifier_text(export.export_clause) {
-                            namespace_targets.push(NamespaceReexportTarget {
-                                file: file_name.clone(),
-                                namespace: ns_name.to_string(),
-                                member: export_name.to_string(),
-                            });
-                        }
+                        && let Some(ns_name) = arena.get_identifier_text(export.export_clause)
+                    {
+                        namespace_targets.push(NamespaceReexportTarget {
+                            file: file_name.clone(),
+                            namespace: ns_name.to_string(),
+                            member: export_name.to_string(),
+                        });
+                    }
                     continue;
                 }
 
@@ -1862,9 +1869,10 @@ impl Project {
             }
 
             if let Some(sym_id) = expected_symbol
-                && file.binder().resolve_identifier(arena, expr_idx) != Some(sym_id) {
-                    continue;
-                }
+                && file.binder().resolve_identifier(arena, expr_idx) != Some(sym_id)
+            {
+                continue;
+            }
 
             let member_idx = access.name_or_argument;
             let matches = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -1993,16 +2001,17 @@ impl Project {
                         .unwrap_or_default()
                 };
                 if !export_nodes.is_empty()
-                    && let Some(target_file) = self.files.get_mut(&def_file) {
-                        for node in export_nodes {
-                            Self::collect_file_references(
-                                target_file,
-                                node,
-                                Some(&mut scope_stats),
-                                &mut locations,
-                            );
-                        }
+                    && let Some(target_file) = self.files.get_mut(&def_file)
+                {
+                    for node in export_nodes {
+                        Self::collect_file_references(
+                            target_file,
+                            node,
+                            Some(&mut scope_stats),
+                            &mut locations,
+                        );
                     }
+                }
 
                 for other_name in &file_names {
                     if other_name == &def_file {
@@ -2016,16 +2025,17 @@ impl Project {
                             .unwrap_or_default()
                     };
                     if !binding_nodes.is_empty()
-                        && let Some(other_file) = self.files.get_mut(other_name) {
-                            for node in binding_nodes {
-                                Self::collect_file_references(
-                                    other_file,
-                                    node,
-                                    Some(&mut scope_stats),
-                                    &mut locations,
-                                );
-                            }
+                        && let Some(other_file) = self.files.get_mut(other_name)
+                    {
+                        for node in binding_nodes {
+                            Self::collect_file_references(
+                                other_file,
+                                node,
+                                Some(&mut scope_stats),
+                                &mut locations,
+                            );
                         }
+                    }
 
                     let namespace_names = {
                         let other_file = self.files.get(other_name);
@@ -2034,16 +2044,17 @@ impl Project {
                             .unwrap_or_default()
                     };
                     if !namespace_names.is_empty()
-                        && let Some(other_file) = self.files.get(other_name) {
-                            for namespace_name in namespace_names {
-                                self.collect_namespace_member_locations(
-                                    other_file,
-                                    &namespace_name,
-                                    &export_name,
-                                    &mut locations,
-                                );
-                            }
+                        && let Some(other_file) = self.files.get(other_name)
+                    {
+                        for namespace_name in namespace_names {
+                            self.collect_namespace_member_locations(
+                                other_file,
+                                &namespace_name,
+                                &export_name,
+                                &mut locations,
+                            );
                         }
+                    }
                 }
             }
 
@@ -2265,16 +2276,17 @@ impl Project {
                             .unwrap_or_default()
                     };
                     if !export_nodes.is_empty()
-                        && let Some(target_file) = self.files.get_mut(&def_file) {
-                            for node in export_nodes {
-                                Self::collect_file_rename_edits(
-                                    target_file,
-                                    node,
-                                    &normalized_name,
-                                    &mut workspace_edit,
-                                );
-                            }
+                        && let Some(target_file) = self.files.get_mut(&def_file)
+                    {
+                        for node in export_nodes {
+                            Self::collect_file_rename_edits(
+                                target_file,
+                                node,
+                                &normalized_name,
+                                &mut workspace_edit,
+                            );
                         }
+                    }
                 }
 
                 let mut reexport_refs = Vec::new();
@@ -2313,29 +2325,29 @@ impl Project {
                             .unwrap_or_default()
                     };
                     if !import_targets.is_empty()
-                        && let Some(other_file) = self.files.get_mut(other_name) {
-                            for target in import_targets {
-                                if let Some(property_name) = target.property_name {
-                                    if let Some(location) = other_file.node_location(property_name)
-                                    {
-                                        workspace_edit.add_edit(
-                                            location.file_path,
-                                            TextEdit::new(location.range, normalized_name.clone()),
-                                        );
-                                    }
-                                } else {
-                                    if other_name == file_name {
-                                        continue;
-                                    }
-                                    Self::collect_file_rename_edits(
-                                        other_file,
-                                        target.local_ident,
-                                        &normalized_name,
-                                        &mut workspace_edit,
+                        && let Some(other_file) = self.files.get_mut(other_name)
+                    {
+                        for target in import_targets {
+                            if let Some(property_name) = target.property_name {
+                                if let Some(location) = other_file.node_location(property_name) {
+                                    workspace_edit.add_edit(
+                                        location.file_path,
+                                        TextEdit::new(location.range, normalized_name.clone()),
                                     );
                                 }
+                            } else {
+                                if other_name == file_name {
+                                    continue;
+                                }
+                                Self::collect_file_rename_edits(
+                                    other_file,
+                                    target.local_ident,
+                                    &normalized_name,
+                                    &mut workspace_edit,
+                                );
                             }
                         }
+                    }
 
                     let namespace_names = {
                         let other_file = self.files.get(other_name);
@@ -2344,23 +2356,24 @@ impl Project {
                             .unwrap_or_default()
                     };
                     if !namespace_names.is_empty()
-                        && let Some(other_file) = self.files.get(other_name) {
-                            let mut locations = Vec::new();
-                            for namespace_name in namespace_names {
-                                self.collect_namespace_member_locations(
-                                    other_file,
-                                    &namespace_name,
-                                    &export_name,
-                                    &mut locations,
-                                );
-                            }
-                            for location in locations {
-                                workspace_edit.add_edit(
-                                    location.file_path,
-                                    TextEdit::new(location.range, normalized_name.clone()),
-                                );
-                            }
+                        && let Some(other_file) = self.files.get(other_name)
+                    {
+                        let mut locations = Vec::new();
+                        for namespace_name in namespace_names {
+                            self.collect_namespace_member_locations(
+                                other_file,
+                                &namespace_name,
+                                &export_name,
+                                &mut locations,
+                            );
                         }
+                        for location in locations {
+                            workspace_edit.add_edit(
+                                location.file_path,
+                                TextEdit::new(location.range, normalized_name.clone()),
+                            );
+                        }
+                    }
                 }
             }
 
@@ -2764,14 +2777,15 @@ impl Project {
                 }
             } else if clause_node.kind == SyntaxKind::Identifier as u16
                 && let Some(export_text) = arena.get_identifier_text(export.export_clause)
-                    && export_text == export_name {
-                        matches.push(ExportMatch {
-                            kind: ImportCandidateKind::Named {
-                                export_name: export_text.to_string(),
-                            },
-                            is_type_only: export.is_type_only,
-                        });
-                    }
+                && export_text == export_name
+            {
+                matches.push(ExportMatch {
+                    kind: ImportCandidateKind::Named {
+                        export_name: export_text.to_string(),
+                    },
+                    is_type_only: export.is_type_only,
+                });
+            }
         }
 
         matches

@@ -582,9 +582,10 @@ impl<'a> ClassES5Emitter<'a> {
                 let init_node = self.arena.get(prop_data.initializer);
                 if let Some(node) = init_node
                     && node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        && contains_this_reference(self.arena, prop_data.initializer) {
-                            return true;
-                        }
+                    && contains_this_reference(self.arena, prop_data.initializer)
+                {
+                    return true;
+                }
             }
         }
         false
@@ -628,18 +629,20 @@ impl<'a> ClassES5Emitter<'a> {
             }
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node)
-                    && self.node_contains_arrow_with_this(expr_stmt.expression) {
-                        return true;
-                    }
+                    && self.node_contains_arrow_with_this(expr_stmt.expression)
+                {
+                    return true;
+                }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_data) = self.arena.get_variable(node) {
                     for &decl_idx in &var_data.declarations.nodes {
                         if let Some(decl_node) = self.arena.get(decl_idx)
                             && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                                && self.node_contains_arrow_with_this(decl.initializer) {
-                                    return true;
-                                }
+                            && self.node_contains_arrow_with_this(decl.initializer)
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -671,15 +674,17 @@ impl<'a> ClassES5Emitter<'a> {
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
             {
                 if let Some(access) = self.arena.get_access_expr(node)
-                    && self.node_contains_arrow_with_this(access.expression) {
-                        return true;
-                    }
+                    && self.node_contains_arrow_with_this(access.expression)
+                {
+                    return true;
+                }
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 if let Some(paren) = self.arena.get_parenthesized(node)
-                    && self.node_contains_arrow_with_this(paren.expression) {
-                        return true;
-                    }
+                    && self.node_contains_arrow_with_this(paren.expression)
+                {
+                    return true;
+                }
             }
             _ => {}
         }
@@ -734,11 +739,12 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write("\"]");
             }
         } else if name_node.kind == SyntaxKind::NumericLiteral as u16
-            && let Some(lit) = self.arena.get_literal(name_node) {
-                self.write("[");
-                self.write(&lit.text);
-                self.write("]");
-            }
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            self.write("[");
+            self.write(&lit.text);
+            self.write("]");
+        }
     }
 
     /// Emit a method name for prototype assignment: .name or [expr]
@@ -763,11 +769,12 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write("\"]");
             }
         } else if name_node.kind == SyntaxKind::NumericLiteral as u16
-            && let Some(lit) = self.arena.get_literal(name_node) {
-                self.write("[");
-                self.write(&lit.text);
-                self.write("]");
-            }
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            self.write("[");
+            self.write(&lit.text);
+            self.write("]");
+        }
     }
 
     /// Emit private field initializations using WeakMap.set() pattern
@@ -828,44 +835,46 @@ impl<'a> ClassES5Emitter<'a> {
 
             // Emit getter: _ClassName_accessor_get.set(this, function() { ... });
             if let Some(get_var) = &acc.get_var_name
-                && let Some(getter_body) = acc.getter_body {
-                    self.write_indent();
-                    self.write(get_var);
-                    self.write(".set(");
-                    self.write(receiver);
-                    self.write(", function() {");
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_block_contents(getter_body);
-                    self.decrease_indent();
-                    self.write_indent();
-                    self.write("});");
-                    self.write_line();
-                }
+                && let Some(getter_body) = acc.getter_body
+            {
+                self.write_indent();
+                self.write(get_var);
+                self.write(".set(");
+                self.write(receiver);
+                self.write(", function() {");
+                self.write_line();
+                self.increase_indent();
+                self.emit_block_contents(getter_body);
+                self.decrease_indent();
+                self.write_indent();
+                self.write("});");
+                self.write_line();
+            }
 
             // Emit setter: _ClassName_accessor_set.set(this, function(param) { ... });
             if let Some(set_var) = &acc.set_var_name
-                && let Some(setter_body) = acc.setter_body {
-                    self.write_indent();
-                    self.write(set_var);
-                    self.write(".set(");
-                    self.write(receiver);
-                    self.write(", function(");
-                    // Emit parameter name
-                    if let Some(param) = acc.setter_param {
-                        self.write_identifier_text(param);
-                    } else {
-                        self.write("value");
-                    }
-                    self.write(") {");
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_block_contents(setter_body);
-                    self.decrease_indent();
-                    self.write_indent();
-                    self.write("});");
-                    self.write_line();
+                && let Some(setter_body) = acc.setter_body
+            {
+                self.write_indent();
+                self.write(set_var);
+                self.write(".set(");
+                self.write(receiver);
+                self.write(", function(");
+                // Emit parameter name
+                if let Some(param) = acc.setter_param {
+                    self.write_identifier_text(param);
+                } else {
+                    self.write("value");
                 }
+                self.write(") {");
+                self.write_line();
+                self.increase_indent();
+                self.emit_block_contents(setter_body);
+                self.decrease_indent();
+                self.write_indent();
+                self.write("});");
+                self.write_line();
+            }
         }
     }
 
@@ -1226,24 +1235,25 @@ impl<'a> ClassES5Emitter<'a> {
                     entry.0 = Some(member_idx);
                 }
             } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(accessor_data) = self.arena.get_accessor(member_node) {
-                    let is_static = self.is_static(&accessor_data.modifiers);
-                    // Skip static accessors (handled in emit_static_members)
-                    if is_static {
-                        continue;
-                    }
-                    // Skip abstract accessors (they have no body and shouldn't be emitted)
-                    if self.is_abstract(&accessor_data.modifiers) {
-                        continue;
-                    }
-                    // Skip private accessors (they use WeakMap pattern)
-                    if is_private_identifier(self.arena, accessor_data.name) {
-                        continue;
-                    }
-                    let name = self.get_identifier_text(accessor_data.name);
-                    let entry = accessor_map.entry(name).or_insert((None, None, is_static));
-                    entry.1 = Some(member_idx);
+                && let Some(accessor_data) = self.arena.get_accessor(member_node)
+            {
+                let is_static = self.is_static(&accessor_data.modifiers);
+                // Skip static accessors (handled in emit_static_members)
+                if is_static {
+                    continue;
                 }
+                // Skip abstract accessors (they have no body and shouldn't be emitted)
+                if self.is_abstract(&accessor_data.modifiers) {
+                    continue;
+                }
+                // Skip private accessors (they use WeakMap pattern)
+                if is_private_identifier(self.arena, accessor_data.name) {
+                    continue;
+                }
+                let name = self.get_identifier_text(accessor_data.name);
+                let entry = accessor_map.entry(name).or_insert((None, None, is_static));
+                entry.1 = Some(member_idx);
+            }
         }
 
         // Track which accessor names we've already emitted
@@ -1498,10 +1508,11 @@ impl<'a> ClassES5Emitter<'a> {
         if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
             self.write("return");
             if let Some(ret_data) = self.arena.get_return_statement(stmt_node)
-                && !ret_data.expression.is_none() {
-                    self.write(" ");
-                    self.emit_expression(ret_data.expression);
-                }
+                && !ret_data.expression.is_none()
+            {
+                self.write(" ");
+                self.emit_expression(ret_data.expression);
+            }
             self.write(";");
         } else {
             // Fallback: emit statement normally but it might not look right
@@ -1542,26 +1553,28 @@ impl<'a> ClassES5Emitter<'a> {
 
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
                 if let Some(accessor_data) = self.arena.get_accessor(member_node)
-                    && self.is_static(&accessor_data.modifiers) {
-                        // Skip private static accessors (they use WeakMap pattern)
-                        if is_private_identifier(self.arena, accessor_data.name) {
-                            continue;
-                        }
-                        let name = self.get_identifier_text(accessor_data.name);
-                        let entry = static_accessor_map.entry(name).or_insert((None, None));
-                        entry.0 = Some(member_idx);
+                    && self.is_static(&accessor_data.modifiers)
+                {
+                    // Skip private static accessors (they use WeakMap pattern)
+                    if is_private_identifier(self.arena, accessor_data.name) {
+                        continue;
                     }
+                    let name = self.get_identifier_text(accessor_data.name);
+                    let entry = static_accessor_map.entry(name).or_insert((None, None));
+                    entry.0 = Some(member_idx);
+                }
             } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR
                 && let Some(accessor_data) = self.arena.get_accessor(member_node)
-                    && self.is_static(&accessor_data.modifiers) {
-                        // Skip private static accessors (they use WeakMap pattern)
-                        if is_private_identifier(self.arena, accessor_data.name) {
-                            continue;
-                        }
-                        let name = self.get_identifier_text(accessor_data.name);
-                        let entry = static_accessor_map.entry(name).or_insert((None, None));
-                        entry.1 = Some(member_idx);
-                    }
+                && self.is_static(&accessor_data.modifiers)
+            {
+                // Skip private static accessors (they use WeakMap pattern)
+                if is_private_identifier(self.arena, accessor_data.name) {
+                    continue;
+                }
+                let name = self.get_identifier_text(accessor_data.name);
+                let entry = static_accessor_map.entry(name).or_insert((None, None));
+                entry.1 = Some(member_idx);
+            }
         }
 
         // Emit static methods and properties
@@ -1903,11 +1916,12 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write("\"]");
             }
         } else if name_node.kind == SyntaxKind::NumericLiteral as u16
-            && let Some(lit) = self.arena.get_literal(name_node) {
-                self.write("[");
-                self.write(&lit.text);
-                self.write("]");
-            }
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            self.write("[");
+            self.write(&lit.text);
+            self.write("]");
+        }
     }
 
     fn emit_param_binding_assignments(
@@ -2643,11 +2657,12 @@ impl<'a> ClassES5Emitter<'a> {
                 }
             }
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-            && let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
-                for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-                    self.emit_es5_array_binding_element(elem_idx, temp_name, i);
-                }
+            && let Some(pattern) = self.arena.get_binding_pattern(pattern_node)
+        {
+            for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                self.emit_es5_array_binding_element(elem_idx, temp_name, i);
             }
+        }
     }
 
     fn emit_es5_object_rest_element(
@@ -2744,9 +2759,9 @@ impl<'a> ClassES5Emitter<'a> {
             if let Some(key_node) = self.arena.get(key_idx)
                 && (key_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                     || key_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-                {
-                    continue;
-                }
+            {
+                continue;
+            }
             props.push(key_idx);
         }
         props
@@ -3171,18 +3186,19 @@ impl<'a> ClassES5Emitter<'a> {
         self.increase_indent();
 
         if let Some(case_block_node) = self.arena.get(switch_stmt.case_block)
-            && let Some(case_block) = self.arena.blocks.get(case_block_node.data_index as usize) {
-                for &clause_idx in &case_block.statements.nodes {
-                    self.write_indent();
-                    if let Some(clause_node) = self.arena.get(clause_idx) {
-                        if clause_node.kind == syntax_kind_ext::CASE_CLAUSE {
-                            self.emit_case_clause(clause_idx);
-                        } else if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
-                            self.emit_default_clause(clause_idx);
-                        }
+            && let Some(case_block) = self.arena.blocks.get(case_block_node.data_index as usize)
+        {
+            for &clause_idx in &case_block.statements.nodes {
+                self.write_indent();
+                if let Some(clause_node) = self.arena.get(clause_idx) {
+                    if clause_node.kind == syntax_kind_ext::CASE_CLAUSE {
+                        self.emit_case_clause(clause_idx);
+                    } else if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
+                        self.emit_default_clause(clause_idx);
                     }
                 }
             }
+        }
 
         self.decrease_indent();
         self.write_indent();
@@ -3280,19 +3296,19 @@ impl<'a> ClassES5Emitter<'a> {
             self.write_line();
             self.write_indent();
             if let Some(catch_node) = self.arena.get(try_stmt.catch_clause)
-                && let Some(catch_data) = self.arena.get_catch_clause(catch_node) {
-                    self.write("catch (");
-                    // variable_declaration is a VARIABLE_DECLARATION node, need to get its name
-                    if !catch_data.variable_declaration.is_none()
-                        && let Some(var_decl_node) = self.arena.get(catch_data.variable_declaration)
-                            && let Some(var_decl) =
-                                self.arena.get_variable_declaration(var_decl_node)
-                            {
-                                self.emit_binding_name(var_decl.name);
-                            }
-                    self.write(") ");
-                    self.emit_statement(catch_data.block);
+                && let Some(catch_data) = self.arena.get_catch_clause(catch_node)
+            {
+                self.write("catch (");
+                // variable_declaration is a VARIABLE_DECLARATION node, need to get its name
+                if !catch_data.variable_declaration.is_none()
+                    && let Some(var_decl_node) = self.arena.get(catch_data.variable_declaration)
+                    && let Some(var_decl) = self.arena.get_variable_declaration(var_decl_node)
+                {
+                    self.emit_binding_name(var_decl.name);
                 }
+                self.write(") ");
+                self.emit_statement(catch_data.block);
+            }
         }
 
         if !try_stmt.finally_block.is_none() {
@@ -3463,13 +3479,14 @@ impl<'a> ClassES5Emitter<'a> {
                         // Transform to __classPrivateFieldSet(this, _field, value, "f")
                         let left_node = self.arena.get(bin.left);
                         if let Some(left) = left_node
-                            && let Some(access) = self.arena.get_access_expr(left) {
-                                self.emit_private_field_set(
-                                    access.expression,
-                                    access.name_or_argument,
-                                    bin.right,
-                                );
-                            }
+                            && let Some(access) = self.arena.get_access_expr(left)
+                        {
+                            self.emit_private_field_set(
+                                access.expression,
+                                access.name_or_argument,
+                                bin.right,
+                            );
+                        }
                     } else {
                         self.emit_expression(bin.left);
                         self.write(" ");
@@ -3667,13 +3684,14 @@ impl<'a> ClassES5Emitter<'a> {
                     if is_simple_body && param_transforms.is_empty() {
                         // Single-line: { return expr; }
                         if let Some(block_node) = body_node
-                            && let Some(block) = self.arena.get_block(block_node) {
-                                self.write("{ ");
-                                for &stmt_idx in &block.statements.nodes {
-                                    self.emit_statement(stmt_idx);
-                                }
-                                self.write(" }");
+                            && let Some(block) = self.arena.get_block(block_node)
+                        {
+                            self.write("{ ");
+                            for &stmt_idx in &block.statements.nodes {
+                                self.emit_statement(stmt_idx);
                             }
+                            self.write(" }");
+                        }
                     } else {
                         self.write("{");
                         self.write_line();
@@ -3824,9 +3842,9 @@ impl<'a> ClassES5Emitter<'a> {
                         .arena
                         .unary_exprs_ex
                         .get(spread_node.data_index as usize)
-                    {
-                        self.emit_expression(spread.expression);
-                    }
+                {
+                    self.emit_expression(spread.expression);
+                }
             } else {
                 // Add to current group
                 current_group.push(elem_idx);
@@ -3985,9 +4003,9 @@ impl<'a> ClassES5Emitter<'a> {
             if let Some(node) = self.arena.get(idx)
                 && (node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
                     || node.kind == syntax_kind_ext::SPREAD_ELEMENT)
-                {
-                    return true;
-                }
+            {
+                return true;
+            }
         }
         false
     }
@@ -4011,9 +4029,10 @@ impl<'a> ClassES5Emitter<'a> {
         };
 
         if let Some(name_idx) = name_idx
-            && let Some(name_node) = self.arena.get(name_idx) {
-                return name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME;
-            }
+            && let Some(name_node) = self.arena.get(name_idx)
+        {
+            return name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME;
+        }
 
         false
     }
@@ -4205,9 +4224,10 @@ impl<'a> ClassES5Emitter<'a> {
                 self.write("\"");
             }
         } else if name_node.kind == SyntaxKind::NumericLiteral as u16
-            && let Some(lit) = self.arena.get_literal(name_node) {
-                self.write(&lit.text);
-            }
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            self.write(&lit.text);
+        }
     }
 
     fn emit_binary_operator(&mut self, op: u16) {
@@ -4295,9 +4315,10 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -4339,9 +4360,10 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(node) = self.arena.get(idx) {
             // String literals need quotes in bracket notation
             if node.kind == SyntaxKind::StringLiteral as u16
-                && let Some(lit) = self.arena.get_literal(node) {
-                    return format!("\"{}\"", lit.text);
-                }
+                && let Some(lit) = self.arena.get_literal(node)
+            {
+                return format!("\"{}\"", lit.text);
+            }
             // Other literals (numbers) are used as-is
             if let Some(lit) = self.arena.get_literal(node) {
                 return lit.text.clone();
@@ -4358,9 +4380,10 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -4370,9 +4393,10 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -4382,9 +4406,10 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -4623,26 +4648,27 @@ mod tests {
         // Find the class declaration
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&class_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = ClassES5Emitter::new(&parser.arena);
-                    let output = emitter.emit_class(class_idx);
+            && let Some(&class_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = ClassES5Emitter::new(&parser.arena);
+            let output = emitter.emit_class(class_idx);
 
-                    assert!(
-                        output.contains("var Animal = /** @class */"),
-                        "Expected IIFE pattern: {}",
-                        output
-                    );
-                    assert!(
-                        output.contains("function Animal(name)"),
-                        "Expected constructor function: {}",
-                        output
-                    );
-                    assert!(
-                        output.contains("return Animal;"),
-                        "Expected return statement: {}",
-                        output
-                    );
-                }
+            assert!(
+                output.contains("var Animal = /** @class */"),
+                "Expected IIFE pattern: {}",
+                output
+            );
+            assert!(
+                output.contains("function Animal(name)"),
+                "Expected constructor function: {}",
+                output
+            );
+            assert!(
+                output.contains("return Animal;"),
+                "Expected return statement: {}",
+                output
+            );
+        }
     }
 
     #[test]
@@ -4658,16 +4684,17 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&class_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = ClassES5Emitter::new(&parser.arena);
-                    let output = emitter.emit_class(class_idx);
+            && let Some(&class_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = ClassES5Emitter::new(&parser.arena);
+            let output = emitter.emit_class(class_idx);
 
-                    assert!(
-                        output.contains("Animal.prototype.speak = function"),
-                        "Expected prototype method: {}",
-                        output
-                    );
-                }
+            assert!(
+                output.contains("Animal.prototype.speak = function"),
+                "Expected prototype method: {}",
+                output
+            );
+        }
     }
 
     #[test]
@@ -4684,21 +4711,22 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&class_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = ClassES5Emitter::new(&parser.arena);
-                    let output = emitter.emit_class(class_idx);
+            && let Some(&class_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = ClassES5Emitter::new(&parser.arena);
+            let output = emitter.emit_class(class_idx);
 
-                    assert!(
-                        output.contains("Counter.count = 0"),
-                        "Expected static property: {}",
-                        output
-                    );
-                    assert!(
-                        output.contains("Counter.increment = function"),
-                        "Expected static method: {}",
-                        output
-                    );
-                }
+            assert!(
+                output.contains("Counter.count = 0"),
+                "Expected static property: {}",
+                output
+            );
+            assert!(
+                output.contains("Counter.increment = function"),
+                "Expected static method: {}",
+                output
+            );
+        }
     }
 
     #[test]
@@ -4718,38 +4746,39 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&class_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = ClassES5Emitter::new(&parser.arena);
-                    let output = emitter.emit_class(class_idx);
+            && let Some(&class_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = ClassES5Emitter::new(&parser.arena);
+            let output = emitter.emit_class(class_idx);
 
-                    // Check for WeakMap variable declaration
-                    assert!(
-                        output.contains("var _Counter_count;"),
-                        "Expected WeakMap var declaration: {}",
-                        output
-                    );
+            // Check for WeakMap variable declaration
+            assert!(
+                output.contains("var _Counter_count;"),
+                "Expected WeakMap var declaration: {}",
+                output
+            );
 
-                    // Check for WeakMap instantiation
-                    assert!(
-                        output.contains("_Counter_count = new WeakMap();"),
-                        "Expected WeakMap instantiation: {}",
-                        output
-                    );
+            // Check for WeakMap instantiation
+            assert!(
+                output.contains("_Counter_count = new WeakMap();"),
+                "Expected WeakMap instantiation: {}",
+                output
+            );
 
-                    // Check for .set() in constructor
-                    assert!(
-                        output.contains("_Counter_count.set(this, void 0);"),
-                        "Expected WeakMap.set() in constructor: {}",
-                        output
-                    );
+            // Check for .set() in constructor
+            assert!(
+                output.contains("_Counter_count.set(this, void 0);"),
+                "Expected WeakMap.set() in constructor: {}",
+                output
+            );
 
-                    // Check for __classPrivateFieldSet in constructor (for initializer)
-                    assert!(
-                        output.contains("__classPrivateFieldSet(this, _Counter_count, 0, \"f\")"),
-                        "Expected __classPrivateFieldSet for initializer: {}",
-                        output
-                    );
-                }
+            // Check for __classPrivateFieldSet in constructor (for initializer)
+            assert!(
+                output.contains("__classPrivateFieldSet(this, _Counter_count, 0, \"f\")"),
+                "Expected __classPrivateFieldSet for initializer: {}",
+                output
+            );
+        }
     }
 
     #[test]
@@ -4765,16 +4794,17 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&class_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = ClassES5Emitter::new(&parser.arena);
-                    let output = emitter.emit_class(class_idx);
+            && let Some(&class_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = ClassES5Emitter::new(&parser.arena);
+            let output = emitter.emit_class(class_idx);
 
-                    assert!(
-                        output.contains("[k] = 1"),
-                        "Expected computed property assignment in ES5 output: {}",
-                        output
-                    );
-                }
+            assert!(
+                output.contains("[k] = 1"),
+                "Expected computed property assignment in ES5 output: {}",
+                output
+            );
+        }
     }
 
     #[test]
@@ -4790,21 +4820,22 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&class_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = ClassES5Emitter::new(&parser.arena);
-                    let output = emitter.emit_class(class_idx);
+            && let Some(&class_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = ClassES5Emitter::new(&parser.arena);
+            let output = emitter.emit_class(class_idx);
 
-                    assert!(
-                        output.contains("Object.assign("),
-                        "Expected Object.assign in ES5 output for object spread: {}",
-                        output
-                    );
-                    assert!(
-                        !output.contains("...a"),
-                        "ES5 output should not contain object spread syntax: {}",
-                        output
-                    );
-                }
+            assert!(
+                output.contains("Object.assign("),
+                "Expected Object.assign in ES5 output for object spread: {}",
+                output
+            );
+            assert!(
+                !output.contains("...a"),
+                "ES5 output should not contain object spread syntax: {}",
+                output
+            );
+        }
     }
 }
 

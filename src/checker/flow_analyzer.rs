@@ -289,9 +289,10 @@ impl<'a> DefiniteAssignmentAnalyzer<'a> {
         if flow_node.has_any_flags(flow_flags::ASSIGNMENT) {
             // Check if this is an assignment to a tracked variable
             if let Some(target_var) = self.get_assignment_target(flow_node.node)
-                && self.tracked_vars.contains(&target_var.0) {
-                    state.mark_assigned(target_var);
-                }
+                && self.tracked_vars.contains(&target_var.0)
+            {
+                state.mark_assigned(target_var);
+            }
         } else if flow_node.has_any_flags(flow_flags::BRANCH_LABEL) {
             // At a branch label (merge point), we merge states from all predecessors
             // This is handled during the iterative analysis by checking all antecedents
@@ -342,9 +343,10 @@ impl<'a> DefiniteAssignmentAnalyzer<'a> {
                 // Check if this is an assignment expression
                 if let Some(bin_expr) = self.arena.get_binary_expr(node_data)
                     && let Some(left_node) = self.arena.get(bin_expr.left)
-                        && left_node.kind == SyntaxKind::Identifier as u16 {
-                            return Some(bin_expr.left);
-                        }
+                    && left_node.kind == SyntaxKind::Identifier as u16
+                {
+                    return Some(bin_expr.left);
+                }
                 None
             }
             _ => None,

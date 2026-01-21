@@ -84,25 +84,27 @@ fn test_collect_export_names_with_parsed_ast() {
             );
 
             if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                && let Some(class) = parser.arena.get_class(node) {
-                    eprintln!("  Found class, modifiers: {:?}", class.modifiers);
-                    if let Some(modifiers) = &class.modifiers {
-                        eprintln!("  Modifiers count: {}", modifiers.nodes.len());
-                        for &mod_idx in &modifiers.nodes {
-                            if let Some(mod_node) = parser.arena.get(mod_idx) {
-                                eprintln!(
-                                    "    Modifier kind: {} (Export = {})",
-                                    mod_node.kind,
-                                    SyntaxKind::ExportKeyword as u16
-                                );
-                            }
+                && let Some(class) = parser.arena.get_class(node)
+            {
+                eprintln!("  Found class, modifiers: {:?}", class.modifiers);
+                if let Some(modifiers) = &class.modifiers {
+                    eprintln!("  Modifiers count: {}", modifiers.nodes.len());
+                    for &mod_idx in &modifiers.nodes {
+                        if let Some(mod_node) = parser.arena.get(mod_idx) {
+                            eprintln!(
+                                "    Modifier kind: {} (Export = {})",
+                                mod_node.kind,
+                                SyntaxKind::ExportKeyword as u16
+                            );
                         }
                     }
-                    if let Some(name_node) = parser.arena.get(class.name)
-                        && let Some(ident) = parser.arena.get_identifier(name_node) {
-                            eprintln!("  Class name: {}", ident.escaped_text);
-                        }
                 }
+                if let Some(name_node) = parser.arena.get(class.name)
+                    && let Some(ident) = parser.arena.get_identifier(name_node)
+                {
+                    eprintln!("  Class name: {}", ident.escaped_text);
+                }
+            }
         }
     }
 

@@ -175,9 +175,10 @@ impl<'a> Printer<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == kind {
-                        return true;
-                    }
+                    && mod_node.kind == kind
+                {
+                    return true;
+                }
             }
         }
         false

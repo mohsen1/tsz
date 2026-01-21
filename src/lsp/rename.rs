@@ -194,12 +194,7 @@ impl<'a> RenameProvider<'a> {
 
         // We use find_references which includes the definition
         let locations = if let Some(scope_cache) = scope_cache {
-            finder.find_references_with_scope_cache(
-                root,
-                position,
-                scope_cache,
-                scope_stats,
-            )
+            finder.find_references_with_scope_cache(root, position, scope_cache, scope_stats)
         } else {
             finder.find_references(root, position)
         }
@@ -254,9 +249,9 @@ impl<'a> RenameProvider<'a> {
         if let Some(kind) = scanner::text_to_keyword(name)
             && (scanner::token_is_reserved_word(kind)
                 || scanner::token_is_strict_mode_reserved_word(kind))
-            {
-                return false;
-            }
+        {
+            return false;
+        }
 
         // Manual char check
         let mut chars = name.chars();

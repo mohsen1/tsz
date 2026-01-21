@@ -43,50 +43,53 @@ impl<'a> Printer<'a> {
         };
 
         if self.ctx.target_es5
-            && let Some(expr_node) = self.arena.get(call.expression) {
-                if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    && let Some(access) = self.arena.get_access_expr(expr_node)
-                        && let Some(base) = self.arena.get(access.expression)
-                            && base.kind == SyntaxKind::SuperKeyword as u16 {
-                                self.write("_super.prototype.");
-                                self.emit(access.name_or_argument);
-                                self.write(".call(");
-                                if self.ctx.arrow_state.this_capture_depth > 0 {
-                                    self.write("_this");
-                                } else {
-                                    self.write("this");
-                                }
-                                if let Some(ref args) = call.arguments {
-                                    for &arg_idx in &args.nodes {
-                                        self.write(", ");
-                                        self.emit(arg_idx);
-                                    }
-                                }
-                                self.write(")");
-                                return;
-                            }
-                if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    && let Some(access) = self.arena.get_access_expr(expr_node)
-                        && let Some(base) = self.arena.get(access.expression)
-                            && base.kind == SyntaxKind::SuperKeyword as u16 {
-                                self.write("_super.prototype[");
-                                self.emit(access.name_or_argument);
-                                self.write("].call(");
-                                if self.ctx.arrow_state.this_capture_depth > 0 {
-                                    self.write("_this");
-                                } else {
-                                    self.write("this");
-                                }
-                                if let Some(ref args) = call.arguments {
-                                    for &arg_idx in &args.nodes {
-                                        self.write(", ");
-                                        self.emit(arg_idx);
-                                    }
-                                }
-                                self.write(")");
-                                return;
-                            }
+            && let Some(expr_node) = self.arena.get(call.expression)
+        {
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                self.write("_super.prototype.");
+                self.emit(access.name_or_argument);
+                self.write(".call(");
+                if self.ctx.arrow_state.this_capture_depth > 0 {
+                    self.write("_this");
+                } else {
+                    self.write("this");
+                }
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
             }
+            if expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(expr_node)
+                && let Some(base) = self.arena.get(access.expression)
+                && base.kind == SyntaxKind::SuperKeyword as u16
+            {
+                self.write("_super.prototype[");
+                self.emit(access.name_or_argument);
+                self.write("].call(");
+                if self.ctx.arrow_state.this_capture_depth > 0 {
+                    self.write("_this");
+                } else {
+                    self.write("this");
+                }
+                if let Some(ref args) = call.arguments {
+                    for &arg_idx in &args.nodes {
+                        self.write(", ");
+                        self.emit(arg_idx);
+                    }
+                }
+                self.write(")");
+                return;
+            }
+        }
 
         self.emit(call.expression);
         self.write("(");

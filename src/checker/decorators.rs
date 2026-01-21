@@ -201,9 +201,10 @@ impl<'a> DecoratorChecker<'a> {
         if let Some(ref modifiers) = class_data.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == syntax_kind_ext::DECORATOR {
-                        errors.extend(self.check_decorator(mod_idx, class_idx));
-                    }
+                    && mod_node.kind == syntax_kind_ext::DECORATOR
+                {
+                    errors.extend(self.check_decorator(mod_idx, class_idx));
+                }
             }
         }
 
@@ -243,19 +244,21 @@ impl<'a> DecoratorChecker<'a> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == syntax_kind_ext::DECORATOR {
-                        errors.extend(self.check_decorator(mod_idx, member_idx));
-                    }
+                    && mod_node.kind == syntax_kind_ext::DECORATOR
+                {
+                    errors.extend(self.check_decorator(mod_idx, member_idx));
+                }
             }
         }
 
         // Check parameter decorators for methods
         if member_node.kind == syntax_kind_ext::METHOD_DECLARATION
-            && let Some(method) = self.arena.get_method_decl(member_node) {
-                for &param_idx in &method.parameters.nodes {
-                    errors.extend(self.check_parameter_decorators(param_idx));
-                }
+            && let Some(method) = self.arena.get_method_decl(member_node)
+        {
+            for &param_idx in &method.parameters.nodes {
+                errors.extend(self.check_parameter_decorators(param_idx));
             }
+        }
 
         errors
     }
@@ -275,9 +278,10 @@ impl<'a> DecoratorChecker<'a> {
         if let Some(ref modifiers) = param.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == syntax_kind_ext::DECORATOR {
-                        errors.extend(self.check_decorator(mod_idx, param_idx));
-                    }
+                    && mod_node.kind == syntax_kind_ext::DECORATOR
+                {
+                    errors.extend(self.check_decorator(mod_idx, param_idx));
+                }
             }
         }
 

@@ -177,12 +177,13 @@ fn check_closure_capture(
         k if k == SyntaxKind::Identifier as u16 => {
             if inside_closure
                 && let Some(ident) = arena.get_identifier(node)
-                    && loop_vars.contains(ident.escaped_text.as_str()) {
-                        if !info.captured_vars.contains(&ident.escaped_text) {
-                            info.captured_vars.push(ident.escaped_text.clone());
-                        }
-                        info.needs_capture = true;
-                    }
+                && loop_vars.contains(ident.escaped_text.as_str())
+            {
+                if !info.captured_vars.contains(&ident.escaped_text) {
+                    info.captured_vars.push(ident.escaped_text.clone());
+                }
+                info.needs_capture = true;
+            }
         }
 
         // For all other nodes, recurse into children
@@ -298,17 +299,19 @@ pub fn collect_loop_vars(arena: &NodeArena, initializer_idx: NodeIndex) -> Vec<S
 
     // Initializer can be VARIABLE_DECLARATION_LIST or expression
     if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-        && let Some(decl_list) = arena.get_variable(node) {
-            for &decl_idx in &decl_list.declarations.nodes {
-                if let Some(decl_node) = arena.get(decl_idx)
-                    && let Some(decl) = arena.get_variable_declaration(decl_node)
-                        && let Some(name_node) = arena.get(decl.name)
-                            && name_node.kind == SyntaxKind::Identifier as u16
-                                && let Some(ident) = arena.get_identifier(name_node) {
-                                    vars.push(ident.escaped_text.clone());
-                                }
+        && let Some(decl_list) = arena.get_variable(node)
+    {
+        for &decl_idx in &decl_list.declarations.nodes {
+            if let Some(decl_node) = arena.get(decl_idx)
+                && let Some(decl) = arena.get_variable_declaration(decl_node)
+                && let Some(name_node) = arena.get(decl.name)
+                && name_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = arena.get_identifier(name_node)
+            {
+                vars.push(ident.escaped_text.clone());
             }
         }
+    }
 
     vars
 }

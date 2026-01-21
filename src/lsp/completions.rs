@@ -269,18 +269,19 @@ impl<'a> Completions<'a> {
         let node_idx = if node_idx.is_none() { root } else { node_idx };
 
         if let Some(expr_idx) = self.member_completion_target(node_idx, offset)
-            && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut()) {
-                return if items.is_empty() { None } else { Some(items) };
-            }
+            && let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut())
+        {
+            return if items.is_empty() { None } else { Some(items) };
+        }
 
         // Check for object literal property completion (contextual completions)
         // Only if we have type information available
-        if self.interner.is_some() && self.file_name.is_some()
-            && let Some(items) =
-                self.get_object_literal_completions(node_idx, type_cache)
-            {
-                return if items.is_empty() { None } else { Some(items) };
-            }
+        if self.interner.is_some()
+            && self.file_name.is_some()
+            && let Some(items) = self.get_object_literal_completions(node_idx, type_cache)
+        {
+            return if items.is_empty() { None } else { Some(items) };
+        }
 
         // 3. Get the scope chain at this position
         let mut walker = ScopeWalker::new(self.arena, self.binder);
@@ -845,9 +846,10 @@ impl<'a> Completions<'a> {
 
                 // Check return type annotation
                 if let Some(func) = self.arena.get_function(func_node)
-                    && !func.type_annotation.is_none() {
-                        return Some(checker.get_type_of_node(func.type_annotation));
-                    }
+                    && !func.type_annotation.is_none()
+                {
+                    return Some(checker.get_type_of_node(func.type_annotation));
+                }
             }
             // function call argument: foo({ ... })
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
@@ -912,14 +914,16 @@ impl<'a> Completions<'a> {
 
         // Look up the callable signature
         if let Some(key) = interner.lookup(func_type)
-            && let TypeKey::Callable(callable_id) = key {
-                let callable = interner.callable_shape(callable_id);
-                // Use the first call signature
-                if let Some(first_sig) = callable.call_signatures.first()
-                    && param_index < first_sig.params.len() {
-                        return Some(first_sig.params[param_index].type_id);
-                    }
+            && let TypeKey::Callable(callable_id) = key
+        {
+            let callable = interner.callable_shape(callable_id);
+            // Use the first call signature
+            if let Some(first_sig) = callable.call_signatures.first()
+                && param_index < first_sig.params.len()
+            {
+                return Some(first_sig.params[param_index].type_id);
             }
+        }
         None
     }
 }

@@ -864,12 +864,13 @@ impl Parser {
             let idx = parser::NodeIndex(i as u32);
             if let Some(node) = arena.get(idx)
                 && node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                    && let Some(interface) = arena.get_interface(node)
-                        && let Some(name_node) = arena.get(interface.name)
-                            && let Some(ident) = arena.get_identifier(name_node)
-                                && ident.escaped_text == interface_name {
-                                    interface_decls.push(idx);
-                                }
+                && let Some(interface) = arena.get_interface(node)
+                && let Some(name_node) = arena.get(interface.name)
+                && let Some(ident) = arena.get_identifier(name_node)
+                && ident.escaped_text == interface_name
+            {
+                interface_decls.push(idx);
+            }
         }
 
         if interface_decls.is_empty() {
@@ -926,77 +927,54 @@ impl Parser {
             let idx = parser::NodeIndex(i as u32);
             if let Some(node) = arena.get(idx)
                 && node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                    && let Some(interface) = arena.get_interface(node)
-                        && let Some(name_node) = arena.get(interface.name)
-                            && let Some(ident) = arena.get_identifier(name_node)
-                                && ident.escaped_text == interface_name {
-                                    result.push(format!(
-                                        "Interface '{}' found at node {}",
-                                        interface_name, i
-                                    ));
-                                    result.push(format!(
-                                        "  members list: {:?}",
-                                        interface.members.nodes
-                                    ));
+                && let Some(interface) = arena.get_interface(node)
+                && let Some(name_node) = arena.get(interface.name)
+                && let Some(ident) = arena.get_identifier(name_node)
+                && ident.escaped_text == interface_name
+            {
+                result.push(format!(
+                    "Interface '{}' found at node {}",
+                    interface_name, i
+                ));
+                result.push(format!("  members list: {:?}", interface.members.nodes));
 
-                                    for (mi, &member_idx) in
-                                        interface.members.nodes.iter().enumerate()
-                                    {
-                                        if let Some(member_node) = arena.get(member_idx) {
-                                            result.push(format!(
-                                                "  Member {} (idx {}): kind={}",
-                                                mi, member_idx.0, member_node.kind
-                                            ));
-                                            result.push(format!(
-                                                "    data_index: {}",
-                                                member_node.data_index
-                                            ));
-                                            if let Some(sig) = arena.get_signature(member_node) {
-                                                result
-                                                    .push(format!("    name_idx: {:?}", sig.name));
-                                                result.push(format!(
-                                                    "    type_annotation_idx: {:?}",
-                                                    sig.type_annotation
-                                                ));
+                for (mi, &member_idx) in interface.members.nodes.iter().enumerate() {
+                    if let Some(member_node) = arena.get(member_idx) {
+                        result.push(format!(
+                            "  Member {} (idx {}): kind={}",
+                            mi, member_idx.0, member_node.kind
+                        ));
+                        result.push(format!("    data_index: {}", member_node.data_index));
+                        if let Some(sig) = arena.get_signature(member_node) {
+                            result.push(format!("    name_idx: {:?}", sig.name));
+                            result.push(format!(
+                                "    type_annotation_idx: {:?}",
+                                sig.type_annotation
+                            ));
 
-                                                // Get name text
-                                                if let Some(name_n) = arena.get(sig.name) {
-                                                    if let Some(name_id) =
-                                                        arena.get_identifier(name_n)
-                                                    {
-                                                        result.push(format!(
-                                                            "    name_text: '{}'",
-                                                            name_id.escaped_text
-                                                        ));
-                                                    } else {
-                                                        result.push(format!(
-                                                            "    name_node kind: {}",
-                                                            name_n.kind
-                                                        ));
-                                                    }
-                                                }
-
-                                                // Get type annotation text
-                                                if let Some(type_n) = arena.get(sig.type_annotation)
-                                                {
-                                                    if let Some(type_id) =
-                                                        arena.get_identifier(type_n)
-                                                    {
-                                                        result.push(format!(
-                                                            "    type_text: '{}'",
-                                                            type_id.escaped_text
-                                                        ));
-                                                    } else {
-                                                        result.push(format!(
-                                                            "    type_node kind: {}",
-                                                            type_n.kind
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                            // Get name text
+                            if let Some(name_n) = arena.get(sig.name) {
+                                if let Some(name_id) = arena.get_identifier(name_n) {
+                                    result
+                                        .push(format!("    name_text: '{}'", name_id.escaped_text));
+                                } else {
+                                    result.push(format!("    name_node kind: {}", name_n.kind));
                                 }
+                            }
+
+                            // Get type annotation text
+                            if let Some(type_n) = arena.get(sig.type_annotation) {
+                                if let Some(type_id) = arena.get_identifier(type_n) {
+                                    result
+                                        .push(format!("    type_text: '{}'", type_id.escaped_text));
+                                } else {
+                                    result.push(format!("    type_node kind: {}", type_n.kind));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if result.is_empty() {
@@ -1081,10 +1059,13 @@ impl Parser {
         for i in 0..arena.len() {
             let idx = parser::NodeIndex(i as u32);
             if let Some(node) = arena.get(idx)
-                && node.pos <= pos && pos < node.end && node.kind == IDENTIFIER_KIND {
-                    target_node = Some(idx);
-                    // Don't break - prefer smaller range
-                }
+                && node.pos <= pos
+                && pos < node.end
+                && node.kind == IDENTIFIER_KIND
+            {
+                target_node = Some(idx);
+                // Don't break - prefer smaller range
+            }
         }
 
         let start_idx = match target_node {

@@ -456,9 +456,10 @@ impl<'a> FlowGraphBuilder<'a> {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none()
-            && let Some(node) = self.graph.nodes.get_mut(loop_label) {
-                node.antecedent.push(self.current_flow);
-            }
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
 
         // Create merge label for after the loop
         let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
@@ -502,9 +503,10 @@ impl<'a> FlowGraphBuilder<'a> {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none()
-            && let Some(node) = self.graph.nodes.get_mut(loop_label) {
-                node.antecedent.push(self.current_flow);
-            }
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
 
         // Create merge label for after the loop
         let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
@@ -555,9 +557,10 @@ impl<'a> FlowGraphBuilder<'a> {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none()
-            && let Some(node) = self.graph.nodes.get_mut(loop_label) {
-                node.antecedent.push(self.current_flow);
-            }
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
 
         // Create merge label for after the loop
         let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
@@ -622,9 +625,10 @@ impl<'a> FlowGraphBuilder<'a> {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none()
-            && let Some(node) = self.graph.nodes.get_mut(loop_label) {
-                node.antecedent.push(self.current_flow);
-            }
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
 
         // Create merge label
         let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
@@ -662,9 +666,10 @@ impl<'a> FlowGraphBuilder<'a> {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
         if !self.current_flow.is_none()
-            && let Some(node) = self.graph.nodes.get_mut(loop_label) {
-                node.antecedent.push(self.current_flow);
-            }
+            && let Some(node) = self.graph.nodes.get_mut(loop_label)
+        {
+            node.antecedent.push(self.current_flow);
+        }
 
         // Create merge label
         let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
@@ -990,9 +995,10 @@ impl<'a> FlowGraphBuilder<'a> {
         }
 
         if let Some(node) = self.graph.nodes.get_mut(label)
-            && !node.antecedent.contains(&antecedent) {
-                node.antecedent.push(antecedent);
-            }
+            && !node.antecedent.contains(&antecedent)
+        {
+            node.antecedent.push(antecedent);
+        }
     }
 
     /// Record the current flow node for an AST node.
@@ -1148,12 +1154,14 @@ impl<'a> FlowGraphBuilder<'a> {
         // Robustness: if we're analyzing inside an async function context but the parser represented
         // `await` as an identifier (e.g., due to recovery or when the analysis context is injected),
         // still treat it as an await suspension point.
-        if self.in_async_function() && node.kind == SyntaxKind::Identifier as u16
+        if self.in_async_function()
+            && node.kind == SyntaxKind::Identifier as u16
             && let Some(ident) = self.arena.get_identifier(node)
-                && ident.escaped_text == "await" {
-                    self.handle_await_expression(expr_idx);
-                    return;
-                }
+            && ident.escaped_text == "await"
+        {
+            self.handle_await_expression(expr_idx);
+            return;
+        }
 
         // Check if this is an await expression
         if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
@@ -1170,9 +1178,10 @@ impl<'a> FlowGraphBuilder<'a> {
             self.handle_yield_expression(expr_idx);
             // Also check the operand of the yield expression (stored as UnaryExprDataEx)
             if let Some(unary_data) = self.arena.get_unary_expr_ex(node)
-                && !unary_data.expression.is_none() {
-                    self.handle_expression_for_suspension_points(unary_data.expression);
-                }
+                && !unary_data.expression.is_none()
+            {
+                self.handle_expression_for_suspension_points(unary_data.expression);
+            }
             return;
         }
 
@@ -1354,25 +1363,23 @@ impl<'a> FlowGraphBuilder<'a> {
                     continue;
                 }
                 if let Some(clause_node) = self.arena.get(clause_idx)
-                    && let Some(heritage) = self.arena.get_heritage_clause(clause_node) {
-                        // For 'extends', the expression is evaluated
-                        if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
-                            for &type_idx in &heritage.types.nodes {
-                                if type_idx.is_none() {
-                                    continue;
-                                }
-                                if let Some(expr_with_type) = self.arena.get(type_idx)
-                                    && let Some(data) =
-                                        self.arena.get_expr_type_args(expr_with_type)
-                                    {
-                                        // The extends expression is evaluated at class definition time
-                                        self.handle_expression_for_suspension_points(
-                                            data.expression,
-                                        );
-                                    }
+                    && let Some(heritage) = self.arena.get_heritage_clause(clause_node)
+                {
+                    // For 'extends', the expression is evaluated
+                    if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
+                        for &type_idx in &heritage.types.nodes {
+                            if type_idx.is_none() {
+                                continue;
+                            }
+                            if let Some(expr_with_type) = self.arena.get(type_idx)
+                                && let Some(data) = self.arena.get_expr_type_args(expr_with_type)
+                            {
+                                // The extends expression is evaluated at class definition time
+                                self.handle_expression_for_suspension_points(data.expression);
                             }
                         }
                     }
+                }
             }
         }
 
@@ -1401,12 +1408,10 @@ impl<'a> FlowGraphBuilder<'a> {
                         // Computed property name executes
                         if let Some(name_node) = self.arena.get(prop_name)
                             && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                                && let Some(computed) = self.arena.get_computed_property(name_node)
-                                {
-                                    self.handle_expression_for_suspension_points(
-                                        computed.expression,
-                                    );
-                                }
+                            && let Some(computed) = self.arena.get_computed_property(name_node)
+                        {
+                            self.handle_expression_for_suspension_points(computed.expression);
+                        }
 
                         // Static initializer executes
                         if self.has_static_modifier(&prop_modifiers) && !prop_initializer.is_none()
@@ -1434,12 +1439,10 @@ impl<'a> FlowGraphBuilder<'a> {
                         let method_name = method.name;
                         if let Some(name_node) = self.arena.get(method_name)
                             && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                                && let Some(computed) = self.arena.get_computed_property(name_node)
-                                {
-                                    self.handle_expression_for_suspension_points(
-                                        computed.expression,
-                                    );
-                                }
+                            && let Some(computed) = self.arena.get_computed_property(name_node)
+                        {
+                            self.handle_expression_for_suspension_points(computed.expression);
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
@@ -1448,12 +1451,10 @@ impl<'a> FlowGraphBuilder<'a> {
                         let accessor_name = accessor.name;
                         if let Some(name_node) = self.arena.get(accessor_name)
                             && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                                && let Some(computed) = self.arena.get_computed_property(name_node)
-                                {
-                                    self.handle_expression_for_suspension_points(
-                                        computed.expression,
-                                    );
-                                }
+                            && let Some(computed) = self.arena.get_computed_property(name_node)
+                        {
+                            self.handle_expression_for_suspension_points(computed.expression);
+                        }
                     }
                 }
                 _ => {}
@@ -1471,9 +1472,10 @@ impl<'a> FlowGraphBuilder<'a> {
                     continue;
                 }
                 if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-                        return true;
-                    }
+                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -1501,12 +1503,13 @@ if (typeof x === "string") {
 
         let mut builder = FlowGraphBuilder::new(parser.get_arena());
         if let Some(source_file) = parser.get_arena().get(root)
-            && let Some(sf) = parser.get_arena().get_source_file(source_file) {
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = parser.get_arena().get_source_file(source_file)
+        {
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph was created
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph was created
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1525,13 +1528,14 @@ if (x) {
 
         // Build flow graph using FlowGraphBuilder
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1548,13 +1552,14 @@ while (true) {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists with loop label
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists with loop label
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1574,17 +1579,18 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
 
-                // The key is that the finally block should be on the flow path
-                // from the try block to the console.log statement
-                // This ensures that assignments in try are visible after finally
-            }
+            // The key is that the finally block should be on the flow path
+            // from the try block to the console.log statement
+            // This ensures that assignments in try are visible after finally
+        }
     }
 
     #[test]
@@ -1605,13 +1611,14 @@ try {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists with try/catch/finally
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists with try/catch/finally
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1626,15 +1633,16 @@ let x = await bar();
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                // Create builder and set async depth (simulating being in async function)
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.async_depth = 1; // Simulate being in async function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            // Create builder and set async depth (simulating being in async function)
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.async_depth = 1; // Simulate being in async function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1649,14 +1657,15 @@ const result = await bar() + await baz();
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.async_depth = 1; // Simulate being in async function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.async_depth = 1; // Simulate being in async function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1675,14 +1684,15 @@ if (condition) {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.async_depth = 1; // Simulate being in async function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.async_depth = 1; // Simulate being in async function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1699,14 +1709,15 @@ while (condition) {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.async_depth = 1; // Simulate being in async function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.async_depth = 1; // Simulate being in async function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1725,14 +1736,15 @@ try {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.async_depth = 1; // Simulate being in async function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.async_depth = 1; // Simulate being in async function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1747,15 +1759,16 @@ const x = await bar();
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                // Create builder and set async depth (simulating being in async arrow function)
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.async_depth = 1; // Simulate being in async function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            // Create builder and set async depth (simulating being in async arrow function)
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.async_depth = 1; // Simulate being in async function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     // =============================================================================
@@ -1778,27 +1791,28 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.generator_depth = 1; // Simulate being in generator function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.generator_depth = 1; // Simulate being in generator function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph has nodes including YIELD_POINT nodes
-                assert!(!graph.nodes.is_empty());
+            // Verify flow graph has nodes including YIELD_POINT nodes
+            assert!(!graph.nodes.is_empty());
 
-                // Count yield point nodes
-                let yield_count = (0..graph.nodes.len())
-                    .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
-                    .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
-                    .count();
+            // Count yield point nodes
+            let yield_count = (0..graph.nodes.len())
+                .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
+                .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
+                .count();
 
-                // We should have 2 yield points (yield 1 and yield 2)
-                assert!(
-                    yield_count >= 2,
-                    "Expected at least 2 yield points, got {}",
-                    yield_count
-                );
-            }
+            // We should have 2 yield points (yield 1 and yield 2)
+            assert!(
+                yield_count >= 2,
+                "Expected at least 2 yield points, got {}",
+                yield_count
+            );
+        }
     }
 
     #[test]
@@ -1813,14 +1827,15 @@ yield* otherGenerator();
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.generator_depth = 1; // Simulate being in generator function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.generator_depth = 1; // Simulate being in generator function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists and has yield point
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists and has yield point
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1839,14 +1854,15 @@ while (counter < 10) {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.generator_depth = 1; // Simulate being in generator function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.generator_depth = 1; // Simulate being in generator function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1865,14 +1881,15 @@ try {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.generator_depth = 1; // Simulate being in generator function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.generator_depth = 1; // Simulate being in generator function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -1892,39 +1909,40 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                // Simulate being in async generator function
-                builder.async_depth = 1;
-                builder.generator_depth = 1;
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            // Simulate being in async generator function
+            builder.async_depth = 1;
+            builder.generator_depth = 1;
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists with both await and yield points
-                assert!(!graph.nodes.is_empty());
+            // Verify flow graph exists with both await and yield points
+            assert!(!graph.nodes.is_empty());
 
-                // Count yield point nodes
-                let yield_count = (0..graph.nodes.len())
-                    .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
-                    .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
-                    .count();
+            // Count yield point nodes
+            let yield_count = (0..graph.nodes.len())
+                .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
+                .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
+                .count();
 
-                // Count await point nodes
-                let await_count = (0..graph.nodes.len())
-                    .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
-                    .filter(|n| (n.flags & flow_flags::AWAIT_POINT) != 0)
-                    .count();
+            // Count await point nodes
+            let await_count = (0..graph.nodes.len())
+                .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
+                .filter(|n| (n.flags & flow_flags::AWAIT_POINT) != 0)
+                .count();
 
-                assert!(
-                    yield_count >= 2,
-                    "Expected at least 2 yield points, got {}",
-                    yield_count
-                );
-                assert!(
-                    await_count >= 2,
-                    "Expected at least 2 await points, got {}",
-                    await_count
-                );
-            }
+            assert!(
+                yield_count >= 2,
+                "Expected at least 2 yield points, got {}",
+                yield_count
+            );
+            assert!(
+                await_count >= 2,
+                "Expected at least 2 await points, got {}",
+                await_count
+            );
+        }
     }
 
     #[test]
@@ -1945,26 +1963,27 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.generator_depth = 1; // Simulate being in generator function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.generator_depth = 1; // Simulate being in generator function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph has assignment and yield nodes
-                assert!(!graph.nodes.is_empty());
+            // Verify flow graph has assignment and yield nodes
+            assert!(!graph.nodes.is_empty());
 
-                // Should have assignment nodes for tracking variable state
-                let assignment_count = (0..graph.nodes.len())
-                    .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
-                    .filter(|n| (n.flags & flow_flags::ASSIGNMENT) != 0)
-                    .count();
+            // Should have assignment nodes for tracking variable state
+            let assignment_count = (0..graph.nodes.len())
+                .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
+                .filter(|n| (n.flags & flow_flags::ASSIGNMENT) != 0)
+                .count();
 
-                assert!(
-                    assignment_count >= 2,
-                    "Expected at least 2 assignment nodes for variable tracking, got {}",
-                    assignment_count
-                );
-            }
+            assert!(
+                assignment_count >= 2,
+                "Expected at least 2 assignment nodes for variable tracking, got {}",
+                assignment_count
+            );
+        }
     }
 
     #[test]
@@ -1984,16 +2003,17 @@ for await (const item of asyncIterable) {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                // Simulate being in async generator function
-                builder.async_depth = 1;
-                builder.generator_depth = 1;
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            // Simulate being in async generator function
+            builder.async_depth = 1;
+            builder.generator_depth = 1;
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -2017,26 +2037,27 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.generator_depth = 1; // Simulate being in generator function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.generator_depth = 1; // Simulate being in generator function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists with proper branching
-                assert!(!graph.nodes.is_empty());
+            // Verify flow graph exists with proper branching
+            assert!(!graph.nodes.is_empty());
 
-                // Should have yield points in both branches
-                let yield_count = (0..graph.nodes.len())
-                    .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
-                    .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
-                    .count();
+            // Should have yield points in both branches
+            let yield_count = (0..graph.nodes.len())
+                .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
+                .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
+                .count();
 
-                assert!(
-                    yield_count >= 2,
-                    "Expected at least 2 yield points in conditional branches, got {}",
-                    yield_count
-                );
-            }
+            assert!(
+                yield_count >= 2,
+                "Expected at least 2 yield points in conditional branches, got {}",
+                yield_count
+            );
+        }
     }
 
     #[test]
@@ -2056,26 +2077,27 @@ yield 3;
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                builder.generator_depth = 1; // Simulate being in generator function
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            builder.generator_depth = 1; // Simulate being in generator function
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
 
-                // Should have at least 3 yield points
-                let yield_count = (0..graph.nodes.len())
-                    .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
-                    .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
-                    .count();
+            // Should have at least 3 yield points
+            let yield_count = (0..graph.nodes.len())
+                .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
+                .filter(|n| (n.flags & flow_flags::YIELD_POINT) != 0)
+                .count();
 
-                assert!(
-                    yield_count >= 3,
-                    "Expected at least 3 yield points, got {}",
-                    yield_count
-                );
-            }
+            assert!(
+                yield_count >= 3,
+                "Expected at least 3 yield points, got {}",
+                yield_count
+            );
+        }
     }
 
     // =============================================================================
@@ -2100,13 +2122,14 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -2125,25 +2148,26 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph has assignment node for static property
-                assert!(!graph.nodes.is_empty());
+            // Verify flow graph has assignment node for static property
+            assert!(!graph.nodes.is_empty());
 
-                let assignment_count = (0..graph.nodes.len())
-                    .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
-                    .filter(|n| (n.flags & flow_flags::ASSIGNMENT) != 0)
-                    .count();
+            let assignment_count = (0..graph.nodes.len())
+                .filter_map(|i| graph.nodes.get(FlowNodeId(i as u32)))
+                .filter(|n| (n.flags & flow_flags::ASSIGNMENT) != 0)
+                .count();
 
-                // Should have assignment for static property initializer
-                assert!(
-                    assignment_count >= 1,
-                    "Expected at least 1 assignment node for static property, got {}",
-                    assignment_count
-                );
-            }
+            // Should have assignment for static property initializer
+            assert!(
+                assignment_count >= 1,
+                "Expected at least 1 assignment node for static property, got {}",
+                assignment_count
+            );
+        }
     }
 
     #[test]
@@ -2159,13 +2183,14 @@ class Derived extends Base {}
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists - extends expression should be tracked
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists - extends expression should be tracked
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -2185,13 +2210,14 @@ class Foo {
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists - computed property expression should be tracked
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists - computed property expression should be tracked
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -2217,13 +2243,14 @@ console.log(x, y);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists
+            assert!(!graph.nodes.is_empty());
+        }
     }
 
     #[test]
@@ -2244,12 +2271,13 @@ console.log(x);
         let arena = parser.get_arena();
 
         if let Some(source_file) = arena.get(root)
-            && let Some(sf) = arena.get_source_file(source_file) {
-                let mut builder = FlowGraphBuilder::new(arena);
-                let graph = builder.build_source_file(&sf.statements);
+            && let Some(sf) = arena.get_source_file(source_file)
+        {
+            let mut builder = FlowGraphBuilder::new(arena);
+            let graph = builder.build_source_file(&sf.statements);
 
-                // Verify flow graph exists - class expression with static block
-                assert!(!graph.nodes.is_empty());
-            }
+            // Verify flow graph exists - class expression with static block
+            assert!(!graph.nodes.is_empty());
+        }
     }
 }

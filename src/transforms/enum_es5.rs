@@ -348,9 +348,10 @@ impl<'a> EnumES5Transformer<'a> {
         if let Some(mods) = modifiers {
             for &idx in &mods.nodes {
                 if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::ConstKeyword as u16 {
-                        return true;
-                    }
+                    && node.kind == SyntaxKind::ConstKeyword as u16
+                {
+                    return true;
+                }
             }
         }
         false
@@ -371,7 +372,7 @@ impl<'a> EnumES5Transformer<'a> {
                 let left = self.evaluate_constant_expression(bin.left)?;
                 let right = self.evaluate_constant_expression(bin.right)?;
                 let op = bin.operator_token;
-                
+
                 match op {
                     o if o == SyntaxKind::PlusToken as u16 => left.checked_add(right),
                     o if o == SyntaxKind::MinusToken as u16 => left.checked_sub(right),
@@ -436,9 +437,10 @@ impl<'a> EnumES5Transformer<'a> {
 
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
         if let Some(node) = self.arena.get(idx)
-            && let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
+            && let Some(ident) = self.arena.get_identifier(node)
+        {
+            return ident.escaped_text.clone();
+        }
         String::new()
     }
 
@@ -518,12 +520,13 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut transformer = EnumES5Transformer::new(&parser.arena);
-                    if let Some(ir) = transformer.transform_enum(enum_idx) {
-                        return IRPrinter::emit_to_string(&ir);
-                    }
-                }
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut transformer = EnumES5Transformer::new(&parser.arena);
+            if let Some(ir) = transformer.transform_enum(enum_idx) {
+                return IRPrinter::emit_to_string(&ir);
+            }
+        }
         String::new()
     }
 
@@ -533,10 +536,11 @@ mod tests {
 
         if let Some(root_node) = parser.arena.get(root)
             && let Some(source_file) = parser.arena.get_source_file(root_node)
-                && let Some(&enum_idx) = source_file.statements.nodes.first() {
-                    let mut emitter = EnumES5Emitter::new(&parser.arena);
-                    return emitter.emit_enum(enum_idx);
-                }
+            && let Some(&enum_idx) = source_file.statements.nodes.first()
+        {
+            let mut emitter = EnumES5Emitter::new(&parser.arena);
+            return emitter.emit_enum(enum_idx);
+        }
         String::new()
     }
 

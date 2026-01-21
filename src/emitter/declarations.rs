@@ -190,9 +190,9 @@ impl<'a> Printer<'a> {
                     if self.ctx.is_commonjs()
                         && (mod_node.kind == SyntaxKind::ExportKeyword as u16
                             || mod_node.kind == SyntaxKind::DefaultKeyword as u16)
-                        {
-                            continue;
-                        }
+                    {
+                        continue;
+                    }
                     self.emit(mod_idx);
                     // Add space or newline after decorator
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
@@ -300,18 +300,20 @@ impl<'a> Printer<'a> {
 
         // Type parameters
         if let Some(ref type_params) = interface.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.write("<");
-                self.emit_comma_separated(&type_params.nodes);
-                self.write(">");
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
 
         // Heritage clauses
         if let Some(ref heritage) = interface.heritage_clauses
-            && !heritage.nodes.is_empty() {
-                self.write(" extends ");
-                self.emit_comma_separated(&heritage.nodes);
-            }
+            && !heritage.nodes.is_empty()
+        {
+            self.write(" extends ");
+            self.emit_comma_separated(&heritage.nodes);
+        }
 
         self.write(" {");
         self.write_line();
@@ -337,11 +339,12 @@ impl<'a> Printer<'a> {
 
         // Type parameters
         if let Some(ref type_params) = type_alias.type_parameters
-            && !type_params.nodes.is_empty() {
-                self.write("<");
-                self.emit_comma_separated(&type_params.nodes);
-                self.write(">");
-            }
+            && !type_params.nodes.is_empty()
+        {
+            self.write("<");
+            self.emit_comma_separated(&type_params.nodes);
+            self.write(">");
+        }
 
         self.write(" = ");
         self.emit(type_alias.type_node);

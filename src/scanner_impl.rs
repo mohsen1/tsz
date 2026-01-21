@@ -1456,9 +1456,10 @@ impl ScannerState {
                         let hex = self.substring(hex_start, self.pos);
                         self.pos += 1;
                         if let Ok(code) = u32::from_str_radix(&hex, 16)
-                            && let Some(c) = char::from_u32(code) {
-                                return c.to_string();
-                            }
+                            && let Some(c) = char::from_u32(code)
+                        {
+                            return c.to_string();
+                        }
                     }
                     self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                     String::from("\\u")
@@ -1675,10 +1676,12 @@ impl ScannerState {
     #[wasm_bindgen(js_name = reScanLessThanToken)]
     pub fn re_scan_less_than_token(&mut self) -> SyntaxKind {
         if self.token == SyntaxKind::LessThanToken
-            && self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::SLASH {
-                self.pos += 1;
-                self.token = SyntaxKind::LessThanSlashToken;
-            }
+            && self.pos < self.end
+            && self.char_code_unchecked(self.pos) == CharacterCodes::SLASH
+        {
+            self.pos += 1;
+            self.token = SyntaxKind::LessThanSlashToken;
+        }
         self.token
     }
 
@@ -1686,15 +1689,16 @@ impl ScannerState {
     #[wasm_bindgen(js_name = reScanHashToken)]
     pub fn re_scan_hash_token(&mut self) -> SyntaxKind {
         if self.token == SyntaxKind::HashToken
-            && self.pos < self.end && is_identifier_start(self.char_code_unchecked(self.pos)) {
+            && self.pos < self.end
+            && is_identifier_start(self.char_code_unchecked(self.pos))
+        {
+            self.pos += 1;
+            while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
                 self.pos += 1;
-                while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos))
-                {
-                    self.pos += 1;
-                }
-                self.token_value = self.substring(self.token_start, self.pos);
-                self.token = SyntaxKind::PrivateIdentifier;
             }
+            self.token_value = self.substring(self.token_start, self.pos);
+            self.token = SyntaxKind::PrivateIdentifier;
+        }
         self.token
     }
 
