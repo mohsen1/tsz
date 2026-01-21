@@ -1825,6 +1825,11 @@ impl WasmProgram {
         self.merged = None;
         self.bind_results = None;
 
+        // Skip package.json files - they're used for module resolution but not parsed
+        if file_name.ends_with("package.json") {
+            return;
+        }
+
         // Detect lib files by name pattern
         let is_lib_file = file_name.contains("lib.d.ts")
             || file_name.contains("lib.es")
