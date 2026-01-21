@@ -335,6 +335,99 @@ pub enum IRNode {
 
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
+
+    // =========================================================================
+    // Module Transform Specific (CommonJS)
+    // =========================================================================
+    /// Use strict directive: `"use strict";`
+    UseStrict,
+
+    /// ES6 module marker comment: `/// <reference types="node" />` style marker
+    EsesModuleMarker,
+
+    /// Export initialization: Object.create for exports
+    ExportInit { name: String },
+
+    /// Require statement: `var_name = require("module_spec")`
+    RequireStatement {
+        var_name: String,
+        module_spec: String,
+    },
+
+    /// Default import: `var_name = module_var.default;`
+    DefaultImport {
+        var_name: String,
+        module_var: String,
+    },
+
+    /// Namespace import: `var_name = module_var;`
+    NamespaceImport {
+        var_name: String,
+        module_var: String,
+    },
+
+    /// Named import: `var_name = module_var.import_name;`
+    NamedImport {
+        var_name: String,
+        module_var: String,
+        import_name: String,
+    },
+
+    /// Export assignment: `exports.name = value;` or `module.exports = value;`
+    ExportAssignment { name: String },
+
+    /// Re-export property: `exports.export_name = module_var.import_name;`
+    ReExportProperty {
+        export_name: String,
+        module_var: String,
+        import_name: String,
+    },
+
+    // =========================================================================
+    // Namespace Transform Specific (IIFE)
+    // =========================================================================
+    /// Namespace IIFE: `(function (Name1) { ... })(Name1 || (Name1 = {}));`
+    NamespaceIIFE {
+        name_parts: Vec<String>,
+        body: Vec<IRNode>,
+        is_exported: bool,
+        attach_to_exports: bool,
+    },
+
+    /// Namespace export: `Namespace.name = value;`
+    NamespaceExport {
+        namespace: String,
+        name: String,
+    },
+
+    // =========================================================================
+    // Enum Transform Specific
+    // =========================================================================
+    /// Enum IIFE: `var EnumName; (function (EnumName) { ... })(EnumName || (EnumName = {}));`
+    EnumIIFE {
+        name: String,
+        members: Vec<EnumMember>,
+    },
+}
+
+/// Enum member for EnumIIFE transform
+#[derive(Debug, Clone)]
+pub struct EnumMember {
+    pub name: String,
+    pub value: EnumMemberValue,
+}
+
+/// Enum member value
+#[derive(Debug, Clone)]
+pub enum EnumMemberValue {
+    /// Auto-incremented numeric value
+    Auto(i64),
+    /// Explicit numeric value
+    Numeric(i64),
+    /// String value
+    String(String),
+    /// Computed expression
+    Computed(IRNode),
 }
 
 /// Property in an object literal
