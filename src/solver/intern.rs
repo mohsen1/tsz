@@ -765,6 +765,12 @@ impl TypeInterner {
         }
         // Remove `unknown` from intersections (identity element)
         flat.retain(|id| *id != TypeId::UNKNOWN);
+
+        // Narrow literal & primitive to literal (e.g., "hello" & string = "hello")
+        if let Some(literal) = self.narrow_literal_primitive_intersection(&flat) {
+            return literal;
+        }
+
         if self.intersection_has_disjoint_primitives(&flat) {
             return TypeId::NEVER;
         }
@@ -783,8 +789,136 @@ impl TypeInterner {
             return merged;
         }
 
+        // If all members are callables/functions, merge them into overloaded callable
+        if let Some(merged) = self.try_merge_callables_in_intersection(&flat) {
+            return merged;
+        }
+
         let list_id = self.intern_type_list(flat.into_vec());
         self.intern(TypeKey::Intersection(list_id))
+    }
+
+    fn try_merge_callables_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
+        let mut call_signatures: Vec<CallSignature> = Vec::new();
+        let mut properties: Vec<PropertyInfo> = Vec::new();
+        let mut string_index: Option<IndexSignature> = None;
+        let mut number_index: Option<IndexSignature> = None;
+
+        // Collect all call signatures and properties
+        for &member in members {
+            match self.lookup(member) {
+                Some(TypeKey::Function(func_id)) => {
+                    let func = self.function_shape(func_id);
+                    call_signatures.push(CallSignature {
+                        type_params: func.type_params.clone(),
+                        params: func.params.clone(),
+                        this_type: func.this_type,
+                        return_type: func.return_type,
+                        type_predicate: func.type_predicate.clone(),
+                    });
+                }
+                Some(TypeKey::Callable(callable_id)) => {
+                    let callable = self.callable_shape(callable_id);
+                    // Add all call signatures
+                    for sig in &callable.call_signatures {
+                        call_signatures.push(sig.clone());
+                    }
+                    // Merge properties
+                    for prop in &callable.properties {
+                        if let Some(existing) = properties.iter_mut().find(|p| p.name == prop.name) {
+                            // Intersect property types
+                            existing.type_id = self.intersection2(existing.type_id, prop.type_id);
+                            existing.write_type = self.intersection2(existing.write_type, prop.write_type);
+                            existing.optional = existing.optional && prop.optional;
+                            existing.readonly = existing.readonly || prop.readonly;
+                        } else {
+                            properties.push(prop.clone());
+                        }
+                    }
+                    // Merge index signatures
+                    match (&callable.string_index, &string_index) {
+                        (Some(idx), None) => string_index = Some(idx.clone()),
+                        (Some(idx), Some(existing)) => {
+                            string_index = Some(IndexSignature {
+                                key_type: existing.key_type,
+                                value_type: self.intersection2(existing.value_type, idx.value_type),
+                                readonly: existing.readonly || idx.readonly,
+                            });
+                        }
+                        _ => {}
+                    }
+                    match (&callable.number_index, &number_index) {
+                        (Some(idx), None) => number_index = Some(idx.clone()),
+                        (Some(idx), Some(existing)) => {
+                            number_index = Some(IndexSignature {
+                                key_type: existing.key_type,
+                                value_type: self.intersection2(existing.value_type, idx.value_type),
+                                readonly: existing.readonly || idx.readonly,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                _ => return None, // Not all callables, can't merge
+            }
+        }
+
+        if call_signatures.is_empty() {
+            return None;
+        }
+
+        // Sort properties by name for consistent hashing
+        properties.sort_by_key(|p| p.name.0);
+
+        let callable_shape = CallableShape {
+            call_signatures,
+            construct_signatures: Vec::new(),
+            properties,
+            string_index,
+            number_index,
+        };
+
+        let shape_id = self.intern_callable_shape(callable_shape);
+        Some(self.intern(TypeKey::Callable(shape_id)))
+    }
+
+    fn narrow_literal_primitive_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
+        // Check if we have a literal and its corresponding primitive
+        // e.g., "hello" & string => "hello"
+        let mut literal: Option<TypeId> = None;
+        let mut literal_class: Option<PrimitiveClass> = None;
+        let mut has_primitive = false;
+
+        // First pass: find the literal and its class
+        for &member in members {
+            if let Some(TypeKey::Literal(_)) = self.lookup(member) {
+                if literal.is_none() {
+                    literal = Some(member);
+                    literal_class = self.primitive_class_for(member);
+                } else {
+                    // Multiple literals, can't narrow
+                    return None;
+                }
+            }
+        }
+
+        // Second pass: check if we have a matching primitive
+        if let Some(lit_class) = literal_class {
+            for &member in members {
+                if let Some(class) = self.primitive_class_for(member) {
+                    if class == lit_class && member != literal.unwrap() {
+                        has_primitive = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if literal.is_some() && has_primitive {
+            literal
+        } else {
+            None
+        }
     }
 
     fn try_merge_objects_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
@@ -1148,6 +1282,11 @@ impl TypeInterner {
 
         // Second pass: remove literal types that have a corresponding primitive
         flat.retain(|type_id| {
+            // Check for boolean literal intrinsics
+            if *type_id == TypeId::BOOLEAN_TRUE || *type_id == TypeId::BOOLEAN_FALSE {
+                return !has_boolean;
+            }
+
             // Keep if it's not a literal type
             let Some(TypeKey::Literal(literal)) = self.lookup(*type_id) else {
                 return true;

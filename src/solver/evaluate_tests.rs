@@ -38217,7 +38217,7 @@ fn test_parameters_variadic_tuple_type() {
 #[test]
 fn test_return_type_intersection_of_functions() {
     // ReturnType<(() => string) & (() => number)> should handle intersection
-    // This is an edge case where function intersection has conflicting returns
+    // This creates an overloaded callable with both signatures
     let interner = TypeInterner::new();
 
     let func_string = interner.function(FunctionShape {
@@ -38242,12 +38242,20 @@ fn test_return_type_intersection_of_functions() {
 
     let intersection = interner.intersection(vec![func_string, func_number]);
 
+    // Functions in intersection are merged into a callable with overloaded signatures
     match interner.lookup(intersection) {
-        Some(TypeKey::Intersection(list_id)) => {
-            let members = interner.type_list(list_id);
-            assert_eq!(members.len(), 2);
+        Some(TypeKey::Callable(shape_id)) => {
+            let shape = interner.callable_shape(shape_id);
+            assert_eq!(shape.call_signatures.len(), 2, "Should have both call signatures");
+            // Check that we have both return types
+            let return_types: Vec<TypeId> = shape.call_signatures
+                .iter()
+                .map(|sig| sig.return_type)
+                .collect();
+            assert!(return_types.contains(&TypeId::STRING));
+            assert!(return_types.contains(&TypeId::NUMBER));
         }
-        _ => panic!("Expected Intersection type"),
+        _ => panic!("Expected Callable type with overloaded signatures"),
     }
 }
 
