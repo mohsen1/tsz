@@ -35,12 +35,13 @@ TIMEOUT=600
 WORKERS=$CPU_CORES
 
 # Parse arguments
+SawAll=false
 for arg in "$@"; do
     case $arg in
         --no-sandbox) USE_SANDBOX=false ;;
         --wasm) USE_WASM=true ;;
         --native) USE_WASM=false ;;
-        --all) MAX_TESTS=99999; TIMEOUT=3600 ;;
+        --all) SawAll=true; MAX_TESTS=99999; TIMEOUT=3600 ;;
         --max=*) MAX_TESTS="${arg#*=}" ;;
         --workers=*) WORKERS="${arg#*=}" ;;
         --verbose|-v) VERBOSE=true ;;
@@ -73,13 +74,28 @@ for arg in "$@"; do
     esac
 done
 
+# Build arguments to pass to child scripts, converting --all to --max and --timeout
+CHILD_ARGS=()
+for arg in "$@"; do
+    case $arg in
+        --all)
+            # Convert --all to explicit --max and --timeout
+            CHILD_ARGS+=(--max="$MAX_TESTS" --timeout="$TIMEOUT")
+            ;;
+        *)
+            # Pass through other arguments
+            CHILD_ARGS+=("$arg")
+            ;;
+    esac
+done
+
 # Branch based on mode
 if [ "$USE_SANDBOX" = false ]; then
     # No sandbox - run native binary directly
-    exec "$SCRIPT_DIR/run-native-unsafe.sh" "$@"
+    exec "$SCRIPT_DIR/run-native-unsafe.sh" "${CHILD_ARGS[@]}"
 else
     # Docker mode - pass wasm/native choice
-    exec "$SCRIPT_DIR/run-docker.sh" "--wasm=$USE_WASM" "$@"
+    exec "$SCRIPT_DIR/run-docker.sh" "--wasm=$USE_WASM" "${CHILD_ARGS[@]}"
 fi
 
 
