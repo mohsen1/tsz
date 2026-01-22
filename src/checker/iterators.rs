@@ -323,21 +323,57 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     // Helper methods
     // =========================================================================
 
-    fn object_has_iterator_method(&self, _shape_id: crate::solver::ObjectShapeId) -> bool {
-        // TODO: Check if object shape has [Symbol.iterator] method
-        // This requires looking up the property with the well-known symbol key
+    fn object_has_iterator_method(&self, shape_id: crate::solver::ObjectShapeId) -> bool {
+        // Check if object shape has a 'next' method (iterator protocol)
+        // or [Symbol.iterator] method
+        let shape = self.ctx.types.object_shape(shape_id);
+        for prop in &shape.properties {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            // Check for 'next' method (direct iterator)
+            if prop_name.as_ref() == "next" && prop.is_method {
+                return true;
+            }
+        }
         false
     }
 
-    fn object_has_async_iterator_method(&self, _shape_id: crate::solver::ObjectShapeId) -> bool {
-        // TODO: Check if object shape has [Symbol.asyncIterator] method
+    fn object_has_async_iterator_method(&self, shape_id: crate::solver::ObjectShapeId) -> bool {
+        // Check if object has a 'next' method that returns Promise
+        // This is the async iterator protocol
+        let shape = self.ctx.types.object_shape(shape_id);
+        for prop in &shape.properties {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            if prop_name.as_ref() == "next" && prop.is_method {
+                // Check if the return type is Promise-like
+                if let Some(crate::solver::TypeKey::Function(func_id)) =
+                    self.ctx.types.lookup(prop.type_id)
+                {
+                    let func = self.ctx.types.function_shape(func_id);
+                    // Check if return type is a Promise (has 'then' property)
+                    if let Some(crate::solver::TypeKey::Object(ret_shape_id)) =
+                        self.ctx.types.lookup(func.return_type)
+                    {
+                        let ret_shape = self.ctx.types.object_shape(ret_shape_id);
+                        for ret_prop in &ret_shape.properties {
+                            let ret_prop_name = self.ctx.types.resolve_atom_ref(ret_prop.name);
+                            if ret_prop_name.as_ref() == "then" {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         false
     }
 
+    /// Get the element type from an async iterable.
+    ///
+    /// For AsyncGenerator<Y, R, N>, this extracts Y (the yield type).
+    /// For async iterables, this unwraps Promise<IteratorResult<T>> to get T.
     fn get_async_iterable_element_type(&self, type_id: TypeId) -> TypeId {
-        // For async iterables, get the awaited element type
-        // This unwraps Promise<T> to get T
-        self.get_iterable_element_type(type_id)
+        // Use the helper function from generators module
+        crate::checker::generators::get_async_iterable_element_type(self.ctx.types, type_id)
     }
 
     fn is_valid_for_in_target(&self, type_id: TypeId) -> bool {
