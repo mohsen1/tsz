@@ -75,8 +75,12 @@ pub enum CallResult {
 }
 
 struct TupleRestExpansion {
+    /// Fixed elements before the variadic portion (prefix)
     fixed: Vec<TupleElement>,
+    /// The variadic element type (e.g., T for ...T[])
     variadic: Option<TypeId>,
+    /// Fixed elements after the variadic portion (suffix/tail)
+    tail: Vec<TupleElement>,
 }
 
 /// Evaluates function calls.
@@ -581,6 +585,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if expansion.variadic.is_some() {
                     variadic = true;
                 }
+                // Count tail elements from nested tuple spreads
+                for tail_elem in expansion.tail {
+                    max += 1;
+                    if !tail_elem.optional {
+                        min += 1;
+                    }
+                }
                 continue;
             }
             max += 1;
@@ -605,18 +616,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let (prefix, rest_and_tail) = elements.split_at(rest_index);
         let rest_elem = &rest_and_tail[0];
-        let tail = &rest_and_tail[1..];
+        let outer_tail = &rest_and_tail[1..];
 
         let expansion = self.expand_tuple_rest(rest_elem.type_id);
         let prefix_len = prefix.len();
         let rest_fixed_len = expansion.fixed.len();
-        let tail_len = tail.len();
+        let expansion_tail_len = expansion.tail.len();
+        let outer_tail_len = outer_tail.len();
+        // Total suffix = expansion.tail + outer_tail
+        let total_suffix_len = expansion_tail_len + outer_tail_len;
 
         if let Some(variadic) = expansion.variadic {
-            let suffix_start = rest_arg_count.saturating_sub(tail_len);
+            let suffix_start = rest_arg_count.saturating_sub(total_suffix_len);
             if offset >= suffix_start {
-                let tail_index = offset - suffix_start;
-                return tail.get(tail_index).map(|elem| elem.type_id);
+                let suffix_index = offset - suffix_start;
+                // First check expansion.tail, then outer_tail
+                if suffix_index < expansion_tail_len {
+                    return Some(expansion.tail[suffix_index].type_id);
+                }
+                let outer_index = suffix_index - expansion_tail_len;
+                return outer_tail.get(outer_index).map(|elem| elem.type_id);
             }
             if offset < prefix_len {
                 return Some(prefix[offset].type_id);
@@ -628,6 +647,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return Some(variadic);
         }
 
+        // No variadic: prefix + expansion.fixed + expansion.tail + outer_tail
         let mut index = offset;
         if index < prefix_len {
             return Some(prefix[index].type_id);
@@ -637,7 +657,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return Some(expansion.fixed[index].type_id);
         }
         index -= rest_fixed_len;
-        tail.get(index).map(|elem| elem.type_id)
+        if index < expansion_tail_len {
+            return Some(expansion.tail[index].type_id);
+        }
+        index -= expansion_tail_len;
+        outer_tail.get(index).map(|elem| elem.type_id)
     }
 
     fn rest_element_type(&self, type_id: TypeId) -> TypeId {
@@ -663,17 +687,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             Some(TypeKey::Array(elem)) => TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(elem),
+                tail: Vec::new(),
             },
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 let mut fixed = Vec::new();
-                for elem in elements.iter() {
+                for (i, elem) in elements.iter().enumerate() {
                     if elem.rest {
                         let inner = self.expand_tuple_rest(elem.type_id);
                         fixed.extend(inner.fixed);
+                        // Capture tail elements: inner.tail + elements after the rest
+                        let mut tail = inner.tail;
+                        tail.extend(elements[i + 1..].iter().cloned());
                         return TupleRestExpansion {
                             fixed,
                             variadic: inner.variadic,
+                            tail,
                         };
                     }
                     fixed.push(elem.clone());
@@ -681,11 +710,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 TupleRestExpansion {
                     fixed,
                     variadic: None,
+                    tail: Vec::new(),
                 }
             }
             _ => TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(type_id),
+                tail: Vec::new(),
             },
         }
     }

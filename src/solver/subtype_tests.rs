@@ -27589,3 +27589,196 @@ fn test_intrinsic_to_literal_fails() {
         other => panic!("Expected TypeMismatch, got {:?}", other),
     }
 }
+
+// =============================================================================
+// Nested Tuple Spread with Tail Elements
+// =============================================================================
+
+#[test]
+fn test_nested_tuple_spread_with_tail() {
+    // Test that nested tuple spreads with tail elements are handled correctly
+    // [number, string, boolean, symbol] IS assignable to [number, ...[string, ...any[], boolean], symbol]
+    // The nested tuple [string, ...any[], boolean] expands to: prefix=[string], variadic=any, tail=[boolean]
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let any_array = interner.array(TypeId::ANY);
+
+    // Inner tuple: [string, ...any[], boolean]
+    let inner_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: any_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Target: [number, ...inner_tuple, symbol]
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: inner_tuple,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::SYMBOL,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Source: [number, string, boolean, symbol]
+    // This should match: number, string (from inner prefix), boolean (from inner tail), symbol (outer tail)
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::SYMBOL,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_nested_tuple_spread_to_array() {
+    // Test nested spread when checking assignability to array
+    // [string, ...[string, ...string[], string]] IS assignable to string[]
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+
+    // Inner tuple: [string, ...string[], string]
+    let inner_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Source: [string, ...inner_tuple]
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: inner_tuple,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    // All elements are strings (prefix: string, inner.prefix: string, inner.variadic: string,
+    // inner.tail: string), so this should be assignable to string[]
+    assert!(checker.is_subtype_of(source, string_array));
+}
+
+#[test]
+fn test_nested_tuple_spread_to_array_with_mismatch() {
+    // Test nested spread with type mismatch in tail
+    // [string, ...[string, ...string[], number]] is NOT assignable to string[]
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+
+    // Inner tuple: [string, ...string[], number] - note: tail has number, not string
+    let inner_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Source: [string, ...inner_tuple]
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: inner_tuple,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    // The inner tail element is number, which doesn't match string[]
+    assert!(!checker.is_subtype_of(source, string_array));
+}
