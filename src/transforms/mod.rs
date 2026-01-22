@@ -30,7 +30,7 @@
 //! | `optional_chain` | ✅ Migrated | Uses IR nodes |
 //! | `generators` | ✅ Migrated | Uses `GeneratorTransformer` |
 //! | `decorators` | ✅ Migrated | Uses IR nodes |
-//! | `class_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
+//! | `class_es5` | ⚠️ Partial | `ES5ClassTransformer` in `class_es5_ir.rs` (core IR-based) |
 //! | `namespace_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
 //! | `async_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
 //! | `arrow_es5` | ℹ️ Helper | Analysis only, no emit |
@@ -79,6 +79,7 @@ pub mod arrow_es5;
 pub mod async_es5;
 pub mod block_scoping_es5;
 pub mod class_es5;
+pub mod class_es5_ir;
 pub mod destructuring_es5;
 mod emit_utils;
 pub mod enum_es5;
