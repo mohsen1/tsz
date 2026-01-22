@@ -29,6 +29,7 @@ mod narrowing;
 mod operations;
 mod subtype;
 mod types;
+pub mod unsoundness_audit;
 
 pub(crate) use apparent::*;
 pub use compat::*;
@@ -45,6 +46,7 @@ pub use narrowing::*;
 pub use operations::*;
 pub use subtype::*;
 pub use types::*;
+pub use unsoundness_audit::*;
 
 #[cfg(test)]
 mod callable_tests;
