@@ -4928,7 +4928,7 @@ fn test_best_common_type_with_supertype() {
     let bct = ctx.best_common_type(&types);
 
     // Animal should be assignable to BCT
-    assert!(ctx.is_subtype_of(animal, bct),
+    assert!(crate::solver::subtype::is_subtype_of(&interner, animal, bct),
             "Animal should be subtype of BCT");
 }
 
