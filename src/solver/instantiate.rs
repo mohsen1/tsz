@@ -518,6 +518,12 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.template_literal(instantiated)
             }
 
+            // StringIntrinsic: instantiate the type argument
+            TypeKey::StringIntrinsic { kind, type_arg } => {
+                let inst_arg = self.instantiate(*type_arg);
+                self.interner.intern(TypeKey::StringIntrinsic { kind: *kind, type_arg: inst_arg })
+            }
+
             // Infer: keep as-is unless explicitly substituting inference variables
             TypeKey::Infer(info) => {
                 if self.substitute_infer

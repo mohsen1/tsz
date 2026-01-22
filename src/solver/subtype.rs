@@ -2325,6 +2325,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 })
             }
+            TypeKey::StringIntrinsic { type_arg, .. } => {
+                self.type_contains_this_type_inner(type_arg, visited)
+            }
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Ref(_)

@@ -321,6 +321,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.cache.borrow_mut().insert(type_id, result);
                 result
             }
+            TypeKey::StringIntrinsic { kind, type_arg } => {
+                let result = self.evaluate_string_intrinsic(*kind, *type_arg);
+                self.visiting.borrow_mut().remove(&type_id);
+                self.cache.borrow_mut().insert(type_id, result);
+                result
+            }
             // Other types pass through unchanged
             _ => {
                 self.visiting.borrow_mut().remove(&type_id);
@@ -2065,6 +2071,148 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Evaluate string manipulation intrinsic types (Uppercase, Lowercase, Capitalize, Uncapitalize)
+    /// These distribute over unions and transform string literal types
+    fn evaluate_string_intrinsic(&self, kind: crate::solver::types::StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        use crate::solver::types::StringIntrinsicKind;
+
+        // First evaluate the type argument
+        let evaluated_arg = self.evaluate(type_arg);
+
+        let key = match self.interner.lookup(evaluated_arg) {
+            Some(k) => k,
+            None => return TypeId::ERROR,
+        };
+
+        match key {
+            // Handle unions - distribute the operation over each member
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                let transformed: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| self.evaluate_string_intrinsic(kind, member))
+                    .collect();
+                self.interner.union(transformed)
+            }
+
+            // String literal types - apply the transformation
+            TypeKey::Literal(LiteralValue::String(atom)) => {
+                let s = self.interner.resolve_atom_ref(atom);
+                let transformed = match kind {
+                    StringIntrinsicKind::Uppercase => s.to_uppercase().to_string(),
+                    StringIntrinsicKind::Lowercase => s.to_lowercase().to_string(),
+                    StringIntrinsicKind::Capitalize => {
+                        if s.is_empty() {
+                            s.to_string()
+                        } else {
+                            let mut chars = s.chars();
+                            match chars.next() {
+                                Some(first) => {
+                                    let upper: String = first.to_uppercase().collect();
+                                    upper + chars.as_str()
+                                }
+                                None => s.to_string(),
+                            }
+                        }
+                    }
+                    StringIntrinsicKind::Uncapitalize => {
+                        if s.is_empty() {
+                            s.to_string()
+                        } else {
+                            let mut chars = s.chars();
+                            match chars.next() {
+                                Some(first) => {
+                                    let lower: String = first.to_lowercase().collect();
+                                    lower + chars.as_str()
+                                }
+                                None => s.to_string(),
+                            }
+                        }
+                    }
+                };
+                self.interner.literal_string(&transformed)
+            }
+
+            // Template literal types - apply the transformation
+            TypeKey::TemplateLiteral(spans) => {
+                self.apply_string_intrinsic_to_template_literal(kind, spans)
+            }
+
+            // The intrinsic string type passes through unchanged
+            TypeKey::Intrinsic(IntrinsicKind::String) => TypeId::STRING,
+
+            // For type parameters and other deferred types, keep as StringIntrinsic
+            TypeKey::TypeParameter(_) | TypeKey::Infer(_) | TypeKey::KeyOf(_) | TypeKey::IndexAccess(_, _) => {
+                self.interner.intern(TypeKey::StringIntrinsic { kind, type_arg: evaluated_arg })
+            }
+
+            // For all other types, return error
+            _ => TypeId::ERROR,
+        }
+    }
+
+    /// Apply a string intrinsic to a template literal type
+    fn apply_string_intrinsic_to_template_literal(&self, kind: crate::solver::types::StringIntrinsicKind, spans: TemplateLiteralId) -> TypeId {
+        use crate::solver::types::StringIntrinsicKind;
+        use crate::solver::types::TemplateSpan;
+
+        let span_list = self.interner.template_list(spans);
+
+        // Check if all spans are Text (no type interpolation)
+        let all_text = span_list.iter().all(|span| matches!(span, TemplateSpan::Text(_)));
+
+        if !all_text {
+            // Template literal with interpolation - can't statically transform
+            // In TypeScript, these would generally remain as template literals
+            // For now, return the string intrinsic type as-is
+            return TypeId::STRING;
+        }
+
+        // All spans are text - we can concatenate and transform
+        let mut result = String::new();
+        for span in span_list.iter() {
+            if let TemplateSpan::Text(atom) = span {
+                let text = self.interner.resolve_atom_ref(*atom);
+                result.push_str(&text);
+            }
+        }
+
+        let transformed = match kind {
+            StringIntrinsicKind::Uppercase => result.to_uppercase().to_string(),
+            StringIntrinsicKind::Lowercase => result.to_lowercase().to_string(),
+            StringIntrinsicKind::Capitalize => {
+                if result.is_empty() {
+                    result
+                } else {
+                    let mut chars = result.chars();
+                    match chars.next() {
+                        Some(first) => {
+                            let upper: String = first.to_uppercase().collect();
+                            upper + chars.as_str()
+                        }
+                        None => result,
+                    }
+                }
+            }
+            StringIntrinsicKind::Uncapitalize => {
+                if result.is_empty() {
+                    result
+                } else {
+                    let mut chars = result.chars();
+                    match chars.next() {
+                        Some(first) => {
+                            let lower: String = first.to_lowercase().collect();
+                            lower + chars.as_str()
+                        }
+                        None => result,
+                    }
+                }
+            }
+        };
+
+        self.interner.literal_string(&transformed)
+    }
+
     /// Helper to evaluate keyof or pass through union constraint
     fn evaluate_keyof_or_constraint(&self, constraint: TypeId) -> TypeId {
         if let Some(TypeKey::Conditional(cond_id)) = self.interner.lookup(constraint) {
@@ -2419,6 +2567,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     TemplateSpan::Type(inner) => self.type_contains_infer_inner(*inner, visited),
                 })
             }
+            TypeKey::StringIntrinsic { type_arg, .. } => self.type_contains_infer_inner(type_arg, visited),
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Ref(_)
@@ -2857,6 +3006,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 true
+            }
+            TypeKey::StringIntrinsic { type_arg, .. } => {
+                self.bind_infer_defaults_inner(type_arg, inferred, bindings, checker, visited)
             }
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)

@@ -1281,6 +1281,7 @@ impl<'a> TypeLowering<'a> {
                     TemplateSpan::Type(inner) => self.contains_meta_type_inner(*inner, visited),
                 })
             }
+            TypeKey::StringIntrinsic { type_arg, .. } => self.contains_meta_type_inner(type_arg, visited),
             TypeKey::Ref(_)
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
@@ -1556,6 +1557,9 @@ impl<'a> TypeLowering<'a> {
                         self.collect_infer_bindings(*inner, visited);
                     }
                 }
+            }
+            TypeKey::StringIntrinsic { type_arg, .. } => {
+                self.collect_infer_bindings(type_arg, visited);
             }
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
@@ -1985,24 +1989,78 @@ impl<'a> TypeLowering<'a> {
                 && let Some(ident) = self.arena.get_identifier(name_node)
             {
                 let name = ident.escaped_text.as_str();
-                if (name == "Array" || name == "ReadonlyArray")
-                    && self.lookup_type_param(name).is_none()
+
+                // Handle string manipulation intrinsic types
+                if self.lookup_type_param(name).is_none()
                     && self.resolve_type_symbol(data.type_name).is_none()
                 {
-                    // Use Unknown instead of Any for stricter type checking
-                    // Array/ReadonlyArray without type arguments defaults to unknown[]
-                    // instead of any[] to prevent implicit any
-                    let elem_type = data
-                        .type_arguments
-                        .as_ref()
-                        .and_then(|args| args.nodes.first().copied())
-                        .map(|idx| self.lower_type(idx))
-                        .unwrap_or(TypeId::UNKNOWN);
-                    let array_type = self.interner.array(elem_type);
-                    if name == "ReadonlyArray" {
-                        return self.interner.intern(TypeKey::ReadonlyType(array_type));
+                    match name {
+                        "Array" | "ReadonlyArray" => {
+                            // Use Unknown instead of Any for stricter type checking
+                            // Array/ReadonlyArray without type arguments defaults to unknown[]
+                            // instead of any[] to prevent implicit any
+                            let elem_type = data
+                                .type_arguments
+                                .as_ref()
+                                .and_then(|args| args.nodes.first().copied())
+                                .map(|idx| self.lower_type(idx))
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let array_type = self.interner.array(elem_type);
+                            if name == "ReadonlyArray" {
+                                return self.interner.intern(TypeKey::ReadonlyType(array_type));
+                            }
+                            return array_type;
+                        }
+                        "Uppercase" => {
+                            if let Some(args) = &data.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let type_arg = self.lower_type(first_arg);
+                                return self.interner.intern(TypeKey::StringIntrinsic {
+                                    kind: crate::solver::types::StringIntrinsicKind::Uppercase,
+                                    type_arg,
+                                });
+                            }
+                            return TypeId::ERROR;
+                        }
+                        "Lowercase" => {
+                            if let Some(args) = &data.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let type_arg = self.lower_type(first_arg);
+                                return self.interner.intern(TypeKey::StringIntrinsic {
+                                    kind: crate::solver::types::StringIntrinsicKind::Lowercase,
+                                    type_arg,
+                                });
+                            }
+                            return TypeId::ERROR;
+                        }
+                        "Capitalize" => {
+                            if let Some(args) = &data.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let type_arg = self.lower_type(first_arg);
+                                return self.interner.intern(TypeKey::StringIntrinsic {
+                                    kind: crate::solver::types::StringIntrinsicKind::Capitalize,
+                                    type_arg,
+                                });
+                            }
+                            return TypeId::ERROR;
+                        }
+                        "Uncapitalize" => {
+                            if let Some(args) = &data.type_arguments
+                                && let Some(&first_arg) = args.nodes.first()
+                            {
+                                let type_arg = self.lower_type(first_arg);
+                                return self.interner.intern(TypeKey::StringIntrinsic {
+                                    kind: crate::solver::types::StringIntrinsicKind::Uncapitalize,
+                                    type_arg,
+                                });
+                            }
+                            return TypeId::ERROR;
+                        }
+                        _ => {}
                     }
-                    return array_type;
                 }
             }
 
