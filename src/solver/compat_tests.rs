@@ -1,4 +1,5 @@
 use super::*;
+use crate::solver::db::QueryDatabase;
 use crate::solver::subtype::SubtypeFailureReason;
 use crate::solver::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType,
@@ -4613,8 +4614,37 @@ fn test_strict_function_types_affects_methods_independently() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let animal = interner.object(vec![]);
-    let dog = interner.object(vec![]);
+    // Animal: { name: string }
+    let name = interner.intern_string("name");
+    let animal = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Dog: { name: string, breed: string } - Dog is subtype of Animal
+    let breed = interner.intern_string("breed");
+    let dog = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: breed,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
 
     // Create method types
     let fn_animal = interner.function(FunctionShape {
@@ -4722,7 +4752,7 @@ fn test_no_unchecked_indexed_access_with_nested_types() {
 #[test]
 fn test_keyof_union_contravariance() {
     let interner = TypeInterner::new();
-    let mut checker = CompatChecker::new(&interner);
+    let checker = CompatChecker::new(&interner);
 
     let name = interner.intern_string("name");
     let age = interner.intern_string("age");
@@ -4747,30 +4777,65 @@ fn test_keyof_union_contravariance() {
         is_method: false,
     }]);
 
-    // keyof A should be "name"
-    let keyof_a = interner.intern(TypeKey::KeyOf(type_a));
-
-    // keyof B should be "age"
-    let keyof_b = interner.intern(TypeKey::KeyOf(type_b));
-
     // keyof (A | B) should be keyof A & keyof B
-    // which is ("name" | "age")
+    // Since A has "name" and B has "age" with NO common keys,
+    // keyof (A | B) = "name" & "age" = never
     let union_ab = interner.union(vec![type_a, type_b]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union_ab));
+    let keyof_union = crate::solver::evaluate_keyof(&interner, union_ab);
 
-    // The result should include both "name" and "age"
-    let name_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(name)));
-    let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
+    // keyof (A | B) with no common keys should be never
+    assert_eq!(
+        keyof_union,
+        TypeId::NEVER,
+        "keyof (A | B) with disjoint keys should be never"
+    );
 
-    // keyof (A | B) should be a union of both keys
-    assert!(
-        checker.is_assignable(name_literal, keyof_union),
-        "keyof (A | B) should include 'name'"
+    // Verify that keyof properly extracts keys when there ARE common properties
+    let name_prop = PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    };
+    // Type C: { name: string, x: number }
+    let type_c = interner.object(vec![
+        name_prop.clone(),
+        PropertyInfo {
+            name: interner.intern_string("x"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+    // Type D: { name: string, y: boolean }
+    let type_d = interner.object(vec![
+        name_prop,
+        PropertyInfo {
+            name: interner.intern_string("y"),
+            type_id: TypeId::BOOLEAN,
+            write_type: TypeId::BOOLEAN,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // keyof (C | D) = keyof C & keyof D = ("name" | "x") & ("name" | "y") = "name"
+    let union_cd = interner.union(vec![type_c, type_d]);
+    let keyof_union_cd = crate::solver::evaluate_keyof(&interner, union_cd);
+
+    let name_literal = interner.literal_string("name");
+    assert_eq!(
+        keyof_union_cd, name_literal,
+        "keyof (C | D) with common 'name' key should be 'name'"
     );
-    assert!(
-        checker.is_assignable(age_literal, keyof_union),
-        "keyof (A | B) should include 'age'"
-    );
+
+    // Suppress unused checker warning
+    let _ = checker;
 }
 
 #[test]
@@ -4973,7 +5038,7 @@ fn test_best_common_type_with_supertype() {
 
     // Animal should be assignable to BCT
     assert!(
-        ctx.is_subtype_of(animal, bct),
+        interner.is_subtype_of(animal, bct),
         "Animal should be subtype of BCT"
     );
 }
