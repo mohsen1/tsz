@@ -2,246 +2,326 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
+**Current Status:** Type system solver is complete. Focus is now on production readiness: transform pipeline migration, module resolution, and conformance validation.
 
+---
 
-## Strategy Shift: Solver Foundation First
+## Top Priority: Transform Pipeline Migration
 
-**We are prioritizing solver/checker completion over conformance parity.**
+**Problem:** `src/transforms/` has ~7,500 lines of architectural debt blocking reliable ES5 JavaScript emission.
 
-Chasing conformance percentages before the type system solver is solid is premature. A sound, complete solver is the foundation - conformance improvements will follow naturally from proper type system mechanics.
+**Issue:** Legacy transforms (class_es5, async_es5, namespace_es5) mix AST manipulation with string emission, making them untestable and error-prone.
 
-**Key principle:** Understand the type system deeply, implement correctly, then validate with conformance tests.
+**Solution:** Migrate to IR (Intermediate Representation) pattern already proven in enum_es5, destructuring_es5, spread_es5.
 
-## Top Priority: Complete the Solver
+### Transforms Requiring Migration
 
-The solver (`src/solver/`) is the heart of the type system. It must implement:
-- **Semantic subtyping** (types as sets of values, set inclusion for subtyping)
-- **Coinductive semantics** (for recursive types)
-- **Structural typing** with proper canonicalization
-- **Advanced TypeScript features** (conditionals, mapped types, template literals, inference)
+| Transform | Lines | Blocker | Complexity |
+|-----------|-------|---------|------------|
+| `class_es5.rs` | 4,849 | Classes, inheritance, private fields, getters/setters | **CRITICAL** |
+| `async_es5.rs` | 1,491 | Async/await → __awaiter/__generator | **HIGH** |
+| `namespace_es5.rs` | 1,169 | Nested IIFEs | **MEDIUM** |
 
-**Status:** Core solver architecture is sound but incomplete. See `specs/SOLVER_ROADMAP.md` for comprehensive implementation plan.
+### Reference Implementation (Already Working)
 
-## Secondary Priority: Test Coverage for Solver
+Study these files for the migration pattern:
+- `src/transforms/enum_es5.rs` - Clean IR pattern
+- `src/transforms/destructuring_es5.rs` - IR-based transform
+- `src/transforms/ir.rs` - IR node definitions
 
-Conformance tests are useful for validation, but should not drive implementation. Use them to:
-- Validate solver correctness after implementation
-- Catch edge cases in type system mechanics
-- Ensure TypeScript compatibility behaviors are wired in compat layer
+### Migration Pattern
 
-**Current Test Status:**
+```rust
+// Step 1: Create transformer (no strings, just IR)
+pub struct ES5ClassTransformer<'a> {
+    arena: &'a NodeArena,
+    class_name: String,
+    temp_var_counter: u32,
+}
 
-**Docker-isolated by default** for safety. Tests run in parallel across all CPU cores.
+impl<'a> ES5ClassTransformer<'a> {
+    pub fn transform_class(&mut self, idx: NodeIndex) -> Option<IRNode> {
+        // Analyze AST, build IR tree
+        IRNode::ES5ClassIIFE {
+            name: self.class_name.clone(),
+            base_class: /* ... */,
+            body: /* ... */,
+        }
+    }
+}
 
-```bash
-# Docker + Native Binary (default: fast, stable)
-./conformance/run-conformance.sh --all
+// Step 2: Wrap old Emitter for compatibility
+pub struct ClassES5Emitter<'a> {
+    transformer: ES5ClassTransformer<'a>,
+}
 
-# Docker + WASM (slower, for WASM-specific testing)
-./conformance/run-conformance.sh --wasm --all
-
-# No Docker (unsafe: vulnerable to infinite loops/OOM)
-./conformance/run-conformance.sh --no-sandbox --all
+impl<'a> ClassES5Emitter<'a> {
+    pub fn emit_class(&mut self, idx: NodeIndex) -> String {
+        let ir = self.transformer.transform_class(idx)?;
+        IRPrinter::emit_to_string(&ir)
+    }
+}
 ```
 
-**Performance (1000 tests, 14 CPU cores):**
-- Native: ~26 tests/sec (38.8s total)
-- WASM: ~22 tests/sec (45.7s total)
-- Native is ~18% faster but both run in parallel across all cores
+### IR Nodes Already Defined
 
-**Test Coverage:**
-- Currently testing: 12,093 files (60% of TypeScript/tests)
-  - `conformance/`: 5,691 files
-  - `compiler/`: 6,402 files
-- Not testing: 7,975 files (40%)
-  - `fourslash/`: 6,563 files (IDE features)
-  - `projects/`: 175 files (module resolution - HIGH VALUE)
-  - `transpile/`: 22 files (JS output)
+The following IR nodes exist in `src/transforms/ir.rs` and are ready to use:
+- `ES5ClassIIFE` - Class IIFE pattern
+- `ExtendsHelper` - `__extends` helper call
+- `PrototypeMethod` - Method assignment to prototype
+- `StaticMethod` - Static method assignment
+- `AwaiterCall` - `__awaiter` helper
+- `GeneratorBody` - Generator state machine
+- `GeneratorOp` - `[opcode, value]` operations
+- `NamespaceIIFE` - Namespace IIFE pattern
 
-***
+### Estimated Timeline
 
-## Lower Priority Items
+- **Week 1:** Migrate `class_es5.rs`
+  - Build transformer struct
+  - Construct IR nodes for IIFE, extends, methods
+  - Test against existing class transform tests
 
-These tasks are important but should be pursued **after** solver is solid:
+- **Week 2:** Migrate `async_es5.rs`
+  - Build generator state machine IR
+  - Reuse AwaiterCall, GeneratorBody nodes
 
-### Code Hygiene
+- **Week 3:** Migrate `namespace_es5.rs` + Integration
+  - Complete transform migration
+  - Update all callers
+  - Run full test suite validation
 
-* Remove `#![allow(dead_code)]` and fix unused code
-* Add proper tracing infrastructure (replace print statements)
-* Clean up Clippy ignores in `clippy.toml`
-* Test-awareness cleanup: sweep checker/binder for path heuristics or test-specific workarounds (per AGENTS rules)
+### Success Criteria
 
-### Transform Pipeline Fix
+- All 3 transforms use IR pattern (no direct string emission)
+- All existing transform tests pass
+- ES5 emission matches TSC output
 
-`src/transforms/` mixes AST manipulation with string emission. Transforms should produce a lowered AST, then the printer should emit strings.
+---
 
-### Compat Layer Audit
+## Secondary Priority: Module Resolution
 
-Audit `compat` module against `TS_UNSOUNDNESS_CATALOG.md` to ensure all rules are wired and option-driven (weak types, template literal limits, rest bivariance, exactOptionalPropertyTypes).
+**Goal:** Enable `projects/` conformance tests (175 files) for real-world project validation.
 
-### Expand Test Coverage (After Solver is Solid)
+**What's Needed:**
+1. Implement Node16/NodeNext module resolution algorithms
+2. Add `projects/` category to conformance runner
+3. Handle tsconfig.json `paths`, `baseUrl`, composite projects
+4. Support circular import detection
 
-**Recommended additions:**
-- **Add `projects/` category** (175 files) - HIGH VALUE
-  - Tests module resolution, compiler options, multi-file projects
-  - Validates real-world project scenarios
-  - Estimated effort: 2-4 hours
-- **Evaluate `fourslash/` subset** (selective from 6,563 files)
-  - Tests complex multi-file language features
-  - Skip IDE-specific tests (completion, navigation)
-  - Estimated effort: 8-16 hours for selective integration
+**Estimated Effort:** 1 week
 
-***
+**Reference:** `specs/COMPILER_OPTIONS.md`, `src/module_resolver.rs`
 
-## Test Coverage Research Findings
+---
 
-### TypeScript/tests Directory Structure
+## Secondary Priority: Conformance Test Infrastructure Fix
 
-| Category | Files | Purpose | Status |
-|----------|-------|---------|--------|
-| `conformance/` | 5,691 | Language spec compliance (52 categories) | ✅ Testing |
-| `compiler/` | 6,402 | Compiler behavior and API | ✅ Testing |
-| `fourslash/` | 6,563 | IDE features (completion, navigation, refactor) | ⚠️ Not tested |
-| `projects/` | 175 | Module resolution, project configuration | ⚠️ Not tested |
-| `transpile/` | 22 | JavaScript output generation | ❌ Not relevant |
+**Problem:** Test runner has JSON parsing bug preventing reliable baseline measurements.
 
-### Fourslash Tests Analysis
+**Action Plan:**
+1. Debug `conformance/run-conformance.sh --max=10 --verbose`
+2. Fix JSON parsing in `conformance/src/worker.ts`
+3. Get baseline conformance metrics
+4. Identify top 10 failing test categories
 
-**Purpose:** Specialized framework for testing IDE/editor functionality
+**Important:** Do NOT chase pass percentages. Fix root causes in solver/checker, not test-specific workarounds.
 
-**Format:**
-- Uses `////` markers and `@Filename` directives
-- DSL with verification API (`goTo.marker()`, `verify.quickInfoAt()`)
-- Supports multi-file test scenarios
+---
 
-**Capabilities:**
-- Code completion, navigation, refactoring
-- Incremental edit testing
-- Complex multi-file language features
-- Error diagnostics and suggestions
+## Test Infrastructure
 
-**Recommendation:** Selective integration
-- ✅ Extract language feature tests (multi-file scenarios)
+**Current Coverage:**
+- `conformance/`: 5,691 files (language spec compliance)
+- `compiler/`: 6,402 files (compiler behavior)
+- **Not testing:** `projects/` (175 files) - module resolution
+- **Not testing:** `fourslash/` (6,563 files) - IDE features
+
+**Recommended Additions (After Transform Migration):**
+
+### 1. Add `projects/` Category (HIGH VALUE)
+
+**Purpose:** Module resolution, compiler options, multi-file projects
+
+**Why:** Validates real-world project scenarios, essential for TypeScript usage
+
+**Effort:** 2-4 hours
+
+**Requirements:**
+- JSON parser for project configuration
+- Module resolution implementation (Node16/NodeNext)
+- Multi-file project test harness
+
+### 2. Evaluate `fourslash/` Subset
+
+**Purpose:** Complex multi-file language features
+
+**Why:** Validates edge cases in multi-file scenarios
+
+**Effort:** 8-16 hours (selective integration)
+
+**Strategy:**
+- ✅ Extract language feature tests
 - ❌ Skip IDE-specific tests (completion, navigation)
-- ⚠️ Requires implementing fourslash DSL parser
-- Estimated effort: 8-16 hours
+- ⚠️ Requires fourslash DSL parser
 
-### Projects Tests Analysis
+---
 
-**Purpose:** Module resolution and project configuration validation
+## Future Directions (Post-MVP)
 
-**Format:** JSON configuration + multi-file project directories
+After transform migration and module resolution are complete, choose one:
 
-**Capabilities:**
-- Circular import handling
-- Reference path resolution (`/// <reference>`)
-- Module resolution algorithms (Node16, NodeNext, bundler)
-- Compiler options validation (rootDir, outDir, declarationDir)
-- Source map generation
-- Declaration file organization
+### Option A: LSP/IDE Integration
 
-**Recommendation:** HIGH VALUE - Add this category
-- ✅ Tests critical real-world scenarios
-- ✅ Validates module resolution (essential for TypeScript)
-- ✅ Multi-file project testing
-- ⚠️ Requires JSON parser and project setup
-- Estimated effort: 2-4 hours
+**Value:** User-facing, visible impact
 
-### Implementation Priority
+**Effort:** 4-6 weeks
 
-1. **Add `projects/` category** (175 files)
-   - High value, medium effort
-   - Tests essential module resolution features
-   - Complements existing conformance tests
+**Tasks:**
+- Parent mapping for O(1) parent lookup
+- LSP protocol handlers (hover, go-to-def)
+- Incremental type checking
+- WASM language service for browser tools
 
-2. **Evaluate fourslash subset** (selective from 6,563)
-   - Medium-high value, high effort
-   - Focus on multi-file language feature tests
-   - Skip IDE/editor-specific tests
+### Option B: Performance Benchmarking
 
-***
+**Value:** Credibility, marketing differentiation
 
-## Key Files
+**Effort:** 2-3 weeks
 
-| File/Directory | Purpose | Lines |
-|----------------|---------|-------|
-| `src/checker/` | Type checker | ~44,000 total |
-| `src/parser/state.rs` | Parser implementation | 10,770 |
-| `src/parser/node.rs` | AST node definitions | ~5,500 |
-| `src/binder.rs` | Symbol binding | 587 |
-| `src/solver/` | Type resolution | 37 files |
-| `src/transforms/` | JavaScript transforms | ~850K total (inc. tests) |
+**Tasks:**
+- Benchmark suite (parser speed, emitter throughput)
+- Profile real codebases (React, Vue)
+- WASM vs native comparison
+- Memory profiling validation
 
-***
+### Option C: WASM Language Service
 
-## Commands
+**Value:** Browser-based TypeScript (StackBlitz, CodeSandbox)
+
+**Effort:** 3-4 weeks
+
+**Tasks:**
+- Browser-compatible WASM build
+- Language service API
+- Integration with web editors
+
+---
+
+## Immediate Action Plan (This Week)
+
+### Day 1-2: Debug Conformance Tests
 
 ```bash
-cargo build                              # Build
-cargo test --lib                         # Run all tests
-cargo test --lib solver::                # Run specific module
-wasm-pack build --target nodejs          # Build WASM
+# Find the JSON parsing bug
+./conformance/run-conformance.sh --max=10 --verbose
 
-# Conformance tests (Docker-isolated by default)
+# Fix conformance/src/worker.ts JSON parsing
+# Get baseline metrics
+```
+
+### Day 3-4: Study Transform Architecture
+
+```bash
+# Review the clean IR pattern
+# Read: src/transforms/mod.rs (migration status)
+# Read: src/transforms/enum_es5.rs (reference implementation)
+# Read: src/transforms/ir.rs (IR node definitions)
+```
+
+### Day 5: Start class_es5 Migration
+
+```bash
+# Create design document
+# specs/CLASS_ES5_MIGRATION.md
+
+# Build transformer struct
+# Construct IR nodes for IIFE pattern
+# Test against existing class transform tests
+```
+
+---
+
+## Commands Reference
+
+```bash
+# Build
+cargo build                              # Native build
+wasm-pack build --target nodejs          # WASM build
+
+# Test
+cargo test --lib                         # All unit tests
+cargo test --lib solver::subtype_tests   # Specific module
+./scripts/test.sh --lib                  # Docker-isolated tests
+
+# Conformance (Docker-isolated for safety)
 ./conformance/run-conformance.sh --max=500       # Run 500 tests
 ./conformance/run-conformance.sh --all           # Run all tests
 ./conformance/run-conformance.sh --native        # Use native binary (faster)
 ./conformance/run-conformance.sh --wasm          # Use WASM (slower)
-./conformance/run-conformance.sh --no-sandbox    # No Docker (unsafe)
+./conformance/run-conformance.sh --no-sandbox    # No Docker (unsafe - infinite loop risk)
 ./conformance/run-conformance.sh --workers=N     # Set worker count
 ```
 
-***
+---
 
 ## Git Hooks
 
-Pre-commit hooks are available to enforce code quality before committing:
+Pre-commit hooks enforce code quality:
 
 ```bash
-# Install hooks (run once after cloning)
+# Install (run once)
 ./scripts/install-hooks.sh
 
-# Now hooks will run automatically before each commit
+# Hooks run automatically:
+# 1. cargo fmt (formatting)
+# 2. cargo clippy --fix (linter)
+# 3. cargo build (build warnings)
+# 4. cargo test --lib (unit tests in Docker)
 ```
 
-**Pre-commit hook checks:**
-1. `cargo fmt` - Applies code formatting
-2. `cargo clippy --fix` - Auto-fixes linter warnings (fails if unfixable)
-3. `cargo build --lib --bins --benches` - Checks for build warnings
-4. `cargo test --lib` - Runs unit tests (in Docker)
-
-**Fix formatting issues:**
+**Fix issues before committing:**
 ```bash
-# Format code
 cargo fmt
-
-# Then commit again
-git commit -m "your message"
-```
-
-**Fix clippy issues:**
-```bash
-# Auto-fix clippy warnings
 cargo clippy --all-targets --fix --allow-dirty --allow-staged
 ```
 
-***
+---
 
 ## Rules
-
-* All commits must pass unit tests
-* No test-aware code in source
-* Fix root causes, not symptoms
 
 | Don't | Do Instead |
 |-------|------------|
 | Check file names in checker | Fix the underlying logic |
 | Suppress errors for specific tests | Implement correct behavior |
+| Chase conformance percentages | Fix root causes in solver/checker |
 
-***
+---
 
 ## Merge Criteria
 
 1. `cargo build` passes
 2. `cargo test` passes
 3. Tests run in < 30 seconds
+4. No test-aware code in source
+
+---
+
+## Key Files for Transform Migration
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/transforms/class_es5.rs` | 4,849 | **MIGRATE FIRST** - Classes, inheritance |
+| `src/transforms/async_es5.rs` | 1,491 | **MIGRATE SECOND** - Async/await |
+| `src/transforms/namespace_es5.rs` | 1,169 | **MIGRATE THIRD** - Namespaces |
+| `src/transforms/ir.rs` | 738 | IR node definitions (reference) |
+| `src/transforms/enum_es5.rs` | ~800 | Clean IR pattern example |
+| `src/transforms/mod.rs` | 105 | Migration status documentation |
+| `src/transforms/ir_printer.rs` | 206 | IR → JavaScript printer |
+| `src/transforms/destructuring_es5.rs` | ~900 | Another IR pattern example |
+| `src/checker/state.rs` | 25,849 | Main checker (may need transform updates) |
+| `src/emitter/mod.rs` | ~2,000 | Emitter entry points |
+
+---
+
+**Total Codebase:** ~500,000 lines of Rust code
