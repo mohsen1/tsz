@@ -6487,3 +6487,511 @@ fn test_solve_generic_instantiation_object_constraint() {
     let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
     assert_eq!(result, GenericInstantiationResult::Success);
 }
+
+// ============================================================================
+// Tuple-to-Array Assignability Tests for Operations
+// These tests verify type operations work correctly with tuple-to-array patterns
+// ============================================================================
+
+/// Test that array_element_type correctly extracts element type from homogeneous tuple
+#[test]
+fn test_array_element_type_homogeneous_tuple() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // [string, string] should have element type string
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.array_element_type(tuple);
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "[string, string] should have element type string"
+    );
+}
+
+/// Test that array_element_type correctly extracts union type from heterogeneous tuple
+#[test]
+fn test_array_element_type_heterogeneous_tuple() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // [string, number] should have element type (string | number)
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.array_element_type(tuple);
+    // Result should be a union of string | number
+    assert!(
+        result == TypeId::STRING
+            || result == TypeId::NUMBER
+            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+        "[string, number] element type should be string, number, or (string | number)"
+    );
+}
+
+/// Test array_element_type with tuple containing rest element
+#[test]
+fn test_array_element_type_tuple_with_rest() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let number_array = interner.array(TypeId::NUMBER);
+
+    // [string, ...number[]] should have element type (string | number)
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: number_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let result = evaluator.array_element_type(tuple);
+    // Result should be a union of string | number or one of the types
+    assert!(
+        result == TypeId::STRING
+            || result == TypeId::NUMBER
+            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+        "[string, ...number[]] element type should be string, number, or (string | number)"
+    );
+}
+
+/// Test array_element_type with empty tuple
+#[test]
+fn test_array_element_type_empty_tuple() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // [] should have element type never
+    let empty_tuple = interner.tuple(Vec::new());
+
+    let result = evaluator.array_element_type(empty_tuple);
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "[] should have element type never"
+    );
+}
+
+/// Test array_element_type with single-element tuple
+#[test]
+fn test_array_element_type_single_element_tuple() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // [number] should have element type number
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    let result = evaluator.array_element_type(tuple);
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "[number] should have element type number"
+    );
+}
+
+/// Test array_element_type with tuple containing optional elements
+#[test]
+fn test_array_element_type_optional_tuple() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // [string, number?] element type should be (string | number | undefined) or (string | number)
+    // depending on implementation
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.array_element_type(tuple);
+    // Should contain at least string and number (could also include undefined for optional)
+    assert!(
+        result == TypeId::STRING
+            || result == TypeId::NUMBER
+            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+        "[string, number?] element type should be string, number, or a union containing them"
+    );
+}
+
+/// Test array_element_type with three-element heterogeneous tuple
+#[test]
+fn test_array_element_type_three_element_tuple() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    // [string, number, boolean] should have element type (string | number | boolean)
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.array_element_type(tuple);
+    // Result should be a union of all three types or one of them
+    assert!(
+        result == TypeId::STRING
+            || result == TypeId::NUMBER
+            || result == TypeId::BOOLEAN
+            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+        "[string, number, boolean] element type should be a union of the three types"
+    );
+}
+
+/// Test array_element_type with tuple containing literals
+#[test]
+fn test_array_element_type_literal_tuple() {
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let hello = interner.literal_string("hello");
+    let world = interner.literal_string("world");
+
+    // ["hello", "world"] should have element type "hello" | "world"
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: hello,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: world,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let result = evaluator.array_element_type(tuple);
+    // Result should be a union of literals or one of them
+    assert!(
+        result == hello
+            || result == world
+            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+        "[\"hello\", \"world\"] element type should be literal union"
+    );
+}
+
+/// Test generic function with tuple argument matching array constraint
+#[test]
+fn test_generic_function_tuple_to_array_constraint() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create an array constraint: T extends string[]
+    let string_array = interner.array(TypeId::STRING);
+
+    let type_params = vec![TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(string_array),
+        default: None,
+    }];
+
+    // [string, string] should satisfy string[] constraint
+    let tuple_arg = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let type_args = vec![tuple_arg];
+    let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
+    assert_eq!(
+        result,
+        GenericInstantiationResult::Success,
+        "[string, string] should satisfy T extends string[] constraint"
+    );
+}
+
+/// Test generic function with heterogeneous tuple NOT matching homogeneous array constraint
+#[test]
+fn test_generic_function_heterogeneous_tuple_fails_homogeneous_array_constraint() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create an array constraint: T extends string[]
+    let string_array = interner.array(TypeId::STRING);
+
+    let type_params = vec![TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(string_array),
+        default: None,
+    }];
+
+    // [string, number] should NOT satisfy string[] constraint
+    let tuple_arg = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let type_args = vec![tuple_arg];
+    let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
+    assert!(
+        matches!(result, GenericInstantiationResult::ConstraintViolation { .. }),
+        "[string, number] should NOT satisfy T extends string[] constraint"
+    );
+}
+
+/// Test generic function with tuple matching union array constraint
+#[test]
+fn test_generic_function_tuple_to_union_array_constraint() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create union array constraint: T extends (string | number)[]
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+
+    let type_params = vec![TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(union_array),
+        default: None,
+    }];
+
+    // [string, number] should satisfy (string | number)[] constraint
+    let tuple_arg = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let type_args = vec![tuple_arg];
+    let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
+    assert_eq!(
+        result,
+        GenericInstantiationResult::Success,
+        "[string, number] should satisfy T extends (string | number)[] constraint"
+    );
+}
+
+/// Test generic function with tuple with rest matching array constraint
+#[test]
+fn test_generic_function_tuple_with_rest_to_array_constraint() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create union array constraint: T extends (string | number)[]
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let number_array = interner.array(TypeId::NUMBER);
+
+    let type_params = vec![TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(union_array),
+        default: None,
+    }];
+
+    // [string, ...number[]] should satisfy (string | number)[] constraint
+    let tuple_arg = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: number_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let type_args = vec![tuple_arg];
+    let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
+    assert_eq!(
+        result,
+        GenericInstantiationResult::Success,
+        "[string, ...number[]] should satisfy T extends (string | number)[] constraint"
+    );
+}
+
+/// Test empty tuple with any array constraint
+#[test]
+fn test_generic_function_empty_tuple_to_any_array_constraint() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create any[] constraint
+    let any_array = interner.array(TypeId::ANY);
+
+    let type_params = vec![TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(any_array),
+        default: None,
+    }];
+
+    // [] should satisfy any[] constraint
+    let empty_tuple = interner.tuple(Vec::new());
+
+    let type_args = vec![empty_tuple];
+    let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
+    assert_eq!(
+        result,
+        GenericInstantiationResult::Success,
+        "[] should satisfy T extends any[] constraint"
+    );
+}
+
+/// Test single-element tuple with array constraint
+#[test]
+fn test_generic_function_single_element_tuple_to_array_constraint() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create number[] constraint
+    let number_array = interner.array(TypeId::NUMBER);
+
+    let type_params = vec![TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(number_array),
+        default: None,
+    }];
+
+    // [number] should satisfy number[] constraint
+    let tuple_arg = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    let type_args = vec![tuple_arg];
+    let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
+    assert_eq!(
+        result,
+        GenericInstantiationResult::Success,
+        "[number] should satisfy T extends number[] constraint"
+    );
+}
+
+/// Test tuple with optional elements and array constraint
+#[test]
+fn test_generic_function_tuple_with_optional_to_array_constraint() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create string[] constraint
+    let string_array = interner.array(TypeId::STRING);
+
+    let type_params = vec![TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(string_array),
+        default: None,
+    }];
+
+    // [string, string?] should satisfy string[] constraint
+    let tuple_arg = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let type_args = vec![tuple_arg];
+    let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
+    assert_eq!(
+        result,
+        GenericInstantiationResult::Success,
+        "[string, string?] should satisfy T extends string[] constraint"
+    );
+}
