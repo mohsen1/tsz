@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub(crate) fn push_usize(output: &mut String, value: usize) {
     push_u64(output, value as u64);
 }
@@ -6,6 +7,7 @@ pub(crate) fn push_u32(output: &mut String, value: u32) {
     push_u64(output, value as u64);
 }
 
+#[allow(dead_code)]
 pub(crate) fn push_i64(output: &mut String, value: i64) {
     if value < 0 {
         output.push('-');

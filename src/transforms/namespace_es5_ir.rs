@@ -657,6 +657,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Flatten a module name into parts (for simple/qualified names)
+    #[allow(dead_code)]
     fn flatten_module_name(&self, name_idx: NodeIndex) -> Option<Vec<String>> {
         let mut parts = Vec::new();
         self.collect_name_parts(name_idx, &mut parts);
@@ -664,6 +665,7 @@ impl<'a> NamespaceTransformContext<'a> {
     }
 
     /// Recursively collect name parts from qualified names
+    #[allow(dead_code)]
     fn collect_name_parts(&self, idx: NodeIndex, parts: &mut Vec<String>) {
         let Some(node) = self.arena.get(idx) else {
             return;
