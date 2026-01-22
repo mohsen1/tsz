@@ -6,9 +6,6 @@
 //! IMPORTANT: All positions are character-based (like JavaScript's string indexing),
 //! NOT byte-based. This ensures compatibility with TypeScript's scanner positions.
 
-// Allow dead code for scanner infrastructure methods that will be used in future phases
-#![allow(dead_code)]
-
 use crate::char_codes::CharacterCodes;
 use crate::interner::{Atom, Interner};
 use crate::scanner::SyntaxKind;
@@ -247,6 +244,7 @@ impl ScannerState {
 
     /// Get the byte at the given index. Returns None if out of bounds.
     #[inline]
+    #[allow(dead_code)] // Infrastructure for scanner extensions
     fn byte_at(&self, index: usize) -> Option<u8> {
         self.source.as_bytes().get(index).copied()
     }
@@ -292,6 +290,7 @@ impl ScannerState {
     }
 
     #[inline]
+    #[allow(dead_code)] // Infrastructure for scanner extensions
     fn is_at_end(&self) -> bool {
         self.pos >= self.end
     }

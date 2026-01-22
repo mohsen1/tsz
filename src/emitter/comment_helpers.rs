@@ -33,6 +33,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit leading comments before a node's start position.
+    #[allow(dead_code)] // Infrastructure for comment preservation
     pub(super) fn emit_leading_comments(&mut self, pos: u32) {
         if self.ctx.options.remove_comments {
             return;
@@ -59,6 +60,7 @@ impl<'a> Printer<'a> {
 
     /// Emit comments in the gap between last_processed_pos and the given position.
     /// This handles comments that appear between AST nodes.
+    #[allow(dead_code)] // Infrastructure for comment preservation
     pub(super) fn emit_comments_in_gap(&mut self, up_to_pos: u32) {
         if self.ctx.options.remove_comments {
             return;
