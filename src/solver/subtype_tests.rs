@@ -2551,6 +2551,133 @@ fn test_never_array_to_variadic_tuple() {
 }
 
 #[test]
+fn test_never_array_to_variadic_tuple_with_optional_tail() {
+    // never[] IS assignable to [...string[], number?]
+    // The tuple allows empty because:
+    // 1. The rest element has no required fixed elements
+    // 2. The trailing element is optional
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let never_array = interner.array(TypeId::NEVER);
+    let string_array = interner.array(TypeId::STRING);
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    assert!(checker.is_subtype_of(never_array, target));
+}
+
+#[test]
+fn test_never_array_to_variadic_tuple_with_required_tail() {
+    // never[] is NOT assignable to [...string[], number]
+    // The tuple does NOT allow empty because the trailing element is required
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let never_array = interner.array(TypeId::NEVER);
+    let string_array = interner.array(TypeId::STRING);
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(!checker.is_subtype_of(never_array, target));
+}
+
+#[test]
+fn test_never_array_to_tuple_with_optional_prefix_and_rest() {
+    // never[] IS assignable to [string?, ...number[]]
+    // The tuple allows empty because all elements before the rest are optional
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let never_array = interner.array(TypeId::NEVER);
+    let number_array = interner.array(TypeId::NUMBER);
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        TupleElement {
+            type_id: number_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    assert!(checker.is_subtype_of(never_array, target));
+}
+
+#[test]
+fn test_typed_array_not_assignable_to_variadic_tuple() {
+    // string[] is NOT assignable to [...string[]]
+    // Arrays cannot be assigned to tuples even when element types match
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: string_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    assert!(!checker.is_subtype_of(string_array, target));
+}
+
+#[test]
+fn test_typed_array_not_assignable_to_optional_tuple() {
+    // number[] is NOT assignable to [number?, number?]
+    // Arrays cannot be assigned to tuples with only optional elements
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let number_array = interner.array(TypeId::NUMBER);
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    assert!(!checker.is_subtype_of(number_array, target));
+}
+
+#[test]
 fn test_number_index_signature_numeric_property() {
     // CRITICAL: { 0: string } should match { [x: number]: string }
 
