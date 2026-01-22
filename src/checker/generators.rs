@@ -759,68 +759,110 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     }
 
     /// Create an IteratorResult<Y, R> type.
-    /// IteratorResult<Y, R> = { value: Y; done: false } | { value: R; done: true }
+    /// IteratorResult<Y, R> = { done?: false; value: Y } | { done: true; value: R }
     fn create_iterator_result_type(&self, yield_type: TypeId, return_type: TypeId) -> TypeId {
-        let value_name = self.ctx.types.intern_string("value");
-        let done_name = self.ctx.types.intern_string("done");
+        // Try to find the global IteratorResult type from lib contexts
+        if let Some(iterator_result_base) = self.lookup_global_type("IteratorResult") {
+            return self.ctx.types.application(
+                iterator_result_base,
+                vec![yield_type, return_type],
+            );
+        }
 
-        // { value: Y; done: false }
+        // Fallback: create structural IteratorResult<T, TReturn>
+        let done_name = self.ctx.types.intern_string("done");
+        let value_name = self.ctx.types.intern_string("value");
+
+        // IteratorYieldResult<Y> = { done?: false; value: Y }
+        // Note: done is optional per TypeScript spec
         let yield_result = self.ctx.types.object(vec![
+            crate::solver::PropertyInfo {
+                name: done_name,
+                type_id: self.ctx.types.literal_boolean(false),
+                write_type: self.ctx.types.literal_boolean(false),
+                optional: true, // done?: false
+                readonly: false,
+                is_method: false,
+            },
             crate::solver::PropertyInfo {
                 name: value_name,
                 type_id: yield_type,
                 write_type: yield_type,
                 optional: false,
-                readonly: true,
-                is_method: false,
-            },
-            crate::solver::PropertyInfo {
-                name: done_name,
-                type_id: self.ctx.types.literal_boolean(false),
-                write_type: self.ctx.types.literal_boolean(false),
-                optional: false,
-                readonly: true,
+                readonly: false,
                 is_method: false,
             },
         ]);
 
-        // { value: R; done: true }
+        // IteratorReturnResult<R> = { done: true; value: R }
         let return_result = self.ctx.types.object(vec![
+            crate::solver::PropertyInfo {
+                name: done_name,
+                type_id: self.ctx.types.literal_boolean(true),
+                write_type: self.ctx.types.literal_boolean(true),
+                optional: false, // done: true (required)
+                readonly: false,
+                is_method: false,
+            },
             crate::solver::PropertyInfo {
                 name: value_name,
                 type_id: return_type,
                 write_type: return_type,
                 optional: false,
-                readonly: true,
-                is_method: false,
-            },
-            crate::solver::PropertyInfo {
-                name: done_name,
-                type_id: self.ctx.types.literal_boolean(true),
-                write_type: self.ctx.types.literal_boolean(true),
-                optional: false,
-                readonly: true,
+                readonly: false,
                 is_method: false,
             },
         ]);
 
-        // Union of yield and return results
+        // IteratorResult<Y, R> = IteratorYieldResult<Y> | IteratorReturnResult<R>
         self.ctx.types.union2(yield_result, return_result)
     }
 
-    /// Create a Promise<T> type as a structural object type.
-    /// Promise<T> = { then: T } (simplified structural representation)
+    /// Create Promise<T> type.
     fn create_promise_type(&self, inner_type: TypeId) -> TypeId {
-        let then_name = self.ctx.types.intern_string("then");
+        // Try to find the global Promise interface from lib contexts
+        if let Some(promise_base) = self.lookup_global_type("Promise") {
+            return self.ctx.types.application(promise_base, vec![inner_type]);
+        }
 
-        self.ctx.types.object(vec![crate::solver::PropertyInfo {
-            name: then_name,
-            type_id: inner_type,
-            write_type: inner_type,
-            optional: false,
-            readonly: true,
-            is_method: true,
-        }])
+        // Fallback: use the synthetic Promise base type
+        // This allows the type to be recognized as promise-like even without lib types
+        self.ctx.types.application(TypeId::PROMISE_BASE, vec![inner_type])
+    }
+
+    /// Look up a global type by name from lib contexts.
+    fn lookup_global_type(&self, name: &str) -> Option<TypeId> {
+        use crate::solver::TypeLowering;
+
+        for lib_ctx in &self.ctx.lib_contexts {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
+                    // Lower the type from the lib file's arena
+                    let lowering = TypeLowering::new(lib_ctx.arena.as_ref(), self.ctx.types);
+                    // For interfaces, use all declarations (handles declaration merging)
+                    if !symbol.declarations.is_empty() {
+                        return Some(lowering.lower_interface_declarations(&symbol.declarations));
+                    }
+                    // For type aliases and other single-declaration types
+                    let decl_idx = symbol.value_declaration;
+                    if decl_idx.0 != u32::MAX {
+                        return Some(lowering.lower_type(decl_idx));
+                    }
+                }
+            }
+        }
+
+        // Also check the current file's file_locals
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                let lowering = crate::solver::TypeLowering::new(self.ctx.arena, self.ctx.types);
+                if !symbol.declarations.is_empty() {
+                    return Some(lowering.lower_interface_declarations(&symbol.declarations));
+                }
+            }
+        }
+
+        None
     }
 }
 
