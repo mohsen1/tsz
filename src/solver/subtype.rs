@@ -140,8 +140,12 @@ impl TypeResolver for TypeEnvironment {
 }
 
 struct TupleRestExpansion {
+    /// Fixed elements before the variadic portion (prefix)
     fixed: Vec<TupleElement>,
+    /// The variadic element type (e.g., T for ...T[])
     variadic: Option<TypeId>,
+    /// Fixed elements after the variadic portion (suffix/tail)
+    tail: Vec<TupleElement>,
 }
 
 /// Subtype checking context.
@@ -632,6 +636,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             && !self.check_subtype(variadic, *t_elem).is_true()
                         {
                             return SubtypeResult::False;
+                        }
+                        // Check tail elements from nested tuple spreads
+                        for tail_elem in expansion.tail {
+                            if !self.check_subtype(tail_elem.type_id, *t_elem).is_true() {
+                                return SubtypeResult::False;
+                            }
                         }
                     } else {
                         // Regular element: T <: U
@@ -1866,9 +1876,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for (i, t_elem) in target.iter().enumerate() {
             if t_elem.rest {
                 let expansion = self.expand_tuple_rest(t_elem.type_id);
-                let tail = &target[i + 1..];
+                let outer_tail = &target[i + 1..];
+                // Combined suffix = expansion.tail + outer_tail
+                // We need to match these from the end of the source tuple
+                let combined_suffix: Vec<_> = expansion
+                    .tail
+                    .iter()
+                    .chain(outer_tail.iter())
+                    .cloned()
+                    .collect();
+
                 let mut source_end = source.len();
-                for tail_elem in tail.iter().rev() {
+                for tail_elem in combined_suffix.iter().rev() {
                     if source_end <= i {
                         if !tail_elem.optional {
                             return SubtypeResult::False;
@@ -2022,9 +2041,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return false;
                 }
 
+                // Check tail elements from nested tuple spreads
+                if expansion.tail.iter().any(|tail_elem| !tail_elem.optional) {
+                    return false;
+                }
+
                 // Tuple with rest element allows empty if:
                 // 1. No required trailing elements after the rest
                 // 2. The rest expansion has no required fixed elements
+                // 3. The expansion has no required tail elements
                 return true;
             }
 
@@ -3090,17 +3115,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             Some(TypeKey::Array(elem)) => TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(elem),
+                tail: Vec::new(),
             },
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 let mut fixed = Vec::new();
-                for elem in elements.iter() {
+                for (i, elem) in elements.iter().enumerate() {
                     if elem.rest {
                         let inner = self.expand_tuple_rest(elem.type_id);
                         fixed.extend(inner.fixed);
+                        // Capture tail elements: inner.tail + elements after the rest
+                        let mut tail = inner.tail;
+                        tail.extend(elements[i + 1..].iter().cloned());
                         return TupleRestExpansion {
                             fixed,
                             variadic: inner.variadic,
+                            tail,
                         };
                     }
                     fixed.push(elem.clone());
@@ -3108,11 +3138,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 TupleRestExpansion {
                     fixed,
                     variadic: None,
+                    tail: Vec::new(),
                 }
             }
             _ => TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(type_id),
+                tail: Vec::new(),
             },
         }
     }
@@ -4435,9 +4467,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for (i, t_elem) in target.iter().enumerate() {
             if t_elem.rest {
                 let expansion = self.expand_tuple_rest(t_elem.type_id);
-                let tail = &target[i + 1..];
+                let outer_tail = &target[i + 1..];
+                // Combined suffix = expansion.tail + outer_tail
+                let combined_suffix: Vec<_> = expansion
+                    .tail
+                    .iter()
+                    .chain(outer_tail.iter())
+                    .cloned()
+                    .collect();
+
                 let mut source_end = source.len();
-                for tail_elem in tail.iter().rev() {
+                for tail_elem in combined_suffix.iter().rev() {
                     if source_end <= i {
                         if !tail_elem.optional {
                             return Some(SubtypeFailureReason::TupleElementMismatch {
