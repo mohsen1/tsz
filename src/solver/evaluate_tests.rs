@@ -22199,15 +22199,8 @@ fn test_nonnullable_removes_null() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: Full NonNullable implementation requires type parameter distribution.
-    // Currently, the conditional evaluates the entire union against null|undefined,
-    // and since not all members extend null|undefined, it returns the union as-is.
-    // The test verifies the conditional evaluates without crashing.
-    // When fully implemented, result should equal TypeId::STRING.
-    assert!(
-        result != TypeId::NEVER,
-        "NonNullable should not return never for string|null"
-    );
+    // Distributive conditional filters out null from the union
+    assert_eq!(result, TypeId::STRING, "NonNullable<string | null> should equal string");
 }
 
 /// Test NonNullable<T> with union containing undefined.
@@ -22232,12 +22225,8 @@ fn test_nonnullable_removes_undefined() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: When distributive conditional is fully implemented with type parameters,
-    // result should equal TypeId::NUMBER.
-    assert!(
-        result != TypeId::NEVER,
-        "NonNullable should not return never for number|undefined"
-    );
+    // Distributive conditional filters out undefined from the union
+    assert_eq!(result, TypeId::NUMBER, "NonNullable<number | undefined> should equal number");
 }
 
 /// Test NonNullable<T> with union containing both null and undefined.
@@ -22262,12 +22251,8 @@ fn test_nonnullable_removes_null_and_undefined() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: When distributive conditional is fully implemented with type parameters,
-    // result should equal TypeId::STRING.
-    assert!(
-        result != TypeId::NEVER,
-        "NonNullable should not return never for string|null|undefined"
-    );
+    // Distributive conditional filters out null and undefined from the union
+    assert_eq!(result, TypeId::STRING, "NonNullable<string | null | undefined> should equal string");
 }
 
 /// Test NonNullable<T> with complex union.
@@ -22297,12 +22282,9 @@ fn test_nonnullable_preserves_non_nullable_members() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: When distributive conditional is fully implemented with type parameters,
-    // result should equal string | number union.
-    assert!(
-        result != TypeId::NEVER,
-        "NonNullable should not return never for mixed union"
-    );
+    // Distributive conditional filters out null and undefined, preserving string and number
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(result, expected, "NonNullable<string | number | null | undefined> should equal string | number");
 }
 
 /// Test NonNullable<T> with only nullable types.
@@ -22986,15 +22968,9 @@ fn test_awaited_mixed_union() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: Full Awaited implementation requires proper distributive conditional
-    // with type parameter tracking. Currently, mixed unions with objects and primitives
-    // are not fully distributed. The test verifies we get a valid result.
-    // When fully implemented: Promise<boolean> unwraps to boolean, number passes through,
-    // result should be boolean | number.
-    assert!(
-        result != TypeId::NEVER,
-        "Awaited on mixed union should not return never"
-    );
+    // Distributive conditional: Promise<boolean> unwraps to boolean, number passes through
+    let expected = interner.union(vec![TypeId::BOOLEAN, TypeId::NUMBER]);
+    assert_eq!(result, expected, "Awaited<Promise<boolean> | number> should equal boolean | number");
 }
 
 // ============================================================================
