@@ -506,16 +506,50 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Template literal: instantiate embedded types
+            // After substitution, if any type span becomes a union of string literals,
+            // we trigger evaluation to expand the template literal into a union of strings.
             TypeKey::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(*spans);
-                let instantiated: Vec<TemplateSpan> = spans
-                    .iter()
-                    .map(|span| match span {
-                        TemplateSpan::Text(t) => TemplateSpan::Text(*t),
-                        TemplateSpan::Type(t) => TemplateSpan::Type(self.instantiate(*t)),
-                    })
-                    .collect();
-                self.interner.template_literal(instantiated)
+                let mut instantiated: Vec<TemplateSpan> = Vec::with_capacity(spans.len());
+                let mut needs_evaluation = false;
+
+                for span in spans.iter() {
+                    match span {
+                        TemplateSpan::Text(t) => instantiated.push(TemplateSpan::Text(*t)),
+                        TemplateSpan::Type(t) => {
+                            let inst_type = self.instantiate(*t);
+                            // Check if this type became something that can be evaluated:
+                            // - A union of string literals
+                            // - A single string literal
+                            // - The string intrinsic type
+                            if let Some(key) = self.interner.lookup(inst_type) {
+                                match key {
+                                    TypeKey::Union(_)
+                                    | TypeKey::Literal(LiteralValue::String(_))
+                                    | TypeKey::Literal(LiteralValue::Number(_))
+                                    | TypeKey::Literal(LiteralValue::Boolean(_))
+                                    | TypeKey::Intrinsic(IntrinsicKind::String)
+                                    | TypeKey::Intrinsic(IntrinsicKind::Number)
+                                    | TypeKey::Intrinsic(IntrinsicKind::Boolean) => {
+                                        needs_evaluation = true;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            instantiated.push(TemplateSpan::Type(inst_type));
+                        }
+                    }
+                }
+
+                let template_type = self.interner.template_literal(instantiated);
+
+                // If we detected types that can be evaluated, trigger evaluation
+                // to potentially expand the template literal to a union of string literals
+                if needs_evaluation {
+                    crate::solver::evaluate::evaluate_type(self.interner, template_type)
+                } else {
+                    template_type
+                }
             }
 
             // StringIntrinsic: instantiate the type argument
