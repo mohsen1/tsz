@@ -8884,15 +8884,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let member_type = match self.enum_kind(sym_id) {
-            Some(EnumKind::String) => TypeId::STRING,
-            Some(EnumKind::Numeric) => TypeId::NUMBER,
-            None => {
-                // Return UNKNOWN instead of ANY for enum without explicit kind
-                TypeId::UNKNOWN
-            }
-        };
-
+        // Check if the property exists in this enum
         for &decl_idx in &symbol.declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
                 continue;
@@ -8910,7 +8902,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = self.get_property_name(member.name)
                     && name == property_name
                 {
-                    return Some(member_type);
+                    // Return the enum type itself, not just STRING or NUMBER
+                    // This allows proper enum assignability checking
+                    return Some(self.ctx.types.intern(crate::solver::TypeKey::Ref(
+                        crate::solver::SymbolRef(sym_id.0),
+                    )));
                 }
             }
         }
@@ -11478,7 +11474,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the type of an enum member (STRING or NUMBER) by finding its parent enum.
+    /// Get the type of an enum member by finding its parent enum.
+    /// Returns the enum type itself (e.g., `MyEnum`) rather than just STRING or NUMBER.
     /// This is used when enum members are accessed through namespace exports.
     fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
         // Get the extended node to find parent
@@ -11500,33 +11497,14 @@ impl<'a> CheckerState<'a> {
 
             // Found the enum declaration
             if parent_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                let Some(enum_decl) = self.ctx.arena.get_enum(parent_node) else {
-                    break;
-                };
-
-                // Check if any member has a string initializer
-                for &member_idx in &enum_decl.members.nodes {
-                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                        continue;
-                    };
-                    let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
-                        continue;
-                    };
-                    if member.initializer.is_none() {
-                        continue;
-                    }
-                    let Some(init_node) = self.ctx.arena.get(member.initializer) else {
-                        continue;
-                    };
-                    if init_node.kind == SyntaxKind::StringLiteral as u16
-                        || init_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                    {
-                        return TypeId::STRING;
-                    }
+                // Find the symbol for this enum declaration
+                if let Some(sym_id) = self.ctx.binder.get_node_symbol(current) {
+                    // Return the enum type itself
+                    return self.ctx.types.intern(crate::solver::TypeKey::Ref(
+                        crate::solver::SymbolRef(sym_id.0),
+                    ));
                 }
-
-                // No string initializer found, so it's a numeric enum
-                return TypeId::NUMBER;
+                break;
             }
 
             // Move to parent
@@ -11548,6 +11526,8 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
+        use crate::solver::TypeKey;
+
         let source_enum = self.enum_symbol_from_type(source);
         let target_enum = self.enum_symbol_from_type(target);
 
@@ -11579,6 +11559,31 @@ impl<'a> CheckerState<'a> {
             let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
             checker.set_strict_null_checks(self.ctx.strict_null_checks());
             return Some(checker.is_assignable(source, TypeId::NUMBER));
+        }
+
+        // String enum opacity: string literals are NOT assignable to string enum types
+        // This makes string enums more opaque than numeric enums
+        if let Some(target_enum) = target_enum
+            && self.enum_kind(target_enum) == Some(EnumKind::String)
+        {
+            // Only enum members (via Ref) are assignable to string enum types
+            // Direct string literals are not assignable
+            if let Some(TypeKey::Literal(_)) = self.ctx.types.lookup(source) {
+                return Some(false);
+            }
+            // STRING is not assignable to string enum
+            if source == TypeId::STRING {
+                return Some(false);
+            }
+        }
+
+        // String enum is NOT assignable to string (different from numeric enum)
+        if let Some(source_enum) = source_enum
+            && self.enum_kind(source_enum) == Some(EnumKind::String)
+        {
+            if target == TypeId::STRING {
+                return Some(false);
+            }
         }
 
         None
