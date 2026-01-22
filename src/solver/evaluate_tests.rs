@@ -22206,7 +22206,11 @@ fn test_nonnullable_removes_null() {
     let result = evaluate_conditional(&interner, &cond);
 
     // Distributive conditional filters out null from the union
-    assert_eq!(result, TypeId::STRING, "NonNullable<string | null> should equal string");
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "NonNullable<string | null> should equal string"
+    );
 }
 
 /// Test NonNullable<T> with union containing undefined.
@@ -22232,7 +22236,11 @@ fn test_nonnullable_removes_undefined() {
     let result = evaluate_conditional(&interner, &cond);
 
     // Distributive conditional filters out undefined from the union
-    assert_eq!(result, TypeId::NUMBER, "NonNullable<number | undefined> should equal number");
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "NonNullable<number | undefined> should equal number"
+    );
 }
 
 /// Test NonNullable<T> with union containing both null and undefined.
@@ -22258,7 +22266,11 @@ fn test_nonnullable_removes_null_and_undefined() {
     let result = evaluate_conditional(&interner, &cond);
 
     // Distributive conditional filters out null and undefined from the union
-    assert_eq!(result, TypeId::STRING, "NonNullable<string | null | undefined> should equal string");
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "NonNullable<string | null | undefined> should equal string"
+    );
 }
 
 /// Test NonNullable<T> with complex union.
@@ -22290,7 +22302,10 @@ fn test_nonnullable_preserves_non_nullable_members() {
 
     // Distributive conditional filters out null and undefined, preserving string and number
     let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(result, expected, "NonNullable<string | number | null | undefined> should equal string | number");
+    assert_eq!(
+        result, expected,
+        "NonNullable<string | number | null | undefined> should equal string | number"
+    );
 }
 
 /// Test NonNullable<T> with only nullable types.
@@ -22976,7 +22991,10 @@ fn test_awaited_mixed_union() {
 
     // Distributive conditional: Promise<boolean> unwraps to boolean, number passes through
     let expected = interner.union(vec![TypeId::BOOLEAN, TypeId::NUMBER]);
-    assert_eq!(result, expected, "Awaited<Promise<boolean> | number> should equal boolean | number");
+    assert_eq!(
+        result, expected,
+        "Awaited<Promise<boolean> | number> should equal boolean | number"
+    );
 }
 
 // ============================================================================
@@ -38225,9 +38243,14 @@ fn test_return_type_intersection_of_functions() {
     match interner.lookup(intersection) {
         Some(TypeKey::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
-            assert_eq!(shape.call_signatures.len(), 2, "Should have both call signatures");
+            assert_eq!(
+                shape.call_signatures.len(),
+                2,
+                "Should have both call signatures"
+            );
             // Check that we have both return types
-            let return_types: Vec<TypeId> = shape.call_signatures
+            let return_types: Vec<TypeId> = shape
+                .call_signatures
                 .iter()
                 .map(|sig| sig.return_type)
                 .collect();

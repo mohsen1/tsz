@@ -50,7 +50,13 @@ fn main() {
             } else {
                 println!("Total missing: {}\n", missing.len());
                 for rule in missing {
-                    println!("  {} Rule #{}: {} (Phase {:?})", rule.status.emoji(), rule.rule_number, rule.name, rule.phase);
+                    println!(
+                        "  {} Rule #{}: {} (Phase {:?})",
+                        rule.status.emoji(),
+                        rule.rule_number,
+                        rule.name,
+                        rule.phase
+                    );
                     println!("    Notes: {}", rule.notes);
                     println!();
                 }
@@ -80,10 +86,18 @@ fn main() {
             println!("# Phase {} Rules: {}\n", phase_num, phase);
             let rules = audit.rules_by_phase(phase);
             println!("Total: {} rules\n", rules.len());
-            println!("Completion: {:.1}%\n", audit.completion_by_phase(phase) * 100.0);
+            println!(
+                "Completion: {:.1}%\n",
+                audit.completion_by_phase(phase) * 100.0
+            );
 
             for rule in rules {
-                println!("  {} Rule #{}: {}", rule.status.emoji(), rule.rule_number, rule.name);
+                println!(
+                    "  {} Rule #{}: {}",
+                    rule.status.emoji(),
+                    rule.rule_number,
+                    rule.name
+                );
                 println!("    Status: {:?}", rule.status);
                 println!("    Coverage: {:.0}%", rule.test_coverage * 100.0);
                 if !rule.notes.is_empty() {
@@ -125,7 +139,13 @@ fn main() {
                 println!("No rules with this status.\n");
             } else {
                 for rule in rules {
-                    println!("  {} Rule #{}: {} (Phase {:?})", rule.status.emoji(), rule.rule_number, rule.name, rule.phase);
+                    println!(
+                        "  {} Rule #{}: {} (Phase {:?})",
+                        rule.status.emoji(),
+                        rule.rule_number,
+                        rule.name,
+                        rule.phase
+                    );
                     if !rule.notes.is_empty() {
                         println!("    Notes: {}", rule.notes);
                     }

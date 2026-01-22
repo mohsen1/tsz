@@ -1281,7 +1281,9 @@ impl<'a> TypeLowering<'a> {
                     TemplateSpan::Type(inner) => self.contains_meta_type_inner(*inner, visited),
                 })
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => self.contains_meta_type_inner(type_arg, visited),
+            TypeKey::StringIntrinsic { type_arg, .. } => {
+                self.contains_meta_type_inner(type_arg, visited)
+            }
             TypeKey::Ref(_)
             | TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
@@ -2300,10 +2302,9 @@ impl<'a> TypeLowering<'a> {
                 && let Some(head_lit) = self.arena.get_literal(head_node)
                 && !head_lit.text.is_empty()
             {
-                let processed = crate::solver::types::process_template_escape_sequences(&head_lit.text);
-                spans.push(TemplateSpan::Text(
-                    self.interner.intern_string(&processed),
-                ));
+                let processed =
+                    crate::solver::types::process_template_escape_sequences(&head_lit.text);
+                spans.push(TemplateSpan::Text(self.interner.intern_string(&processed)));
             }
 
             // Add template spans (type + text pairs)
@@ -2323,9 +2324,7 @@ impl<'a> TypeLowering<'a> {
                         // Process escape sequences in the text part
                         let processed =
                             crate::solver::types::process_template_escape_sequences(&lit_data.text);
-                        spans.push(TemplateSpan::Text(
-                            self.interner.intern_string(&processed),
-                        ));
+                        spans.push(TemplateSpan::Text(self.interner.intern_string(&processed)));
                     }
                 }
             }

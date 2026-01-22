@@ -3348,7 +3348,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
         name: b,
         type_id: TypeId::NUMBER,
         write_type: TypeId::NUMBER,
-        optional: false,  // Required property - NOT weak
+        optional: false, // Required property - NOT weak
         readonly: false,
         is_method: false,
     }]);
@@ -3358,7 +3358,7 @@ fn test_weak_union_with_non_weak_member_not_weak() {
     // Source that matches the non-weak member
     let source_matching_non_weak = interner.object(vec![PropertyInfo {
         name: b,
-        type_id: TypeId::NUMBER,  // Matches the required property
+        type_id: TypeId::NUMBER, // Matches the required property
         write_type: TypeId::NUMBER,
         optional: false,
         readonly: false,
@@ -3366,8 +3366,10 @@ fn test_weak_union_with_non_weak_member_not_weak() {
     }]);
 
     // Should be accepted since source matches the non-weak member
-    assert!(checker.is_assignable(source_matching_non_weak, union),
-            "Source matching non-weak member should be assignable to union");
+    assert!(
+        checker.is_assignable(source_matching_non_weak, union),
+        "Source matching non-weak member should be assignable to union"
+    );
 
     // Source that doesn't match any member should be rejected
     let c = interner.intern_string("c");
@@ -3381,8 +3383,10 @@ fn test_weak_union_with_non_weak_member_not_weak() {
     }]);
 
     // Should be rejected since source doesn't match any union member
-    assert!(!checker.is_assignable(source_no_match, union),
-            "Source not matching any union member should not be assignable");
+    assert!(
+        !checker.is_assignable(source_no_match, union),
+        "Source not matching any union member should not be assignable"
+    );
 }
 
 // =============================================================================
@@ -3423,11 +3427,15 @@ fn test_exact_optional_property_types_distinguishes_undefined_from_missing() {
 
     // With exact mode, these are NOT the same
     // { x?: number } is NOT assignable to { x: number | undefined }
-    assert!(!checker.is_assignable(optional_number, _explicit_undefined),
-            "Optional property should not be assignable to explicit undefined union in exact mode");
+    assert!(
+        !checker.is_assignable(optional_number, _explicit_undefined),
+        "Optional property should not be assignable to explicit undefined union in exact mode"
+    );
     // { x: number | undefined } is NOT assignable to { x?: number }
-    assert!(!checker.is_assignable(_explicit_undefined, optional_number),
-            "Explicit undefined union should not be assignable to optional property in exact mode");
+    assert!(
+        !checker.is_assignable(_explicit_undefined, optional_number),
+        "Explicit undefined union should not be assignable to optional property in exact mode"
+    );
 }
 
 #[test]
@@ -3473,8 +3481,10 @@ fn test_exact_optional_property_types_false_allows_undefined() {
         is_method: false,
     }]);
 
-    assert!(checker.is_assignable(just_undefined, optional_number),
-            "Explicit undefined should be assignable to optional property in non-exact mode");
+    assert!(
+        checker.is_assignable(just_undefined, optional_number),
+        "Explicit undefined should be assignable to optional property in non-exact mode"
+    );
 }
 
 #[test]
@@ -3570,10 +3580,10 @@ fn test_strict_null_checks_union_with_null() {
 
     // With strict mode on (default), nullable types are distinct from non-nullable
     // But a specific type IS assignable to a union containing it (normal subtyping)
-    assert!(!checker.is_assignable(nullable_string, TypeId::STRING));  // string | null not assignable to string
-    assert!(checker.is_assignable(TypeId::STRING, nullable_string));  // string IS assignable to string | null
-    assert!(!checker.is_assignable(undefinable_number, TypeId::NUMBER));  // number | undefined not assignable to number
-    assert!(checker.is_assignable(TypeId::NUMBER, undefinable_number));  // number IS assignable to number | undefined
+    assert!(!checker.is_assignable(nullable_string, TypeId::STRING)); // string | null not assignable to string
+    assert!(checker.is_assignable(TypeId::STRING, nullable_string)); // string IS assignable to string | null
+    assert!(!checker.is_assignable(undefinable_number, TypeId::NUMBER)); // number | undefined not assignable to number
+    assert!(checker.is_assignable(TypeId::NUMBER, undefinable_number)); // number IS assignable to number | undefined
 
     // With strict mode off, null/undefined are "never-like" and assignable
     checker.set_strict_null_checks(false);
@@ -3646,14 +3656,20 @@ fn test_void_return_exception_functions() {
     });
 
     // Functions with non-void returns ARE assignable to void-returning functions
-    assert!(checker.is_assignable(string_fn, void_fn),
-            "Function returning string should be assignable to void function");
-    assert!(checker.is_assignable(number_fn, void_fn),
-            "Function returning number should be assignable to void function");
+    assert!(
+        checker.is_assignable(string_fn, void_fn),
+        "Function returning string should be assignable to void function"
+    );
+    assert!(
+        checker.is_assignable(number_fn, void_fn),
+        "Function returning number should be assignable to void function"
+    );
 
     // But void-return function is NOT assignable to non-void function
-    assert!(!checker.is_assignable(void_fn, string_fn),
-            "Void function should NOT be assignable to string function");
+    assert!(
+        !checker.is_assignable(void_fn, string_fn),
+        "Void function should NOT be assignable to string function"
+    );
 }
 
 #[test]
@@ -3699,8 +3715,10 @@ fn test_void_return_exception_with_parameters() {
     // Return type mismatch still applies void exception
     // Even though parameters don't match, the void return should allow non-void returns
     // (though parameters will still be checked separately)
-    assert!(!checker.is_assignable(string_number_fn, void_fn),
-            "Parameter mismatch should still cause rejection");
+    assert!(
+        !checker.is_assignable(string_number_fn, void_fn),
+        "Parameter mismatch should still cause rejection"
+    );
 }
 
 #[test]
@@ -3755,8 +3773,10 @@ fn test_void_return_exception_constructors() {
     }]);
 
     // Constructor returning instance IS assignable to void-returning constructor
-    assert!(checker.is_assignable(instance_ctor, void_ctor),
-            "Constructor returning instance should be assignable to void constructor");
+    assert!(
+        checker.is_assignable(instance_ctor, void_ctor),
+        "Constructor returning instance should be assignable to void constructor"
+    );
 }
 
 // =============================================================================
@@ -3796,7 +3816,7 @@ fn test_method_bivariance_allows_derived_methods() {
             type_params: Vec::new(),
             type_predicate: None,
             is_constructor: false,
-            is_method: true,  // This is a method
+            is_method: true, // This is a method
         }),
         write_type: TypeId::ANY,
         optional: false,
@@ -3838,7 +3858,7 @@ fn test_method_bivariance_allows_derived_methods() {
             type_params: Vec::new(),
             type_predicate: None,
             is_constructor: false,
-            is_method: true,  // This is a method
+            is_method: true, // This is a method
         }),
         write_type: TypeId::ANY,
         optional: false,
@@ -3848,8 +3868,10 @@ fn test_method_bivariance_allows_derived_methods() {
 
     // With method bivariance (default), derived method with narrower parameter is assignable
     // This simulates the covariant 'this' behavior
-    assert!(checker.is_assignable(derived_method, base_method),
-            "Derived method with narrower 'this' parameter should be assignable to Base method due to bivariance");
+    assert!(
+        checker.is_assignable(derived_method, base_method),
+        "Derived method with narrower 'this' parameter should be assignable to Base method due to bivariance"
+    );
 }
 
 #[test]
@@ -3937,8 +3959,10 @@ fn test_method_bivariance_persists_with_strict_function_types() {
     }]);
 
     // Methods are still bivariant even with strictFunctionTypes
-    assert!(checker.is_assignable(derived_with_method, base_with_method),
-            "Methods should remain bivariant even with strictFunctionTypes");
+    assert!(
+        checker.is_assignable(derived_with_method, base_with_method),
+        "Methods should remain bivariant even with strictFunctionTypes"
+    );
 }
 
 #[test]
@@ -3964,7 +3988,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         type_params: Vec::new(),
         type_predicate: None,
         is_constructor: false,
-        is_method: false,  // NOT a method
+        is_method: false, // NOT a method
     });
 
     let fn_animal = interner.function(FunctionShape {
@@ -3979,12 +4003,14 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         type_params: Vec::new(),
         type_predicate: None,
         is_constructor: false,
-        is_method: false,  // NOT a method
+        is_method: false, // NOT a method
     });
 
     // Functions should be contravariant (not assignable) with strictFunctionTypes
-    assert!(!checker.is_assignable(fn_dog, fn_animal),
-            "Standalone functions should be contravariant with strictFunctionTypes");
+    assert!(
+        !checker.is_assignable(fn_dog, fn_animal),
+        "Standalone functions should be contravariant with strictFunctionTypes"
+    );
 
     // But methods are still bivariant
     let method_name = interner.intern_string("method");
@@ -3995,7 +4021,7 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         write_type: TypeId::ANY,
         optional: false,
         readonly: false,
-        is_method: true,  // IS a method
+        is_method: true, // IS a method
     }]);
 
     let obj_with_animal_method = interner.object(vec![PropertyInfo {
@@ -4004,12 +4030,14 @@ fn test_function_variance_strict_function_types_affects_functions_not_methods() 
         write_type: TypeId::ANY,
         optional: false,
         readonly: false,
-        is_method: true,  // IS a method
+        is_method: true, // IS a method
     }]);
 
     // Methods are bivariant even with strictFunctionTypes
-    assert!(checker.is_assignable(obj_with_dog_method, obj_with_animal_method),
-            "Methods should be bivariant even with strictFunctionTypes");
+    assert!(
+        checker.is_assignable(obj_with_dog_method, obj_with_animal_method),
+        "Methods should be bivariant even with strictFunctionTypes"
+    );
 }
 
 // =============================================================================
@@ -4059,13 +4087,17 @@ fn test_strict_mode_enables_all_strict_flags() {
     });
 
     // Default: non-strict (bivariant)
-    assert!(checker.is_assignable(fn_dog, fn_animal),
-            "Functions should be bivariant by default");
+    assert!(
+        checker.is_assignable(fn_dog, fn_animal),
+        "Functions should be bivariant by default"
+    );
 
     // Enable strict function types
     checker.set_strict_function_types(true);
-    assert!(!checker.is_assignable(fn_dog, fn_animal),
-            "Functions should be contravariant with strictFunctionTypes");
+    assert!(
+        !checker.is_assignable(fn_dog, fn_animal),
+        "Functions should be contravariant with strictFunctionTypes"
+    );
 }
 
 #[test]
@@ -4075,7 +4107,7 @@ fn test_compiler_options_independent_toggles() {
     let mut checker = CompatChecker::new(&interner);
 
     // Start with all defaults
-    assert!(!checker.is_assignable(TypeId::NULL, TypeId::STRING));  // strictNullChecks=true (default)
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::STRING)); // strictNullChecks=true (default)
 
     // Toggle strictNullChecks
     checker.set_strict_null_checks(false);
@@ -4106,15 +4138,19 @@ fn test_compiler_options_independent_toggles() {
 
     // Default (exact_optional_property_types=false): optional includes undefined
     // So { x: number | undefined } should be assignable to { x?: number }
-    assert!(checker.is_assignable(explicit_union, optional_number),
-            "Explicit number|undefined should be assignable to optional number in default mode");
+    assert!(
+        checker.is_assignable(explicit_union, optional_number),
+        "Explicit number|undefined should be assignable to optional number in default mode"
+    );
 
     // Toggle exact_optional_property_types
     checker.set_exact_optional_property_types(true);
     // In exact mode, optional does NOT include undefined
     // So { x: number | undefined } should NOT be assignable to { x?: number }
-    assert!(!checker.is_assignable(explicit_union, optional_number),
-            "Explicit number|undefined should NOT be assignable to optional number in exact mode");
+    assert!(
+        !checker.is_assignable(explicit_union, optional_number),
+        "Explicit number|undefined should NOT be assignable to optional number in exact mode"
+    );
 
     // Toggle no_unchecked_indexed_access
     let indexed = interner.object_with_index(ObjectShape {

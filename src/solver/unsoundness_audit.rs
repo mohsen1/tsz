@@ -44,8 +44,7 @@ impl ImplementationStatus {
     pub fn is_implemented(self) -> bool {
         matches!(
             self,
-            ImplementationStatus::FullyImplemented
-                | ImplementationStatus::PartiallyImplemented
+            ImplementationStatus::FullyImplemented | ImplementationStatus::PartiallyImplemented
         )
     }
 
@@ -651,16 +650,12 @@ impl UnsoundnessAudit {
 
     /// Get rules by phase
     pub fn rules_by_phase(&self, phase: ImplementationPhase) -> Vec<&RuleImplementation> {
-        self.all_rules()
-            .filter(|r| r.phase == phase)
-            .collect()
+        self.all_rules().filter(|r| r.phase == phase).collect()
     }
 
     /// Get rules by status
     pub fn rules_by_status(&self, status: ImplementationStatus) -> Vec<&RuleImplementation> {
-        self.all_rules()
-            .filter(|r| r.status == status)
-            .collect()
+        self.all_rules().filter(|r| r.status == status).collect()
     }
 
     /// Count rules with given status
@@ -671,7 +666,11 @@ impl UnsoundnessAudit {
     /// Calculate overall completion percentage
     pub fn overall_completion(&self) -> f32 {
         let total = self.rules.len() as f32;
-        let completed = self.rules.values().map(|r| r.status.completion_ratio()).sum::<f32>();
+        let completed = self
+            .rules
+            .values()
+            .map(|r| r.status.completion_ratio())
+            .sum::<f32>();
         if total > 0.0 { completed / total } else { 0.0 }
     }
 
@@ -681,7 +680,10 @@ impl UnsoundnessAudit {
         if rules.is_empty() {
             return 0.0;
         }
-        let sum = rules.iter().map(|r| r.status.completion_ratio()).sum::<f32>();
+        let sum = rules
+            .iter()
+            .map(|r| r.status.completion_ratio())
+            .sum::<f32>();
         sum / rules.len() as f32
     }
 
@@ -702,9 +704,7 @@ impl UnsoundnessAudit {
 
         // Overall stats
         report.push_str("## Overall Status\n\n");
-        report.push_str(&format!(
-            "- **Total Rules:** 44\n",
-        ));
+        report.push_str(&format!("- **Total Rules:** 44\n",));
         report.push_str(&format!(
             "- **Fully Implemented:** {} ({:.1}%)\n",
             self.count_by_status(ImplementationStatus::FullyImplemented),
@@ -727,14 +727,19 @@ impl UnsoundnessAudit {
 
         // Phase breakdown
         report.push_str("## Completion by Phase\n\n");
-        for phase in [ImplementationPhase::Phase1, ImplementationPhase::Phase2, ImplementationPhase::Phase3, ImplementationPhase::Phase4] {
+        for phase in [
+            ImplementationPhase::Phase1,
+            ImplementationPhase::Phase2,
+            ImplementationPhase::Phase3,
+            ImplementationPhase::Phase4,
+        ] {
             report.push_str(&format!(
                 "- **{}:** {:.1}%\n",
                 phase,
                 self.completion_by_phase(phase) * 100.0
             ));
         }
-        report.push_str("\n");
+        report.push('\n');
 
         // Critical gaps
         report.push_str("## Critical Gaps (High Priority)\n\n");
@@ -743,33 +748,42 @@ impl UnsoundnessAudit {
             if let Some(r) = self.get_rule_status(rule) {
                 report.push_str(&format!(
                     "- **Rule #{} ({}):** {} {}\n",
-                    rule, r.name, r.status.emoji(), r.notes
+                    rule,
+                    r.name,
+                    r.status.emoji(),
+                    r.notes
                 ));
             }
         }
-        report.push_str("\n");
+        report.push('\n');
 
         report.push_str("### Class Rules (Phase 4)\n");
         for rule in [5u8, 18, 43] {
             if let Some(r) = self.get_rule_status(rule) {
                 report.push_str(&format!(
                     "- **Rule #{} ({}):** {} {}\n",
-                    rule, r.name, r.status.emoji(), r.notes
+                    rule,
+                    r.name,
+                    r.status.emoji(),
+                    r.notes
                 ));
             }
         }
-        report.push_str("\n");
+        report.push('\n');
 
         report.push_str("### Phase 2 Gaps (Blockers)\n");
         for rule in [10u8, 19] {
             if let Some(r) = self.get_rule_status(rule) {
                 report.push_str(&format!(
                     "- **Rule #{} ({}):** {} {}\n",
-                    rule, r.name, r.status.emoji(), r.notes
+                    rule,
+                    r.name,
+                    r.status.emoji(),
+                    r.notes
                 ));
             }
         }
-        report.push_str("\n");
+        report.push('\n');
 
         // Interdependencies
         report.push_str("## Key Interdependencies\n\n");
@@ -859,7 +873,11 @@ mod tests {
         let audit = UnsoundnessAudit::new();
         // Phase 1 rules should be at least partially implemented
         for rule in audit.rules_by_phase(ImplementationPhase::Phase1) {
-            assert!(rule.status.is_implemented(), "Phase 1 rule #{} should be implemented", rule.rule_number);
+            assert!(
+                rule.status.is_implemented(),
+                "Phase 1 rule #{} should be implemented",
+                rule.rule_number
+            );
         }
     }
 
@@ -870,10 +888,20 @@ mod tests {
         // We expect some rules to be missing
         assert!(!missing.is_empty(), "Should have missing rules");
         // But not too many critical Phase 1/2 rules
-        let critical_missing = missing.iter()
-            .filter(|r| matches!(r.phase, ImplementationPhase::Phase1 | ImplementationPhase::Phase2))
+        let critical_missing = missing
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r.phase,
+                    ImplementationPhase::Phase1 | ImplementationPhase::Phase2
+                )
+            })
             .count();
-        assert!(critical_missing <= 2, "Should not have many critical missing rules, found {}", critical_missing);
+        assert!(
+            critical_missing <= 2,
+            "Should not have many critical missing rules, found {}",
+            critical_missing
+        );
     }
 
     #[test]

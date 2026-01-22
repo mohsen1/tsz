@@ -322,4 +322,3 @@ fn test_process_template_escape_sequences_multiple_interpolation_markers() {
     let result = process_template_escape_sequences("\\$\\$\\$");
     assert_eq!(result, "$$$");
 }
-

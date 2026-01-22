@@ -1861,7 +1861,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             return (prop.optional, prop.readonly);
                         }
                     }
-                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) = self.interner.lookup(source_obj) {
+                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) =
+                    self.interner.lookup(source_obj)
+                {
                     let shape = self.interner.object_shape(shape_id);
                     for prop in &shape.properties {
                         if prop.name == key_name {
@@ -1875,7 +1877,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         let get_modifiers_for_key = |_key_type: TypeId, key_name: Atom| -> (bool, bool) {
-            let mut optional = match mapped.optional_modifier {
+            let optional = match mapped.optional_modifier {
                 Some(MappedModifier::Add) => true,
                 Some(MappedModifier::Remove) => false,
                 None => {
@@ -1956,7 +1958,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
 
                     // Get modifiers for string index
-                    let (idx_optional, idx_readonly) = get_modifiers_for_key(key_type, self.interner.intern_string(""));
+                    let (idx_optional, idx_readonly) =
+                        get_modifiers_for_key(key_type, self.interner.intern_string(""));
                     if idx_optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
@@ -1986,7 +1989,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
 
                     // Get modifiers for number index
-                    let (idx_optional, idx_readonly) = get_modifiers_for_key(key_type, self.interner.intern_string(""));
+                    let (idx_optional, idx_readonly) =
+                        get_modifiers_for_key(key_type, self.interner.intern_string(""));
                     if idx_optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
@@ -2050,7 +2054,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let span_list = self.interner.template_list(spans);
 
         // Check if all spans are just text (no interpolation)
-        let all_text = span_list.iter().all(|span| matches!(span, TemplateSpan::Text(_)));
+        let all_text = span_list
+            .iter()
+            .all(|span| matches!(span, TemplateSpan::Text(_)));
 
         if all_text {
             // Concatenate all text spans into a single string literal
@@ -2271,7 +2277,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate string manipulation intrinsic types (Uppercase, Lowercase, Capitalize, Uncapitalize)
     /// These distribute over unions and transform string literal types
-    fn evaluate_string_intrinsic(&self, kind: crate::solver::types::StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+    fn evaluate_string_intrinsic(
+        &self,
+        kind: crate::solver::types::StringIntrinsicKind,
+        type_arg: TypeId,
+    ) -> TypeId {
         use crate::solver::types::StringIntrinsicKind;
 
         // First evaluate the type argument
@@ -2340,9 +2350,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::Intrinsic(IntrinsicKind::String) => TypeId::STRING,
 
             // For type parameters and other deferred types, keep as StringIntrinsic
-            TypeKey::TypeParameter(_) | TypeKey::Infer(_) | TypeKey::KeyOf(_) | TypeKey::IndexAccess(_, _) => {
-                self.interner.intern(TypeKey::StringIntrinsic { kind, type_arg: evaluated_arg })
-            }
+            TypeKey::TypeParameter(_)
+            | TypeKey::Infer(_)
+            | TypeKey::KeyOf(_)
+            | TypeKey::IndexAccess(_, _) => self.interner.intern(TypeKey::StringIntrinsic {
+                kind,
+                type_arg: evaluated_arg,
+            }),
 
             // For all other types, return error
             _ => TypeId::ERROR,
@@ -2350,14 +2364,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Apply a string intrinsic to a template literal type
-    fn apply_string_intrinsic_to_template_literal(&self, kind: crate::solver::types::StringIntrinsicKind, spans: TemplateLiteralId) -> TypeId {
+    fn apply_string_intrinsic_to_template_literal(
+        &self,
+        kind: crate::solver::types::StringIntrinsicKind,
+        spans: TemplateLiteralId,
+    ) -> TypeId {
         use crate::solver::types::StringIntrinsicKind;
         use crate::solver::types::TemplateSpan;
 
         let span_list = self.interner.template_list(spans);
 
         // Check if all spans are Text (no type interpolation)
-        let all_text = span_list.iter().all(|span| matches!(span, TemplateSpan::Text(_)));
+        let all_text = span_list
+            .iter()
+            .all(|span| matches!(span, TemplateSpan::Text(_)));
 
         if !all_text {
             // Template literal with interpolation - can't statically transform
@@ -2765,7 +2785,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     TemplateSpan::Type(inner) => self.type_contains_infer_inner(*inner, visited),
                 })
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => self.type_contains_infer_inner(type_arg, visited),
+            TypeKey::StringIntrinsic { type_arg, .. } => {
+                self.type_contains_infer_inner(type_arg, visited)
+            }
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)
             | TypeKey::Ref(_)
@@ -3449,73 +3471,78 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if pattern_fn.this_type.is_none() && has_param_infer && has_return_infer {
                     // Check if pattern has a single rest parameter (e.g., (...args: any[]) => infer R)
                     // This should match any function signature and only extract the return type
-                    let has_single_rest_param = pattern_fn.params.len() == 1 && pattern_fn.params[0].rest;
+                    let has_single_rest_param =
+                        pattern_fn.params.len() == 1 && pattern_fn.params[0].rest;
 
-                    let mut match_params_and_return =
-                        |source_type: TypeId,
-                         source_params: &[ParamInfo],
-                         source_return: TypeId,
-                         bindings: &mut FxHashMap<Atom, TypeId>|
-                         -> bool {
-                            let mut local_visited = FxHashSet::default();
-                            if has_single_rest_param {
-                                // For a pattern like (...args: any[]) => infer R, we only care about
-                                // matching the return type. The parameters are ignored.
-                                // However, if the pattern parameter type contains infer, we still need to match it.
-                                if self.type_contains_infer(pattern_fn.params[0].type_id) {
-                                    let pattern_param = &pattern_fn.params[0];
-                                    for source_param in source_params {
-                                        let source_param_type = if source_param.optional {
-                                            self.interner
-                                                .union2(source_param.type_id, TypeId::UNDEFINED)
-                                        } else {
-                                            source_param.type_id
-                                        };
-                                        if !self.match_infer_pattern(
-                                            source_param_type,
-                                            pattern_param.type_id,
-                                            bindings,
-                                            &mut local_visited,
-                                            checker,
-                                        ) {
-                                            return false;
-                                        }
+                    let mut match_params_and_return = |source_type: TypeId,
+                                                       source_params: &[ParamInfo],
+                                                       source_return: TypeId,
+                                                       bindings: &mut FxHashMap<Atom, TypeId>|
+                     -> bool {
+                        let mut local_visited = FxHashSet::default();
+                        if has_single_rest_param {
+                            // For a pattern like (...args: any[]) => infer R, we only care about
+                            // matching the return type. The parameters are ignored.
+                            // However, if the pattern parameter type contains infer, we still need to match it.
+                            if self.type_contains_infer(pattern_fn.params[0].type_id) {
+                                let pattern_param = &pattern_fn.params[0];
+                                for source_param in source_params {
+                                    let source_param_type = if source_param.optional {
+                                        self.interner
+                                            .union2(source_param.type_id, TypeId::UNDEFINED)
+                                    } else {
+                                        source_param.type_id
+                                    };
+                                    if !self.match_infer_pattern(
+                                        source_param_type,
+                                        pattern_param.type_id,
+                                        bindings,
+                                        &mut local_visited,
+                                        checker,
+                                    ) {
+                                        return false;
                                     }
                                 }
-                                // If the pattern param doesn't contain infer, skip parameter matching entirely
-                            } else {
-                                if !self.match_signature_params(
-                                    source_params,
-                                    &pattern_fn.params,
-                                    bindings,
-                                    &mut local_visited,
-                                    checker,
-                                ) {
-                                    return false;
-                                }
                             }
-                            if !self.match_infer_pattern(
-                                source_return,
-                                pattern_fn.return_type,
+                            // If the pattern param doesn't contain infer, skip parameter matching entirely
+                        } else {
+                            if !self.match_signature_params(
+                                source_params,
+                                &pattern_fn.params,
                                 bindings,
                                 &mut local_visited,
                                 checker,
                             ) {
                                 return false;
                             }
-                            // For patterns with single rest param (like ReturnType), skip the final subtype check
-                            // This is because Callable subtyping is complex and we've already matched the signature
-                            if has_single_rest_param {
-                                return true;
-                            }
-                            let substituted = self.substitute_infer(pattern, bindings);
-                            checker.is_subtype_of(source_type, substituted)
-                        };
+                        }
+                        if !self.match_infer_pattern(
+                            source_return,
+                            pattern_fn.return_type,
+                            bindings,
+                            &mut local_visited,
+                            checker,
+                        ) {
+                            return false;
+                        }
+                        // For patterns with single rest param (like ReturnType), skip the final subtype check
+                        // This is because Callable subtyping is complex and we've already matched the signature
+                        if has_single_rest_param {
+                            return true;
+                        }
+                        let substituted = self.substitute_infer(pattern, bindings);
+                        checker.is_subtype_of(source_type, substituted)
+                    };
 
                     return match self.interner.lookup(source) {
                         Some(TypeKey::Function(source_fn_id)) => {
                             let source_fn = self.interner.function_shape(source_fn_id);
-                            match_params_and_return(source, &source_fn.params, source_fn.return_type, bindings)
+                            match_params_and_return(
+                                source,
+                                &source_fn.params,
+                                source_fn.return_type,
+                                bindings,
+                            )
                         }
                         Some(TypeKey::Callable(source_shape_id)) => {
                             // Match against the last call signature (TypeScript behavior)
@@ -3525,7 +3552,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             // Use the last call signature (TypeScript's behavior for overloads)
                             let source_sig = source_shape.call_signatures.last().unwrap();
-                            match_params_and_return(source, &source_sig.params, source_sig.return_type, bindings)
+                            match_params_and_return(
+                                source,
+                                &source_sig.params,
+                                source_sig.return_type,
+                                bindings,
+                            )
                         }
                         Some(TypeKey::Union(members)) => {
                             let members = self.interner.type_list(members);
@@ -3545,11 +3577,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         }
                                     }
                                     Some(TypeKey::Callable(source_shape_id)) => {
-                                        let source_shape = self.interner.callable_shape(source_shape_id);
+                                        let source_shape =
+                                            self.interner.callable_shape(source_shape_id);
                                         if source_shape.call_signatures.is_empty() {
                                             return false;
                                         }
-                                        let source_sig = source_shape.call_signatures.last().unwrap();
+                                        let source_sig =
+                                            source_shape.call_signatures.last().unwrap();
                                         if !match_params_and_return(
                                             member,
                                             &source_sig.params,
@@ -3588,34 +3622,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                         if has_single_rest_infer {
                             let infer_ty = pattern_fn.params[0].type_id;
-                            let mut match_construct_params_tuple = |source_params: &[ParamInfo],
-                                                                   bindings: &mut FxHashMap<Atom, TypeId>|
-                             -> bool {
-                                // Build a tuple type from all source parameters
-                                let tuple_elems: Vec<TupleElement> = source_params.iter().map(|p| {
-                                    TupleElement {
-                                        type_id: p.type_id,
-                                        name: p.name,
-                                        optional: p.optional,
-                                        rest: false,
-                                    }
-                                }).collect();
-                                let tuple_ty = self.interner.tuple(tuple_elems);
+                            let mut match_construct_params_tuple =
+                                |source_params: &[ParamInfo],
+                                 bindings: &mut FxHashMap<Atom, TypeId>|
+                                 -> bool {
+                                    // Build a tuple type from all source parameters
+                                    let tuple_elems: Vec<TupleElement> = source_params
+                                        .iter()
+                                        .map(|p| TupleElement {
+                                            type_id: p.type_id,
+                                            name: p.name,
+                                            optional: p.optional,
+                                            rest: false,
+                                        })
+                                        .collect();
+                                    let tuple_ty = self.interner.tuple(tuple_elems);
 
-                                // Match the tuple against the infer type
-                                let mut local_visited = FxHashSet::default();
-                                self.match_infer_pattern(
-                                    tuple_ty,
-                                    infer_ty,
-                                    bindings,
-                                    &mut local_visited,
-                                    checker,
-                                )
-                            };
+                                    // Match the tuple against the infer type
+                                    let mut local_visited = FxHashSet::default();
+                                    self.match_infer_pattern(
+                                        tuple_ty,
+                                        infer_ty,
+                                        bindings,
+                                        &mut local_visited,
+                                        checker,
+                                    )
+                                };
 
                             return match self.interner.lookup(source) {
                                 Some(TypeKey::Callable(source_shape_id)) => {
-                                    let source_shape = self.interner.callable_shape(source_shape_id);
+                                    let source_shape =
+                                        self.interner.callable_shape(source_shape_id);
                                     if source_shape.construct_signatures.is_empty() {
                                         return false;
                                     }
@@ -3629,12 +3666,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         let mut member_bindings = FxHashMap::default();
                                         match self.interner.lookup(member) {
                                             Some(TypeKey::Callable(source_shape_id)) => {
-                                                let source_shape = self.interner.callable_shape(source_shape_id);
+                                                let source_shape =
+                                                    self.interner.callable_shape(source_shape_id);
                                                 if source_shape.construct_signatures.is_empty() {
                                                     return false;
                                                 }
-                                                let source_sig = &source_shape.construct_signatures[0];
-                                                if !match_construct_params_tuple(&source_sig.params, &mut member_bindings) {
+                                                let source_sig =
+                                                    &source_shape.construct_signatures[0];
+                                                if !match_construct_params_tuple(
+                                                    &source_sig.params,
+                                                    &mut member_bindings,
+                                                ) {
                                                     return false;
                                                 }
                                             }
@@ -3657,18 +3699,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
 
                         // General case: match parameters individually
-                        let mut match_construct_params = |source_params: &[ParamInfo],
-                                                         bindings: &mut FxHashMap<Atom, TypeId>|
-                         -> bool {
-                            let mut local_visited = FxHashSet::default();
-                            self.match_signature_params(
-                                source_params,
-                                &pattern_fn.params,
-                                bindings,
-                                &mut local_visited,
-                                checker,
-                            )
-                        };
+                        let mut match_construct_params =
+                            |source_params: &[ParamInfo],
+                             bindings: &mut FxHashMap<Atom, TypeId>|
+                             -> bool {
+                                let mut local_visited = FxHashSet::default();
+                                self.match_signature_params(
+                                    source_params,
+                                    &pattern_fn.params,
+                                    bindings,
+                                    &mut local_visited,
+                                    checker,
+                                )
+                            };
 
                         return match self.interner.lookup(source) {
                             Some(TypeKey::Callable(source_shape_id)) => {
@@ -3686,12 +3729,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     let mut member_bindings = FxHashMap::default();
                                     match self.interner.lookup(member) {
                                         Some(TypeKey::Callable(source_shape_id)) => {
-                                            let source_shape = self.interner.callable_shape(source_shape_id);
+                                            let source_shape =
+                                                self.interner.callable_shape(source_shape_id);
                                             if source_shape.construct_signatures.is_empty() {
                                                 return false;
                                             }
                                             let source_sig = &source_shape.construct_signatures[0];
-                                            if !match_construct_params(&source_sig.params, &mut member_bindings) {
+                                            if !match_construct_params(
+                                                &source_sig.params,
+                                                &mut member_bindings,
+                                            ) {
                                                 return false;
                                             }
                                         }
@@ -3791,8 +3838,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 if pattern_fn.this_type.is_none() && !has_param_infer && has_return_infer {
                     let mut match_return = |source_type: TypeId,
-                                           source_return: TypeId,
-                                           bindings: &mut FxHashMap<Atom, TypeId>|
+                                            source_return: TypeId,
+                                            bindings: &mut FxHashMap<Atom, TypeId>|
                      -> bool {
                         let mut local_visited = FxHashSet::default();
                         if !self.match_infer_pattern(
@@ -3830,17 +3877,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 match self.interner.lookup(member) {
                                     Some(TypeKey::Function(source_fn_id)) => {
                                         let source_fn = self.interner.function_shape(source_fn_id);
-                                        if !match_return(member, source_fn.return_type, &mut member_bindings) {
+                                        if !match_return(
+                                            member,
+                                            source_fn.return_type,
+                                            &mut member_bindings,
+                                        ) {
                                             return false;
                                         }
                                     }
                                     Some(TypeKey::Callable(source_shape_id)) => {
-                                        let source_shape = self.interner.callable_shape(source_shape_id);
+                                        let source_shape =
+                                            self.interner.callable_shape(source_shape_id);
                                         if source_shape.call_signatures.is_empty() {
                                             return false;
                                         }
-                                        let source_sig = source_shape.call_signatures.last().unwrap();
-                                        if !match_return(member, source_sig.return_type, &mut member_bindings) {
+                                        let source_sig =
+                                            source_shape.call_signatures.last().unwrap();
+                                        if !match_return(
+                                            member,
+                                            source_sig.return_type,
+                                            &mut member_bindings,
+                                        ) {
                                             return false;
                                         }
                                     }

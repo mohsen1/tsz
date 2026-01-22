@@ -521,7 +521,10 @@ impl<'a> TypeInstantiator<'a> {
             // StringIntrinsic: instantiate the type argument
             TypeKey::StringIntrinsic { kind, type_arg } => {
                 let inst_arg = self.instantiate(*type_arg);
-                self.interner.intern(TypeKey::StringIntrinsic { kind: *kind, type_arg: inst_arg })
+                self.interner.intern(TypeKey::StringIntrinsic {
+                    kind: *kind,
+                    type_arg: inst_arg,
+                })
             }
 
             // Infer: keep as-is unless explicitly substituting inference variables

@@ -14,26 +14,26 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
-# Check formatting
+# Run formatting
 echo ""
-echo "1️⃣  Checking code formatting..."
-if ! cargo fmt --check; then
-    echo ""
-    echo "❌ Code is not formatted. Run: cargo fmt"
-    exit 1
-fi
-echo "✅ Formatting check passed"
+echo "1️⃣  Running cargo fmt..."
+cargo fmt
+echo "✅ Formatting applied"
 
-# Run clippy (lib and bins only, skip tests that require Docker)
+# Run clippy with --fix (lib and bins only, skip tests that require Docker)
 echo ""
-echo "2️⃣  Running clippy..."
-if ! cargo clippy --bins --lib -- -D warnings; then
+echo "2️⃣  Running clippy --fix..."
+if ! cargo clippy --bins --lib --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
+    # If fix didn't resolve everything, run again to show errors
     echo ""
-    echo "❌ Clippy found issues. Please fix them before committing."
-    echo "   Run: cargo clippy --bins --lib --fix --allow-dirty --allow-staged"
+    echo "⚠️  Clippy found issues that couldn't be auto-fixed:"
+    cargo clippy --bins --lib -- -D warnings
     exit 1
 fi
-echo "✅ Clippy passed"
+echo "✅ Clippy passed (auto-fixed where possible)"
+
+# Re-add any files that were modified by fmt or clippy --fix
+git add -u
 
 # Run unit tests (in Docker as required)
 echo ""
