@@ -4138,3 +4138,785 @@ fn test_compiler_options_independent_toggles() {
     checker.set_no_unchecked_indexed_access(true);
     assert!(!checker.is_assignable(index_access, TypeId::NUMBER));
 }
+
+// =============================================================================
+// Rule #29: The Global Function type - Intrinsic(Function) as untyped callable supertype
+// =============================================================================
+
+#[test]
+fn test_function_intrinsic_accepts_any_function() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create a simple function type
+    let simple_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Function intrinsic should accept any function
+    assert!(checker.is_assignable(simple_fn, TypeId::FUNCTION),
+            "Any function should be assignable to Function intrinsic");
+}
+
+#[test]
+fn test_function_intrinsic_accepts_callable() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create a callable with multiple signatures
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: Vec::new(),
+                params: vec![ParamInfo {
+                    name: None,
+                    type_id: TypeId::STRING,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: TypeId::NUMBER,
+                type_predicate: None,
+            },
+        ],
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+    });
+
+    // Function intrinsic should accept callable types
+    assert!(checker.is_assignable(callable, TypeId::FUNCTION),
+            "Callable types should be assignable to Function intrinsic");
+}
+
+#[test]
+fn test_function_intrinsic_rejects_non_callable() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Primitives are NOT callable
+    assert!(!checker.is_assignable(TypeId::STRING, TypeId::FUNCTION),
+            "String should NOT be assignable to Function intrinsic");
+    assert!(!checker.is_assignable(TypeId::NUMBER, TypeId::FUNCTION),
+            "Number should NOT be assignable to Function intrinsic");
+
+    // Objects are NOT callable (unless they have call signatures)
+    let obj = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    assert!(!checker.is_assignable(obj, TypeId::FUNCTION),
+            "Plain object should NOT be assignable to Function intrinsic");
+}
+
+#[test]
+fn test_function_intrinsic_with_union_of_callables() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let fn1 = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let fn2 = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Union of callables should be assignable to Function
+    let union_fn = interner.union(vec![fn1, fn2]);
+    assert!(checker.is_assignable(union_fn, TypeId::FUNCTION),
+            "Union of callables should be assignable to Function intrinsic");
+}
+
+#[test]
+fn test_function_intrinsic_with_union_non_callable() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let fn1 = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Union of callable and non-callable should NOT be assignable to Function
+    let mixed_union = interner.union(vec![fn1, TypeId::STRING]);
+    assert!(!checker.is_assignable(mixed_union, TypeId::FUNCTION),
+            "Mixed union (callable | non-callable) should NOT be assignable to Function");
+}
+
+// =============================================================================
+// Union/Intersection Distributivity Tests
+// =============================================================================
+
+#[test]
+fn test_union_intersection_distributivity_basic() {
+    // Test: (A | B) & C distributes to (A & C) | (B & C)
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let name = interner.intern_string("name");
+    let age = interner.intern_string("age");
+
+    let type_a = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let type_b = interner.object(vec![PropertyInfo {
+        name: age,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let type_c = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // (A | B) & C
+    let union_ab = interner.union(vec![type_a, type_b]);
+    let intersection = interner.intersection(vec![union_ab, type_c]);
+
+    // A & C (should be compatible since both have 'name: string')
+    let a_and_c = interner.intersection(vec![type_a, type_c]);
+
+    assert!(checker.is_assignable(intersection, a_and_c),
+            "(A | B) & C should distribute correctly");
+}
+
+#[test]
+fn test_intersection_union_distributivity() {
+    // Test: A & (B | C) distributes to (A & B) | (A & C)
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let name = interner.intern_string("name");
+    let age = interner.intern_string("age");
+
+    let type_a = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let type_b = interner.object(vec![PropertyInfo {
+        name: age,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let type_c = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // A & (B | C)
+    let union_bc = interner.union(vec![type_b, type_c]);
+    let intersection = interner.intersection(vec![type_a, union_bc]);
+
+    // (A & B) is empty (incompatible), so intersection should simplify
+    assert!(checker.is_assignable(type_a, intersection),
+            "A & (B | C) should distribute to (A & B) | (A & C)");
+}
+
+#[test]
+fn test_distributivity_with_primitives() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // (string | number) & string should be string
+    let str_num = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let result = interner.intersection(vec![str_num, TypeId::STRING]);
+
+    assert!(checker.is_assignable(TypeId::STRING, result),
+            "(string | number) & string should be string");
+}
+
+// =============================================================================
+// Enhanced Weak Type Detection Tests
+// =============================================================================
+
+#[test]
+fn test_weak_type_detection_with_all_strict_options() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Enable all strict options
+    checker.set_strict_function_types(true);
+    checker.set_strict_null_checks(true);
+    checker.set_exact_optional_property_types(true);
+    checker.set_no_unchecked_indexed_access(true);
+
+    let x = interner.intern_string("x");
+    let y = interner.intern_string("y");
+
+    // Weak type: all optional properties
+    let weak_type = interner.object(vec![
+        PropertyInfo {
+            name: x,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: y,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // Source with no common properties should be rejected
+    let source = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("z"),
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    assert!(!checker.is_assignable(source, weak_type),
+            "Weak type detection should work with all strict options enabled");
+}
+
+#[test]
+fn test_weak_union_detection_improved() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x = interner.intern_string("x");
+    let y = interner.intern_string("y");
+
+    // Weak types in a union
+    let weak1 = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let weak2 = interner.object(vec![PropertyInfo {
+        name: y,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let weak_union = interner.union(vec![weak1, weak2]);
+
+    // Source with no common properties should be rejected
+    let source = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("z"),
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    assert!(!checker.is_assignable(source, weak_union),
+            "Weak union detection should reject source with no common properties");
+}
+
+// =============================================================================
+// Comprehensive Compiler Options Tests
+// =============================================================================
+
+#[test]
+fn test_all_compiler_options_combinations() {
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+
+    let optional_number = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let explicit_union = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: number_or_undefined,
+        write_type: number_or_undefined,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Test all combinations
+    let test_cases = vec![
+        (false, false, false, "all defaults"),
+        (true, false, false, "strictFunctionTypes only"),
+        (false, true, false, "exactOptionalProperties only"),
+        (false, false, true, "noUncheckedIndexedAccess only"),
+        (true, true, false, "strict + exact"),
+        (true, false, true, "strict + noUnchecked"),
+        (false, true, true, "exact + noUnchecked"),
+        (true, true, true, "all strict"),
+    ];
+
+    for (strict_fn, exact, no_unchecked, desc) in test_cases {
+        let mut checker = CompatChecker::new(&interner);
+        checker.set_strict_function_types(strict_fn);
+        checker.set_exact_optional_property_types(exact);
+        checker.set_no_unchecked_indexed_access(no_unchecked);
+
+        // The behavior should change based on exact_optional_property_types
+        let expected = !exact; // When exact=true, should NOT be assignable
+        let result = checker.is_assignable(explicit_union, optional_number);
+
+        assert_eq!(result, expected,
+                   "Failed for: {} (exact={})", desc, exact);
+    }
+}
+
+#[test]
+fn test_strict_function_types_affects_methods_independently() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let animal = interner.object(vec![]);
+    let dog = interner.object(vec![]);
+
+    // Create method types
+    let fn_animal = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: animal,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false, // Function, not method
+    });
+
+    let fn_dog = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: dog,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false, // Function, not method
+    });
+
+    // Default: bivariant
+    assert!(checker.is_assignable(fn_dog, fn_animal),
+            "Functions should be bivariant by default");
+
+    // Enable strict function types
+    checker.set_strict_function_types(true);
+    assert!(!checker.is_assignable(fn_dog, fn_animal),
+            "Functions should be contravariant with strictFunctionTypes");
+
+    // Methods should remain bivariant even with strictFunctionTypes
+    let method_animal = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: animal,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true, // This is a method
+    });
+
+    let method_dog = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: dog,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true, // This is a method
+    });
+
+    assert!(checker.is_assignable(method_dog, method_animal),
+            "Methods should remain bivariant even with strictFunctionTypes");
+}
+
+#[test]
+fn test_no_unchecked_indexed_access_with_nested_types() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create nested array type
+    let nested_array = interner.array(interner.array(TypeId::STRING));
+
+    // Index access should include undefined when no_unchecked_indexed_access is enabled
+    checker.set_no_unchecked_indexed_access(true);
+
+    // String should NOT be assignable to (string | undefined)
+    assert!(!checker.is_assignable(TypeId::STRING, nested_array),
+            "With noUncheckedIndexedAccess, array indexing includes undefined");
+}
+
+// =============================================================================
+// Rule #30: keyof contravariance - keyof(A | B) === keyof A & keyof B
+// =============================================================================
+
+#[test]
+fn test_keyof_union_contravariance() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let name = interner.intern_string("name");
+    let age = interner.intern_string("age");
+
+    // Type A: { name: string }
+    let type_a = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Type B: { age: number }
+    let type_b = interner.object(vec![PropertyInfo {
+        name: age,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // keyof A should be "name"
+    let keyof_a = interner.intern(TypeKey::KeyOf(type_a));
+
+    // keyof B should be "age"
+    let keyof_b = interner.intern(TypeKey::KeyOf(type_b));
+
+    // keyof (A | B) should be keyof A & keyof B
+    // which is ("name" | "age")
+    let union_ab = interner.union(vec![type_a, type_b]);
+    let keyof_union = interner.intern(TypeKey::KeyOf(union_ab));
+
+    // The result should include both "name" and "age"
+    let name_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(name)));
+    let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
+
+    // keyof (A | B) should be a union of both keys
+    assert!(checker.is_assignable(name_literal, keyof_union),
+            "keyof (A | B) should include 'name'");
+    assert!(checker.is_assignable(age_literal, keyof_union),
+            "keyof (A | B) should include 'age'");
+}
+
+#[test]
+fn test_keyof_intersection_distributivity() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let name = interner.intern_string("name");
+    let age = interner.intern_string("age");
+
+    // Type A: { name: string }
+    let type_a = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Type B: { name: string, age: number }
+    let type_b = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: age,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // keyof (A & B) should be keyof A | keyof B
+    // Both have 'name', B also has 'age'
+    let intersection_ab = interner.intersection(vec![type_a, type_b]);
+    let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection_ab));
+
+    let name_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(name)));
+    let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
+
+    // keyof (A & B) should include 'name' (common to both)
+    assert!(checker.is_assignable(name_literal, keyof_intersection),
+            "keyof (A & B) should include 'name'");
+
+    // keyof (A & B) should include 'age' (from B)
+    assert!(checker.is_assignable(age_literal, keyof_intersection),
+            "keyof (A & B) should include 'age'");
+}
+
+#[test]
+fn test_keyof_with_union_of_objects_with_common_properties() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let name = interner.intern_string("name");
+    let age = interner.intern_string("age");
+
+    // Type A: { name: string, age: number }
+    let type_a = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: age,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // Type B: { name: string, email: string }
+    let email = interner.intern_string("email");
+    let type_b = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: email,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // keyof (A | B) should be keyof A & keyof B
+    // which is just "name" (the common property)
+    let union_ab = interner.union(vec![type_a, type_b]);
+    let keyof_union = interner.intern(TypeKey::KeyOf(union_ab));
+
+    let name_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(name)));
+    let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
+    let email_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(email)));
+
+    // keyof (A | B) should include 'name' (common to both)
+    assert!(checker.is_assignable(name_literal, keyof_union),
+            "keyof (A | B) should include common property 'name'");
+
+    // keyof (A | B) should NOT include 'age' (only in A)
+    assert!(!checker.is_assignable(age_literal, keyof_union),
+            "keyof (A | B) should NOT include 'age' (only in A)");
+
+    // keyof (A | B) should NOT include 'email' (only in B)
+    assert!(!checker.is_assignable(email_literal, keyof_union),
+            "keyof (A | B) should NOT include 'email' (only in B)");
+}
+
+// =============================================================================
+// Rule #32: Best Common Type (BCT) inference for array literals
+// =============================================================================
+
+#[test]
+fn test_best_common_type_array_literal_inference() {
+    let interner = TypeInterner::new();
+    let ctx = crate::solver::infer::InferenceContext::new(&interner);
+
+    // Array literal with mixed types: [1, "hello", true]
+    // Best common type should be the union: number | string | boolean
+    let types = vec![TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN];
+    let bct = ctx.best_common_type(&types);
+
+    // The BCT should be a union of all three types
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN]);
+    assert_eq!(bct, expected, "BCT of mixed types should be their union");
+}
+
+#[test]
+fn test_best_common_type_with_supertype() {
+    let interner = TypeInterner::new();
+    let ctx = crate::solver::infer::InferenceContext::new(&interner);
+
+    let name = interner.intern_string("name");
+
+    // Type Animal: { name: string }
+    let animal = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Type Dog: { name: string, breed: string }
+    let breed = interner.intern_string("breed");
+    let dog = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: breed,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // BCT of [Animal, Dog] should be Animal (the supertype)
+    let types = vec![animal, dog];
+    let bct = ctx.best_common_type(&types);
+
+    // Animal should be assignable to BCT
+    assert!(ctx.is_subtype_of(animal, bct),
+            "Animal should be subtype of BCT");
+}
+
+#[test]
+fn test_best_common_type_empty_array() {
+    let interner = TypeInterner::new();
+    let ctx = crate::solver::infer::InferenceContext::new(&interner);
+
+    // Empty array should infer to unknown[] (or any[])
+    let types: Vec<TypeId> = vec![];
+    let bct = ctx.best_common_type(&types);
+
+    // Empty arrays default to unknown
+    assert_eq!(bct, TypeId::UNKNOWN, "BCT of empty array should be unknown");
+}
+
+#[test]
+fn test_best_common_type_single_element() {
+    let interner = TypeInterner::new();
+    let ctx = crate::solver::infer::InferenceContext::new(&interner);
+
+    // Single element array should just be that type
+    let types = vec![TypeId::STRING];
+    let bct = ctx.best_common_type(&types);
+
+    assert_eq!(bct, TypeId::STRING, "BCT of single element should be that element");
+}
