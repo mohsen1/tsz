@@ -333,7 +333,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Transform a function in namespace
     fn transform_function_in_namespace(
         &self,
-        _ns_name: &str,
+        ns_name: &str,
         func_idx: NodeIndex,
     ) -> Option<IRNode> {
         let func_node = self.arena.get(func_idx)?;
@@ -350,7 +350,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         if is_exported {
             Some(IRNode::Sequence(vec![
                 IRNode::ASTRef(func_idx),
-                IRNode::ExportAssignment { name: func_name },
+                IRNode::NamespaceExport {
+                    namespace: ns_name.to_string(),
+                    name: func_name.clone(),
+                    value: Box::new(IRNode::Identifier(func_name)),
+                },
             ]))
         } else {
             Some(IRNode::ASTRef(func_idx))
@@ -358,7 +362,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     }
 
     /// Transform an exported function
-    fn transform_function_exported(&self, _ns_name: &str, func_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_function_exported(&self, ns_name: &str, func_idx: NodeIndex) -> Option<IRNode> {
         let func_node = self.arena.get(func_idx)?;
         let func_data = self.arena.get_function(func_node)?;
 
@@ -369,12 +373,16 @@ impl<'a> NamespaceES5Transformer<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         Some(IRNode::Sequence(vec![
             IRNode::ASTRef(func_idx),
-            IRNode::ExportAssignment { name: func_name },
+            IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: func_name.clone(),
+                value: Box::new(IRNode::Identifier(func_name)),
+            },
         ]))
     }
 
     /// Transform a class in namespace
-    fn transform_class_in_namespace(&self, _ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_class_in_namespace(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
         let class_node = self.arena.get(class_idx)?;
         let class_data = self.arena.get_class(class_node)?;
 
@@ -384,7 +392,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         if is_exported {
             Some(IRNode::Sequence(vec![
                 IRNode::ASTRef(class_idx),
-                IRNode::ExportAssignment { name: class_name },
+                IRNode::NamespaceExport {
+                    namespace: ns_name.to_string(),
+                    name: class_name.clone(),
+                    value: Box::new(IRNode::Identifier(class_name)),
+                },
             ]))
         } else {
             Some(IRNode::ASTRef(class_idx))
@@ -392,23 +404,23 @@ impl<'a> NamespaceES5Transformer<'a> {
     }
 
     /// Transform an exported class
-    fn transform_class_exported(&self, _ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_class_exported(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
         let class_node = self.arena.get(class_idx)?;
         let class_data = self.arena.get_class(class_node)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
         Some(IRNode::Sequence(vec![
             IRNode::ASTRef(class_idx),
-            IRNode::ExportAssignment { name: class_name },
+            IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: class_name.clone(),
+                value: Box::new(IRNode::Identifier(class_name)),
+            },
         ]))
     }
 
     /// Transform a variable statement in namespace
-    fn transform_variable_in_namespace(
-        &self,
-        _ns_name: &str,
-        var_idx: NodeIndex,
-    ) -> Option<IRNode> {
+    fn transform_variable_in_namespace(&self, ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
         let var_node = self.arena.get(var_idx)?;
         let var_data = self.arena.get_variable(var_node)?;
 
@@ -419,7 +431,11 @@ impl<'a> NamespaceES5Transformer<'a> {
         if is_exported {
             let var_names = collect_variable_names(self.arena, &var_data.declarations);
             for name in var_names {
-                result.push(IRNode::ExportAssignment { name });
+                result.push(IRNode::NamespaceExport {
+                    namespace: ns_name.to_string(),
+                    name: name.clone(),
+                    value: Box::new(IRNode::Identifier(name)),
+                });
             }
         }
 
@@ -427,7 +443,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     }
 
     /// Transform an exported variable
-    fn transform_variable_exported(&self, _ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_variable_exported(&self, ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
         let var_node = self.arena.get(var_idx)?;
         let var_data = self.arena.get_variable(var_node)?;
 
@@ -436,14 +452,18 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Always export since this is from an export declaration
         let var_names = collect_variable_names(self.arena, &var_data.declarations);
         for name in var_names {
-            result.push(IRNode::ExportAssignment { name });
+            result.push(IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: name.clone(),
+                value: Box::new(IRNode::Identifier(name)),
+            });
         }
 
         Some(IRNode::Sequence(result))
     }
 
     /// Transform an enum in namespace
-    fn transform_enum_in_namespace(&self, _ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_enum_in_namespace(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
 
@@ -453,21 +473,29 @@ impl<'a> NamespaceES5Transformer<'a> {
         let mut result = vec![IRNode::ASTRef(enum_idx)];
 
         if is_exported {
-            result.push(IRNode::ExportAssignment { name: enum_name });
+            result.push(IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: enum_name.clone(),
+                value: Box::new(IRNode::Identifier(enum_name)),
+            });
         }
 
         Some(IRNode::Sequence(result))
     }
 
     /// Transform an exported enum
-    fn transform_enum_exported(&self, _ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_enum_exported(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
 
         let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         Some(IRNode::Sequence(vec![
             IRNode::ASTRef(enum_idx),
-            IRNode::ExportAssignment { name: enum_name },
+            IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: enum_name.clone(),
+                value: Box::new(IRNode::Identifier(enum_name)),
+            },
         ]))
     }
 
@@ -742,7 +770,7 @@ impl<'a> NamespaceTransformContext<'a> {
     /// Transform a function in namespace context
     pub fn transform_function_in_namespace(
         &self,
-        _ns_name: &str,
+        ns_name: &str,
         func_idx: NodeIndex,
     ) -> Option<IRNode> {
         let func_node = self.arena.get(func_idx)?;
@@ -757,10 +785,14 @@ impl<'a> NamespaceTransformContext<'a> {
         let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
 
         if is_exported {
-            // Return AST ref + export assignment (without block braces)
+            // Return AST ref + namespace export
             Some(IRNode::Sequence(vec![
                 IRNode::ASTRef(func_idx),
-                IRNode::ExportAssignment { name: func_name },
+                IRNode::NamespaceExport {
+                    namespace: ns_name.to_string(),
+                    name: func_name.clone(),
+                    value: Box::new(IRNode::Identifier(func_name)),
+                },
             ]))
         } else {
             Some(IRNode::ASTRef(func_idx))
@@ -770,7 +802,7 @@ impl<'a> NamespaceTransformContext<'a> {
     /// Transform an exported function in namespace
     fn transform_function_in_namespace_exported(
         &self,
-        _ns_name: &str,
+        ns_name: &str,
         func_idx: NodeIndex,
     ) -> Option<IRNode> {
         let func_node = self.arena.get(func_idx)?;
@@ -783,12 +815,16 @@ impl<'a> NamespaceTransformContext<'a> {
         let func_name = get_identifier_text(self.arena, func_data.name)?;
         Some(IRNode::Sequence(vec![
             IRNode::ASTRef(func_idx),
-            IRNode::ExportAssignment { name: func_name },
+            IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: func_name.clone(),
+                value: Box::new(IRNode::Identifier(func_name)),
+            },
         ]))
     }
 
     /// Transform a class in namespace context
-    fn transform_class_in_namespace(&self, _ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_class_in_namespace(&self, ns_name: &str, class_idx: NodeIndex) -> Option<IRNode> {
         let class_node = self.arena.get(class_idx)?;
         let class_data = self.arena.get_class(class_node)?;
 
@@ -798,7 +834,11 @@ impl<'a> NamespaceTransformContext<'a> {
         if is_exported {
             Some(IRNode::Sequence(vec![
                 IRNode::ASTRef(class_idx),
-                IRNode::ExportAssignment { name: class_name },
+                IRNode::NamespaceExport {
+                    namespace: ns_name.to_string(),
+                    name: class_name.clone(),
+                    value: Box::new(IRNode::Identifier(class_name)),
+                },
             ]))
         } else {
             Some(IRNode::ASTRef(class_idx))
@@ -808,23 +848,27 @@ impl<'a> NamespaceTransformContext<'a> {
     /// Transform an exported class in namespace
     fn transform_class_in_namespace_exported(
         &self,
-        _ns_name: &str,
+        ns_name: &str,
         class_idx: NodeIndex,
     ) -> Option<IRNode> {
         let class_node = self.arena.get(class_idx)?;
         let class_data = self.arena.get_class(class_node)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
-        Some(IRNode::Block(vec![
+        Some(IRNode::Sequence(vec![
             IRNode::ASTRef(class_idx),
-            IRNode::ExportAssignment { name: class_name },
+            IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: class_name.clone(),
+                value: Box::new(IRNode::Identifier(class_name)),
+            },
         ]))
     }
 
     /// Transform a variable statement in namespace
     pub fn transform_variable_in_namespace(
         &self,
-        _ns_name: &str,
+        ns_name: &str,
         var_idx: NodeIndex,
     ) -> Option<IRNode> {
         let var_node = self.arena.get(var_idx)?;
@@ -838,7 +882,11 @@ impl<'a> NamespaceTransformContext<'a> {
             // Collect variable names for export
             let var_names = collect_variable_names(self.arena, &var_data.declarations);
             for name in var_names {
-                result.push(IRNode::ExportAssignment { name });
+                result.push(IRNode::NamespaceExport {
+                    namespace: ns_name.to_string(),
+                    name: name.clone(),
+                    value: Box::new(IRNode::Identifier(name)),
+                });
             }
         }
 
@@ -848,7 +896,7 @@ impl<'a> NamespaceTransformContext<'a> {
     /// Transform an exported variable statement in namespace
     fn transform_variable_in_namespace_exported(
         &self,
-        _ns_name: &str,
+        ns_name: &str,
         var_idx: NodeIndex,
     ) -> Option<IRNode> {
         let var_node = self.arena.get(var_idx)?;
@@ -859,14 +907,18 @@ impl<'a> NamespaceTransformContext<'a> {
         // Always export
         let var_names = collect_variable_names(self.arena, &var_data.declarations);
         for name in var_names {
-            result.push(IRNode::ExportAssignment { name });
+            result.push(IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: name.clone(),
+                value: Box::new(IRNode::Identifier(name)),
+            });
         }
 
         Some(IRNode::Sequence(result))
     }
 
     /// Transform an enum in namespace
-    fn transform_enum_in_namespace(&self, _ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
+    fn transform_enum_in_namespace(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
 
@@ -876,7 +928,11 @@ impl<'a> NamespaceTransformContext<'a> {
         let mut result = vec![IRNode::ASTRef(enum_idx)];
 
         if is_exported {
-            result.push(IRNode::ExportAssignment { name: enum_name });
+            result.push(IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: enum_name.clone(),
+                value: Box::new(IRNode::Identifier(enum_name)),
+            });
         }
 
         Some(IRNode::Sequence(result))
@@ -885,7 +941,7 @@ impl<'a> NamespaceTransformContext<'a> {
     /// Transform an exported enum in namespace
     fn transform_enum_in_namespace_exported(
         &self,
-        _ns_name: &str,
+        ns_name: &str,
         enum_idx: NodeIndex,
     ) -> Option<IRNode> {
         let enum_node = self.arena.get(enum_idx)?;
@@ -894,7 +950,11 @@ impl<'a> NamespaceTransformContext<'a> {
         let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         Some(IRNode::Sequence(vec![
             IRNode::ASTRef(enum_idx),
-            IRNode::ExportAssignment { name: enum_name },
+            IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: enum_name.clone(),
+                value: Box::new(IRNode::Identifier(enum_name)),
+            },
         ]))
     }
 
@@ -1363,14 +1423,14 @@ mod tests {
 
         if let Some(IRNode::NamespaceIIFE { body, .. }) = ir {
             assert!(!body.is_empty(), "Body should have function");
-            // Check for export assignment
+            // Check for namespace export
             let has_export = body.iter().any(|node| {
                 matches!(
                     node,
-                    IRNode::Sequence(nodes) if nodes.iter().any(|n| matches!(n, IRNode::ExportAssignment { name } if name == "foo"))
+                    IRNode::Sequence(nodes) if nodes.iter().any(|n| matches!(n, IRNode::NamespaceExport { namespace, name, .. } if namespace == "M" && name == "foo"))
                 )
             });
-            assert!(has_export, "Should have export assignment for foo");
+            assert!(has_export, "Should have namespace export for foo");
         } else {
             panic!("Expected NamespaceIIFE IR node");
         }
