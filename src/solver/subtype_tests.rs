@@ -8144,7 +8144,6 @@ fn test_template_literal_pattern_prefix() {
 }
 
 #[test]
-#[ignore = "Template literal pattern subtyping with suffix not fully implemented"]
 fn test_template_literal_pattern_suffix() {
     // `${string}-suffix` pattern
     let interner = TypeInterner::new();
@@ -8199,7 +8198,6 @@ fn test_template_literal_pattern_with_union() {
 }
 
 #[test]
-#[ignore = "Template literal pattern subtyping with multiple parts not fully implemented"]
 fn test_template_literal_pattern_multiple_parts() {
     // `${string}-${number}` pattern
     let interner = TypeInterner::new();
@@ -8233,6 +8231,316 @@ fn test_template_literal_empty_parts() {
     // Any string literal should match
     let hello = interner.literal_string("hello");
     assert!(checker.is_subtype_of(hello, template));
+}
+
+// =============================================================================
+// Complex Template Literal Pattern Matching Tests
+// =============================================================================
+
+#[test]
+fn test_template_literal_multiple_string_wildcards() {
+    // `${string}-${string}-foo` pattern - the key acceptance criteria
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-foo")),
+    ]);
+
+    // Template is subtype of string
+    assert!(checker.is_subtype_of(template, TypeId::STRING));
+
+    // "hello-world-foo" should match `${string}-${string}-foo`
+    let matching = interner.literal_string("hello-world-foo");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "a-b-foo" should also match
+    let matching2 = interner.literal_string("a-b-foo");
+    assert!(checker.is_subtype_of(matching2, template));
+
+    // "-foo" should also match (empty strings for wildcards)
+    let matching3 = interner.literal_string("--foo");
+    assert!(checker.is_subtype_of(matching3, template));
+
+    // "hello-world-bar" should NOT match (wrong suffix)
+    let not_matching = interner.literal_string("hello-world-bar");
+    assert!(!checker.is_subtype_of(not_matching, template));
+
+    // "hello-foo" should NOT match (missing middle part)
+    let not_matching2 = interner.literal_string("hello-foo");
+    assert!(!checker.is_subtype_of(not_matching2, template));
+}
+
+#[test]
+fn test_template_literal_consecutive_string_wildcards() {
+    // `${string}${string}` pattern - consecutive wildcards
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // Any string should match (wildcards can each match any portion)
+    let hello = interner.literal_string("hello");
+    assert!(checker.is_subtype_of(hello, template));
+
+    // Empty string should also match
+    let empty = interner.literal_string("");
+    assert!(checker.is_subtype_of(empty, template));
+}
+
+#[test]
+fn test_template_literal_number_type_pattern() {
+    // `id-${number}` pattern
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("id-")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+
+    // "id-42" should match
+    let matching = interner.literal_string("id-42");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "id-3.14" should match
+    let matching_decimal = interner.literal_string("id-3.14");
+    assert!(checker.is_subtype_of(matching_decimal, template));
+
+    // "id--5" should match (negative number)
+    let matching_negative = interner.literal_string("id--5");
+    assert!(checker.is_subtype_of(matching_negative, template));
+
+    // "id-abc" should NOT match
+    let not_matching = interner.literal_string("id-abc");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_boolean_type_pattern() {
+    // `flag-${boolean}` pattern
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("flag-")),
+        TemplateSpan::Type(TypeId::BOOLEAN),
+    ]);
+
+    // "flag-true" should match
+    let matching_true = interner.literal_string("flag-true");
+    assert!(checker.is_subtype_of(matching_true, template));
+
+    // "flag-false" should match
+    let matching_false = interner.literal_string("flag-false");
+    assert!(checker.is_subtype_of(matching_false, template));
+
+    // "flag-yes" should NOT match
+    let not_matching = interner.literal_string("flag-yes");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_overlapping_patterns() {
+    // Test case where the separator appears within the matched content
+    // `${string}-${string}` matching "a-b-c" (multiple valid splits)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // "a-b-c" should match (can be "a" + "-" + "b-c" or "a-b" + "-" + "c")
+    let matching = interner.literal_string("a-b-c");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "no-dash" should match
+    let matching2 = interner.literal_string("no-dash");
+    assert!(checker.is_subtype_of(matching2, template));
+
+    // "nodash" should NOT match (no separator)
+    let not_matching = interner.literal_string("nodash");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_number_string_combination() {
+    // `${number}-${string}` pattern
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // "42-hello" should match
+    let matching = interner.literal_string("42-hello");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "3.14-world" should match
+    let matching2 = interner.literal_string("3.14-world");
+    assert!(checker.is_subtype_of(matching2, template));
+
+    // "hello-42" should NOT match (wrong order)
+    let not_matching = interner.literal_string("hello-42");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_literal_number_in_pattern() {
+    // `value-${42}` pattern - literal number type
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let num_42 = interner.literal_number(42.0);
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("value-")),
+        TemplateSpan::Type(num_42),
+    ]);
+
+    // "value-42" should match
+    let matching = interner.literal_string("value-42");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "value-43" should NOT match
+    let not_matching = interner.literal_string("value-43");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_literal_boolean_in_pattern() {
+    // `enabled-${true}` pattern - literal boolean type
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let bool_true = interner.literal_boolean(true);
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("enabled-")),
+        TemplateSpan::Type(bool_true),
+    ]);
+
+    // "enabled-true" should match
+    let matching = interner.literal_string("enabled-true");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "enabled-false" should NOT match
+    let not_matching = interner.literal_string("enabled-false");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_complex_three_wildcards() {
+    // `${string}/${string}/${string}` pattern - file path like
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("/")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("/")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // "a/b/c" should match
+    let matching = interner.literal_string("a/b/c");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "users/admin/home" should match
+    let matching2 = interner.literal_string("users/admin/home");
+    assert!(checker.is_subtype_of(matching2, template));
+
+    // "a/b" should NOT match (only two parts)
+    let not_matching = interner.literal_string("a/b");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_empty_wildcard_match() {
+    // `prefix-${string}-suffix` where wildcard can be empty
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("pre-")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-suf")),
+    ]);
+
+    // "pre--suf" should match (empty string for wildcard)
+    let matching_empty = interner.literal_string("pre--suf");
+    assert!(checker.is_subtype_of(matching_empty, template));
+
+    // "pre-middle-suf" should match
+    let matching = interner.literal_string("pre-middle-suf");
+    assert!(checker.is_subtype_of(matching, template));
+}
+
+#[test]
+fn test_template_literal_union_with_wildcards() {
+    // `${string}-${"a" | "b"}` pattern - union in second position
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let a = interner.literal_string("a");
+    let b = interner.literal_string("b");
+    let ab_union = interner.union(vec![a, b]);
+
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(ab_union),
+    ]);
+
+    // "hello-a" should match
+    let matching_a = interner.literal_string("hello-a");
+    assert!(checker.is_subtype_of(matching_a, template));
+
+    // "world-b" should match
+    let matching_b = interner.literal_string("world-b");
+    assert!(checker.is_subtype_of(matching_b, template));
+
+    // "test-c" should NOT match
+    let not_matching = interner.literal_string("test-c");
+    assert!(!checker.is_subtype_of(not_matching, template));
+}
+
+#[test]
+fn test_template_literal_special_characters() {
+    // Test patterns with special characters
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // `${string}@${string}.com`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("@")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string(".com")),
+    ]);
+
+    // "user@domain.com" should match
+    let matching = interner.literal_string("user@domain.com");
+    assert!(checker.is_subtype_of(matching, template));
+
+    // "a@b.com" should match
+    let matching2 = interner.literal_string("a@b.com");
+    assert!(checker.is_subtype_of(matching2, template));
+
+    // "user@domain.org" should NOT match
+    let not_matching = interner.literal_string("user@domain.org");
+    assert!(!checker.is_subtype_of(not_matching, template));
 }
 
 #[test]
