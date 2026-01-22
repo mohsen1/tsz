@@ -16,6 +16,7 @@ use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
+use tracing::{debug, span, Level};
 
 /// A control flow graph side-table.
 ///
@@ -142,6 +143,9 @@ impl<'a> FlowGraphBuilder<'a> {
 
     /// Build the flow graph for a source file.
     pub fn build_source_file(&mut self, statements: &NodeList) -> &FlowGraph {
+        let _span = span!(Level::DEBUG, "build_flow_graph", num_statements = statements.nodes.len()).entered();
+        debug!("Building flow graph for source file with {} statements", statements.nodes.len());
+
         for &stmt_idx in &statements.nodes {
             if !stmt_idx.is_none() {
                 self.build_statement(stmt_idx);
@@ -174,6 +178,9 @@ impl<'a> FlowGraphBuilder<'a> {
     /// # Returns
     /// Reference to the built flow graph
     pub fn build_function_body(&mut self, body: &crate::parser::node::BlockData) -> &FlowGraph {
+        let _span = span!(Level::DEBUG, "build_function_body", num_statements = body.statements.nodes.len()).entered();
+        debug!("Building flow graph for function body with {} statements", body.statements.nodes.len());
+
         // Reset the builder state for a new function
         self.graph = FlowGraph::new();
         self.current_flow = self.graph.nodes.alloc(flow_flags::START);
