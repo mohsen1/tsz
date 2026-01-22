@@ -203,6 +203,7 @@ pub enum IntrinsicKind {
     Bigint,
     Symbol,
     Object,
+    Function,
 }
 
 /// String manipulation intrinsic kinds
@@ -229,6 +230,7 @@ impl IntrinsicKind {
             IntrinsicKind::Bigint => TypeId::BIGINT,
             IntrinsicKind::Symbol => TypeId::SYMBOL,
             IntrinsicKind::Object => TypeId::OBJECT,
+            IntrinsicKind::Function => TypeId::FUNCTION,
         }
     }
 }
