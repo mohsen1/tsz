@@ -1699,10 +1699,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_elem: TypeId,
         target: &[TupleElement],
     ) -> SubtypeResult {
+        // TypeScript semantics: Arrays (T[]) are generally NOT assignable to tuple types,
+        // even variadic tuples like [...T[]], because tuples have specific structural
+        // constraints that arrays don't satisfy.
+        //
+        // The ONLY exception is never[] which represents an empty array and can be
+        // assigned to any tuple that allows empty (has no required elements).
+        //
+        // Cases:
+        // - never[] -> [] : Yes (empty array to empty tuple)
+        // - never[] -> [string?] : Yes (empty array to optional-only tuple)
+        // - never[] -> [...string[]] : Yes (empty array to variadic tuple)
+        // - never[] -> [string] : No (empty array cannot satisfy required element)
+        // - string[] -> [...string[]] : No (arrays are not assignable to tuples)
+        // - string[] -> [string?] : No (arrays are not assignable to tuples)
+
+        // Only never[] can potentially be assigned to tuples
         if source_elem != TypeId::NEVER {
             return SubtypeResult::False;
         }
 
+        // never[] can be assigned to a tuple if and only if the tuple allows empty
         if self.tuple_allows_empty(target) {
             SubtypeResult::True
         } else {
@@ -1713,13 +1730,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn tuple_allows_empty(&self, target: &[TupleElement]) -> bool {
         for (index, elem) in target.iter().enumerate() {
             if elem.rest {
-                if index + 1 < target.len() {
+                // Check if there are any REQUIRED elements after the rest element
+                // e.g., [...string[], number] has a required trailing element
+                // but [...string[], number?] only has optional trailing elements
+                let tail = &target[index + 1..];
+                if tail.iter().any(|tail_elem| !tail_elem.optional) {
                     return false;
                 }
+
+                // Check the expanded rest element for required fixed elements
                 let expansion = self.expand_tuple_rest(elem.type_id);
                 if expansion.fixed.iter().any(|fixed| !fixed.optional) {
                     return false;
                 }
+
+                // Tuple with rest element allows empty if:
+                // 1. No required trailing elements after the rest
+                // 2. The rest expansion has no required fixed elements
                 return true;
             }
 
