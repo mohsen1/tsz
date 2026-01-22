@@ -2442,12 +2442,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 type_arg: evaluated_arg,
             }),
 
+            // Handle chained string intrinsics: Uppercase<Lowercase<T>>
+            // The inner intrinsic already wraps the type, so wrap again with outer
+            TypeKey::StringIntrinsic {
+                kind: _inner_kind,
+                type_arg: _inner_arg,
+            } => {
+                // Wrap the already-evaluated intrinsic with the outer one
+                // This creates Uppercase<Lowercase<T>> structure which will be
+                // evaluated layer by layer when the type parameter is substituted
+                self.interner.intern(TypeKey::StringIntrinsic {
+                    kind,
+                    type_arg: evaluated_arg,
+                })
+            }
+
             // For all other types, return error
             _ => TypeId::ERROR,
         }
     }
 
     /// Apply a string intrinsic to a template literal type
+    ///
+    /// This handles cases like `Uppercase<\`hello-${string}\`>` which should produce
+    /// a template literal with uppercase text spans: `\`HELLO-${string}\``
+    ///
+    /// For template literals with type interpolations:
+    /// - Text spans are transformed (uppercased, lowercased, etc.)
+    /// - Type spans are wrapped in the same string intrinsic
+    /// - For Capitalize/Uncapitalize, special handling for the first span
     fn apply_string_intrinsic_to_template_literal(
         &self,
         kind: crate::solver::types::StringIntrinsicKind,
@@ -2463,56 +2486,126 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .iter()
             .all(|span| matches!(span, TemplateSpan::Text(_)));
 
-        if !all_text {
-            // Template literal with interpolation - can't statically transform
-            // In TypeScript, these would generally remain as template literals
-            // For now, return the string intrinsic type as-is
-            return TypeId::STRING;
+        if all_text {
+            // All spans are text - we can concatenate and transform
+            let mut result = String::new();
+            for span in span_list.iter() {
+                if let TemplateSpan::Text(atom) = span {
+                    let text = self.interner.resolve_atom_ref(*atom);
+                    result.push_str(&text);
+                }
+            }
+
+            let transformed = self.apply_string_transform(kind, &result);
+            return self.interner.literal_string(&transformed);
         }
 
-        // All spans are text - we can concatenate and transform
-        let mut result = String::new();
+        // Template literal with type interpolations
+        // Transform text spans and wrap type spans in the intrinsic
+        let mut new_spans: Vec<TemplateSpan> = Vec::with_capacity(span_list.len());
+        let mut is_first_span = true;
+
         for span in span_list.iter() {
-            if let TemplateSpan::Text(atom) = span {
-                let text = self.interner.resolve_atom_ref(*atom);
-                result.push_str(&text);
+            match span {
+                TemplateSpan::Text(atom) => {
+                    let text = self.interner.resolve_atom_ref(*atom);
+                    let transformed = if is_first_span {
+                        // For first text span, apply full transformation (including Capitalize/Uncapitalize)
+                        self.apply_string_transform(kind, &text)
+                    } else {
+                        // For subsequent text spans, only apply Uppercase/Lowercase
+                        // Capitalize/Uncapitalize only affect the first character
+                        match kind {
+                            StringIntrinsicKind::Uppercase => text.to_uppercase(),
+                            StringIntrinsicKind::Lowercase => text.to_lowercase(),
+                            StringIntrinsicKind::Capitalize | StringIntrinsicKind::Uncapitalize => {
+                                text.to_string()
+                            }
+                        }
+                    };
+                    let new_atom = self.interner.intern_string(&transformed);
+                    new_spans.push(TemplateSpan::Text(new_atom));
+                    // After a non-empty text span, subsequent spans are not "first"
+                    if !text.is_empty() {
+                        is_first_span = false;
+                    }
+                }
+                TemplateSpan::Type(type_id) => {
+                    // For type interpolations, wrap in the appropriate string intrinsic
+                    // For Capitalize/Uncapitalize on non-first position, we don't wrap
+                    // since those only affect the first character
+                    let wrapped_type = if is_first_span {
+                        // First position type: apply the intrinsic
+                        self.interner.intern(TypeKey::StringIntrinsic {
+                            kind,
+                            type_arg: *type_id,
+                        })
+                    } else {
+                        // Non-first position: only Uppercase/Lowercase apply
+                        match kind {
+                            StringIntrinsicKind::Uppercase | StringIntrinsicKind::Lowercase => {
+                                self.interner.intern(TypeKey::StringIntrinsic {
+                                    kind,
+                                    type_arg: *type_id,
+                                })
+                            }
+                            StringIntrinsicKind::Capitalize
+                            | StringIntrinsicKind::Uncapitalize => {
+                                // Capitalize/Uncapitalize don't affect non-first positions
+                                *type_id
+                            }
+                        }
+                    };
+                    new_spans.push(TemplateSpan::Type(wrapped_type));
+                    // After a type span, we're definitely not first anymore
+                    is_first_span = false;
+                }
             }
         }
 
-        let transformed = match kind {
-            StringIntrinsicKind::Uppercase => result.to_uppercase().to_string(),
-            StringIntrinsicKind::Lowercase => result.to_lowercase().to_string(),
+        self.interner.template_literal(new_spans)
+    }
+
+    /// Apply a string transformation to a string value
+    fn apply_string_transform(
+        &self,
+        kind: crate::solver::types::StringIntrinsicKind,
+        s: &str,
+    ) -> String {
+        use crate::solver::types::StringIntrinsicKind;
+
+        match kind {
+            StringIntrinsicKind::Uppercase => s.to_uppercase(),
+            StringIntrinsicKind::Lowercase => s.to_lowercase(),
             StringIntrinsicKind::Capitalize => {
-                if result.is_empty() {
-                    result
+                if s.is_empty() {
+                    s.to_string()
                 } else {
-                    let mut chars = result.chars();
+                    let mut chars = s.chars();
                     match chars.next() {
                         Some(first) => {
                             let upper: String = first.to_uppercase().collect();
                             upper + chars.as_str()
                         }
-                        None => result,
+                        None => s.to_string(),
                     }
                 }
             }
             StringIntrinsicKind::Uncapitalize => {
-                if result.is_empty() {
-                    result
+                if s.is_empty() {
+                    s.to_string()
                 } else {
-                    let mut chars = result.chars();
+                    let mut chars = s.chars();
                     match chars.next() {
                         Some(first) => {
                             let lower: String = first.to_lowercase().collect();
                             lower + chars.as_str()
                         }
-                        None => result,
+                        None => s.to_string(),
                     }
                 }
             }
-        };
-
-        self.interner.literal_string(&transformed)
+        }
     }
 
     /// Helper to evaluate keyof or pass through union constraint
