@@ -1799,6 +1799,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None => return self.interner.mapped(mapped.clone()),
         };
 
+        // Check if this is a homomorphic mapped type (template is T[K] indexed access)
+        // In this case, we should preserve the original property modifiers
+        let is_homomorphic = self.is_homomorphic_mapped_type(mapped);
+
+        // Extract source object type if this is homomorphic
+        // For { [K in keyof T]: T[K] }, the constraint is keyof T and template is T[K]
+        let source_object = if is_homomorphic {
+            self.extract_source_from_homomorphic(mapped)
+        } else {
+            None
+        };
+
         let remap_key_type = |key_type: TypeId| -> Result<Option<TypeId>, ()> {
             let Some(name_type) = mapped.name_type else {
                 return Ok(Some(key_type));
@@ -1814,16 +1826,57 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Ok(Some(remapped))
         };
 
-        let optional = match mapped.optional_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => false, // Default: preserve original (but we don't have original info here)
+        // Helper to get property modifiers for a given key
+        let get_property_modifiers = |key_name: Atom| -> (bool, bool) {
+            if let Some(source_obj) = source_object {
+                if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(source_obj) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        if prop.name == key_name {
+                            return (prop.optional, prop.readonly);
+                        }
+                    }
+                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) = self.interner.lookup(source_obj) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        if prop.name == key_name {
+                            return (prop.optional, prop.readonly);
+                        }
+                    }
+                }
+            }
+            // Default modifiers when we can't determine
+            (false, false)
         };
 
-        let readonly = match mapped.readonly_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => false,
+        let get_modifiers_for_key = |_key_type: TypeId, key_name: Atom| -> (bool, bool) {
+            let mut optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    // For homomorphic types with no explicit modifier, preserve original
+                    if is_homomorphic {
+                        get_property_modifiers(key_name).0
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            let readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    // For homomorphic types with no explicit modifier, preserve original
+                    if is_homomorphic {
+                        get_property_modifiers(key_name).1
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            (optional, readonly)
         };
 
         // Build the resulting object properties
@@ -1852,6 +1905,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let property_type =
                 self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
 
+            // Get modifiers for this specific key (preserves homomorphic behavior)
+            let (optional, readonly) = get_modifiers_for_key(key_literal, key_name);
+
             properties.push(PropertyInfo {
                 name: remapped_name,
                 type_id: property_type,
@@ -1873,13 +1929,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     subst.insert(mapped.type_param.name, key_type);
                     let mut value_type =
                         self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
-                    if optional {
+
+                    // Get modifiers for string index
+                    let (idx_optional, idx_readonly) = get_modifiers_for_key(key_type, self.interner.intern_string(""));
+                    if idx_optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
                     Some(IndexSignature {
                         key_type,
                         value_type,
-                        readonly,
+                        readonly: idx_readonly,
                     })
                 }
                 Ok(None) => None,
@@ -1900,13 +1959,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     subst.insert(mapped.type_param.name, key_type);
                     let mut value_type =
                         self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
-                    if optional {
+
+                    // Get modifiers for number index
+                    let (idx_optional, idx_readonly) = get_modifiers_for_key(key_type, self.interner.intern_string(""));
+                    if idx_optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
                     Some(IndexSignature {
                         key_type,
                         value_type,
-                        readonly,
+                        readonly: idx_readonly,
                     })
                 }
                 Ok(None) => None,
@@ -1924,6 +1986,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             })
         } else {
             self.interner.object(properties)
+        }
+    }
+
+    /// Check if a mapped type is homomorphic (template is T[K] indexed access)
+    /// Homomorphic mapped types preserve modifiers from the source type
+    fn is_homomorphic_mapped_type(&self, mapped: &MappedType) -> bool {
+        // Check if template is an IndexAccess type
+        match self.interner.lookup(mapped.template) {
+            Some(TypeKey::IndexAccess(_obj, idx)) => {
+                // Check if the index is our type parameter
+                match self.interner.lookup(idx) {
+                    Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Extract the source object type from a homomorphic mapped type
+    /// For { [K in keyof T]: T[K] }, extract T
+    fn extract_source_from_homomorphic(&self, mapped: &MappedType) -> Option<TypeId> {
+        match self.interner.lookup(mapped.template) {
+            Some(TypeKey::IndexAccess(obj, _idx)) => {
+                // The object part of T[K] is the source type
+                Some(obj)
+            }
+            _ => None,
         }
     }
 
