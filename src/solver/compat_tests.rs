@@ -144,6 +144,36 @@ fn test_any_assignability() {
 }
 
 #[test]
+fn test_tuple_to_any_array_compat() {
+    // [string, boolean] IS assignable to any[]
+    // This is important for generic constraint checking with T extends any[]
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let any_array = interner.array(TypeId::ANY);
+
+    // [string, boolean]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // This should SUCCEED - any element type accepts anything
+    assert!(checker.is_assignable(tuple, any_array));
+    assert!(checker.is_assignable_to(tuple, any_array));
+}
+
+#[test]
 fn test_unknown_assignability() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
@@ -4928,7 +4958,9 @@ fn test_best_common_type_with_supertype() {
     let bct = ctx.best_common_type(&types);
 
     // Animal should be assignable to BCT
-    assert!(ctx.is_subtype_of(animal, bct),
+    // Use CompatChecker for assignability checking since InferenceContext's is_subtype is private
+    let mut checker = CompatChecker::new(&interner);
+    assert!(checker.is_assignable_to(animal, bct),
             "Animal should be subtype of BCT");
 }
 

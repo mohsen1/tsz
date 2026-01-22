@@ -2375,6 +2375,37 @@ fn test_tuple_array_assignment_tuple_to_union_array() {
 }
 
 #[test]
+fn test_tuple_to_any_array() {
+    // [string, boolean] IS assignable to any[]
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let any_array = interner.array(TypeId::ANY);
+
+    // [string, boolean]
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // any[]
+    let target = any_array;
+
+    // This should SUCCEED - any element type accepts anything
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
 fn test_array_to_variadic_tuple() {
     // string[] is NOT assignable to [...string[]]
     let interner = TypeInterner::new();
