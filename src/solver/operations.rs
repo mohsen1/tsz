@@ -916,6 +916,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 })
             }
+            TypeKey::StringIntrinsic { type_arg, .. } => {
+                self.type_contains_placeholder(type_arg, var_map, visited)
+            }
             TypeKey::TypeParameter(_)
             | TypeKey::Infer(_)
             | TypeKey::Intrinsic(_)

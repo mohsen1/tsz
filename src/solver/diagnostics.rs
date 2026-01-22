@@ -592,6 +592,15 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeKey::Infer(info) => format!("infer {}", self.atom(info.name)),
             TypeKey::ThisType => "this".to_string(),
+            TypeKey::StringIntrinsic { kind, type_arg } => {
+                let kind_name = match kind {
+                    crate::solver::types::StringIntrinsicKind::Uppercase => "Uppercase",
+                    crate::solver::types::StringIntrinsicKind::Lowercase => "Lowercase",
+                    crate::solver::types::StringIntrinsicKind::Capitalize => "Capitalize",
+                    crate::solver::types::StringIntrinsicKind::Uncapitalize => "Uncapitalize",
+                };
+                format!("{}<{}>", kind_name, self.format(*type_arg))
+            }
             TypeKey::Error => "error".to_string(),
         }
     }
