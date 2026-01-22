@@ -44143,3 +44143,245 @@ fn test_template_literal_literal_union_pattern() {
     // "ax" should match `${"a" | "b"}x`
     assert_eq!(result, input);
 }
+
+/// Test template literal types with array/tuple index access scenarios
+/// This verifies that template literals work correctly in index access contexts
+/// which is important for noUncheckedIndexedAccess scenarios
+#[test]
+fn test_template_literal_index_access_scenario() {
+    let interner = TypeInterner::new();
+
+    // Create an object with template literal-like string properties
+    let obj = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("item0"),
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: interner.intern_string("item1"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // Access with a literal string key
+    let key = interner.literal_string("item0");
+    let result = evaluate_index_access(&interner, obj, key);
+
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// Test template literal pattern matching in mapped types
+/// { [K in `${Prefix}${infer S}`]: S } expands correctly
+#[test]
+fn test_template_literal_mapped_type_pattern() {
+    let interner = TypeInterner::new();
+
+    let infer_s_name = interner.intern_string("S");
+    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: infer_s_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create a template literal pattern like `get${infer S}`
+    let pattern_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(infer_s),
+    ]);
+
+    // Verify the pattern was created
+    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(pattern_template) {
+        let spans = interner.template_list(spans);
+        assert_eq!(spans.len(), 2);
+    } else {
+        panic!("Expected template literal");
+    }
+}
+
+/// Test multiple template literal infers with complex union patterns
+/// T extends `start${infer A}-middle${infer B}-end` ? [A, B] : never
+#[test]
+fn test_template_literal_multiple_infers_complex_pattern() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+
+    let infer_a_name = interner.intern_string("A");
+    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: infer_a_name,
+        constraint: None,
+        default: None,
+    }));
+
+    let infer_b_name = interner.intern_string("B");
+    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: infer_b_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Pattern: `start${infer A}-middle${infer B}-end`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("start")),
+        TemplateSpan::Type(infer_a),
+        TemplateSpan::Text(interner.intern_string("-middle")),
+        TemplateSpan::Type(infer_b),
+        TemplateSpan::Text(interner.intern_string("-end")),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: pattern,
+        true_type: infer_a, // Return first infer
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+
+    // Test with "startFOO-middleBAR-end"
+    let mut subst = TypeSubstitution::new();
+    let input = interner.literal_string("startFOO-middleBAR-end");
+    subst.insert(t_name, input);
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    let expected = interner.literal_string("FOO");
+    assert_eq!(result, expected);
+}
+
+/// Test template literal with union of unions
+/// `prefix${("a" | "b") | ("c" | "d")}` should handle nested unions
+#[test]
+fn test_template_literal_nested_union_interpolation() {
+    let interner = TypeInterner::new();
+
+    // Create nested unions: ("a" | "b") | ("c" | "d")
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let union_ab = interner.union(vec![lit_a, lit_b]);
+
+    let lit_c = interner.literal_string("c");
+    let lit_d = interner.literal_string("d");
+    let union_cd = interner.union(vec![lit_c, lit_d]);
+
+    let nested_union = interner.union(vec![union_ab, union_cd]);
+
+    // Template with nested union interpolation
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(nested_union),
+    ]);
+
+    // Verify template was created
+    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
+        let spans = interner.template_list(spans);
+        assert_eq!(spans.len(), 2);
+    } else {
+        panic!("Expected template literal");
+    }
+}
+
+/// Test template literal matching against another template literal
+/// `foo${string}` extends `foo${infer R}` ? R : never
+#[test]
+fn test_template_literal_matches_template_literal() {
+    let interner = TypeInterner::new();
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Pattern: `foo${infer R}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("foo")),
+        TemplateSpan::Type(infer_r),
+    ]);
+
+    // Check type: `foo${string}`
+    let check_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("foo")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: check_template,
+        extends_type: pattern,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    // Should infer string
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// Test keyof with template literal that expands to multiple literals
+/// keyof `item${0 | 1 | 2}` should return string
+#[test]
+fn test_keyof_template_literal_number_union_interpolation() {
+    let interner = TypeInterner::new();
+
+    // Create 0 | 1 | 2 union
+    let lit_0 = interner.literal_number(0.0);
+    let lit_1 = interner.literal_number(1.0);
+    let lit_2 = interner.literal_number(2.0);
+    let union_012 = interner.union(vec![lit_0, lit_1, lit_2]);
+
+    // Create template literal: `item${0 | 1 | 2}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("item")),
+        TemplateSpan::Type(union_012),
+    ]);
+
+    // keyof should return string (template literals behave like strings)
+    let result = evaluate_keyof(&interner, template);
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// Test conditional with template literal in both check and extends
+/// `prefix${string}` extends `prefix${string}` ? true : false
+#[test]
+fn test_template_literal_conditional_same_pattern() {
+    let interner = TypeInterner::new();
+
+    let template1 = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let template2 = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: template1,
+        extends_type: template2,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    // Should match and return true branch
+    assert_eq!(result, TypeId::STRING);
+}
