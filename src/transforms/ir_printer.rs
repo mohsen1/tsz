@@ -189,6 +189,10 @@ impl<'a> IRPrinter<'a> {
                 self.emit_comma_separated(elements);
                 self.write("]");
             }
+            IRNode::SpreadElement(expr) => {
+                self.write("...");
+                self.emit_node(expr);
+            }
             IRNode::ObjectLiteral(props) => {
                 if props.is_empty() {
                     self.write("{}");
