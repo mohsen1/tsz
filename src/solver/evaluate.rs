@@ -309,6 +309,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.cache.borrow_mut().insert(type_id, result);
                 result
             }
+            TypeKey::TemplateLiteral(spans) => {
+                let result = self.evaluate_template_literal(*spans);
+                self.visiting.borrow_mut().remove(&type_id);
+                self.cache.borrow_mut().insert(type_id, result);
+                result
+            }
             // Resolve Ref types to their structural form
             TypeKey::Ref(symbol) => {
                 let result =
@@ -488,6 +494,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.collect_type_params(obj, seen, params);
                 self.collect_type_params(idx, seen, params);
             }
+            TypeKey::TemplateLiteral(spans) => {
+                // Extract type params from template literal interpolations
+                let spans = self.interner.template_list(spans);
+                for span in spans.iter() {
+                    if let TemplateSpan::Type(inner) = span {
+                        self.collect_type_params(*inner, seen, params);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -526,6 +541,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Evaluate mapped types in type arguments
                 let mapped = self.interner.mapped_type(mapped_id);
                 self.evaluate_mapped(mapped.as_ref())
+            }
+            TypeKey::TemplateLiteral(spans) => {
+                // Evaluate template literal types in type arguments
+                self.evaluate_template_literal(spans)
             }
             _ => arg,
         }
@@ -1799,6 +1818,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None => return self.interner.mapped(mapped.clone()),
         };
 
+        // Check if this is a homomorphic mapped type (template is T[K] indexed access)
+        // In this case, we should preserve the original property modifiers
+        let is_homomorphic = self.is_homomorphic_mapped_type(mapped);
+
+        // Extract source object type if this is homomorphic
+        // For { [K in keyof T]: T[K] }, the constraint is keyof T and template is T[K]
+        let source_object = if is_homomorphic {
+            self.extract_source_from_homomorphic(mapped)
+        } else {
+            None
+        };
+
         let remap_key_type = |key_type: TypeId| -> Result<Option<TypeId>, ()> {
             let Some(name_type) = mapped.name_type else {
                 return Ok(Some(key_type));
@@ -1814,16 +1845,57 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Ok(Some(remapped))
         };
 
-        let optional = match mapped.optional_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => false, // Default: preserve original (but we don't have original info here)
+        // Helper to get property modifiers for a given key
+        let get_property_modifiers = |key_name: Atom| -> (bool, bool) {
+            if let Some(source_obj) = source_object {
+                if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(source_obj) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        if prop.name == key_name {
+                            return (prop.optional, prop.readonly);
+                        }
+                    }
+                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) = self.interner.lookup(source_obj) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        if prop.name == key_name {
+                            return (prop.optional, prop.readonly);
+                        }
+                    }
+                }
+            }
+            // Default modifiers when we can't determine
+            (false, false)
         };
 
-        let readonly = match mapped.readonly_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => false,
+        let get_modifiers_for_key = |_key_type: TypeId, key_name: Atom| -> (bool, bool) {
+            let mut optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    // For homomorphic types with no explicit modifier, preserve original
+                    if is_homomorphic {
+                        get_property_modifiers(key_name).0
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            let readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    // For homomorphic types with no explicit modifier, preserve original
+                    if is_homomorphic {
+                        get_property_modifiers(key_name).1
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            (optional, readonly)
         };
 
         // Build the resulting object properties
@@ -1852,6 +1924,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let property_type =
                 self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
 
+            // Get modifiers for this specific key (preserves homomorphic behavior)
+            let (optional, readonly) = get_modifiers_for_key(key_literal, key_name);
+
             properties.push(PropertyInfo {
                 name: remapped_name,
                 type_id: property_type,
@@ -1873,13 +1948,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     subst.insert(mapped.type_param.name, key_type);
                     let mut value_type =
                         self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
-                    if optional {
+
+                    // Get modifiers for string index
+                    let (idx_optional, idx_readonly) = get_modifiers_for_key(key_type, self.interner.intern_string(""));
+                    if idx_optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
                     Some(IndexSignature {
                         key_type,
                         value_type,
-                        readonly,
+                        readonly: idx_readonly,
                     })
                 }
                 Ok(None) => None,
@@ -1900,13 +1978,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     subst.insert(mapped.type_param.name, key_type);
                     let mut value_type =
                         self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
-                    if optional {
+
+                    // Get modifiers for number index
+                    let (idx_optional, idx_readonly) = get_modifiers_for_key(key_type, self.interner.intern_string(""));
+                    if idx_optional {
                         value_type = self.interner.union2(value_type, TypeId::UNDEFINED);
                     }
                     Some(IndexSignature {
                         key_type,
                         value_type,
-                        readonly,
+                        readonly: idx_readonly,
                     })
                 }
                 Ok(None) => None,
@@ -1924,6 +2005,123 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             })
         } else {
             self.interner.object(properties)
+        }
+    }
+
+    /// Check if a mapped type is homomorphic (template is T[K] indexed access)
+    /// Homomorphic mapped types preserve modifiers from the source type
+    fn is_homomorphic_mapped_type(&self, mapped: &MappedType) -> bool {
+        // Check if template is an IndexAccess type
+        match self.interner.lookup(mapped.template) {
+            Some(TypeKey::IndexAccess(_obj, idx)) => {
+                // Check if the index is our type parameter
+                match self.interner.lookup(idx) {
+                    Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Extract the source object type from a homomorphic mapped type
+    /// For { [K in keyof T]: T[K] }, extract T
+    fn extract_source_from_homomorphic(&self, mapped: &MappedType) -> Option<TypeId> {
+        match self.interner.lookup(mapped.template) {
+            Some(TypeKey::IndexAccess(obj, _idx)) => {
+                // The object part of T[K] is the source type
+                Some(obj)
+            }
+            _ => None,
+        }
+    }
+
+    /// Evaluate a template literal type: `hello${T}world`
+    ///
+    /// Template literals evaluate to a union of all possible literal string combinations.
+    /// For example: `get${K}` where K = "a" | "b" evaluates to "geta" | "getb"
+    fn evaluate_template_literal(&self, spans: TemplateLiteralId) -> TypeId {
+        let span_list = self.interner.template_list(spans);
+
+        // Check if all spans are just text (no interpolation)
+        let all_text = span_list.iter().all(|span| matches!(span, TemplateSpan::Text(_)));
+
+        if all_text {
+            // Concatenate all text spans into a single string literal
+            let mut result = String::new();
+            for span in span_list.iter() {
+                if let TemplateSpan::Text(atom) = span {
+                    result.push_str(self.interner.resolve_atom_ref(*atom).as_ref());
+                }
+            }
+            return self.interner.literal_string(&result);
+        }
+
+        // Check if we can fully evaluate to a union of literals
+        let mut combinations = vec![String::new()];
+
+        for span in span_list.iter() {
+            match span {
+                TemplateSpan::Text(atom) => {
+                    let text = self.interner.resolve_atom_ref(*atom).to_string();
+                    for combo in &mut combinations {
+                        combo.push_str(&text);
+                    }
+                }
+                TemplateSpan::Type(type_id) => {
+                    let evaluated = self.evaluate(*type_id);
+
+                    // Check if this is a union of literal strings
+                    if let Some(TypeKey::Union(members)) = self.interner.lookup(evaluated) {
+                        let members = self.interner.type_list(members);
+                        let mut new_combinations = Vec::new();
+
+                        for combo in &combinations {
+                            for &member in members.iter() {
+                                if let Some(TypeKey::Literal(LiteralValue::String(atom))) =
+                                    self.interner.lookup(member)
+                                {
+                                    let text = self.interner.resolve_atom_ref(atom).to_string();
+                                    new_combinations.push(format!("{}{}", combo, text));
+                                } else {
+                                    // Can't fully evaluate - return template literal as-is
+                                    return self.interner.template_literal(span_list.to_vec());
+                                }
+                            }
+                        }
+                        combinations = new_combinations;
+                    } else if let Some(TypeKey::Literal(LiteralValue::String(atom))) =
+                        self.interner.lookup(evaluated)
+                    {
+                        let text = self.interner.resolve_atom_ref(atom).to_string();
+                        for combo in &mut combinations {
+                            combo.push_str(&text);
+                        }
+                    } else if evaluated == TypeId::STRING {
+                        // String type in template means any string - can't fully evaluate
+                        return self.interner.template_literal(span_list.to_vec());
+                    } else {
+                        // Can't evaluate this type - return template literal as-is
+                        return self.interner.template_literal(span_list.to_vec());
+                    }
+                }
+            }
+        }
+
+        // Convert combinations to union of literal strings
+        if combinations.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        let literal_types: Vec<TypeId> = combinations
+            .iter()
+            .map(|s| self.interner.literal_string(s))
+            .collect();
+
+        if literal_types.len() == 1 {
+            literal_types[0]
+        } else {
+            self.interner.union(literal_types)
         }
     }
 

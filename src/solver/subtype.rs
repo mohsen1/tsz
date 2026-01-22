@@ -968,6 +968,50 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
+        // Check if this is a homomorphic mapped type (template is T[K])
+        // If so, we should preserve the original property modifiers
+        let is_homomorphic = match self.interner.lookup(mapped.template) {
+            Some(TypeKey::IndexAccess(_obj, idx)) => {
+                match self.interner.lookup(idx) {
+                    Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+
+        // Extract source object type for homomorphic mapped types
+        let source_object = if is_homomorphic {
+            match self.interner.lookup(mapped.template) {
+                Some(TypeKey::IndexAccess(obj, _idx)) => Some(obj),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        // Helper to get original property modifiers
+        let get_original_modifiers = |key_name: crate::interner::Atom| -> (bool, bool) {
+            if let Some(source_obj) = source_object {
+                if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(source_obj) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        if prop.name == key_name {
+                            return (prop.optional, prop.readonly);
+                        }
+                    }
+                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) = self.interner.lookup(source_obj) {
+                    let shape = self.interner.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        if prop.name == key_name {
+                            return (prop.optional, prop.readonly);
+                        }
+                    }
+                }
+            }
+            (false, false)
+        };
+
         // Build properties by instantiating template for each key
         let mut properties = Vec::new();
         for key_name in keys {
@@ -982,8 +1026,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Evaluate the instantiated type to resolve conditionals like T[K] extends object ? ... : T[K]
             let property_type = evaluate_type(self.interner, instantiated_type);
 
-            let optional = matches!(mapped.optional_modifier, Some(MappedModifier::Add));
-            let readonly = matches!(mapped.readonly_modifier, Some(MappedModifier::Add));
+            // Determine modifiers based on mapped type configuration
+            let (original_optional, original_readonly) = get_original_modifiers(key_name);
+            let optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    // For homomorphic types, preserve original
+                    if is_homomorphic { original_optional } else { false }
+                }
+            };
+            let readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    // For homomorphic types, preserve original
+                    if is_homomorphic { original_readonly } else { false }
+                }
+            };
 
             properties.push(PropertyInfo {
                 name: key_name,
