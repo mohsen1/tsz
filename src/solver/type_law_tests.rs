@@ -10,11 +10,10 @@
 //! - **Top**: T ≤ any (any is the top type)
 //! - **Bottom**: never ≤ T (never is the bottom type)
 
-use crate::solver::{
-    FunctionShape, ParamInfo, PropertyInfo, SubtypeChecker,
-    TupleElement, TypeInterner,
-};
 use crate::solver::types::{SymbolRef, TypeId};
+use crate::solver::{
+    FunctionShape, ParamInfo, PropertyInfo, SubtypeChecker, TupleElement, TypeInterner,
+};
 
 // =============================================================================
 // Reflexivity Tests (T ≤ T)

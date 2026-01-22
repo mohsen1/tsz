@@ -17,7 +17,7 @@ use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-use tracing::{debug, span, warn, Level};
+use tracing::{Level, debug, span, warn};
 
 /// Lib file context for global type resolution.
 /// This mirrors the definition in checker::context to avoid circular dependencies.
@@ -493,7 +493,9 @@ impl BinderState {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<SymbolId> {
-        let _span = span!(Level::DEBUG, "resolve_import_with_reexports", %module_specifier, %export_name).entered();
+        let _span =
+            span!(Level::DEBUG, "resolve_import_with_reexports", %module_specifier, %export_name)
+                .entered();
 
         // First, check if it's a direct export from this module
         if let Some(module_table) = self.module_exports.get(module_specifier)
@@ -4352,9 +4354,7 @@ impl BinderState {
                 missing.len(),
                 missing
             );
-            warn!(
-                "[LIB_SYMBOL_WARNING] This may cause test failures due to unresolved symbols."
-            );
+            warn!("[LIB_SYMBOL_WARNING] This may cause test failures due to unresolved symbols.");
             warn!(
                 "[LIB_SYMBOL_WARNING] Ensure lib.d.ts is loaded via addLibFile() before binding."
             );

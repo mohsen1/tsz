@@ -29,7 +29,7 @@ use crate::scanner::SyntaxKind;
 use crate::solver::{ContextualTypeContext, TypeId, TypeInterner};
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
-use tracing::{debug, span, trace, Level};
+use tracing::{Level, debug, span, trace};
 
 // =============================================================================
 // CheckerState
@@ -486,9 +486,7 @@ impl<'a> CheckerState<'a> {
                                 );
                                 trace!(
                                     is_exported = symbol.is_exported,
-                                    export_ok,
-                                    is_class_member,
-                                    "[BIND_RESOLVE] Symbol status"
+                                    export_ok, is_class_member, "[BIND_RESOLVE] Symbol status"
                                 );
                             }
                             if export_ok && !is_class_member {
@@ -517,7 +515,9 @@ impl<'a> CheckerState<'a> {
                             }
                             return Some(sym_id);
                         } else if debug {
-                            trace!("[BIND_RESOLVE] SKIPPED: No symbol data and require_export or module scope");
+                            trace!(
+                                "[BIND_RESOLVE] SKIPPED: No symbol data and require_export or module scope"
+                            );
                         }
                     }
 
@@ -567,9 +567,9 @@ impl<'a> CheckerState<'a> {
                                                 Self::is_class_member_symbol(member_symbol.flags);
                                             if debug {
                                                 trace!(
-                                                    flags = format_args!("0x{:x}", member_symbol.flags),
-                                                    is_class_member,
-                                                    "[BIND_RESOLVE] Member flags"
+                                                    flags =
+                                                        format_args!("0x{:x}", member_symbol.flags),
+                                                    is_class_member, "[BIND_RESOLVE] Member flags"
                                                 );
                                             }
                                             if !is_class_member {
@@ -617,10 +617,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if debug {
-                trace!(
-                    scope_depth,
-                    "[BIND_RESOLVE] Exhausted scope chain"
-                );
+                trace!(scope_depth, "[BIND_RESOLVE] Exhausted scope chain");
             }
         } else if debug {
             trace!(idx = ?idx, "[BIND_RESOLVE] No enclosing scope found for node");
@@ -648,8 +645,7 @@ impl<'a> CheckerState<'a> {
                 if debug {
                     trace!(
                         flags = format_args!("0x{:x}", symbol.flags),
-                        is_class_member,
-                        "[BIND_RESOLVE] Symbol flags"
+                        is_class_member, "[BIND_RESOLVE] Symbol flags"
                     );
                 }
                 if !is_class_member {
@@ -708,8 +704,7 @@ impl<'a> CheckerState<'a> {
                     if debug {
                         trace!(
                             flags = format_args!("0x{:x}", symbol.flags),
-                            is_class_member,
-                            "[BIND_RESOLVE] Symbol flags"
+                            is_class_member, "[BIND_RESOLVE] Symbol flags"
                         );
                     }
                     // For lib binders, be more permissive with class members
