@@ -30,9 +30,15 @@ set -euo pipefail
 IMAGE_NAME="rust-wasm-base"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Generate unique volume name suffix based on worktree path to allow parallel runs
-WORKTREE_HASH=$(echo -n "$ROOT_DIR" | md5sum | cut -c1-8 2>/dev/null || echo -n "$ROOT_DIR" | md5 -q | cut -c1-8)
-TARGET_VOLUME="wasm-target-${WORKTREE_HASH}"
+# Use shared target volume for all worktrees to prevent duplicate build artifacts
+# When running with orchestrator, all workers share the same build cache
+# For standalone runs, we still use the shared volume for efficiency
+TARGET_VOLUME="tsz-target-shared"
+
+# Resource limits optimized for 14-core machine with 9 orchestrator workers
+# Each worker gets ~1.5 cores and ~4GB RAM
+DOCKER_MEMORY="4g"
+DOCKER_CPUS="2"
 
 # Parse arguments
 REBUILD=false
@@ -142,9 +148,9 @@ EOF
 fi
 
 # Run tests
-echo "🧪 Running tests in Docker sandbox (memory: 16g, cpus: 12)..."
+echo "🧪 Running tests in Docker sandbox (memory: $DOCKER_MEMORY, cpus: $DOCKER_CPUS)..."
 echo "   Use --no-sandbox to run tests directly without Docker"
-echo "   Target cache: $TARGET_VOLUME (worktree-specific)"
+echo "   Target cache: $TARGET_VOLUME (shared across all worktrees)"
 
 # We use a workaround: copy source to a writable location inside the container
 # This avoids the ro mount conflict with the target cache
@@ -161,14 +167,14 @@ fi
 
 if [ -n "$TEST_FILTER" ]; then
     echo "   Filter: $TEST_FILTER"
-    docker run --rm --memory="16g" --cpus="12" \
+    docker run --rm --memory="$DOCKER_MEMORY" --cpus="$DOCKER_CPUS" \
         -v "$ROOT_DIR:/source:ro" \
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
         -v "$TARGET_VOLUME":/app/target \
         "$IMAGE_NAME" bash -c "find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && cp -r /source/* /app/ && $NEXT_TEST_ARGS $TEST_FILTER"
 else
-    docker run --rm --memory="16g" --cpus="12" \
+    docker run --rm --memory="$DOCKER_MEMORY" --cpus="$DOCKER_CPUS" \
         -v "$ROOT_DIR:/source:ro" \
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
