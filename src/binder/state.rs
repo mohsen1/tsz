@@ -738,10 +738,32 @@ impl BinderState {
 
         self.sync_current_scope_to_persistent();
 
-        // Store file locals, preserving any existing lib symbols.
+        // Store file locals from the ROOT scope only, not nested namespaces/modules.
+        // This prevents namespace-local symbols from being accessible globally.
         // User symbols take precedence - only add lib symbols if no user symbol exists.
         let existing_file_locals = std::mem::take(&mut self.file_locals);
-        self.file_locals = std::mem::take(&mut self.current_scope);
+
+        // Only collect symbols from the root SourceFile scope, not nested namespaces/modules
+        let root_scope_symbols = if let Some(root_scope) = self.scopes.first() {
+            // The first scope is always the SourceFile scope
+            root_scope.table.clone()
+        } else {
+            // Fallback: empty scope if no scopes exist (shouldn't happen)
+            SymbolTable::new()
+        };
+
+        // Debug: log what's going into file_locals
+        if std::env::var("BIND_DEBUG").is_ok() {
+            eprintln!(
+                "[FILE_LOCALS] Root scope has {} symbols",
+                root_scope_symbols.len()
+            );
+            for (name, _) in root_scope_symbols.iter() {
+                eprintln!("[FILE_LOCALS]   - {}", name);
+            }
+        }
+
+        self.file_locals = root_scope_symbols;
 
         // Merge back any existing file locals (e.g., lib symbols) that were pre-populated.
         for (name, sym_id) in existing_file_locals.iter() {
