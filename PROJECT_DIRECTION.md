@@ -2,6 +2,10 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
+## Address code review comments
+
+See `docs/CODE_REVIEW_efd539a62.md` to find and address outstanding code review comments.q
+
 ## Strategy Shift: Solver Foundation First
 
 **We are prioritizing solver/checker completion over conformance parity.**
@@ -203,9 +207,10 @@ Pre-commit hooks are available to enforce code quality before committing:
 ```
 
 **Pre-commit hook checks:**
-1. `cargo fmt --check` - Ensures code is formatted
-2. `cargo clippy --all-targets -- -D warnings` - Catches linter warnings
-3. `cargo test --lib` - Runs unit tests
+1. `cargo fmt` - Applies code formatting
+2. `cargo clippy --fix` - Auto-fixes linter warnings (fails if unfixable)
+3. `cargo build --lib --bins --benches` - Checks for build warnings
+4. `cargo test --lib` - Runs unit tests (in Docker)
 
 **Fix formatting issues:**
 ```bash

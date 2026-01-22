@@ -68,3 +68,4 @@ Dockerfile.*
 .runaway-daemon.log
 
 .env
+logs/

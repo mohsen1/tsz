@@ -4201,8 +4201,10 @@ fn test_function_intrinsic_accepts_any_function() {
     });
 
     // Function intrinsic should accept any function
-    assert!(checker.is_assignable(simple_fn, TypeId::FUNCTION),
-            "Any function should be assignable to Function intrinsic");
+    assert!(
+        checker.is_assignable(simple_fn, TypeId::FUNCTION),
+        "Any function should be assignable to Function intrinsic"
+    );
 }
 
 #[test]
@@ -4212,20 +4214,18 @@ fn test_function_intrinsic_accepts_callable() {
 
     // Create a callable with multiple signatures
     let callable = interner.callable(CallableShape {
-        call_signatures: vec![
-            CallSignature {
-                type_params: Vec::new(),
-                params: vec![ParamInfo {
-                    name: None,
-                    type_id: TypeId::STRING,
-                    optional: false,
-                    rest: false,
-                }],
-                this_type: None,
-                return_type: TypeId::NUMBER,
-                type_predicate: None,
-            },
-        ],
+        call_signatures: vec![CallSignature {
+            type_params: Vec::new(),
+            params: vec![ParamInfo {
+                name: None,
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+        }],
         construct_signatures: Vec::new(),
         properties: Vec::new(),
         string_index: None,
@@ -4233,8 +4233,10 @@ fn test_function_intrinsic_accepts_callable() {
     });
 
     // Function intrinsic should accept callable types
-    assert!(checker.is_assignable(callable, TypeId::FUNCTION),
-            "Callable types should be assignable to Function intrinsic");
+    assert!(
+        checker.is_assignable(callable, TypeId::FUNCTION),
+        "Callable types should be assignable to Function intrinsic"
+    );
 }
 
 #[test]
@@ -4243,10 +4245,14 @@ fn test_function_intrinsic_rejects_non_callable() {
     let mut checker = CompatChecker::new(&interner);
 
     // Primitives are NOT callable
-    assert!(!checker.is_assignable(TypeId::STRING, TypeId::FUNCTION),
-            "String should NOT be assignable to Function intrinsic");
-    assert!(!checker.is_assignable(TypeId::NUMBER, TypeId::FUNCTION),
-            "Number should NOT be assignable to Function intrinsic");
+    assert!(
+        !checker.is_assignable(TypeId::STRING, TypeId::FUNCTION),
+        "String should NOT be assignable to Function intrinsic"
+    );
+    assert!(
+        !checker.is_assignable(TypeId::NUMBER, TypeId::FUNCTION),
+        "Number should NOT be assignable to Function intrinsic"
+    );
 
     // Objects are NOT callable (unless they have call signatures)
     let obj = interner.object(vec![PropertyInfo {
@@ -4257,8 +4263,10 @@ fn test_function_intrinsic_rejects_non_callable() {
         readonly: false,
         is_method: false,
     }]);
-    assert!(!checker.is_assignable(obj, TypeId::FUNCTION),
-            "Plain object should NOT be assignable to Function intrinsic");
+    assert!(
+        !checker.is_assignable(obj, TypeId::FUNCTION),
+        "Plain object should NOT be assignable to Function intrinsic"
+    );
 }
 
 #[test]
@@ -4298,8 +4306,10 @@ fn test_function_intrinsic_with_union_of_callables() {
 
     // Union of callables should be assignable to Function
     let union_fn = interner.union(vec![fn1, fn2]);
-    assert!(checker.is_assignable(union_fn, TypeId::FUNCTION),
-            "Union of callables should be assignable to Function intrinsic");
+    assert!(
+        checker.is_assignable(union_fn, TypeId::FUNCTION),
+        "Union of callables should be assignable to Function intrinsic"
+    );
 }
 
 #[test]
@@ -4324,8 +4334,10 @@ fn test_function_intrinsic_with_union_non_callable() {
 
     // Union of callable and non-callable should NOT be assignable to Function
     let mixed_union = interner.union(vec![fn1, TypeId::STRING]);
-    assert!(!checker.is_assignable(mixed_union, TypeId::FUNCTION),
-            "Mixed union (callable | non-callable) should NOT be assignable to Function");
+    assert!(
+        !checker.is_assignable(mixed_union, TypeId::FUNCTION),
+        "Mixed union (callable | non-callable) should NOT be assignable to Function"
+    );
 }
 
 // =============================================================================
@@ -4375,8 +4387,10 @@ fn test_union_intersection_distributivity_basic() {
     // A & C (should be compatible since both have 'name: string')
     let a_and_c = interner.intersection(vec![type_a, type_c]);
 
-    assert!(checker.is_assignable(intersection, a_and_c),
-            "(A | B) & C should distribute correctly");
+    assert!(
+        checker.is_assignable(intersection, a_and_c),
+        "(A | B) & C should distribute correctly"
+    );
 }
 
 #[test]
@@ -4420,8 +4434,10 @@ fn test_intersection_union_distributivity() {
     let intersection = interner.intersection(vec![type_a, union_bc]);
 
     // (A & B) is empty (incompatible), so intersection should simplify
-    assert!(checker.is_assignable(type_a, intersection),
-            "A & (B | C) should distribute to (A & B) | (A & C)");
+    assert!(
+        checker.is_assignable(type_a, intersection),
+        "A & (B | C) should distribute to (A & B) | (A & C)"
+    );
 }
 
 #[test]
@@ -4433,8 +4449,10 @@ fn test_distributivity_with_primitives() {
     let str_num = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let result = interner.intersection(vec![str_num, TypeId::STRING]);
 
-    assert!(checker.is_assignable(TypeId::STRING, result),
-            "(string | number) & string should be string");
+    assert!(
+        checker.is_assignable(TypeId::STRING, result),
+        "(string | number) & string should be string"
+    );
 }
 
 // =============================================================================
@@ -4485,8 +4503,10 @@ fn test_weak_type_detection_with_all_strict_options() {
         is_method: false,
     }]);
 
-    assert!(!checker.is_assignable(source, weak_type),
-            "Weak type detection should work with all strict options enabled");
+    assert!(
+        !checker.is_assignable(source, weak_type),
+        "Weak type detection should work with all strict options enabled"
+    );
 }
 
 #[test]
@@ -4528,8 +4548,10 @@ fn test_weak_union_detection_improved() {
         is_method: false,
     }]);
 
-    assert!(!checker.is_assignable(source, weak_union),
-            "Weak union detection should reject source with no common properties");
+    assert!(
+        !checker.is_assignable(source, weak_union),
+        "Weak union detection should reject source with no common properties"
+    );
 }
 
 // =============================================================================
@@ -4582,8 +4604,7 @@ fn test_all_compiler_options_combinations() {
         let expected = !exact; // When exact=true, should NOT be assignable
         let result = checker.is_assignable(explicit_union, optional_number);
 
-        assert_eq!(result, expected,
-                   "Failed for: {} (exact={})", desc, exact);
+        assert_eq!(result, expected, "Failed for: {} (exact={})", desc, exact);
     }
 }
 
@@ -4627,13 +4648,17 @@ fn test_strict_function_types_affects_methods_independently() {
     });
 
     // Default: bivariant
-    assert!(checker.is_assignable(fn_dog, fn_animal),
-            "Functions should be bivariant by default");
+    assert!(
+        checker.is_assignable(fn_dog, fn_animal),
+        "Functions should be bivariant by default"
+    );
 
     // Enable strict function types
     checker.set_strict_function_types(true);
-    assert!(!checker.is_assignable(fn_dog, fn_animal),
-            "Functions should be contravariant with strictFunctionTypes");
+    assert!(
+        !checker.is_assignable(fn_dog, fn_animal),
+        "Functions should be contravariant with strictFunctionTypes"
+    );
 
     // Methods should remain bivariant even with strictFunctionTypes
     let method_animal = interner.function(FunctionShape {
@@ -4666,8 +4691,10 @@ fn test_strict_function_types_affects_methods_independently() {
         is_method: true, // This is a method
     });
 
-    assert!(checker.is_assignable(method_dog, method_animal),
-            "Methods should remain bivariant even with strictFunctionTypes");
+    assert!(
+        checker.is_assignable(method_dog, method_animal),
+        "Methods should remain bivariant even with strictFunctionTypes"
+    );
 }
 
 #[test]
@@ -4682,8 +4709,10 @@ fn test_no_unchecked_indexed_access_with_nested_types() {
     checker.set_no_unchecked_indexed_access(true);
 
     // String should NOT be assignable to (string | undefined)
-    assert!(!checker.is_assignable(TypeId::STRING, nested_array),
-            "With noUncheckedIndexedAccess, array indexing includes undefined");
+    assert!(
+        !checker.is_assignable(TypeId::STRING, nested_array),
+        "With noUncheckedIndexedAccess, array indexing includes undefined"
+    );
 }
 
 // =============================================================================
@@ -4734,10 +4763,14 @@ fn test_keyof_union_contravariance() {
     let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
 
     // keyof (A | B) should be a union of both keys
-    assert!(checker.is_assignable(name_literal, keyof_union),
-            "keyof (A | B) should include 'name'");
-    assert!(checker.is_assignable(age_literal, keyof_union),
-            "keyof (A | B) should include 'age'");
+    assert!(
+        checker.is_assignable(name_literal, keyof_union),
+        "keyof (A | B) should include 'name'"
+    );
+    assert!(
+        checker.is_assignable(age_literal, keyof_union),
+        "keyof (A | B) should include 'age'"
+    );
 }
 
 #[test]
@@ -4787,12 +4820,16 @@ fn test_keyof_intersection_distributivity() {
     let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
 
     // keyof (A & B) should include 'name' (common to both)
-    assert!(checker.is_assignable(name_literal, keyof_intersection),
-            "keyof (A & B) should include 'name'");
+    assert!(
+        checker.is_assignable(name_literal, keyof_intersection),
+        "keyof (A & B) should include 'name'"
+    );
 
     // keyof (A & B) should include 'age' (from B)
-    assert!(checker.is_assignable(age_literal, keyof_intersection),
-            "keyof (A & B) should include 'age'");
+    assert!(
+        checker.is_assignable(age_literal, keyof_intersection),
+        "keyof (A & B) should include 'age'"
+    );
 }
 
 #[test]
@@ -4851,19 +4888,26 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
 
     let name_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(name)));
     let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
-    let email_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(email)));
+    let email_literal =
+        interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(email)));
 
     // keyof (A | B) should include 'name' (common to both)
-    assert!(checker.is_assignable(name_literal, keyof_union),
-            "keyof (A | B) should include common property 'name'");
+    assert!(
+        checker.is_assignable(name_literal, keyof_union),
+        "keyof (A | B) should include common property 'name'"
+    );
 
     // keyof (A | B) should NOT include 'age' (only in A)
-    assert!(!checker.is_assignable(age_literal, keyof_union),
-            "keyof (A | B) should NOT include 'age' (only in A)");
+    assert!(
+        !checker.is_assignable(age_literal, keyof_union),
+        "keyof (A | B) should NOT include 'age' (only in A)"
+    );
 
     // keyof (A | B) should NOT include 'email' (only in B)
-    assert!(!checker.is_assignable(email_literal, keyof_union),
-            "keyof (A | B) should NOT include 'email' (only in B)");
+    assert!(
+        !checker.is_assignable(email_literal, keyof_union),
+        "keyof (A | B) should NOT include 'email' (only in B)"
+    );
 }
 
 // =============================================================================
@@ -4928,8 +4972,10 @@ fn test_best_common_type_with_supertype() {
     let bct = ctx.best_common_type(&types);
 
     // Animal should be assignable to BCT
-    assert!(ctx.is_subtype_of(animal, bct),
-            "Animal should be subtype of BCT");
+    assert!(
+        ctx.is_subtype_of(animal, bct),
+        "Animal should be subtype of BCT"
+    );
 }
 
 #[test]
@@ -4954,5 +5000,9 @@ fn test_best_common_type_single_element() {
     let types = vec![TypeId::STRING];
     let bct = ctx.best_common_type(&types);
 
-    assert_eq!(bct, TypeId::STRING, "BCT of single element should be that element");
+    assert_eq!(
+        bct,
+        TypeId::STRING,
+        "BCT of single element should be that element"
+    );
 }
