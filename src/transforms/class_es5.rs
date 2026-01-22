@@ -31,8 +31,8 @@
 //! - Uses `IRPrinter` to emit IR nodes as JavaScript strings
 //! - Maintains the same public API as the original implementation for backward compatibility
 
-use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
+use crate::parser::node::NodeArena;
 use crate::source_map::Mapping;
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::ir_printer::IRPrinter;
@@ -110,7 +110,8 @@ impl<'a> ClassES5Emitter<'a> {
 
     fn emit_class_internal(&mut self, class_idx: NodeIndex, override_name: Option<&str>) -> String {
         let ir = if let Some(name) = override_name {
-            self.transformer.transform_class_to_ir_with_name(class_idx, Some(name))
+            self.transformer
+                .transform_class_to_ir_with_name(class_idx, Some(name))
         } else {
             self.transformer.transform_class_to_ir(class_idx)
         };
@@ -158,80 +159,142 @@ mod tests {
     #[test]
     fn test_simple_class() {
         let output = emit_class("class Point { }");
-        assert!(output.contains("var Point = /** @class */ (function ()"), "Should have class IIFE: {}", output);
-        assert!(output.contains("function Point()"), "Should have constructor: {}", output);
-        assert!(output.contains("return Point;"), "Should return class name: {}", output);
+        assert!(
+            output.contains("var Point = /** @class */ (function ()"),
+            "Should have class IIFE: {}",
+            output
+        );
+        assert!(
+            output.contains("function Point()"),
+            "Should have constructor: {}",
+            output
+        );
+        assert!(
+            output.contains("return Point;"),
+            "Should return class name: {}",
+            output
+        );
     }
 
     #[test]
     fn test_class_with_constructor() {
-        let output = emit_class(r#"class Point {
+        let output = emit_class(
+            r#"class Point {
             constructor(x, y) {
                 this.x = x;
                 this.y = y;
             }
-        }"#);
-        assert!(output.contains("function Point(x, y)"), "Should have constructor with params: {}", output);
+        }"#,
+        );
+        assert!(
+            output.contains("function Point(x, y)"),
+            "Should have constructor with params: {}",
+            output
+        );
     }
 
     #[test]
     fn test_class_with_extends() {
-        let output = emit_class(r#"class Dog extends Animal {
+        let output = emit_class(
+            r#"class Dog extends Animal {
             constructor(name) {
                 super(name);
             }
-        }"#);
-        assert!(output.contains("(function (_super)"), "Should have _super parameter: {}", output);
-        assert!(output.contains("__extends(Dog, _super)"), "Should have extends helper: {}", output);
-        assert!(output.contains("_super.call(this"), "Should have super.call pattern: {}", output);
+        }"#,
+        );
+        assert!(
+            output.contains("(function (_super)"),
+            "Should have _super parameter: {}",
+            output
+        );
+        assert!(
+            output.contains("__extends(Dog, _super)"),
+            "Should have extends helper: {}",
+            output
+        );
+        assert!(
+            output.contains("_super.call(this"),
+            "Should have super.call pattern: {}",
+            output
+        );
     }
 
     #[test]
     fn test_class_with_method() {
-        let output = emit_class(r#"class Greeter {
+        let output = emit_class(
+            r#"class Greeter {
             greet() {
                 console.log("Hello");
             }
-        }"#);
-        assert!(output.contains("Greeter.prototype.greet = function ()"), "Should have prototype method: {}", output);
+        }"#,
+        );
+        assert!(
+            output.contains("Greeter.prototype.greet = function ()"),
+            "Should have prototype method: {}",
+            output
+        );
     }
 
     #[test]
     fn test_class_with_static_method() {
-        let output = emit_class(r#"class Counter {
+        let output = emit_class(
+            r#"class Counter {
             static count() {
                 return 0;
             }
-        }"#);
-        assert!(output.contains("Counter.count = function ()"), "Should have static method: {}", output);
+        }"#,
+        );
+        assert!(
+            output.contains("Counter.count = function ()"),
+            "Should have static method: {}",
+            output
+        );
     }
 
     #[test]
     fn test_class_with_private_field() {
-        let output = emit_class(r#"class Container {
+        let output = emit_class(
+            r#"class Container {
             #value = 42;
-        }"#);
-        assert!(output.contains("var _Container_value"), "Should have WeakMap declaration: {}", output);
-        assert!(output.contains("_Container_value.set("), "Should have WeakMap.set call: {}", output);
+        }"#,
+        );
+        assert!(
+            output.contains("var _Container_value"),
+            "Should have WeakMap declaration: {}",
+            output
+        );
+        assert!(
+            output.contains("_Container_value.set("),
+            "Should have WeakMap.set call: {}",
+            output
+        );
     }
 
     #[test]
     fn test_class_with_getter_setter() {
-        let output = emit_class(r#"class Person {
+        let output = emit_class(
+            r#"class Person {
             _name: string = "";
             get name() { return this._name; }
             set name(value: string) { this._name = value; }
-        }"#);
-        assert!(output.contains("Object.defineProperty"), "Should have Object.defineProperty: {}", output);
+        }"#,
+        );
+        assert!(
+            output.contains("Object.defineProperty"),
+            "Should have Object.defineProperty: {}",
+            output
+        );
         assert!(output.contains("get:"), "Should have getter: {}", output);
         assert!(output.contains("set:"), "Should have setter: {}", output);
     }
 
     #[test]
     fn test_declare_class_ignored() {
-        let output = emit_class(r#"declare class Foo {
+        let output = emit_class(
+            r#"declare class Foo {
             bar(): void;
-        }"#);
+        }"#,
+        );
         assert!(output.is_empty(), "Declare class should produce no output");
     }
 }

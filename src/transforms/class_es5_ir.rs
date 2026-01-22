@@ -868,7 +868,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Async method: wrap body in __awaiter call
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
-                        generator_body: Box::new(IRNode::Block(self.convert_block_body(method_data.body))),
+                        generator_body: Box::new(IRNode::Block(
+                            self.convert_block_body(method_data.body),
+                        )),
                     }]
                 } else {
                     self.convert_block_body(method_data.body)
@@ -1059,7 +1061,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Async method: wrap body in __awaiter call
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
-                        generator_body: Box::new(IRNode::Block(self.convert_block_body(method_data.body))),
+                        generator_body: Box::new(IRNode::Block(
+                            self.convert_block_body(method_data.body),
+                        )),
                     }]
                 } else {
                     self.convert_block_body(method_data.body)
@@ -1107,12 +1111,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         PropertyNameIR::NumericLiteral(n) => {
                             IRNode::elem(IRNode::id(&self.class_name), IRNode::number(n))
                         }
-                        PropertyNameIR::Computed(expr_idx) => {
-                            IRNode::elem(
-                                IRNode::id(&self.class_name),
-                                self.convert_expression(*expr_idx),
-                            )
-                        }
+                        PropertyNameIR::Computed(expr_idx) => IRNode::elem(
+                            IRNode::id(&self.class_name),
+                            self.convert_expression(*expr_idx),
+                        ),
                     };
 
                     // ClassName.prop = value;
@@ -1199,7 +1201,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(name_node) {
-                return IRMethodName::Computed(Box::new(self.convert_expression(computed.expression)));
+                return IRMethodName::Computed(Box::new(
+                    self.convert_expression(computed.expression),
+                ));
             }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.arena.get_identifier(name_node) {
@@ -1315,7 +1319,9 @@ impl<'a> AstToIr<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::BLOCK => self.convert_block(idx),
-            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => self.convert_expression_statement(idx),
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                self.convert_expression_statement(idx)
+            }
             k if k == syntax_kind_ext::RETURN_STATEMENT => self.convert_return_statement(idx),
             k if k == syntax_kind_ext::IF_STATEMENT => self.convert_if_statement(idx),
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => self.convert_variable_statement(idx),
@@ -1329,7 +1335,9 @@ impl<'a> AstToIr<'a> {
             k if k == syntax_kind_ext::CONTINUE_STATEMENT => self.convert_continue_statement(idx),
             k if k == syntax_kind_ext::LABELED_STATEMENT => self.convert_labeled_statement(idx),
             k if k == syntax_kind_ext::EMPTY_STATEMENT => IRNode::EmptyStatement,
-            k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
                 self.convert_for_in_of_statement(idx)
             }
             _ => IRNode::ASTRef(idx), // Fallback for unsupported statements
@@ -1354,19 +1362,27 @@ impl<'a> AstToIr<'a> {
             k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.convert_call_expression(idx),
             k if k == syntax_kind_ext::NEW_EXPRESSION => self.convert_new_expression(idx),
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self.convert_property_access(idx),
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self.convert_element_access(idx),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.convert_property_access(idx)
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                self.convert_element_access(idx)
+            }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => self.convert_binary_expression(idx),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self.convert_prefix_unary(idx),
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => self.convert_postfix_unary(idx),
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self.convert_parenthesized(idx),
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => self.convert_conditional(idx),
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self.convert_array_literal(idx),
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self.convert_object_literal(idx),
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.convert_object_literal(idx)
+            }
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.convert_arrow_function(idx),
             k if k == syntax_kind_ext::SPREAD_ELEMENT => self.convert_spread_element(idx),
-            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
                 self.convert_template_literal(idx)
             }
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => self.convert_await_expression(idx),
@@ -1711,7 +1727,10 @@ impl<'a> AstToIr<'a> {
         if let Some(call) = self.arena.get_call_expr(node) {
             let callee = self.convert_expression(call.expression);
             let args = if let Some(ref args) = call.arguments {
-                args.nodes.iter().map(|&a| self.convert_expression(a)).collect()
+                args.nodes
+                    .iter()
+                    .map(|&a| self.convert_expression(a))
+                    .collect()
             } else {
                 vec![]
             };
@@ -1730,7 +1749,10 @@ impl<'a> AstToIr<'a> {
         if let Some(call_data) = self.arena.get_call_expr(node) {
             let callee = self.convert_expression(call_data.expression);
             let args = if let Some(ref args) = call_data.arguments {
-                args.nodes.iter().map(|&a| self.convert_expression(a)).collect()
+                args.nodes
+                    .iter()
+                    .map(|&a| self.convert_expression(a))
+                    .collect()
             } else {
                 vec![]
             };
@@ -1831,7 +1853,9 @@ impl<'a> AstToIr<'a> {
             k if k == SyntaxKind::CaretToken as u16 => "^".to_string(),
             k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<".to_string(),
             k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>".to_string(),
-            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>".to_string(),
+            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
+                ">>>".to_string()
+            }
             k if k == SyntaxKind::InKeyword as u16 => "in".to_string(),
             k if k == SyntaxKind::InstanceOfKeyword as u16 => "instanceof".to_string(),
             k if k == SyntaxKind::CommaToken as u16 => ",".to_string(),
