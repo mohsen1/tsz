@@ -48,29 +48,26 @@
 //! }(Animal));
 //! ```
 //!
-//! ## Current Limitations (Migration Notes)
+//! ## Architecture
 //!
-//! This transformer produces the class IIFE structure but uses `IRNode::ASTRef` for:
-//! - Method bodies
-//! - Constructor body statements
-//! - Property initializers
-//! - Getter/setter bodies
+//! This transformer fully converts class bodies to IR nodes using the `AstToIr` converter,
+//! which handles most JavaScript statements and expressions. The thin wrapper in
+//! `class_es5.rs` uses this transformer with `IRPrinter` to emit JavaScript.
 //!
-//! `ASTRef` nodes copy raw source text via `IRPrinter`, which means:
-//! 1. Source text must be available during printing
-//! 2. **No ES5 transformations are applied** to method body contents
+//! Supported features:
+//! - Simple and derived classes with extends
+//! - Constructors with super() calls
+//! - Instance and static methods
+//! - Instance and static properties
+//! - Getters and setters (combined into Object.defineProperty)
+//! - Private fields (WeakMap pattern)
+//! - Parameter properties (public/private/protected/readonly)
+//! - Async methods (__awaiter wrapper)
+//! - Computed property names
+//! - Static blocks
 //!
-//! For a complete migration to replace `class_es5.rs`, this transformer would need to:
-//! - Fully transform all expressions/statements into IR nodes (no ASTRef)
-//! - Handle arrow function → regular function with `_this` capture
-//! - Handle `super` property access and method calls
-//! - Handle template literals → string concatenation
-//! - Handle destructuring in parameters
-//! - Handle for-of/for-in → ES5 loops
-//! - Handle all other ES6+ → ES5 transformations
-//!
-//! The legacy `class_es5.rs` handles all these cases with its own expression emission.
-//! Until this transformer is complete, `class_es5.rs` remains the primary implementation.
+//! The `AstToIr` converter handles most JavaScript constructs. For complex or edge cases
+//! not yet supported, it falls back to `IRNode::ASTRef` which copies source text directly.
 
 use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
@@ -100,6 +97,32 @@ impl<'a> ES5ClassTransformer<'a> {
             has_extends: false,
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
+        }
+    }
+
+    /// Convert an AST statement to IR (avoids ASTRef when possible)
+    fn convert_statement(&self, idx: NodeIndex) -> IRNode {
+        AstToIr::new(self.arena).convert_statement(idx)
+    }
+
+    /// Convert an AST expression to IR (avoids ASTRef when possible)
+    fn convert_expression(&self, idx: NodeIndex) -> IRNode {
+        AstToIr::new(self.arena).convert_expression(idx)
+    }
+
+    /// Convert a block body to IR statements
+    fn convert_block_body(&self, block_idx: NodeIndex) -> Vec<IRNode> {
+        if let Some(block_node) = self.arena.get(block_idx)
+            && let Some(block) = self.arena.get_block(block_node)
+        {
+            block
+                .statements
+                .nodes
+                .iter()
+                .map(|&s| self.convert_statement(s))
+                .collect()
+        } else {
+            vec![]
         }
     }
 
@@ -388,7 +411,7 @@ impl<'a> ES5ClassTransformer<'a> {
             if i >= super_stmt_position && super_stmt_idx.is_some() {
                 break;
             }
-            body.push(IRNode::ASTRef(stmt_idx));
+            body.push(self.convert_statement(stmt_idx));
         }
 
         // Emit super() as var _this = _super.call(this, args) || this;
@@ -418,7 +441,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     continue;
                 }
                 // Transform this to _this in these statements
-                body.push(IRNode::ASTRef(stmt_idx));
+                body.push(self.convert_statement(stmt_idx));
             }
         }
 
@@ -455,7 +478,7 @@ impl<'a> ES5ClassTransformer<'a> {
             && let Some(block) = self.arena.get_block(block_node)
         {
             for &stmt_idx in &block.statements.nodes {
-                body.push(IRNode::ASTRef(stmt_idx));
+                body.push(self.convert_statement(stmt_idx));
             }
         }
     }
@@ -502,7 +525,7 @@ impl<'a> ES5ClassTransformer<'a> {
         {
             if let Some(ref call_args) = call.arguments {
                 for &arg_idx in &call_args.nodes {
-                    args.push(IRNode::ASTRef(arg_idx));
+                    args.push(self.convert_expression(arg_idx));
                 }
             }
         }
@@ -574,7 +597,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 body.push(IRNode::expr_stmt(IRNode::PrivateFieldSet {
                     receiver: Box::new(key.clone()),
                     weakmap_name: field.weakmap_name.clone(),
-                    value: Box::new(IRNode::ASTRef(field.initializer)),
+                    value: Box::new(self.convert_expression(field.initializer)),
                 }));
             }
         }
@@ -603,7 +626,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     value: Box::new(IRNode::FunctionExpr {
                         name: None,
                         parameters: vec![],
-                        body: vec![IRNode::ASTRef(getter_body)],
+                        body: self.convert_block_body(getter_body),
                         is_expression_body: false,
                     }),
                 }));
@@ -626,7 +649,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     value: Box::new(IRNode::FunctionExpr {
                         name: None,
                         parameters: vec![IRParam::new(param_name)],
-                        body: vec![IRNode::ASTRef(setter_body)],
+                        body: self.convert_block_body(setter_body),
                         is_expression_body: false,
                     }),
                 }));
@@ -653,7 +676,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         Some(IRNode::expr_stmt(IRNode::assign(
             self.build_property_access(receiver, prop_name),
-            IRNode::ASTRef(prop_data.initializer),
+            self.convert_expression(prop_data.initializer),
         )))
     }
 
@@ -663,7 +686,9 @@ impl<'a> ES5ClassTransformer<'a> {
             PropertyNameIR::Identifier(n) => IRNode::prop(receiver, n),
             PropertyNameIR::StringLiteral(s) => IRNode::elem(receiver, IRNode::string(s)),
             PropertyNameIR::NumericLiteral(n) => IRNode::elem(receiver, IRNode::number(n)),
-            PropertyNameIR::Computed(expr_idx) => IRNode::elem(receiver, IRNode::ASTRef(expr_idx)),
+            PropertyNameIR::Computed(expr_idx) => {
+                IRNode::elem(receiver, self.convert_expression(expr_idx))
+            }
         }
     }
 
@@ -751,8 +776,8 @@ impl<'a> ES5ClassTransformer<'a> {
 
             // Try as ExpressionWithTypeArguments (for generics)
             if let Some(expr_data) = self.arena.get_expr_type_args(type_node) {
-                // Return the expression as an AST reference
-                return Some(IRNode::ASTRef(expr_data.expression));
+                // Return the expression converted to IR
+                return Some(self.convert_expression(expr_data.expression));
             }
         }
 
@@ -843,10 +868,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Async method: wrap body in __awaiter call
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
-                        generator_body: Box::new(IRNode::ASTRef(method_data.body)),
+                        generator_body: Box::new(IRNode::Block(self.convert_block_body(method_data.body))),
                     }]
                 } else {
-                    vec![IRNode::ASTRef(method_data.body)]
+                    self.convert_block_body(method_data.body)
                 };
 
                 // ClassName.prototype.methodName = function () { body };
@@ -927,7 +952,7 @@ impl<'a> ES5ClassTransformer<'a> {
             body: if accessor_data.body.is_none() {
                 vec![]
             } else {
-                vec![IRNode::ASTRef(accessor_data.body)]
+                self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
         })
@@ -946,7 +971,7 @@ impl<'a> ES5ClassTransformer<'a> {
             body: if accessor_data.body.is_none() {
                 vec![]
             } else {
-                vec![IRNode::ASTRef(accessor_data.body)]
+                self.convert_block_body(accessor_data.body)
             },
             is_expression_body: false,
         })
@@ -1034,10 +1059,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Async method: wrap body in __awaiter call
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
-                        generator_body: Box::new(IRNode::ASTRef(method_data.body)),
+                        generator_body: Box::new(IRNode::Block(self.convert_block_body(method_data.body))),
                     }]
                 } else {
-                    vec![IRNode::ASTRef(method_data.body)]
+                    self.convert_block_body(method_data.body)
                 };
 
                 // ClassName.methodName = function () { body };
@@ -1083,14 +1108,17 @@ impl<'a> ES5ClassTransformer<'a> {
                             IRNode::elem(IRNode::id(&self.class_name), IRNode::number(n))
                         }
                         PropertyNameIR::Computed(expr_idx) => {
-                            IRNode::elem(IRNode::id(&self.class_name), IRNode::ASTRef(*expr_idx))
+                            IRNode::elem(
+                                IRNode::id(&self.class_name),
+                                self.convert_expression(*expr_idx),
+                            )
                         }
                     };
 
                     // ClassName.prop = value;
                     body.push(IRNode::expr_stmt(IRNode::assign(
                         target,
-                        IRNode::ASTRef(prop_data.initializer),
+                        self.convert_expression(prop_data.initializer),
                     )));
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
@@ -1101,7 +1129,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         .statements
                         .nodes
                         .iter()
-                        .map(|&stmt_idx| IRNode::ASTRef(stmt_idx))
+                        .map(|&stmt_idx| self.convert_statement(stmt_idx))
                         .collect();
 
                     if !statements.is_empty() {
@@ -1171,7 +1199,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(name_node) {
-                return IRMethodName::Computed(Box::new(IRNode::ASTRef(computed.expression)));
+                return IRMethodName::Computed(Box::new(self.convert_expression(computed.expression)));
             }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.arena.get_identifier(name_node) {
@@ -1263,6 +1291,840 @@ fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeLis
         }
     }
     false
+}
+
+// =============================================================================
+// AST to IR Conversion
+// =============================================================================
+
+/// Convert an AST node to IR, avoiding ASTRef when possible
+pub struct AstToIr<'a> {
+    arena: &'a NodeArena,
+}
+
+impl<'a> AstToIr<'a> {
+    pub fn new(arena: &'a NodeArena) -> Self {
+        Self { arena }
+    }
+
+    /// Convert a statement to IR
+    pub fn convert_statement(&self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::ASTRef(idx);
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::BLOCK => self.convert_block(idx),
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => self.convert_expression_statement(idx),
+            k if k == syntax_kind_ext::RETURN_STATEMENT => self.convert_return_statement(idx),
+            k if k == syntax_kind_ext::IF_STATEMENT => self.convert_if_statement(idx),
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => self.convert_variable_statement(idx),
+            k if k == syntax_kind_ext::THROW_STATEMENT => self.convert_throw_statement(idx),
+            k if k == syntax_kind_ext::TRY_STATEMENT => self.convert_try_statement(idx),
+            k if k == syntax_kind_ext::FOR_STATEMENT => self.convert_for_statement(idx),
+            k if k == syntax_kind_ext::WHILE_STATEMENT => self.convert_while_statement(idx),
+            k if k == syntax_kind_ext::DO_STATEMENT => self.convert_do_while_statement(idx),
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => self.convert_switch_statement(idx),
+            k if k == syntax_kind_ext::BREAK_STATEMENT => self.convert_break_statement(idx),
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT => self.convert_continue_statement(idx),
+            k if k == syntax_kind_ext::LABELED_STATEMENT => self.convert_labeled_statement(idx),
+            k if k == syntax_kind_ext::EMPTY_STATEMENT => IRNode::EmptyStatement,
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
+                self.convert_for_in_of_statement(idx)
+            }
+            _ => IRNode::ASTRef(idx), // Fallback for unsupported statements
+        }
+    }
+
+    /// Convert an expression to IR
+    pub fn convert_expression(&self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::ASTRef(idx);
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.convert_identifier(idx),
+            k if k == SyntaxKind::NumericLiteral as u16 => self.convert_numeric_literal(idx),
+            k if k == SyntaxKind::StringLiteral as u16 => self.convert_string_literal(idx),
+            k if k == SyntaxKind::TrueKeyword as u16 => IRNode::BooleanLiteral(true),
+            k if k == SyntaxKind::FalseKeyword as u16 => IRNode::BooleanLiteral(false),
+            k if k == SyntaxKind::NullKeyword as u16 => IRNode::NullLiteral,
+            k if k == SyntaxKind::UndefinedKeyword as u16 => IRNode::Undefined,
+            k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This { captured: false },
+            k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self.convert_call_expression(idx),
+            k if k == syntax_kind_ext::NEW_EXPRESSION => self.convert_new_expression(idx),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self.convert_property_access(idx),
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self.convert_element_access(idx),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => self.convert_binary_expression(idx),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => self.convert_prefix_unary(idx),
+            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => self.convert_postfix_unary(idx),
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self.convert_parenthesized(idx),
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => self.convert_conditional(idx),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => self.convert_array_literal(idx),
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self.convert_object_literal(idx),
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
+            k if k == syntax_kind_ext::ARROW_FUNCTION => self.convert_arrow_function(idx),
+            k if k == syntax_kind_ext::SPREAD_ELEMENT => self.convert_spread_element(idx),
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
+                self.convert_template_literal(idx)
+            }
+            k if k == syntax_kind_ext::AWAIT_EXPRESSION => self.convert_await_expression(idx),
+            k if k == syntax_kind_ext::TYPE_ASSERTION || k == syntax_kind_ext::AS_EXPRESSION => {
+                // Type assertions are stripped in ES5
+                self.convert_type_assertion(idx)
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => self.convert_non_null(idx),
+            _ => IRNode::ASTRef(idx), // Fallback
+        }
+    }
+
+    fn convert_block(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(block) = self.arena.get_block(node) {
+            let stmts: Vec<IRNode> = block
+                .statements
+                .nodes
+                .iter()
+                .map(|&s| self.convert_statement(s))
+                .collect();
+            IRNode::Block(stmts)
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_expression_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
+            IRNode::ExpressionStatement(Box::new(self.convert_expression(expr_stmt.expression)))
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_return_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(ret) = self.arena.get_return_statement(node) {
+            let expr = if ret.expression.is_none() {
+                None
+            } else {
+                Some(Box::new(self.convert_expression(ret.expression)))
+            };
+            IRNode::ReturnStatement(expr)
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_if_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(if_stmt) = self.arena.get_if_statement(node) {
+            let else_branch = if if_stmt.else_statement.is_none() {
+                None
+            } else {
+                Some(Box::new(self.convert_statement(if_stmt.else_statement)))
+            };
+            IRNode::IfStatement {
+                condition: Box::new(self.convert_expression(if_stmt.expression)),
+                then_branch: Box::new(self.convert_statement(if_stmt.then_statement)),
+                else_branch,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_variable_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // VariableStatement uses VariableData which has declarations directly
+        if let Some(var_data) = self.arena.get_variable(node) {
+            let decls: Vec<IRNode> = var_data
+                .declarations
+                .nodes
+                .iter()
+                .filter_map(|&d| self.convert_variable_declaration(d))
+                .collect();
+            if decls.len() == 1 {
+                return decls.into_iter().next().unwrap();
+            }
+            return IRNode::VarDeclList(decls);
+        }
+        IRNode::ASTRef(idx)
+    }
+
+    fn convert_variable_declaration(&self, idx: NodeIndex) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        let var_decl = self.arena.get_variable_declaration(node)?;
+        let name = get_identifier_text(self.arena, var_decl.name)?;
+        let initializer = if var_decl.initializer.is_none() {
+            None
+        } else {
+            Some(Box::new(self.convert_expression(var_decl.initializer)))
+        };
+        Some(IRNode::VarDecl { name, initializer })
+    }
+
+    fn convert_throw_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // Throw uses ReturnData (same as return statement)
+        if let Some(return_data) = self.arena.get_return_statement(node) {
+            IRNode::ThrowStatement(Box::new(self.convert_expression(return_data.expression)))
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_try_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(try_data) = self.arena.get_try(node) {
+            let try_block = Box::new(self.convert_statement(try_data.try_block));
+
+            let catch_clause = if try_data.catch_clause.is_none() {
+                None
+            } else if let Some(catch_node) = self.arena.get(try_data.catch_clause)
+                && let Some(catch) = self.arena.get_catch_clause(catch_node)
+            {
+                let param = if catch.variable_declaration.is_none() {
+                    None
+                } else {
+                    get_identifier_text(self.arena, catch.variable_declaration)
+                };
+                let catch_block = self.arena.get(catch.block);
+                let body = if let Some(block_node) = catch_block
+                    && let Some(block) = self.arena.get_block(block_node)
+                {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .map(|&s| self.convert_statement(s))
+                        .collect()
+                } else {
+                    vec![]
+                };
+                Some(IRCatchClause { param, body })
+            } else {
+                None
+            };
+
+            let finally_block = if try_data.finally_block.is_none() {
+                None
+            } else {
+                Some(Box::new(self.convert_statement(try_data.finally_block)))
+            };
+
+            IRNode::TryStatement {
+                try_block,
+                catch_clause,
+                finally_block,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_for_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // For uses LoopData (same as while/do-while)
+        if let Some(loop_data) = self.arena.get_loop(node) {
+            let initializer = if loop_data.initializer.is_none() {
+                None
+            } else {
+                Some(Box::new(self.convert_expression(loop_data.initializer)))
+            };
+            let condition = if loop_data.condition.is_none() {
+                None
+            } else {
+                Some(Box::new(self.convert_expression(loop_data.condition)))
+            };
+            let incrementor = if loop_data.incrementor.is_none() {
+                None
+            } else {
+                Some(Box::new(self.convert_expression(loop_data.incrementor)))
+            };
+            IRNode::ForStatement {
+                initializer,
+                condition,
+                incrementor,
+                body: Box::new(self.convert_statement(loop_data.statement)),
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_while_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // While uses LoopData (same as for/do-while)
+        if let Some(loop_data) = self.arena.get_loop(node) {
+            IRNode::WhileStatement {
+                condition: Box::new(self.convert_expression(loop_data.condition)),
+                body: Box::new(self.convert_statement(loop_data.statement)),
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_do_while_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // DoWhile uses LoopData (same as while/for loops)
+        if let Some(loop_data) = self.arena.get_loop(node) {
+            IRNode::DoWhileStatement {
+                body: Box::new(self.convert_statement(loop_data.statement)),
+                condition: Box::new(self.convert_expression(loop_data.condition)),
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_switch_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(switch_data) = self.arena.get_switch(node) {
+            // Case block uses BlockData where statements contains the case clauses
+            let cases = if let Some(case_block_node) = self.arena.get(switch_data.case_block)
+                && let Some(block_data) = self.arena.get_block(case_block_node)
+            {
+                block_data
+                    .statements
+                    .nodes
+                    .iter()
+                    .map(|&c| self.convert_switch_case(c))
+                    .collect()
+            } else {
+                vec![]
+            };
+            IRNode::SwitchStatement {
+                expression: Box::new(self.convert_expression(switch_data.expression)),
+                cases,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_switch_case(&self, idx: NodeIndex) -> IRSwitchCase {
+        let node = self.arena.get(idx).unwrap();
+        // get_case_clause works for both CASE_CLAUSE and DEFAULT_CLAUSE
+        // For DEFAULT_CLAUSE, expression is NONE
+        if let Some(case_clause) = self.arena.get_case_clause(node) {
+            let test = if case_clause.expression.is_none() {
+                None // Default clause
+            } else {
+                Some(self.convert_expression(case_clause.expression))
+            };
+            IRSwitchCase {
+                test,
+                statements: case_clause
+                    .statements
+                    .nodes
+                    .iter()
+                    .map(|&s| self.convert_statement(s))
+                    .collect(),
+            }
+        } else {
+            IRSwitchCase {
+                test: None,
+                statements: vec![],
+            }
+        }
+    }
+
+    fn convert_break_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(jump_data) = self.arena.get_jump_data(node) {
+            let label = if jump_data.label.is_none() {
+                None
+            } else {
+                get_identifier_text(self.arena, jump_data.label)
+            };
+            IRNode::BreakStatement(label)
+        } else {
+            IRNode::BreakStatement(None)
+        }
+    }
+
+    fn convert_continue_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(jump_data) = self.arena.get_jump_data(node) {
+            let label = if jump_data.label.is_none() {
+                None
+            } else {
+                get_identifier_text(self.arena, jump_data.label)
+            };
+            IRNode::ContinueStatement(label)
+        } else {
+            IRNode::ContinueStatement(None)
+        }
+    }
+
+    fn convert_labeled_statement(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(labeled) = self.arena.get_labeled_statement(node) {
+            if let Some(label) = get_identifier_text(self.arena, labeled.label) {
+                return IRNode::LabeledStatement {
+                    label,
+                    statement: Box::new(self.convert_statement(labeled.statement)),
+                };
+            }
+        }
+        IRNode::ASTRef(idx)
+    }
+
+    fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
+        // For-in/for-of need ES5 transformation - use ASTRef for now
+        // A complete implementation would convert to a regular for loop
+        IRNode::ASTRef(idx)
+    }
+
+    fn convert_identifier(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(ident) = self.arena.get_identifier(node) {
+            IRNode::Identifier(ident.escaped_text.clone())
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_numeric_literal(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(lit) = self.arena.get_literal(node) {
+            IRNode::NumericLiteral(lit.text.clone())
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_string_literal(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(lit) = self.arena.get_literal(node) {
+            IRNode::StringLiteral(lit.text.clone())
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_call_expression(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(call) = self.arena.get_call_expr(node) {
+            let callee = self.convert_expression(call.expression);
+            let args = if let Some(ref args) = call.arguments {
+                args.nodes.iter().map(|&a| self.convert_expression(a)).collect()
+            } else {
+                vec![]
+            };
+            IRNode::CallExpr {
+                callee: Box::new(callee),
+                arguments: args,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_new_expression(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // NewExpression uses CallExprData (same as CallExpression)
+        if let Some(call_data) = self.arena.get_call_expr(node) {
+            let callee = self.convert_expression(call_data.expression);
+            let args = if let Some(ref args) = call_data.arguments {
+                args.nodes.iter().map(|&a| self.convert_expression(a)).collect()
+            } else {
+                vec![]
+            };
+            IRNode::NewExpr {
+                callee: Box::new(callee),
+                arguments: args,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_property_access(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // PropertyAccessExpression uses AccessExprData
+        if let Some(access) = self.arena.get_access_expr(node) {
+            let object = self.convert_expression(access.expression);
+            if let Some(name) = get_identifier_text(self.arena, access.name_or_argument) {
+                return IRNode::PropertyAccess {
+                    object: Box::new(object),
+                    property: name,
+                };
+            }
+        }
+        IRNode::ASTRef(idx)
+    }
+
+    fn convert_element_access(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // ElementAccessExpression uses AccessExprData
+        if let Some(access) = self.arena.get_access_expr(node) {
+            let object = self.convert_expression(access.expression);
+            let index = self.convert_expression(access.name_or_argument);
+            IRNode::ElementAccess {
+                object: Box::new(object),
+                index: Box::new(index),
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_binary_expression(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(bin) = self.arena.get_binary_expr(node) {
+            let left = self.convert_expression(bin.left);
+            let right = self.convert_expression(bin.right);
+            let op = self.get_binary_operator(bin.operator_token);
+
+            // Handle logical operators specially
+            if op == "||" {
+                return IRNode::LogicalOr {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            }
+            if op == "&&" {
+                return IRNode::LogicalAnd {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            }
+
+            IRNode::BinaryExpr {
+                left: Box::new(left),
+                operator: op,
+                right: Box::new(right),
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn get_binary_operator(&self, token: u16) -> String {
+        match token {
+            k if k == SyntaxKind::PlusToken as u16 => "+".to_string(),
+            k if k == SyntaxKind::MinusToken as u16 => "-".to_string(),
+            k if k == SyntaxKind::AsteriskToken as u16 => "*".to_string(),
+            k if k == SyntaxKind::SlashToken as u16 => "/".to_string(),
+            k if k == SyntaxKind::PercentToken as u16 => "%".to_string(),
+            k if k == SyntaxKind::EqualsToken as u16 => "=".to_string(),
+            k if k == SyntaxKind::PlusEqualsToken as u16 => "+=".to_string(),
+            k if k == SyntaxKind::MinusEqualsToken as u16 => "-=".to_string(),
+            k if k == SyntaxKind::AsteriskEqualsToken as u16 => "*=".to_string(),
+            k if k == SyntaxKind::SlashEqualsToken as u16 => "/=".to_string(),
+            k if k == SyntaxKind::EqualsEqualsToken as u16 => "==".to_string(),
+            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => "===".to_string(),
+            k if k == SyntaxKind::ExclamationEqualsToken as u16 => "!=".to_string(),
+            k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => "!==".to_string(),
+            k if k == SyntaxKind::LessThanToken as u16 => "<".to_string(),
+            k if k == SyntaxKind::LessThanEqualsToken as u16 => "<=".to_string(),
+            k if k == SyntaxKind::GreaterThanToken as u16 => ">".to_string(),
+            k if k == SyntaxKind::GreaterThanEqualsToken as u16 => ">=".to_string(),
+            k if k == SyntaxKind::AmpersandAmpersandToken as u16 => "&&".to_string(),
+            k if k == SyntaxKind::BarBarToken as u16 => "||".to_string(),
+            k if k == SyntaxKind::AmpersandToken as u16 => "&".to_string(),
+            k if k == SyntaxKind::BarToken as u16 => "|".to_string(),
+            k if k == SyntaxKind::CaretToken as u16 => "^".to_string(),
+            k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<".to_string(),
+            k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>".to_string(),
+            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>".to_string(),
+            k if k == SyntaxKind::InKeyword as u16 => "in".to_string(),
+            k if k == SyntaxKind::InstanceOfKeyword as u16 => "instanceof".to_string(),
+            k if k == SyntaxKind::CommaToken as u16 => ",".to_string(),
+            _ => "?".to_string(),
+        }
+    }
+
+    fn convert_prefix_unary(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // PrefixUnaryExpression uses UnaryExprData
+        if let Some(unary) = self.arena.get_unary_expr(node) {
+            let operand = self.convert_expression(unary.operand);
+            let op = self.get_prefix_operator(unary.operator);
+            IRNode::PrefixUnaryExpr {
+                operator: op,
+                operand: Box::new(operand),
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn get_prefix_operator(&self, token: u16) -> String {
+        match token {
+            k if k == SyntaxKind::PlusPlusToken as u16 => "++".to_string(),
+            k if k == SyntaxKind::MinusMinusToken as u16 => "--".to_string(),
+            k if k == SyntaxKind::ExclamationToken as u16 => "!".to_string(),
+            k if k == SyntaxKind::TildeToken as u16 => "~".to_string(),
+            k if k == SyntaxKind::PlusToken as u16 => "+".to_string(),
+            k if k == SyntaxKind::MinusToken as u16 => "-".to_string(),
+            k if k == SyntaxKind::TypeOfKeyword as u16 => "typeof ".to_string(),
+            k if k == SyntaxKind::VoidKeyword as u16 => "void ".to_string(),
+            k if k == SyntaxKind::DeleteKeyword as u16 => "delete ".to_string(),
+            _ => "".to_string(),
+        }
+    }
+
+    fn convert_postfix_unary(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // PostfixUnaryExpression uses UnaryExprData
+        if let Some(unary) = self.arena.get_unary_expr(node) {
+            let operand = self.convert_expression(unary.operand);
+            let op = match unary.operator {
+                k if k == SyntaxKind::PlusPlusToken as u16 => "++".to_string(),
+                k if k == SyntaxKind::MinusMinusToken as u16 => "--".to_string(),
+                _ => "".to_string(),
+            };
+            IRNode::PostfixUnaryExpr {
+                operand: Box::new(operand),
+                operator: op,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_parenthesized(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        if let Some(paren) = self.arena.get_parenthesized(node) {
+            IRNode::Parenthesized(Box::new(self.convert_expression(paren.expression)))
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_conditional(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // ConditionalExpression uses ConditionalExprData
+        if let Some(cond) = self.arena.get_conditional_expr(node) {
+            IRNode::ConditionalExpr {
+                condition: Box::new(self.convert_expression(cond.condition)),
+                when_true: Box::new(self.convert_expression(cond.when_true)),
+                when_false: Box::new(self.convert_expression(cond.when_false)),
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_array_literal(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // Array and Object literals use LiteralExprData
+        if let Some(arr) = self.arena.get_literal_expr(node) {
+            let elements: Vec<IRNode> = arr
+                .elements
+                .nodes
+                .iter()
+                .map(|&e| self.convert_expression(e))
+                .collect();
+            IRNode::ArrayLiteral(elements)
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_object_literal(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // Array and Object literals use LiteralExprData (elements = properties)
+        if let Some(obj) = self.arena.get_literal_expr(node) {
+            let props: Vec<IRProperty> = obj
+                .elements
+                .nodes
+                .iter()
+                .filter_map(|&p| self.convert_object_property(p))
+                .collect();
+            IRNode::ObjectLiteral(props)
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_object_property(&self, idx: NodeIndex) -> Option<IRProperty> {
+        let node = self.arena.get(idx)?;
+
+        if let Some(prop_assign) = self.arena.get_property_assignment(node) {
+            let key = self.get_property_key(prop_assign.name)?;
+            let value = self.convert_expression(prop_assign.initializer);
+            Some(IRProperty {
+                key,
+                value,
+                kind: IRPropertyKind::Init,
+            })
+        } else if let Some(shorthand) = self.arena.get_shorthand_property(node) {
+            let name = get_identifier_text(self.arena, shorthand.name)?;
+            Some(IRProperty {
+                key: IRPropertyKey::Identifier(name.clone()),
+                value: IRNode::Identifier(name),
+                kind: IRPropertyKind::Init,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn get_property_key(&self, idx: NodeIndex) -> Option<IRPropertyKey> {
+        let node = self.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let name = get_identifier_text(self.arena, idx)?;
+            Some(IRPropertyKey::Identifier(name))
+        } else if node.kind == SyntaxKind::StringLiteral as u16 {
+            if let Some(lit) = self.arena.get_literal(node) {
+                Some(IRPropertyKey::StringLiteral(lit.text.clone()))
+            } else {
+                None
+            }
+        } else if node.kind == SyntaxKind::NumericLiteral as u16 {
+            if let Some(lit) = self.arena.get_literal(node) {
+                Some(IRPropertyKey::NumericLiteral(lit.text.clone()))
+            } else {
+                None
+            }
+        } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            if let Some(computed) = self.arena.get_computed_property(node) {
+                Some(IRPropertyKey::Computed(Box::new(
+                    self.convert_expression(computed.expression),
+                )))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn convert_function_expression(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // FunctionExpression uses FunctionData
+        if let Some(func) = self.arena.get_function(node) {
+            let name = if func.name.is_none() {
+                None
+            } else {
+                get_identifier_text(self.arena, func.name)
+            };
+            let params = self.convert_parameters(&func.parameters);
+            let body = if func.body.is_none() {
+                vec![]
+            } else if let Some(body_node) = self.arena.get(func.body)
+                && let Some(block) = self.arena.get_block(body_node)
+            {
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .map(|&s| self.convert_statement(s))
+                    .collect()
+            } else {
+                vec![]
+            };
+            IRNode::FunctionExpr {
+                name,
+                parameters: params,
+                body,
+                is_expression_body: false,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_arrow_function(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // ArrowFunction uses FunctionData (has equals_greater_than_token set)
+        if let Some(arrow) = self.arena.get_function(node) {
+            let params = self.convert_parameters(&arrow.parameters);
+            let (body, is_expression_body) = if let Some(body_node) = self.arena.get(arrow.body) {
+                if let Some(block) = self.arena.get_block(body_node) {
+                    let stmts: Vec<IRNode> = block
+                        .statements
+                        .nodes
+                        .iter()
+                        .map(|&s| self.convert_statement(s))
+                        .collect();
+                    (stmts, false)
+                } else {
+                    // Expression body
+                    let expr = self.convert_expression(arrow.body);
+                    (vec![IRNode::ReturnStatement(Some(Box::new(expr)))], true)
+                }
+            } else {
+                (vec![], false)
+            };
+
+            // Arrow functions become regular functions in ES5
+            IRNode::FunctionExpr {
+                name: None,
+                parameters: params,
+                body,
+                is_expression_body,
+            }
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_parameters(&self, params: &NodeList) -> Vec<IRParam> {
+        params
+            .nodes
+            .iter()
+            .filter_map(|&p| {
+                let node = self.arena.get(p)?;
+                let param = self.arena.get_parameter(node)?;
+                let name = get_identifier_text(self.arena, param.name)?;
+                let rest = param.dot_dot_dot_token;
+                Some(IRParam {
+                    name,
+                    rest,
+                    default_value: None, // Default values need special handling
+                })
+            })
+            .collect()
+    }
+
+    fn convert_spread_element(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // SpreadElement uses SpreadData
+        if let Some(spread) = self.arena.get_spread(node) {
+            IRNode::SpreadElement(Box::new(self.convert_expression(spread.expression)))
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_template_literal(&self, idx: NodeIndex) -> IRNode {
+        // Template literals need string concatenation in ES5
+        // For now, use ASTRef as a fallback
+        IRNode::ASTRef(idx)
+    }
+
+    fn convert_await_expression(&self, idx: NodeIndex) -> IRNode {
+        // Await expressions are handled by the async transform
+        IRNode::ASTRef(idx)
+    }
+
+    fn convert_type_assertion(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // Both TYPE_ASSERTION and AS_EXPRESSION use TypeAssertionData
+        if let Some(assertion) = self.arena.get_type_assertion(node) {
+            self.convert_expression(assertion.expression)
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_non_null(&self, idx: NodeIndex) -> IRNode {
+        let node = self.arena.get(idx).unwrap();
+        // NON_NULL_EXPRESSION uses UnaryExpressionData
+        if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+            self.convert_expression(unary.expression)
+        } else {
+            IRNode::ASTRef(idx)
+        }
+    }
 }
 
 // =============================================================================

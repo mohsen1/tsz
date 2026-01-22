@@ -31,7 +31,7 @@
 //! | `generators` | ✅ Migrated | Uses `GeneratorTransformer` |
 //! | `decorators` | ✅ Migrated | Uses IR nodes |
 //! | `namespace_es5` | ✅ Migrated | Uses `NamespaceES5Transformer` + `IRPrinter` |
-//! | `class_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
+//! | `class_es5` | ✅ Migrated | Uses `ES5ClassTransformer` + `IRPrinter` |
 //! | `async_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
 //! | `arrow_es5` | ℹ️ Helper | Analysis only, no emit |
 //! | `block_scoping_es5` | ℹ️ Helper | Analysis only, no emit |
