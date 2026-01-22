@@ -3167,3 +3167,974 @@ fn test_template_literal_expansion_limit_widens_to_string() {
 
     assert_eq!(template, TypeId::STRING);
 }
+
+// =============================================================================
+// Weak Type Detection - Comprehensive Tests (Catalog Rule #13)
+// =============================================================================
+
+#[test]
+fn test_weak_type_all_optional_properties_detection() {
+    // Verifies that types with ALL optional properties are detected as weak
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    // Target with all optional properties - weak type
+    let weak_target = interner.object(vec![
+        PropertyInfo {
+            name: a,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: b,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // Source with no overlapping properties - should be rejected
+    let c = interner.intern_string("c");
+    let source = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    assert!(!checker.is_assignable(source, weak_target));
+    // The weak type violation is detected internally and causes the assignability to fail
+    // We can verify this by checking the failure reason
+    assert!(matches!(
+        checker.explain_failure(source, weak_target),
+        Some(SubtypeFailureReason::NoCommonProperties { .. })
+    ));
+}
+
+#[test]
+fn test_weak_type_with_index_signature_not_weak() {
+    // Types with index signatures are NOT weak, even with all optional properties
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+
+    // Target with optional property + index signature - NOT weak
+    let target = interner.object_with_index(ObjectShape {
+        properties: vec![PropertyInfo {
+            name: a,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: true,
+            readonly: false,
+            is_method: false,
+        }],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+        }),
+        number_index: None,
+    });
+
+    // Source with no overlapping properties - should be accepted due to index signature
+    let b = interner.intern_string("b");
+    let source = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    assert!(checker.is_assignable(source, target));
+}
+
+#[test]
+fn test_weak_type_empty_source_accepted() {
+    // Empty objects are assignable to weak types
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+
+    let weak_target = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let empty_source = interner.object(Vec::new());
+
+    // Empty source should be accepted (no conflicting properties)
+    assert!(checker.is_assignable(empty_source, weak_target));
+}
+
+#[test]
+fn test_weak_union_with_all_weak_members() {
+    // Weak union: union of only weak types
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    let weak_a = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let weak_b = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let weak_union = interner.union(vec![weak_a, weak_b]);
+
+    let c = interner.intern_string("c");
+    let source = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Source with no overlap should be rejected
+    assert!(!checker.is_assignable(source, weak_union));
+}
+
+#[test]
+fn test_weak_union_with_non_weak_member_not_weak() {
+    // Union with at least one non-weak member is not a weak union
+    // Normal union typing applies: source must match at least one member
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+
+    let weak_type = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let non_weak_type = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,  // Required property - NOT weak
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let union = interner.union(vec![weak_type, non_weak_type]);
+
+    // Source that matches the non-weak member
+    let source_matching_non_weak = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,  // Matches the required property
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Should be accepted since source matches the non-weak member
+    assert!(checker.is_assignable(source_matching_non_weak, union),
+            "Source matching non-weak member should be assignable to union");
+
+    // Source that doesn't match any member should be rejected
+    let c = interner.intern_string("c");
+    let source_no_match = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::BOOLEAN,
+        write_type: TypeId::BOOLEAN,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Should be rejected since source doesn't match any union member
+    assert!(!checker.is_assignable(source_no_match, union),
+            "Source not matching any union member should not be assignable");
+}
+
+// =============================================================================
+// exact_optional_property_types Tests (Catalog Rule #14)
+// =============================================================================
+
+#[test]
+fn test_exact_optional_property_types_distinguishes_undefined_from_missing() {
+    // With exact_optional_property_types=true, optional properties distinguish
+    // between "missing" and "undefined"
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    checker.set_exact_optional_property_types(true);
+
+    let x = interner.intern_string("x");
+
+    // { x?: number }
+    let optional_number = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // { x: number | undefined }
+    let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let _explicit_undefined = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: number_or_undefined,
+        write_type: number_or_undefined,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // With exact mode, these are NOT the same
+    // { x?: number } is NOT assignable to { x: number | undefined }
+    assert!(!checker.is_assignable(optional_number, _explicit_undefined),
+            "Optional property should not be assignable to explicit undefined union in exact mode");
+    // { x: number | undefined } is NOT assignable to { x?: number }
+    assert!(!checker.is_assignable(_explicit_undefined, optional_number),
+            "Explicit undefined union should not be assignable to optional property in exact mode");
+}
+
+#[test]
+fn test_exact_optional_property_types_false_allows_undefined() {
+    // With exact_optional_property_types=false, optional properties implicitly
+    // include undefined
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    checker.set_exact_optional_property_types(false);
+
+    let x = interner.intern_string("x");
+
+    // { x?: number } - implicitly { x?: number | undefined }
+    let optional_number = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // { x: number | undefined }
+    let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let _explicit_undefined = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: number_or_undefined,
+        write_type: number_or_undefined,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // With non-exact mode, undefined should be assignable to optional property
+    // This tests that the optional property type is widened to include undefined
+    let just_undefined = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::UNDEFINED,
+        write_type: TypeId::UNDEFINED,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    assert!(checker.is_assignable(just_undefined, optional_number),
+            "Explicit undefined should be assignable to optional property in non-exact mode");
+}
+
+#[test]
+fn test_exact_optional_property_types_toggle_behavior() {
+    // Verify that toggling exact_optional_property_types changes behavior
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x = interner.intern_string("x");
+
+    let optional_number = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let just_undefined = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::UNDEFINED,
+        write_type: TypeId::UNDEFINED,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Default (false): undefined is assignable to optional
+    assert!(checker.is_assignable(just_undefined, optional_number));
+
+    // Toggle to true: undefined is NOT assignable to optional
+    checker.set_exact_optional_property_types(true);
+    assert!(!checker.is_assignable(just_undefined, optional_number));
+
+    // Toggle back to false: undefined is assignable again
+    checker.set_exact_optional_property_types(false);
+    assert!(checker.is_assignable(just_undefined, optional_number));
+}
+
+// =============================================================================
+// strictNullChecks Legacy Behavior Tests (Catalog Rule #9)
+// =============================================================================
+
+#[test]
+fn test_strict_null_checks_off_null_assignable_to_anything() {
+    // With strictNullChecks=false, null is assignable to everything (like never)
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    checker.set_strict_null_checks(false);
+
+    // null is assignable to all types
+    assert!(checker.is_assignable(TypeId::NULL, TypeId::STRING));
+    assert!(checker.is_assignable(TypeId::NULL, TypeId::NUMBER));
+    assert!(checker.is_assignable(TypeId::NULL, TypeId::BOOLEAN));
+    assert!(checker.is_assignable(TypeId::NULL, TypeId::VOID));
+
+    // undefined is also assignable to everything
+    assert!(checker.is_assignable(TypeId::UNDEFINED, TypeId::STRING));
+    assert!(checker.is_assignable(TypeId::UNDEFINED, TypeId::NUMBER));
+    assert!(checker.is_assignable(TypeId::UNDEFINED, TypeId::BOOLEAN));
+}
+
+#[test]
+fn test_strict_null_checks_on_null_not_assignable() {
+    // With strictNullChecks=true, null and undefined are NOT assignable to non-nullish types
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    checker.set_strict_null_checks(true);
+
+    // null is NOT assignable to non-nullish types
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::STRING));
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::NUMBER));
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::BOOLEAN));
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::VOID));
+
+    // undefined is also NOT assignable
+    assert!(!checker.is_assignable(TypeId::UNDEFINED, TypeId::STRING));
+    assert!(!checker.is_assignable(TypeId::UNDEFINED, TypeId::NUMBER));
+    assert!(!checker.is_assignable(TypeId::UNDEFINED, TypeId::BOOLEAN));
+}
+
+#[test]
+fn test_strict_null_checks_union_with_null() {
+    // Test behavior of unions containing null/undefined based on strictNullChecks
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let nullable_string = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+    let undefinable_number = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+
+    // With strict mode on (default), nullable types are distinct from non-nullable
+    // But a specific type IS assignable to a union containing it (normal subtyping)
+    assert!(!checker.is_assignable(nullable_string, TypeId::STRING));  // string | null not assignable to string
+    assert!(checker.is_assignable(TypeId::STRING, nullable_string));  // string IS assignable to string | null
+    assert!(!checker.is_assignable(undefinable_number, TypeId::NUMBER));  // number | undefined not assignable to number
+    assert!(checker.is_assignable(TypeId::NUMBER, undefinable_number));  // number IS assignable to number | undefined
+
+    // With strict mode off, null/undefined are "never-like" and assignable
+    checker.set_strict_null_checks(false);
+    // Now string | null "collapses" to string (null is bottom-like)
+    assert!(checker.is_assignable(nullable_string, TypeId::STRING));
+    assert!(checker.is_assignable(TypeId::NULL, TypeId::STRING));
+    assert!(checker.is_assignable(undefinable_number, TypeId::NUMBER));
+    assert!(checker.is_assignable(TypeId::UNDEFINED, TypeId::NUMBER));
+}
+
+#[test]
+fn test_strict_null_checks_empty_object() {
+    // Test empty object assignability with null/undefined based on strictNullChecks
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty_object = interner.object(Vec::new());
+
+    // With strict mode on (default), null/undefined are NOT assignable to {}
+    assert!(!checker.is_assignable(TypeId::NULL, empty_object));
+    assert!(!checker.is_assignable(TypeId::UNDEFINED, empty_object));
+
+    // With strict mode off, null/undefined ARE assignable to {}
+    checker.set_strict_null_checks(false);
+    assert!(checker.is_assignable(TypeId::NULL, empty_object));
+    assert!(checker.is_assignable(TypeId::UNDEFINED, empty_object));
+}
+
+// =============================================================================
+// Void Return Exception Tests (Catalog Rule #6)
+// =============================================================================
+
+#[test]
+fn test_void_return_exception_functions() {
+    // Functions returning void can accept functions with any return type
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // () => void
+    let void_fn = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // () => string
+    let string_fn = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // () => number
+    let number_fn = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Functions with non-void returns ARE assignable to void-returning functions
+    assert!(checker.is_assignable(string_fn, void_fn),
+            "Function returning string should be assignable to void function");
+    assert!(checker.is_assignable(number_fn, void_fn),
+            "Function returning number should be assignable to void function");
+
+    // But void-return function is NOT assignable to non-void function
+    assert!(!checker.is_assignable(void_fn, string_fn),
+            "Void function should NOT be assignable to string function");
+}
+
+#[test]
+fn test_void_return_exception_with_parameters() {
+    // Void return exception applies even with parameter mismatches
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let x = interner.intern_string("x");
+
+    // (x: number) => void
+    let void_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(x),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // (x: string) => number
+    let string_number_fn = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(x),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Return type mismatch still applies void exception
+    // Even though parameters don't match, the void return should allow non-void returns
+    // (though parameters will still be checked separately)
+    assert!(!checker.is_assignable(string_number_fn, void_fn),
+            "Parameter mismatch should still cause rejection");
+}
+
+#[test]
+fn test_void_return_exception_constructors() {
+    // Void return exception also applies to constructors
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let instance_type = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // new () => void
+    let void_ctor = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("constructor"),
+        type_id: interner.function(FunctionShape {
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: true,
+            is_method: false,
+        }),
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // new () => Instance
+    let instance_ctor = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("constructor"),
+        type_id: interner.function(FunctionShape {
+            params: Vec::new(),
+            this_type: None,
+            return_type: instance_type,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: true,
+            is_method: false,
+        }),
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Constructor returning instance IS assignable to void-returning constructor
+    assert!(checker.is_assignable(instance_ctor, void_ctor),
+            "Constructor returning instance should be assignable to void constructor");
+}
+
+// =============================================================================
+// Covariant This Types Tests (Catalog Rule #19)
+// =============================================================================
+
+#[test]
+fn test_method_bivariance_allows_derived_methods() {
+    // Methods are bivariant in TypeScript, allowing Derived methods to override Base methods
+    // even though method parameters should normally be contravariant
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let method_name = interner.intern_string("compare");
+
+    // class Base { compare(other: Base): void }
+    let base = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let base_method = interner.object(vec![PropertyInfo {
+        name: method_name,
+        type_id: interner.function(FunctionShape {
+            params: vec![ParamInfo {
+                name: None,
+                type_id: base,
+                optional: false,
+                rest: false,
+            }],
+            this_type: Some(base),
+            return_type: TypeId::VOID,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,  // This is a method
+        }),
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // class Derived extends Base { x: string; y: number; compare(other: Derived): void }
+    let derived = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("x"),
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: interner.intern_string("y"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    let derived_method = interner.object(vec![PropertyInfo {
+        name: method_name,
+        type_id: interner.function(FunctionShape {
+            params: vec![ParamInfo {
+                name: None,
+                type_id: derived,
+                optional: false,
+                rest: false,
+            }],
+            this_type: Some(derived),
+            return_type: TypeId::VOID,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,  // This is a method
+        }),
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // With method bivariance (default), derived method with narrower parameter is assignable
+    // This simulates the covariant 'this' behavior
+    assert!(checker.is_assignable(derived_method, base_method),
+            "Derived method with narrower 'this' parameter should be assignable to Base method due to bivariance");
+}
+
+#[test]
+fn test_method_bivariance_persists_with_strict_function_types() {
+    // Methods remain bivariant even with strictFunctionTypes=true
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    checker.set_strict_function_types(true);
+
+    let method_name = interner.intern_string("method");
+
+    // Base type with method
+    let base = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    let base_with_method = interner.object(vec![PropertyInfo {
+        name: method_name,
+        type_id: interner.function(FunctionShape {
+            params: vec![ParamInfo {
+                name: None,
+                type_id: base,
+                optional: false,
+                rest: false,
+            }],
+            this_type: Some(base),
+            return_type: TypeId::VOID,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        }),
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Derived type with method
+    let derived = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("a"),
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: interner.intern_string("b"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    let derived_with_method = interner.object(vec![PropertyInfo {
+        name: method_name,
+        type_id: interner.function(FunctionShape {
+            params: vec![ParamInfo {
+                name: None,
+                type_id: derived,
+                optional: false,
+                rest: false,
+            }],
+            this_type: Some(derived),
+            return_type: TypeId::VOID,
+            type_params: Vec::new(),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        }),
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Methods are still bivariant even with strictFunctionTypes
+    assert!(checker.is_assignable(derived_with_method, base_with_method),
+            "Methods should remain bivariant even with strictFunctionTypes");
+}
+
+#[test]
+fn test_function_variance_strict_function_types_affects_functions_not_methods() {
+    // strictFunctionTypes affects standalone functions but not methods
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    checker.set_strict_function_types(true);
+
+    let (animal, dog) = make_animal_dog(&interner);
+
+    // Standalone functions: contravariant with strictFunctionTypes
+    let fn_dog = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: dog,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,  // NOT a method
+    });
+
+    let fn_animal = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: animal,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,  // NOT a method
+    });
+
+    // Functions should be contravariant (not assignable) with strictFunctionTypes
+    assert!(!checker.is_assignable(fn_dog, fn_animal),
+            "Standalone functions should be contravariant with strictFunctionTypes");
+
+    // But methods are still bivariant
+    let method_name = interner.intern_string("method");
+
+    let obj_with_dog_method = interner.object(vec![PropertyInfo {
+        name: method_name,
+        type_id: fn_dog,
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: true,  // IS a method
+    }]);
+
+    let obj_with_animal_method = interner.object(vec![PropertyInfo {
+        name: method_name,
+        type_id: fn_animal,
+        write_type: TypeId::ANY,
+        optional: false,
+        readonly: false,
+        is_method: true,  // IS a method
+    }]);
+
+    // Methods are bivariant even with strictFunctionTypes
+    assert!(checker.is_assignable(obj_with_dog_method, obj_with_animal_method),
+            "Methods should be bivariant even with strictFunctionTypes");
+}
+
+// =============================================================================
+// Integration Tests: Compiler Options Toggle Behaviors
+// =============================================================================
+
+#[test]
+fn test_strict_mode_enables_all_strict_flags() {
+    // Integration test: strict mode should enable multiple strict behaviors
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Test strict null checks behavior
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::STRING));
+
+    // Test function variance (default is non-strict)
+    let (animal, dog) = make_animal_dog(&interner);
+
+    let fn_dog = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: dog,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let fn_animal = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: None,
+            type_id: animal,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Default: non-strict (bivariant)
+    assert!(checker.is_assignable(fn_dog, fn_animal),
+            "Functions should be bivariant by default");
+
+    // Enable strict function types
+    checker.set_strict_function_types(true);
+    assert!(!checker.is_assignable(fn_dog, fn_animal),
+            "Functions should be contravariant with strictFunctionTypes");
+}
+
+#[test]
+fn test_compiler_options_independent_toggles() {
+    // Test that compiler options can be toggled independently
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Start with all defaults
+    assert!(!checker.is_assignable(TypeId::NULL, TypeId::STRING));  // strictNullChecks=true (default)
+
+    // Toggle strictNullChecks
+    checker.set_strict_null_checks(false);
+    assert!(checker.is_assignable(TypeId::NULL, TypeId::STRING));
+
+    // Reset for next test
+    checker.set_strict_null_checks(true);
+
+    // Toggle exact_optional_property_types
+    let x = interner.intern_string("x");
+    let optional_number = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let explicit_union = interner.object(vec![PropertyInfo {
+        name: x,
+        type_id: number_or_undefined,
+        write_type: number_or_undefined,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Default (exact_optional_property_types=false): optional includes undefined
+    // So { x: number | undefined } should be assignable to { x?: number }
+    assert!(checker.is_assignable(explicit_union, optional_number),
+            "Explicit number|undefined should be assignable to optional number in default mode");
+
+    // Toggle exact_optional_property_types
+    checker.set_exact_optional_property_types(true);
+    // In exact mode, optional does NOT include undefined
+    // So { x: number | undefined } should NOT be assignable to { x?: number }
+    assert!(!checker.is_assignable(explicit_union, optional_number),
+            "Explicit number|undefined should NOT be assignable to optional number in exact mode");
+
+    // Toggle no_unchecked_indexed_access
+    let indexed = interner.object_with_index(ObjectShape {
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        }),
+        number_index: None,
+    });
+    let index_access = interner.intern(TypeKey::IndexAccess(indexed, TypeId::STRING));
+
+    // Reset exact mode for next test
+    checker.set_exact_optional_property_types(false);
+
+    // Default: no_unchecked_indexed_access=false, index access returns NUMBER
+    assert!(checker.is_assignable(index_access, TypeId::NUMBER));
+
+    // Toggle no_unchecked_indexed_access
+    checker.set_no_unchecked_indexed_access(true);
+    assert!(!checker.is_assignable(index_access, TypeId::NUMBER));
+}
