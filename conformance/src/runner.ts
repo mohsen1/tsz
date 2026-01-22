@@ -8,11 +8,12 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import * as os from 'os';
 import { Worker } from 'worker_threads';
 import { fileURLToPath } from 'url';
+import { loadTscCache, type CacheEntry } from './tsc-cache.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(__dirname, '../..');
 
 interface RunnerConfig {
   wasmPkgPath: string;
@@ -34,7 +35,7 @@ const DEFAULT_CONFIG: RunnerConfig = {
   maxTests: 500,
   verbose: false,
   categories: ['conformance', 'compiler', 'projects'],
-  workers: Math.max(1, os.cpus().length),
+  workers: 8, // Optimal for WASM - more workers cause contention
   testTimeout: 10000,
   useWasm: true,
   nativeBinaryPath: path.resolve(__dirname, '../../target/release/tsz'),
@@ -175,11 +176,11 @@ class WorkerPool {
   private pending = new Map<number, PendingTest>();
   private nextId = 0;
   private workerPath: string;
-  private workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string };
+  private workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> };
   private timeout: number;
   private testsBasePath: string;
   private nextWorkerId = 0;
-  
+
   // Stats
   public workersSpawned = 0;
   public workersCrashed = 0;
@@ -188,7 +189,7 @@ class WorkerPool {
   constructor(
     count: number,
     workerPath: string,
-    workerData: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string },
+    workerData: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> },
     timeout: number,
     testsBasePath: string
   ) {
@@ -482,13 +483,24 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     };
   }
 
+  // Load TSC cache
+  const tscCache = loadTscCache(ROOT_DIR);
+  if (tscCache) {
+    log(`\nUsing TSC cache: ${tscCache.testCount} tests cached`, colors.green);
+    log(`  Generated: ${tscCache.generatedAt}`, colors.dim);
+  } else {
+    log(`\nNo TSC cache available - running TSC for each test`, colors.yellow);
+    log(`  Generate cache with: ./run-conformance.sh cache:generate`, colors.dim);
+  }
+
   // Create worker pool
   const workerPath = path.join(__dirname, 'worker.js');
-  const workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string } = {
+  const workerDataBase: { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; tscCacheEntries?: Record<string, CacheEntry> } = {
     wasmPkgPath: cfg.wasmPkgPath,
     libPath: cfg.libPath,
     useWasm: cfg.useWasm,
     nativeBinaryPath: cfg.nativeBinaryPath,
+    tscCacheEntries: tscCache?.entries,
   };
 
   const pool = new WorkerPool(

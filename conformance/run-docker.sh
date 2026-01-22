@@ -32,13 +32,9 @@ for arg in "$@"; do
     esac
 done
 
-# Detect CPU cores if not specified
+# Default to 8 workers (optimal for WASM - more causes contention)
 if [ -z "$WORKERS" ]; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        WORKERS=$(sysctl -n hw.ncpu)
-    else
-        WORKERS=$(nproc 2>/dev/null || echo 4)
-    fi
+    WORKERS=8
 fi
 
 # Check Docker is available
@@ -129,6 +125,7 @@ if [ "$USE_WASM" = true ]; then
         -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
         -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
         -v "$SCRIPT_DIR/package.json:/app/conformance/package.json:ro" \
+        -v "$SCRIPT_DIR/.tsc-cache:/app/conformance/.tsc-cache:ro" \
         -v "$ROOT_DIR/TypeScript/tests:/app/TypeScript/tests:ro" \
         "$IMAGE_NAME" sh -c "
             cd /app/conformance
@@ -152,6 +149,7 @@ else
         -v "$SCRIPT_DIR/src:/app/conformance/src:ro" \
         -v "$SCRIPT_DIR/dist:/app/conformance/dist:ro" \
         -v "$SCRIPT_DIR/package.json:/app/conformance/package.json:ro" \
+        -v "$SCRIPT_DIR/.tsc-cache:/app/conformance/.tsc-cache:ro" \
         -v "$ROOT_DIR/TypeScript/tests:/app/TypeScript/tests:ro" \
         "$IMAGE_NAME" sh -c "
             cd /app/conformance

@@ -32,13 +32,9 @@ for arg in "$@"; do
     esac
 done
 
-# Detect CPU cores if not specified
+# Default to 8 workers (optimal for WASM - more causes contention)
 if [ -z "$WORKERS" ]; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        WORKERS=$(sysctl -n hw.ncpu)
-    else
-        WORKERS=$(nproc 2>/dev/null || echo 4)
-    fi
+    WORKERS=8
 fi
 
 MODE_DESC="$([ "$USE_WASM" = true ] && echo "WASM" || echo "Native Binary")"
