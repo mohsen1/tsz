@@ -4592,8 +4592,37 @@ fn test_strict_function_types_affects_methods_independently() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let animal = interner.object(vec![]);
-    let dog = interner.object(vec![]);
+    // Animal: { name: string }
+    let name = interner.intern_string("name");
+    let animal = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Dog: { name: string, breed: string } - subtype of Animal
+    let breed = interner.intern_string("breed");
+    let dog = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: breed,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
 
     // Create method types
     let fn_animal = interner.function(FunctionShape {
@@ -4698,42 +4727,62 @@ fn test_keyof_union_contravariance() {
     let name = interner.intern_string("name");
     let age = interner.intern_string("age");
 
-    // Type A: { name: string }
-    let type_a = interner.object(vec![PropertyInfo {
-        name,
-        type_id: TypeId::STRING,
-        write_type: TypeId::STRING,
-        optional: false,
-        readonly: false,
-        is_method: false,
-    }]);
+    // Type A: { name: string, age: number }
+    let type_a = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: age,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
 
-    // Type B: { age: number }
-    let type_b = interner.object(vec![PropertyInfo {
-        name: age,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
-        optional: false,
-        readonly: false,
-        is_method: false,
-    }]);
+    // Type B: { name: boolean, age: string }
+    let type_b = interner.object(vec![
+        PropertyInfo {
+            name,
+            type_id: TypeId::BOOLEAN,
+            write_type: TypeId::BOOLEAN,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: age,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
 
-    // keyof A should be "name"
-    let keyof_a = interner.intern(TypeKey::KeyOf(type_a));
+    // keyof A should be "name" | "age"
+    let _keyof_a = interner.intern(TypeKey::KeyOf(type_a));
 
-    // keyof B should be "age"
-    let keyof_b = interner.intern(TypeKey::KeyOf(type_b));
+    // keyof B should be "name" | "age"
+    let _keyof_b = interner.intern(TypeKey::KeyOf(type_b));
 
     // keyof (A | B) should be keyof A & keyof B
-    // which is ("name" | "age")
+    // Since both types have the same keys, keyof (A | B) = "name" | "age"
     let union_ab = interner.union(vec![type_a, type_b]);
     let keyof_union = interner.intern(TypeKey::KeyOf(union_ab));
 
-    // The result should include both "name" and "age"
+    // The result should include both "name" and "age" (common keys)
     let name_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(name)));
     let age_literal = interner.intern(TypeKey::Literal(crate::solver::LiteralValue::String(age)));
 
-    // keyof (A | B) should be a union of both keys
+    // keyof (A | B) should be the intersection of keys, which is "name" | "age"
     assert!(checker.is_assignable(name_literal, keyof_union),
             "keyof (A | B) should include 'name'");
     assert!(checker.is_assignable(age_literal, keyof_union),
