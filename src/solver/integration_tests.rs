@@ -487,16 +487,73 @@ mod tuple_subtyping_tests {
             },
         ]);
 
-        // string[] (readonly array)
-        let array_type = interner.tuple(vec![TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: true,
-        }]);
+        // string[] (array type - not a tuple with rest)
+        let string_array = interner.array(TypeId::STRING);
 
-        // Tuple should NOT be assignable to array (different element types)
-        assert!(!checker.is_assignable(tuple_type, array_type));
+        // Tuple [string, number] should NOT be assignable to string[]
+        // because number is not assignable to string
+        assert!(!checker.is_assignable(tuple_type, string_array));
+
+        // (string | number)[]
+        let union_array = interner.array(interner.union(vec![TypeId::STRING, TypeId::NUMBER]));
+
+        // Tuple [string, number] SHOULD be assignable to (string | number)[]
+        // because both string and number are subtypes of string | number
+        assert!(checker.is_assignable(tuple_type, union_array));
+
+        // [string, string]
+        let string_tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // [string, string] SHOULD be assignable to string[]
+        assert!(checker.is_assignable(string_tuple, string_array));
+    }
+
+    #[test]
+    fn test_tuple_to_array_with_rest_element() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [string, ...number[]] - tuple with rest
+        let tuple_with_rest = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: true,
+            },
+        ]);
+
+        // (string | number)[]
+        let union_array = interner.array(interner.union(vec![TypeId::STRING, TypeId::NUMBER]));
+
+        // [string, ...number[]] SHOULD be assignable to (string | number)[]
+        assert!(checker.is_assignable(tuple_with_rest, union_array));
+
+        // number[]
+        let number_array = interner.array(TypeId::NUMBER);
+
+        // [string, ...number[]] should NOT be assignable to number[]
+        // (string is not assignable to number)
+        assert!(!checker.is_assignable(tuple_with_rest, number_array));
     }
 
     #[test]
@@ -1809,6 +1866,556 @@ mod typescript_quirks_tests {
         assert!(
             checker.is_assignable(handler_cat, handler_animal),
             "Bivariant: (Cat) => void should be assignable to (Animal) => void"
+        );
+    }
+}
+
+/// Test suite for full pipeline integration: CompatChecker -> Lawyer -> SubtypeChecker
+///
+/// These tests verify that the full type checking pipeline works correctly,
+/// ensuring that the Lawyer layer properly mediates between the CompatChecker
+/// and the SubtypeChecker for tuple-to-array and other coercion scenarios.
+#[cfg(test)]
+mod full_pipeline_integration_tests {
+    use super::*;
+
+    /// Test that tuple-to-array goes through the lawyer layer correctly
+    #[test]
+    fn test_pipeline_tuple_to_array_homogeneous() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [number, number, number] - homogeneous tuple
+        let num_tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // number[]
+        let num_array = interner.array(TypeId::NUMBER);
+
+        // Homogeneous tuple should be assignable to array of same type
+        assert!(
+            checker.is_assignable(num_tuple, num_array),
+            "[number, number, number] should be assignable to number[]"
+        );
+    }
+
+    /// Test that heterogeneous tuple assignability to array is properly checked
+    #[test]
+    fn test_pipeline_tuple_to_array_heterogeneous() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [string, number, boolean]
+        let hetero_tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::BOOLEAN,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // string[]
+        let string_array = interner.array(TypeId::STRING);
+
+        // Heterogeneous tuple should NOT be assignable to string[]
+        assert!(
+            !checker.is_assignable(hetero_tuple, string_array),
+            "[string, number, boolean] should NOT be assignable to string[]"
+        );
+
+        // (string | number | boolean)[]
+        let union_array = interner.array(
+            interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN])
+        );
+
+        // Should be assignable to union array containing all element types
+        assert!(
+            checker.is_assignable(hetero_tuple, union_array),
+            "[string, number, boolean] should be assignable to (string | number | boolean)[]"
+        );
+    }
+
+    /// Test the lawyer layer's handling of any in tuple-to-array scenarios
+    #[test]
+    fn test_pipeline_tuple_to_array_with_any() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [any, number]
+        let tuple_with_any = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::ANY,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // any[]
+        let any_array = interner.array(TypeId::ANY);
+
+        // Tuple containing any should be assignable to any[]
+        assert!(
+            checker.is_assignable(tuple_with_any, any_array),
+            "[any, number] should be assignable to any[]"
+        );
+
+        // number[]
+        let number_array = interner.array(TypeId::NUMBER);
+
+        // [any, number] should be assignable to number[] (any is assignable to everything)
+        assert!(
+            checker.is_assignable(tuple_with_any, number_array),
+            "[any, number] should be assignable to number[]"
+        );
+    }
+
+    /// Test compat layer handling of empty tuples
+    #[test]
+    fn test_pipeline_empty_tuple_to_array() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [] - empty tuple
+        let empty_tuple = interner.tuple(vec![]);
+
+        // number[]
+        let number_array = interner.array(TypeId::NUMBER);
+
+        // Empty tuple should be assignable to any array type
+        assert!(
+            checker.is_assignable(empty_tuple, number_array),
+            "[] should be assignable to number[]"
+        );
+
+        // string[]
+        let string_array = interner.array(TypeId::STRING);
+
+        // Empty tuple should be assignable to any array type
+        assert!(
+            checker.is_assignable(empty_tuple, string_array),
+            "[] should be assignable to string[]"
+        );
+    }
+
+    /// Test the pipeline with tuple containing optional elements
+    #[test]
+    fn test_pipeline_tuple_with_optional_to_array() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [string, number?] - tuple with optional element
+        let tuple_with_optional = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: true,
+                rest: false,
+            },
+        ]);
+
+        // (string | number | undefined)[]
+        let union_array = interner.array(
+            interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED])
+        );
+
+        // Tuple with optional should be assignable to array with union including undefined
+        assert!(
+            checker.is_assignable(tuple_with_optional, union_array),
+            "[string, number?] should be assignable to (string | number | undefined)[]"
+        );
+    }
+
+    /// Test unknown type in tuple-to-array scenario
+    #[test]
+    fn test_pipeline_tuple_with_unknown_to_array() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [unknown, unknown]
+        let unknown_tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::UNKNOWN,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::UNKNOWN,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // unknown[]
+        let unknown_array = interner.array(TypeId::UNKNOWN);
+
+        // [unknown, unknown] should be assignable to unknown[]
+        assert!(
+            checker.is_assignable(unknown_tuple, unknown_array),
+            "[unknown, unknown] should be assignable to unknown[]"
+        );
+
+        // string[]
+        let string_array = interner.array(TypeId::STRING);
+
+        // [unknown, unknown] should NOT be assignable to string[]
+        assert!(
+            !checker.is_assignable(unknown_tuple, string_array),
+            "[unknown, unknown] should NOT be assignable to string[]"
+        );
+    }
+}
+
+/// TypeScript parity tests for tuple/array coercion in function parameters
+///
+/// These tests verify that our implementation matches TypeScript's behavior
+/// for common tuple/array assignment patterns in function calls.
+#[cfg(test)]
+mod typescript_parity_tuple_array_tests {
+    use super::*;
+
+    /// TypeScript: function foo(arr: string[]): void {}
+    ///             foo(["a", "b"]);  // OK
+    #[test]
+    fn test_ts_parity_tuple_literal_to_array_param() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // ["a", "b"] - tuple of string literals
+        let tuple_literal = interner.tuple(vec![
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                    interner.intern_string("a"),
+                ))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                    interner.intern_string("b"),
+                ))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // string[]
+        let string_array = interner.array(TypeId::STRING);
+
+        // TypeScript allows this - tuple of string literals is assignable to string[]
+        assert!(
+            checker.is_assignable(tuple_literal, string_array),
+            "TypeScript parity: tuple literal [\"a\", \"b\"] should be assignable to string[]"
+        );
+    }
+
+    /// TypeScript: function foo(arr: number[]): void {}
+    ///             foo([1, "a"]);  // Error!
+    #[test]
+    fn test_ts_parity_mixed_tuple_to_array_param_fails() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [1, "a"] - mixed tuple
+        let mixed_tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                    interner.intern_string("a"),
+                ))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // number[]
+        let number_array = interner.array(TypeId::NUMBER);
+
+        // TypeScript rejects this - string is not assignable to number
+        assert!(
+            !checker.is_assignable(mixed_tuple, number_array),
+            "TypeScript parity: tuple [1, \"a\"] should NOT be assignable to number[]"
+        );
+    }
+
+    /// TypeScript: function process(data: (string | number)[]): void {}
+    ///             process([1, "two", 3]);  // OK
+    #[test]
+    fn test_ts_parity_mixed_tuple_to_union_array() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [1, "two", 3]
+        let mixed_tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                    interner.intern_string("two"),
+                ))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(3.0)))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // (string | number)[]
+        let union_array = interner.array(interner.union(vec![TypeId::STRING, TypeId::NUMBER]));
+
+        // TypeScript allows this
+        assert!(
+            checker.is_assignable(mixed_tuple, union_array),
+            "TypeScript parity: [1, \"two\", 3] should be assignable to (string | number)[]"
+        );
+    }
+
+    /// TypeScript: Function parameter contravariance with tuple/array
+    ///
+    /// In TypeScript with strictFunctionTypes:
+    /// - `(items: string[]) => void` IS assignable to `(items: [string, string]) => void`
+    ///   because contravariance checks that the target param is assignable to source param:
+    ///   [string, string] <: string[] (true - tuple is assignable to array)
+    /// - `(items: [string, string]) => void` is NOT assignable to `(items: string[]) => void`
+    ///   because contravariance checks: string[] <: [string, string] - FALSE
+    ///   (array is NOT assignable to tuple with fixed length)
+    #[test]
+    fn test_ts_parity_function_param_tuple_array_strictness() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        checker.set_strict_function_types(true);
+
+        // (items: string[]) => void
+        let callback_array_param = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("items")),
+                type_id: interner.array(TypeId::STRING),
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        // [string, string]
+        let tuple_type = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // (items: [string, string]) => void
+        let callback_tuple_param = interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("items")),
+                type_id: tuple_type,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        // In strict contravariance, we check: target param <: source param
+        // For (array) => void assignable to (tuple) => void:
+        //   Check: tuple <: array (i.e., [string, string] <: string[]) - TRUE
+        // So this SHOULD be assignable
+        assert!(
+            checker.is_assignable(callback_array_param, callback_tuple_param),
+            "TypeScript parity: (items: string[]) => void SHOULD be assignable to (items: [string, string]) => void (contravariance)"
+        );
+
+        // For (tuple) => void assignable to (array) => void:
+        //   Check: array <: tuple (i.e., string[] <: [string, string]) - FALSE
+        // Array is NOT a subtype of tuple (arrays don't have fixed length guarantee)
+        // So this should NOT be assignable
+        assert!(
+            !checker.is_assignable(callback_tuple_param, callback_array_param),
+            "TypeScript parity: (items: [string, string]) => void should NOT be assignable to (items: string[]) => void (contravariance)"
+        );
+    }
+
+    /// TypeScript: const arr: readonly string[] = ["a", "b"];
+    ///             arr.push("c");  // Error - push doesn't exist on readonly
+    #[test]
+    fn test_ts_parity_tuple_to_readonly_array() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // ["a", "b"]
+        let tuple_literal = interner.tuple(vec![
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                    interner.intern_string("a"),
+                ))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                    interner.intern_string("b"),
+                ))),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // readonly string[]
+        let readonly_string_array = interner.intern(TypeKey::ReadonlyType(
+            interner.array(TypeId::STRING)
+        ));
+
+        // Tuple should be assignable to readonly array
+        assert!(
+            checker.is_assignable(tuple_literal, readonly_string_array),
+            "TypeScript parity: [\"a\", \"b\"] should be assignable to readonly string[]"
+        );
+    }
+
+    /// TypeScript: const point: [number, number] = [1, 2];
+    ///             const arr: number[] = point;  // OK
+    #[test]
+    fn test_ts_parity_named_tuple_to_array() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [x: number, y: number] - named tuple
+        let point_tuple = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: Some(interner.intern_string("x")),
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: Some(interner.intern_string("y")),
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // number[]
+        let number_array = interner.array(TypeId::NUMBER);
+
+        // Named tuple should be assignable to array
+        assert!(
+            checker.is_assignable(point_tuple, number_array),
+            "TypeScript parity: [x: number, y: number] should be assignable to number[]"
+        );
+    }
+
+    /// TypeScript: function spread(...args: string[]): void {}
+    ///             spread(...["a", "b"] as const);  // OK
+    #[test]
+    fn test_ts_parity_spread_tuple_to_rest_param() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        // [string, string]
+        let tuple_type = interner.tuple(vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]);
+
+        // string[] (what rest param becomes)
+        let string_array = interner.array(TypeId::STRING);
+
+        // Tuple should be compatible with array (for spread purposes)
+        assert!(
+            checker.is_assignable(tuple_type, string_array),
+            "TypeScript parity: [string, string] should be assignable to string[] (for spread)"
         );
     }
 }

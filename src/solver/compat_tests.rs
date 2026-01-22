@@ -4927,8 +4927,9 @@ fn test_best_common_type_with_supertype() {
     let types = vec![animal, dog];
     let bct = ctx.best_common_type(&types);
 
-    // Animal should be assignable to BCT
-    assert!(ctx.is_subtype_of(animal, bct),
+    // Animal should be assignable to BCT - use CompatChecker for subtype check
+    let mut checker = CompatChecker::new(&interner);
+    assert!(checker.is_assignable(animal, bct),
             "Animal should be subtype of BCT");
 }
 
@@ -4955,4 +4956,418 @@ fn test_best_common_type_single_element() {
     let bct = ctx.best_common_type(&types);
 
     assert_eq!(bct, TypeId::STRING, "BCT of single element should be that element");
+}
+
+// =============================================================================
+// Tuple-to-Array Tests through CompatChecker (Lawyer Layer)
+// =============================================================================
+
+/// Test that CompatChecker correctly handles tuple-to-array assignments
+/// when elements are assignable.
+#[test]
+fn test_compat_tuple_to_array_homogeneous() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [number, number]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // number[]
+    let array = interner.array(TypeId::NUMBER);
+
+    // Should be assignable via compat layer
+    assert!(checker.is_assignable(tuple, array));
+}
+
+/// Test that CompatChecker correctly rejects tuple-to-array when elements
+/// are not assignable.
+#[test]
+fn test_compat_tuple_to_array_rejects_incompatible() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [string, number]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // string[] (number is not assignable to string)
+    let array = interner.array(TypeId::STRING);
+
+    // Should be rejected
+    assert!(!checker.is_assignable(tuple, array));
+}
+
+/// Test that CompatChecker handles tuple-to-array with union target type.
+#[test]
+fn test_compat_tuple_to_array_union_target() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [string, number, boolean]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // (string | number | boolean)[]
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    let array = interner.array(union);
+
+    // All elements are subtypes of the union, so this should pass
+    assert!(checker.is_assignable(tuple, array));
+}
+
+/// Test lawyer layer handling of `any` in tuple-to-array scenarios.
+#[test]
+fn test_compat_tuple_to_array_with_any_element() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [any, string]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // number[] - string is NOT assignable to number, so this should fail
+    let number_array = interner.array(TypeId::NUMBER);
+    assert!(!checker.is_assignable(tuple, number_array));
+
+    // any[] - both any and string are assignable to any
+    let any_array = interner.array(TypeId::ANY);
+    assert!(checker.is_assignable(tuple, any_array));
+
+    // string[] - any is assignable to string, and string is assignable to string
+    let string_array = interner.array(TypeId::STRING);
+    assert!(checker.is_assignable(tuple, string_array));
+
+    // [any, number] - all elements should be assignable to number[]
+    let tuple_any_number = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    assert!(checker.is_assignable(tuple_any_number, number_array));
+}
+
+/// Test lawyer layer handling when assigning to `any[]`.
+#[test]
+fn test_compat_tuple_to_any_array() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [string, number, boolean]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // any[] - any tuple should be assignable to any[]
+    let any_array = interner.array(TypeId::ANY);
+    assert!(checker.is_assignable(tuple, any_array));
+}
+
+/// Test compat layer handling of tuple with rest element to array.
+#[test]
+fn test_compat_tuple_with_rest_to_array() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [string, ...number[]]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    // number[] - should fail because string is not assignable to number
+    let number_array = interner.array(TypeId::NUMBER);
+    assert!(!checker.is_assignable(tuple, number_array));
+
+    // (string | number)[] - should succeed
+    let union_array = interner.array(interner.union(vec![TypeId::STRING, TypeId::NUMBER]));
+    assert!(checker.is_assignable(tuple, union_array));
+}
+
+/// Test compat layer with strict any propagation mode.
+#[test]
+fn test_compat_tuple_to_array_strict_any() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_any_propagation(true);
+
+    // [number, number]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // number[] - should still work in strict mode
+    let number_array = interner.array(TypeId::NUMBER);
+    assert!(checker.is_assignable(tuple, number_array));
+}
+
+/// Test lawyer layer properly delegates to subtype checker for tuple-array.
+#[test]
+fn test_compat_lawyer_delegates_to_subtype_for_tuple_array() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Verify that the lawyer layer (via check_any_propagation) returns None
+    // for tuple-to-array checks since neither type is `any`, forcing
+    // delegation to the subtype checker
+
+    // [string]
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    // string[]
+    let array = interner.array(TypeId::STRING);
+
+    // lawyer.check_any_propagation should return None (no any involved)
+    assert!(checker.lawyer().check_any_propagation(tuple, array, &interner).is_none());
+
+    // But the full assignability check should succeed
+    assert!(checker.is_assignable(tuple, array));
+}
+
+/// Test empty tuple to array assignability through compat layer.
+#[test]
+fn test_compat_empty_tuple_to_array() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // []
+    let empty_tuple = interner.tuple(vec![]);
+
+    // number[]
+    let number_array = interner.array(TypeId::NUMBER);
+
+    // Empty tuple should be assignable to any array
+    assert!(checker.is_assignable(empty_tuple, number_array));
+
+    // string[]
+    let string_array = interner.array(TypeId::STRING);
+    assert!(checker.is_assignable(empty_tuple, string_array));
+}
+
+/// Test explain_failure provides useful info for tuple-to-array failures.
+#[test]
+fn test_compat_tuple_to_array_explain_failure() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [string, number]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // string[] (number is not assignable to string)
+    let array = interner.array(TypeId::STRING);
+
+    let failure = checker.explain_failure(tuple, array);
+    assert!(failure.is_some(), "Should have a failure reason");
+}
+
+/// Test tuple with optional elements to array.
+#[test]
+fn test_compat_tuple_with_optional_to_array() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [string, number?]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    // (string | number | undefined)[]
+    let union_array = interner.array(
+        interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED])
+    );
+
+    assert!(checker.is_assignable(tuple, union_array));
+}
+
+/// Test readonly tuple to mutable array (should fail).
+#[test]
+fn test_compat_readonly_tuple_to_mutable_array() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [number, number]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // readonly [number, number]
+    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+
+    // number[] (mutable)
+    let mutable_array = interner.array(TypeId::NUMBER);
+
+    // Readonly tuple should NOT be assignable to mutable array
+    assert!(!checker.is_assignable(readonly_tuple, mutable_array));
+}
+
+/// Test tuple to readonly array (should succeed).
+#[test]
+fn test_compat_tuple_to_readonly_array() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // [number, number]
+    let tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // readonly number[]
+    let readonly_array = interner.intern(TypeKey::ReadonlyType(
+        interner.array(TypeId::NUMBER)
+    ));
+
+    // Tuple should be assignable to readonly array
+    assert!(checker.is_assignable(tuple, readonly_array));
 }
