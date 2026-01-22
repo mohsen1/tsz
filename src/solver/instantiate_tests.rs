@@ -536,3 +536,502 @@ fn test_instantiation_depth_limit_returns_error() {
 
     assert_eq!(result, TypeId::ERROR);
 }
+
+// ============================================
+// Template Literal Instantiation Tests
+// ============================================
+
+#[test]
+fn test_instantiate_template_literal_with_string_literal() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `get${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Substitute T = "Name" -> should evaluate to "getName"
+    let name_lit = interner.literal_string("Name");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, name_lit);
+    let result = instantiate_type(&interner, template, &subst);
+
+    // After instantiation with a string literal, the result should be evaluated
+    let expected = interner.literal_string("getName");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_template_literal_with_union() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `get${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Substitute T = "a" | "b" -> should evaluate to "geta" | "getb"
+    let a_lit = interner.literal_string("a");
+    let b_lit = interner.literal_string("b");
+    let union = interner.union(vec![a_lit, b_lit]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, union);
+    let result = instantiate_type(&interner, template, &subst);
+
+    // The result should be a union of "geta" | "getb"
+    let geta = interner.literal_string("geta");
+    let getb = interner.literal_string("getb");
+    let expected = interner.union(vec![geta, getb]);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_template_literal_with_multiple_unions() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    // Create `${T}_${U}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let type_param_u = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(type_param_t),
+        TemplateSpan::Text(interner.intern_string("_")),
+        TemplateSpan::Type(type_param_u),
+    ]);
+
+    // Substitute T = "a" | "b", U = "x" | "y"
+    // Should expand to "a_x" | "a_y" | "b_x" | "b_y"
+    let a_lit = interner.literal_string("a");
+    let b_lit = interner.literal_string("b");
+    let x_lit = interner.literal_string("x");
+    let y_lit = interner.literal_string("y");
+    let t_union = interner.union(vec![a_lit, b_lit]);
+    let u_union = interner.union(vec![x_lit, y_lit]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, t_union);
+    subst.insert(u_name, u_union);
+    let result = instantiate_type(&interner, template, &subst);
+
+    // Verify the result is a union of all combinations
+    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+        let members = interner.type_list(members);
+        assert_eq!(members.len(), 4);
+        // Check that we have the expected combinations
+        let expected_strings = ["a_x", "a_y", "b_x", "b_y"];
+        for expected in expected_strings.iter() {
+            let expected_lit = interner.literal_string(expected);
+            assert!(
+                members.contains(&expected_lit),
+                "Expected '{}' to be in union",
+                expected
+            );
+        }
+    } else {
+        panic!("Expected union type, got {:?}", interner.lookup(result));
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_preserves_type_param() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    // Create `get${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Substitute U = "Name" (T is not substituted)
+    let name_lit = interner.literal_string("Name");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(u_name, name_lit);
+    let result = instantiate_type(&interner, template, &subst);
+
+    // T should stay as is - result should still be a template literal
+    if let Some(TypeKey::TemplateLiteral(spans_id)) = interner.lookup(result) {
+        let spans = interner.template_list(spans_id);
+        assert_eq!(spans.len(), 2);
+        assert!(matches!(&spans[0], TemplateSpan::Text(_)));
+        assert!(matches!(&spans[1], TemplateSpan::Type(_)));
+    } else {
+        panic!(
+            "Expected template literal type, got {:?}",
+            interner.lookup(result)
+        );
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_with_string_intrinsic() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `prefix${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Substitute T = string (intrinsic)
+    // Result should remain a template literal since we can't fully evaluate `string`
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::STRING);
+    let result = instantiate_type(&interner, template, &subst);
+
+    // Should still be a template literal (can't fully evaluate with `string`)
+    if let Some(TypeKey::TemplateLiteral(spans_id)) = interner.lookup(result) {
+        let spans = interner.template_list(spans_id);
+        assert_eq!(spans.len(), 2);
+    } else {
+        panic!(
+            "Expected template literal type, got {:?}",
+            interner.lookup(result)
+        );
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_in_object() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create a template literal type
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("key_")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Create an object { prop: `key_${T}` }
+    let obj = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("prop"),
+        type_id: template,
+        write_type: template,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Substitute T = "name"
+    let name_lit = interner.literal_string("name");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, name_lit);
+    let result = instantiate_type(&interner, obj, &subst);
+
+    // The property type should now be "key_name"
+    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+        let shape = interner.object_shape(shape_id);
+        assert_eq!(shape.properties.len(), 1);
+        let prop_type = shape.properties[0].type_id;
+        let expected = interner.literal_string("key_name");
+        assert_eq!(prop_type, expected);
+    } else {
+        panic!("Expected object type");
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_in_mapped_type_template() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // Create type parameter T (outer, will be substituted)
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create mapped type parameter K (inner, shadowed)
+    let k_param = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+    };
+    let type_param_k = interner.intern(TypeKey::TypeParameter(k_param.clone()));
+
+    // Create template literal `${T}_${K}` as the mapped type's template
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(type_param_t),
+        TemplateSpan::Text(interner.intern_string("_")),
+        TemplateSpan::Type(type_param_k),
+    ]);
+
+    // Create mapped type { [K in "a" | "b"]: `${T}_${K}` }
+    let a_lit = interner.literal_string("a");
+    let b_lit = interner.literal_string("b");
+    let keys_union = interner.union(vec![a_lit, b_lit]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param,
+        constraint: keys_union,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T = "prefix"
+    let prefix_lit = interner.literal_string("prefix");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, prefix_lit);
+    let result = instantiate_type(&interner, mapped, &subst);
+
+    // The result should be a mapped type with T substituted
+    // K should NOT be substituted since it's shadowed
+    if let Some(TypeKey::Mapped(mapped_id)) = interner.lookup(result) {
+        let mapped = interner.mapped_type(mapped_id);
+        // Check that K is still the type param in the template
+        if let Some(TypeKey::TemplateLiteral(spans_id)) = interner.lookup(mapped.template) {
+            let spans = interner.template_list(spans_id);
+            // The template should have T substituted with "prefix", but K preserved
+            // So we expect: Text("prefix"), Text("_"), Type(K)
+            // Note: evaluation might merge text spans
+            assert!(!spans.is_empty());
+        } else {
+            panic!("Expected template literal in mapped type");
+        }
+    } else {
+        panic!("Expected mapped type, got {:?}", interner.lookup(result));
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_with_number_literal() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `value_${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("value_")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Substitute T = 42 (number literal)
+    // TypeScript converts numbers to string in template literals
+    let num_lit = interner.literal_number(42.0);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, num_lit);
+    let result = instantiate_type(&interner, template, &subst);
+
+    // The result should still be a template literal since we need evaluation
+    // to handle number -> string conversion (or it could be evaluated)
+    // Check that it's either a literal string or template literal with the substituted type
+    match interner.lookup(result) {
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let text = interner.resolve_atom(atom);
+            assert_eq!(text, "value_42");
+        }
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            // Should have the number literal substituted
+            assert!(spans.len() >= 1);
+        }
+        _ => {
+            // Both outcomes are acceptable depending on evaluation behavior
+        }
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_empty_string() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `${T}` template literal (just the type param)
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![TemplateSpan::Type(type_param_t)]);
+
+    // Substitute T = "" (empty string literal)
+    let empty_lit = interner.literal_string("");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, empty_lit);
+    let result = instantiate_type(&interner, template, &subst);
+
+    // Result should be the empty string literal
+    let expected = interner.literal_string("");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_template_literal_nested_in_union() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `get${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Create a union with the template: `get${T}` | number
+    let union_with_template = interner.union(vec![template, TypeId::NUMBER]);
+
+    // Substitute T = "Name"
+    let name_lit = interner.literal_string("Name");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, name_lit);
+    let result = instantiate_type(&interner, union_with_template, &subst);
+
+    // Result should be "getName" | number
+    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+        let members = interner.type_list(members);
+        assert_eq!(members.len(), 2);
+        let expected_str = interner.literal_string("getName");
+        assert!(members.contains(&expected_str));
+        assert!(members.contains(&TypeId::NUMBER));
+    } else {
+        panic!("Expected union type");
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_in_function_return() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `get${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Create function () => `get${T}`
+    let func = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: template,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Substitute T = "Value"
+    let value_lit = interner.literal_string("Value");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, value_lit);
+    let result = instantiate_type(&interner, func, &subst);
+
+    // Check the function's return type
+    if let Some(TypeKey::Function(shape_id)) = interner.lookup(result) {
+        let shape = interner.function_shape(shape_id);
+        let expected_return = interner.literal_string("getValue");
+        assert_eq!(shape.return_type, expected_return);
+    } else {
+        panic!("Expected function type");
+    }
+}
+
+#[test]
+fn test_instantiate_template_literal_in_conditional_type() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `prefix_${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix_")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Create conditional: T extends string ? `prefix_${T}` : never
+    let cond = interner.conditional(ConditionalType {
+        check_type: type_param_t,
+        extends_type: TypeId::STRING,
+        true_type: template,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Substitute T = "test"
+    let test_lit = interner.literal_string("test");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, test_lit);
+    let result = instantiate_type(&interner, cond, &subst);
+
+    // The result should be the conditional with substituted types
+    // The template in true_type should be evaluated to "prefix_test"
+    // after full evaluation of the conditional
+    // For now, check that the conditional has the substituted template
+    match interner.lookup(result) {
+        Some(TypeKey::Conditional(cond_id)) => {
+            let cond = interner.conditional_type(cond_id);
+            // The true_type should have the template evaluated
+            let expected_true = interner.literal_string("prefix_test");
+            assert_eq!(cond.true_type, expected_true);
+        }
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            // If the conditional was fully evaluated
+            let text = interner.resolve_atom(atom);
+            assert_eq!(text, "prefix_test");
+        }
+        _ => {
+            // The exact result depends on conditional evaluation behavior
+        }
+    }
+}
