@@ -508,6 +508,140 @@ impl<'a> ContextualTypeContext<'a> {
             Some(self.interner.union(return_types))
         }
     }
+
+    /// Get the contextual yield type for a generator function.
+    ///
+    /// If the expected type is `Generator<Y, R, N>`, this returns Y.
+    /// This is used to contextually type yield expressions.
+    ///
+    /// Example:
+    /// ```typescript
+    /// function* gen(): Generator<number, void, unknown> {
+    ///     yield 1;  // 1 is contextually typed as number
+    /// }
+    /// ```
+    pub fn get_generator_yield_type(&self) -> Option<TypeId> {
+        let expected = self.expected?;
+        let key = self.interner.lookup(expected)?;
+
+        match key {
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Generator<Y, R, N> has Y as the first type argument
+                if !app.args.is_empty() {
+                    Some(app.args[0])
+                } else {
+                    None
+                }
+            }
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                let yield_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_generator_yield_type()
+                    })
+                    .collect();
+
+                if yield_types.is_empty() {
+                    None
+                } else if yield_types.len() == 1 {
+                    Some(yield_types[0])
+                } else {
+                    Some(self.interner.union(yield_types))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the contextual return type for a generator function (TReturn from Generator<Y, TReturn, N>).
+    ///
+    /// This is used to contextually type return statements in generators.
+    pub fn get_generator_return_type(&self) -> Option<TypeId> {
+        let expected = self.expected?;
+        let key = self.interner.lookup(expected)?;
+
+        match key {
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Generator<Y, R, N> has R as the second type argument
+                if app.args.len() >= 2 {
+                    Some(app.args[1])
+                } else {
+                    None
+                }
+            }
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                let return_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_generator_return_type()
+                    })
+                    .collect();
+
+                if return_types.is_empty() {
+                    None
+                } else if return_types.len() == 1 {
+                    Some(return_types[0])
+                } else {
+                    Some(self.interner.union(return_types))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the contextual next type for a generator function (TNext from Generator<Y, R, TNext>).
+    ///
+    /// This is used to determine the type of values passed to .next() and
+    /// the type of the yield expression result.
+    pub fn get_generator_next_type(&self) -> Option<TypeId> {
+        let expected = self.expected?;
+        let key = self.interner.lookup(expected)?;
+
+        match key {
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Generator<Y, R, N> has N as the third type argument
+                if app.args.len() >= 3 {
+                    Some(app.args[2])
+                } else {
+                    None
+                }
+            }
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                let next_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_generator_next_type()
+                    })
+                    .collect();
+
+                if next_types.is_empty() {
+                    None
+                } else if next_types.len() == 1 {
+                    Some(next_types[0])
+                } else {
+                    Some(self.interner.union(next_types))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Create a child context for a yield expression in a generator.
+    pub fn for_yield(&self) -> ContextualTypeContext<'a> {
+        match self.get_generator_yield_type() {
+            Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
+            None => ContextualTypeContext::new(self.interner),
+        }
+    }
 }
 
 /// Apply contextual type to infer a more specific type.
@@ -537,6 +671,283 @@ pub fn apply_contextual_type(
     // For now, prefer the expression type (intrinsic type wins)
     // More sophisticated: check compatibility and narrow
     expr_type
+}
+
+/// Context for yield expression contextual typing in generators.
+///
+/// When checking a yield expression in a generator function, we need
+/// to extract the expected yield type from the function's return type.
+pub struct GeneratorContextualType<'a> {
+    interner: &'a dyn TypeDatabase,
+    /// The generator return type (e.g., Generator<number, void, unknown>)
+    generator_type: Option<TypeId>,
+}
+
+impl<'a> GeneratorContextualType<'a> {
+    /// Create a new generator contextual type context.
+    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
+        GeneratorContextualType {
+            interner,
+            generator_type: None,
+        }
+    }
+
+    /// Create a context with a generator type.
+    pub fn with_generator(interner: &'a dyn TypeDatabase, generator_type: TypeId) -> Self {
+        GeneratorContextualType {
+            interner,
+            generator_type: Some(generator_type),
+        }
+    }
+
+    /// Get the contextual yield type from the generator.
+    ///
+    /// For Generator<Y, R, N> or AsyncGenerator<Y, R, N>, this returns Y.
+    /// This is used for contextual typing of yield expressions.
+    pub fn get_yield_type(&self) -> Option<TypeId> {
+        let gen_type = self.generator_type?;
+        self.extract_yield_type_from_generator(gen_type)
+    }
+
+    /// Get the contextual next type from the generator.
+    ///
+    /// For Generator<Y, R, N> or AsyncGenerator<Y, R, N>, this returns N.
+    /// This is used for the type of the yield expression result.
+    pub fn get_next_type(&self) -> Option<TypeId> {
+        let gen_type = self.generator_type?;
+        self.extract_next_type_from_generator(gen_type)
+    }
+
+    /// Get the contextual return type from the generator.
+    ///
+    /// For Generator<Y, R, N> or AsyncGenerator<Y, R, N>, this returns R.
+    /// This is used for contextual typing of return statements.
+    pub fn get_return_type(&self) -> Option<TypeId> {
+        let gen_type = self.generator_type?;
+        self.extract_return_type_from_generator(gen_type)
+    }
+
+    /// Extract yield type (Y) from Generator<Y, R, N> structure.
+    ///
+    /// We look for the 'next' method's return type, which should be
+    /// IteratorResult<Y, R> or Promise<IteratorResult<Y, R>>.
+    fn extract_yield_type_from_generator(&self, gen_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(gen_type)?;
+
+        match key {
+            TypeKey::Object(shape_id) => {
+                let shape = self.interner.object_shape(shape_id);
+                for prop in &shape.properties {
+                    let prop_name = self.interner.resolve_atom_ref(prop.name);
+                    if prop_name.as_ref() == "next" && prop.is_method {
+                        // Extract yield type from the method return type
+                        return self.extract_yield_from_next_method(prop.type_id);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract yield type from next method's return type.
+    ///
+    /// The return type is either:
+    /// - IteratorResult<Y, R> for sync generators
+    /// - Promise<IteratorResult<Y, R>> for async generators
+    fn extract_yield_from_next_method(&self, method_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(method_type)?;
+
+        if let TypeKey::Function(func_id) = key {
+            let func = self.interner.function_shape(func_id);
+            let return_type = func.return_type;
+
+            // Check if it's a Promise wrapper (async generator)
+            if let Some(TypeKey::Object(shape_id)) = self.interner.lookup(return_type) {
+                let shape = self.interner.object_shape(shape_id);
+                for prop in &shape.properties {
+                    let prop_name = self.interner.resolve_atom_ref(prop.name);
+                    if prop_name.as_ref() == "then" {
+                        // Async generator: unwrap Promise and get IteratorResult value
+                        return self.extract_value_from_iterator_result(prop.type_id);
+                    }
+                    if prop_name.as_ref() == "value" {
+                        // Sync generator: directly get value
+                        return Some(prop.type_id);
+                    }
+                }
+            }
+
+            // Check for union type (IteratorResult = {value: Y, done: false} | {value: R, done: true})
+            if let Some(TypeKey::Union(_)) = self.interner.lookup(return_type) {
+                return self.extract_value_from_iterator_result(return_type);
+            }
+        }
+        None
+    }
+
+    /// Extract the 'value' property from an IteratorResult<Y, R> type.
+    fn extract_value_from_iterator_result(&self, result_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(result_type)?;
+
+        match key {
+            TypeKey::Union(list_id) => {
+                // Get first member (yield result) and extract value
+                let members = self.interner.type_list(list_id);
+                if let Some(&first) = members.first() {
+                    return self.extract_value_property(first);
+                }
+                None
+            }
+            TypeKey::Object(_) => self.extract_value_property(result_type),
+            _ => None,
+        }
+    }
+
+    /// Extract 'value' property from an object type.
+    fn extract_value_property(&self, obj_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(obj_type)?;
+
+        if let TypeKey::Object(shape_id) = key {
+            let shape = self.interner.object_shape(shape_id);
+            for prop in &shape.properties {
+                let prop_name = self.interner.resolve_atom_ref(prop.name);
+                if prop_name.as_ref() == "value" {
+                    return Some(prop.type_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract next type (N) from Generator<Y, R, N> structure.
+    fn extract_next_type_from_generator(&self, gen_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(gen_type)?;
+
+        if let TypeKey::Object(shape_id) = key {
+            let shape = self.interner.object_shape(shape_id);
+            for prop in &shape.properties {
+                let prop_name = self.interner.resolve_atom_ref(prop.name);
+                if prop_name.as_ref() == "next" && prop.is_method {
+                    // Extract next type from the method's first parameter
+                    return self.extract_next_from_method(prop.type_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract next type from next method's parameter.
+    fn extract_next_from_method(&self, method_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(method_type)?;
+
+        if let TypeKey::Function(func_id) = key {
+            let func = self.interner.function_shape(func_id);
+            if let Some(first_param) = func.params.first() {
+                return Some(first_param.type_id);
+            }
+        }
+        None
+    }
+
+    /// Extract return type (R) from Generator<Y, R, N> structure.
+    fn extract_return_type_from_generator(&self, gen_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(gen_type)?;
+
+        if let TypeKey::Object(shape_id) = key {
+            let shape = self.interner.object_shape(shape_id);
+            for prop in &shape.properties {
+                let prop_name = self.interner.resolve_atom_ref(prop.name);
+                if prop_name.as_ref() == "return" && prop.is_method {
+                    // Extract return type from the method's parameter
+                    return self.extract_return_from_method(prop.type_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract return type from return method's parameter.
+    fn extract_return_from_method(&self, method_type: TypeId) -> Option<TypeId> {
+        let key = self.interner.lookup(method_type)?;
+
+        if let TypeKey::Function(func_id) = key {
+            let func = self.interner.function_shape(func_id);
+            if let Some(first_param) = func.params.first() {
+                return Some(first_param.type_id);
+            }
+        }
+        None
+    }
+}
+
+/// Check if a type is an async generator type.
+///
+/// An async generator has a 'next' method that returns Promise<IteratorResult<Y, R>>.
+pub fn is_async_generator_type(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(key) = interner.lookup(type_id) else {
+        return false;
+    };
+
+    if let TypeKey::Object(shape_id) = key {
+        let shape = interner.object_shape(shape_id);
+        for prop in &shape.properties {
+            let prop_name = interner.resolve_atom_ref(prop.name);
+            if prop_name.as_ref() == "next" && prop.is_method {
+                // Check if return type is a Promise (has 'then' property)
+                if let Some(TypeKey::Function(func_id)) = interner.lookup(prop.type_id) {
+                    let func = interner.function_shape(func_id);
+                    if let Some(TypeKey::Object(ret_shape_id)) = interner.lookup(func.return_type) {
+                        let ret_shape = interner.object_shape(ret_shape_id);
+                        for ret_prop in &ret_shape.properties {
+                            let ret_prop_name = interner.resolve_atom_ref(ret_prop.name);
+                            if ret_prop_name.as_ref() == "then" {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if a type is a sync generator type.
+///
+/// A sync generator has a 'next' method that returns IteratorResult<Y, R> directly.
+pub fn is_sync_generator_type(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(key) = interner.lookup(type_id) else {
+        return false;
+    };
+
+    if let TypeKey::Object(shape_id) = key {
+        let shape = interner.object_shape(shape_id);
+        for prop in &shape.properties {
+            let prop_name = interner.resolve_atom_ref(prop.name);
+            if prop_name.as_ref() == "next" && prop.is_method {
+                // Check if return type is NOT a Promise (no 'then' property)
+                if let Some(TypeKey::Function(func_id)) = interner.lookup(prop.type_id) {
+                    let func = interner.function_shape(func_id);
+                    // If return type is a union or object without 'then', it's a sync generator
+                    if let Some(TypeKey::Object(ret_shape_id)) = interner.lookup(func.return_type) {
+                        let ret_shape = interner.object_shape(ret_shape_id);
+                        let has_then = ret_shape
+                            .properties
+                            .iter()
+                            .any(|p| interner.resolve_atom_ref(p.name).as_ref() == "then");
+                        if !has_then {
+                            return true;
+                        }
+                    }
+                    if let Some(TypeKey::Union(_)) = interner.lookup(func.return_type) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

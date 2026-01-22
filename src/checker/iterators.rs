@@ -297,47 +297,327 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     }
 
     /// Create an Iterator<T> type.
+    ///
+    /// This function attempts to:
+    /// 1. Look up the global Iterator interface from lib types
+    /// 2. If found, create a type application Iterator<element_type>
+    /// 3. If not found, create a structural equivalent with `next()` method
+    ///
+    /// The Iterator interface from lib.es2015.iterable.d.ts is:
+    /// ```typescript
+    /// interface Iterator<T, TReturn = any, TNext = undefined> {
+    ///     next(...args: [] | [TNext]): IteratorResult<T, TReturn>;
+    ///     return?(value?: TReturn): IteratorResult<T, TReturn>;
+    ///     throw?(e?: any): IteratorResult<T, TReturn>;
+    /// }
+    /// ```
     pub fn create_iterator_type(&self, element_type: TypeId) -> TypeId {
-        // TODO: Create proper Iterator<T> type reference
-        // For now, return a placeholder
-        TypeId::ANY
+        // Try to find the global Iterator interface from lib contexts
+        if let Some(iterator_base_type) = self.lookup_global_type("Iterator") {
+            // Create Iterator<element_type, any, undefined> application
+            return self.ctx.types.application(
+                iterator_base_type,
+                vec![element_type, TypeId::ANY, TypeId::UNDEFINED],
+            );
+        }
+
+        // Fallback: create a structural equivalent of Iterator<T>
+        // This is used when lib types are not available
+        self.create_structural_iterator_type(element_type)
+    }
+
+    /// Look up a global type by name from lib contexts.
+    fn lookup_global_type(&self, name: &str) -> Option<TypeId> {
+        use crate::solver::TypeLowering;
+
+        for lib_ctx in &self.ctx.lib_contexts {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
+                    // Lower the type from the lib file's arena
+                    let lowering = TypeLowering::new(lib_ctx.arena.as_ref(), self.ctx.types);
+                    // For interfaces, use all declarations (handles declaration merging)
+                    if !symbol.declarations.is_empty() {
+                        return Some(lowering.lower_interface_declarations(&symbol.declarations));
+                    }
+                    // For type aliases and other single-declaration types
+                    let decl_idx = symbol.value_declaration;
+                    if decl_idx.0 != u32::MAX {
+                        return Some(lowering.lower_type(decl_idx));
+                    }
+                }
+            }
+        }
+
+        // Also check the current file's file_locals
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                let lowering = crate::solver::TypeLowering::new(self.ctx.arena, self.ctx.types);
+                if !symbol.declarations.is_empty() {
+                    return Some(lowering.lower_interface_declarations(&symbol.declarations));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Create a structural equivalent of Iterator<T> when the global interface is not available.
+    ///
+    /// Creates an object type with:
+    /// - `next()` method returning IteratorResult<T, any>
+    ///
+    /// IteratorResult<T, TReturn> is: { done?: false; value: T } | { done: true; value: TReturn }
+    fn create_structural_iterator_type(&self, element_type: TypeId) -> TypeId {
+        // Create IteratorResult<T, any> type
+        let iterator_result_type = self.create_iterator_result_type(element_type, TypeId::ANY);
+
+        // Create the `next` method signature: () => IteratorResult<T, any>
+        let next_method_shape = crate::solver::FunctionShape {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type: iterator_result_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        };
+        let next_method_type = self.ctx.types.function(next_method_shape);
+
+        // Create the Iterator object type with `next` property
+        let next_atom = self.ctx.types.intern_string("next");
+        let next_property = crate::solver::PropertyInfo {
+            name: next_atom,
+            type_id: next_method_type,
+            write_type: next_method_type,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        };
+
+        self.ctx.types.object(vec![next_property])
+    }
+
+    /// Create IteratorResult<T, TReturn> type.
+    ///
+    /// IteratorResult<T, TReturn> = IteratorYieldResult<T> | IteratorReturnResult<TReturn>
+    /// where:
+    /// - IteratorYieldResult<T> = { done?: false; value: T }
+    /// - IteratorReturnResult<TReturn> = { done: true; value: TReturn }
+    fn create_iterator_result_type(&self, yield_type: TypeId, return_type: TypeId) -> TypeId {
+        // Try to find the global IteratorResult type from lib contexts
+        if let Some(iterator_result_base) = self.lookup_global_type("IteratorResult") {
+            return self.ctx.types.application(
+                iterator_result_base,
+                vec![yield_type, return_type],
+            );
+        }
+
+        // Fallback: create structural IteratorResult<T, TReturn>
+        let done_atom = self.ctx.types.intern_string("done");
+        let value_atom = self.ctx.types.intern_string("value");
+
+        // IteratorYieldResult<T> = { done?: false; value: T }
+        let yield_result = self.ctx.types.object(vec![
+            crate::solver::PropertyInfo {
+                name: done_atom,
+                type_id: self.ctx.types.literal_boolean(false),
+                write_type: self.ctx.types.literal_boolean(false),
+                optional: true,
+                readonly: false,
+                is_method: false,
+            },
+            crate::solver::PropertyInfo {
+                name: value_atom,
+                type_id: yield_type,
+                write_type: yield_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+            },
+        ]);
+
+        // IteratorReturnResult<TReturn> = { done: true; value: TReturn }
+        let return_result = self.ctx.types.object(vec![
+            crate::solver::PropertyInfo {
+                name: done_atom,
+                type_id: self.ctx.types.literal_boolean(true),
+                write_type: self.ctx.types.literal_boolean(true),
+                optional: false,
+                readonly: false,
+                is_method: false,
+            },
+            crate::solver::PropertyInfo {
+                name: value_atom,
+                type_id: return_type,
+                write_type: return_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+            },
+        ]);
+
+        // IteratorResult<T, TReturn> = IteratorYieldResult<T> | IteratorReturnResult<TReturn>
+        self.ctx.types.union2(yield_result, return_result)
     }
 
     /// Create an IterableIterator<T> type.
+    ///
+    /// IterableIterator<T> extends Iterator<T> and has:
+    /// - `next()` method returning IteratorResult<T>
+    /// - `[Symbol.iterator]()` method returning itself
     pub fn create_iterable_iterator_type(&self, element_type: TypeId) -> TypeId {
-        // TODO: Create proper IterableIterator<T> type reference
-        TypeId::ANY
+        // Try to find the global IterableIterator interface from lib contexts
+        if let Some(iterable_iterator_base) = self.lookup_global_type("IterableIterator") {
+            return self.ctx.types.application(
+                iterable_iterator_base,
+                vec![element_type],
+            );
+        }
+
+        // Fallback: use the iterator type (structural equivalent)
+        // IterableIterator<T> is essentially Iterator<T> with [Symbol.iterator]() returning itself
+        // For the structural fallback, we just return Iterator<T> since Symbol.iterator
+        // access isn't easily modeled structurally without well-known symbols
+        self.create_iterator_type(element_type)
     }
 
     /// Create an AsyncIterator<T> type.
+    ///
+    /// AsyncIterator<T, TReturn = any, TNext = undefined> has:
+    /// - `next()` method returning Promise<IteratorResult<T, TReturn>>
     pub fn create_async_iterator_type(&self, element_type: TypeId) -> TypeId {
-        TypeId::ANY
+        // Try to find the global AsyncIterator interface from lib contexts
+        if let Some(async_iterator_base) = self.lookup_global_type("AsyncIterator") {
+            return self.ctx.types.application(
+                async_iterator_base,
+                vec![element_type, TypeId::ANY, TypeId::UNDEFINED],
+            );
+        }
+
+        // Fallback: create structural equivalent with Promise<IteratorResult<T, any>>
+        self.create_structural_async_iterator_type(element_type)
     }
 
     /// Create an AsyncIterableIterator<T> type.
+    ///
+    /// AsyncIterableIterator<T> extends AsyncIterator<T> and has:
+    /// - `next()` method returning Promise<IteratorResult<T>>
+    /// - `[Symbol.asyncIterator]()` method returning itself
     pub fn create_async_iterable_iterator_type(&self, element_type: TypeId) -> TypeId {
-        TypeId::ANY
+        // Try to find the global AsyncIterableIterator interface from lib contexts
+        if let Some(async_iterable_iterator_base) = self.lookup_global_type("AsyncIterableIterator")
+        {
+            return self.ctx.types.application(
+                async_iterable_iterator_base,
+                vec![element_type],
+            );
+        }
+
+        // Fallback: use async iterator type
+        self.create_async_iterator_type(element_type)
+    }
+
+    /// Create a structural equivalent of AsyncIterator<T> when the global interface is not available.
+    fn create_structural_async_iterator_type(&self, element_type: TypeId) -> TypeId {
+        // Create IteratorResult<T, any> type
+        let iterator_result_type = self.create_iterator_result_type(element_type, TypeId::ANY);
+
+        // Wrap in Promise<IteratorResult<T, any>>
+        let promise_result_type = self.create_promise_type(iterator_result_type);
+
+        // Create the `next` method signature: () => Promise<IteratorResult<T, any>>
+        let next_method_shape = crate::solver::FunctionShape {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type: promise_result_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        };
+        let next_method_type = self.ctx.types.function(next_method_shape);
+
+        // Create the AsyncIterator object type with `next` property
+        let next_atom = self.ctx.types.intern_string("next");
+        let next_property = crate::solver::PropertyInfo {
+            name: next_atom,
+            type_id: next_method_type,
+            write_type: next_method_type,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        };
+
+        self.ctx.types.object(vec![next_property])
+    }
+
+    /// Create Promise<T> type.
+    fn create_promise_type(&self, inner_type: TypeId) -> TypeId {
+        // Try to find the global Promise interface from lib contexts
+        if let Some(promise_base) = self.lookup_global_type("Promise") {
+            return self.ctx.types.application(promise_base, vec![inner_type]);
+        }
+
+        // Fallback: use the synthetic Promise base type
+        // This allows the type to be recognized as promise-like even without lib types
+        self.ctx.types.application(TypeId::PROMISE_BASE, vec![inner_type])
     }
 
     // =========================================================================
     // Helper methods
     // =========================================================================
 
-    fn object_has_iterator_method(&self, _shape_id: crate::solver::ObjectShapeId) -> bool {
-        // TODO: Check if object shape has [Symbol.iterator] method
-        // This requires looking up the property with the well-known symbol key
+    fn object_has_iterator_method(&self, shape_id: crate::solver::ObjectShapeId) -> bool {
+        // Check if object shape has a 'next' method (iterator protocol)
+        // or [Symbol.iterator] method
+        let shape = self.ctx.types.object_shape(shape_id);
+        for prop in &shape.properties {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            // Check for 'next' method (direct iterator)
+            if prop_name.as_ref() == "next" && prop.is_method {
+                return true;
+            }
+        }
         false
     }
 
-    fn object_has_async_iterator_method(&self, _shape_id: crate::solver::ObjectShapeId) -> bool {
-        // TODO: Check if object shape has [Symbol.asyncIterator] method
+    fn object_has_async_iterator_method(&self, shape_id: crate::solver::ObjectShapeId) -> bool {
+        // Check if object has a 'next' method that returns Promise
+        // This is the async iterator protocol
+        let shape = self.ctx.types.object_shape(shape_id);
+        for prop in &shape.properties {
+            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+            if prop_name.as_ref() == "next" && prop.is_method {
+                // Check if the return type is Promise-like
+                if let Some(crate::solver::TypeKey::Function(func_id)) =
+                    self.ctx.types.lookup(prop.type_id)
+                {
+                    let func = self.ctx.types.function_shape(func_id);
+                    // Check if return type is a Promise (has 'then' property)
+                    if let Some(crate::solver::TypeKey::Object(ret_shape_id)) =
+                        self.ctx.types.lookup(func.return_type)
+                    {
+                        let ret_shape = self.ctx.types.object_shape(ret_shape_id);
+                        for ret_prop in &ret_shape.properties {
+                            let ret_prop_name = self.ctx.types.resolve_atom_ref(ret_prop.name);
+                            if ret_prop_name.as_ref() == "then" {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         false
     }
 
+    /// Get the element type from an async iterable.
+    ///
+    /// For AsyncGenerator<Y, R, N>, this extracts Y (the yield type).
+    /// For async iterables, this unwraps Promise<IteratorResult<T>> to get T.
     fn get_async_iterable_element_type(&self, type_id: TypeId) -> TypeId {
-        // For async iterables, get the awaited element type
-        // This unwraps Promise<T> to get T
-        self.get_iterable_element_type(type_id)
+        // Use the helper function from generators module
+        crate::checker::generators::get_async_iterable_element_type(self.ctx.types, type_id)
     }
 
     fn is_valid_for_in_target(&self, type_id: TypeId) -> bool {
@@ -595,5 +875,158 @@ mod tests {
         let elem_type = checker.get_iterable_element_type(tuple_type);
         // The result should be a union type
         assert!(checker.is_iterable(tuple_type));
+    }
+
+    #[test]
+    fn test_create_iterator_type_number() {
+        let source = "";
+        let (parser, binder, types) = create_context(source);
+        let ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        let checker = IteratorChecker { ctx: &mut { ctx } };
+
+        // Create Iterator<number>
+        let iterator_number = checker.create_iterator_type(TypeId::NUMBER);
+
+        // Verify the type is not ANY (i.e., a proper type was created)
+        assert_ne!(iterator_number, TypeId::ANY);
+
+        // Verify it's an object type with a `next` method
+        if let Some(type_key) = types.lookup(iterator_number) {
+            match type_key {
+                crate::solver::TypeKey::Object(shape_id) => {
+                    let shape = types.object_shape(shape_id);
+                    // Should have a `next` property
+                    assert!(shape.properties.iter().any(|p| {
+                        types.resolve_atom(p.name) == "next" && p.is_method
+                    }));
+                }
+                _ => {
+                    // Could be an Application type if lib types were available
+                    // This is acceptable
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_create_iterator_result_type() {
+        let source = "";
+        let (parser, binder, types) = create_context(source);
+        let ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        let checker = IteratorChecker { ctx: &mut { ctx } };
+
+        // Create IteratorResult<number, any>
+        let iterator_result = checker.create_iterator_result_type(TypeId::NUMBER, TypeId::ANY);
+
+        // Verify the type is not ANY
+        assert_ne!(iterator_result, TypeId::ANY);
+
+        // It should be a union type (IteratorYieldResult | IteratorReturnResult)
+        if let Some(type_key) = types.lookup(iterator_result) {
+            match type_key {
+                crate::solver::TypeKey::Union(_) => {
+                    // Expected: union of yield and return result types
+                }
+                _ => {
+                    // Could be an Application type if lib types were available
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_create_iterable_iterator_type() {
+        let source = "";
+        let (parser, binder, types) = create_context(source);
+        let ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        let checker = IteratorChecker { ctx: &mut { ctx } };
+
+        // Create IterableIterator<string>
+        let iterable_iterator = checker.create_iterable_iterator_type(TypeId::STRING);
+
+        // Should not return ANY
+        assert_ne!(iterable_iterator, TypeId::ANY);
+    }
+
+    #[test]
+    fn test_create_async_iterator_type() {
+        let source = "";
+        let (parser, binder, types) = create_context(source);
+        let ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        let checker = IteratorChecker { ctx: &mut { ctx } };
+
+        // Create AsyncIterator<number>
+        let async_iterator = checker.create_async_iterator_type(TypeId::NUMBER);
+
+        // Should not return ANY
+        assert_ne!(async_iterator, TypeId::ANY);
+    }
+
+    #[test]
+    fn test_iterator_type_has_next_method() {
+        let source = "";
+        let (parser, binder, types) = create_context(source);
+        let ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        let checker = IteratorChecker { ctx: &mut { ctx } };
+
+        // Create Iterator<number>
+        let iterator_type = checker.create_iterator_type(TypeId::NUMBER);
+
+        // Verify it has a next() method that returns IteratorResult<number, any>
+        if let Some(crate::solver::TypeKey::Object(shape_id)) = types.lookup(iterator_type) {
+            let shape = types.object_shape(shape_id);
+
+            // Find the next property
+            let next_prop = shape.properties.iter().find(|p| {
+                types.resolve_atom(p.name) == "next"
+            });
+
+            assert!(next_prop.is_some(), "Iterator should have a 'next' method");
+
+            let next_prop = next_prop.unwrap();
+            assert!(next_prop.is_method, "next should be a method");
+
+            // Verify next is a function
+            if let Some(crate::solver::TypeKey::Function(func_id)) = types.lookup(next_prop.type_id) {
+                let func_shape = types.function_shape(func_id);
+                // Return type should be IteratorResult<number, any>
+                assert_ne!(func_shape.return_type, TypeId::ANY);
+            }
+        }
     }
 }

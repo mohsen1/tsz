@@ -131,8 +131,12 @@ impl ConstraintSet {
 }
 
 struct TupleRestExpansion {
+    /// Fixed elements before the variadic portion (prefix)
     fixed: Vec<TupleElement>,
+    /// The variadic element type (e.g., T for ...T[])
     variadic: Option<TypeId>,
+    /// Fixed elements after the variadic portion (suffix/tail)
+    tail: Vec<TupleElement>,
 }
 
 /// Type inference context for a single function call or expression.
@@ -1789,6 +1793,12 @@ impl<'a> InferenceContext<'a> {
                 {
                     return false;
                 }
+                // Check tail elements from nested tuple spreads
+                for tail_elem in expansion.tail {
+                    if !self.is_subtype(tail_elem.type_id, target_elem) {
+                        return false;
+                    }
+                }
             } else if !self.is_subtype(elem.type_id, target_elem) {
                 return false;
             }
@@ -1807,7 +1817,41 @@ impl<'a> InferenceContext<'a> {
         for (i, t_elem) in target.iter().enumerate() {
             if t_elem.rest {
                 let expansion = self.expand_tuple_rest(t_elem.type_id);
-                let mut source_iter = source.iter().skip(i);
+                let outer_tail = &target[i + 1..];
+                // Combined suffix = expansion.tail + outer_tail
+                let combined_suffix: Vec<_> = expansion
+                    .tail
+                    .iter()
+                    .chain(outer_tail.iter())
+                    .cloned()
+                    .collect();
+
+                // Match combined suffix from the end
+                let mut source_end = source.len();
+                for tail_elem in combined_suffix.iter().rev() {
+                    if source_end <= i {
+                        if !tail_elem.optional {
+                            return false;
+                        }
+                        break;
+                    }
+                    let s_elem = &source[source_end - 1];
+                    if s_elem.rest {
+                        if !tail_elem.optional {
+                            return false;
+                        }
+                        break;
+                    }
+                    if !self.is_subtype(s_elem.type_id, tail_elem.type_id) {
+                        if tail_elem.optional {
+                            break;
+                        }
+                        return false;
+                    }
+                    source_end -= 1;
+                }
+
+                let mut source_iter = source.iter().take(source_end).skip(i);
 
                 for t_fixed in &expansion.fixed {
                     match source_iter.next() {
@@ -1875,17 +1919,22 @@ impl<'a> InferenceContext<'a> {
             Some(TypeKey::Array(elem)) => TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(elem),
+                tail: Vec::new(),
             },
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 let mut fixed = Vec::new();
-                for elem in elements.iter() {
+                for (i, elem) in elements.iter().enumerate() {
                     if elem.rest {
                         let inner = self.expand_tuple_rest(elem.type_id);
                         fixed.extend(inner.fixed);
+                        // Capture tail elements: inner.tail + elements after the rest
+                        let mut tail = inner.tail;
+                        tail.extend(elements[i + 1..].iter().cloned());
                         return TupleRestExpansion {
                             fixed,
                             variadic: inner.variadic,
+                            tail,
                         };
                     }
                     fixed.push(elem.clone());
@@ -1893,11 +1942,13 @@ impl<'a> InferenceContext<'a> {
                 TupleRestExpansion {
                     fixed,
                     variadic: None,
+                    tail: Vec::new(),
                 }
             }
             _ => TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(type_id),
+                tail: Vec::new(),
             },
         }
     }
@@ -2015,6 +2066,15 @@ impl<'a> InferenceContext<'a> {
                     cond.false_type,
                 );
             }
+            Some(TypeKey::TemplateLiteral(spans)) => {
+                // Traverse template literal spans to find inference variables
+                let spans = self.interner.template_list(spans);
+                for span in spans.iter() {
+                    if let TemplateSpan::Type(inner) = span {
+                        self.infer_from_type(var, *inner);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -2024,7 +2084,7 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
 
         match self.interner.lookup(ty) {
-            Some(TypeKey::TypeParameter(info)) => {
+            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => {
                 if let Some(param_var) = self.find_type_param(info.name) {
                     self.table.find(param_var) == root
                 } else {
@@ -2089,6 +2149,13 @@ impl<'a> InferenceContext<'a> {
                     || self.contains_inference_var(cond.extends_type, var)
                     || self.contains_inference_var(cond.true_type, var)
                     || self.contains_inference_var(cond.false_type, var)
+            }
+            Some(TypeKey::TemplateLiteral(spans)) => {
+                let spans = self.interner.template_list(spans);
+                spans.iter().any(|span| match span {
+                    TemplateSpan::Text(_) => false,
+                    TemplateSpan::Type(inner) => self.contains_inference_var(*inner, var),
+                })
             }
             _ => false,
         }

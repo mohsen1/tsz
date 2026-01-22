@@ -40258,10 +40258,21 @@ fn test_template_literal_cartesian_product() {
         TemplateSpan::Type(union2),
     ]);
 
-    // The template should be valid - expansion happens during type resolution
+    // With optimization, template literals with expandable unions are expanded immediately
+    // `${"a"|"b"}_${"1"|"2"}` becomes "a_1" | "a_2" | "b_1" | "b_2"
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
-        _ => panic!("Expected TemplateLiteral type"),
+        Some(TypeKey::Union(members_id)) => {
+            let members = interner.type_list(members_id);
+            assert_eq!(
+                members.len(),
+                4,
+                "Expected 4 members in cartesian product union"
+            );
+        }
+        _ => panic!(
+            "Expected Union type for template with multiple union interpolations, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -40306,10 +40317,21 @@ fn test_template_literal_concatenation() {
     let template =
         interner.template_literal(vec![TemplateSpan::Type(hello), TemplateSpan::Type(world)]);
 
-    // The template structure should be valid
+    // With optimization, string literal interpolations are expanded and concatenated
+    // So `${"hello"}${"world"}` becomes "helloworld" string literal
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
-        _ => panic!("Expected TemplateLiteral type"),
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let s = interner.resolve_atom_ref(atom);
+            assert_eq!(
+                s.as_ref(),
+                "helloworld",
+                "Expected concatenated string literal"
+            );
+        }
+        _ => panic!(
+            "Expected string literal for concatenated string interpolations, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -40387,10 +40409,17 @@ fn test_template_literal_multiple_adjacent_types() {
         TemplateSpan::Type(lit_z),
     ]);
 
-    // Should create valid template
+    // With optimization, string literal interpolations are expanded and concatenated
+    // So `${"x"}${"y"}${"z"}` becomes "xyz" string literal
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
-        _ => panic!("Expected TemplateLiteral type"),
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let s = interner.resolve_atom_ref(atom);
+            assert_eq!(s.as_ref(), "xyz", "Expected concatenated string literal");
+        }
+        _ => panic!(
+            "Expected string literal for concatenated string interpolations, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -40410,9 +40439,17 @@ fn test_template_literal_union_in_middle() {
         TemplateSpan::Text(interner.intern_string("_suf")),
     ]);
 
+    // With optimization, template literals with expandable unions become a union of string literals
+    // `pre_${"a"|"b"|"c"}_suf` becomes "pre_a_suf" | "pre_b_suf" | "pre_c_suf"
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
-        _ => panic!("Expected TemplateLiteral type"),
+        Some(TypeKey::Union(members_id)) => {
+            let members = interner.type_list(members_id);
+            assert_eq!(members.len(), 3, "Expected 3 members in union");
+        }
+        _ => panic!(
+            "Expected Union type for template with union interpolation, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -43521,12 +43558,17 @@ fn test_template_literal_with_uppercase_intrinsic_pattern() {
         TemplateSpan::Text(interner.intern_string("Change")),
     ]);
 
-    // Verify template was created correctly
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 3);
-    } else {
-        panic!("Expected template literal");
+    // With optimization, template literals with expandable unions are expanded immediately
+    // `on${"a"|"b"}Change` becomes "onaChange" | "onbChange"
+    match interner.lookup(template) {
+        Some(TypeKey::Union(members_id)) => {
+            let members = interner.type_list(members_id);
+            assert_eq!(members.len(), 2, "Expected 2 members in expanded union");
+        }
+        _ => panic!(
+            "Expected Union type for template with union interpolation, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -43644,21 +43686,24 @@ fn test_template_literal_conditional_extends_template() {
 fn test_template_literal_escape_sequences() {
     let interner = TypeInterner::new();
 
-    // Template with newline escape sequence
+    // Template with newline escape sequence - text-only templates become string literals
     let template = interner.template_literal(vec![TemplateSpan::Text(
         interner.intern_string("line1\\nline2"),
     )]);
 
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 1);
-        if let TemplateSpan::Text(text) = &spans[0] {
-            let resolved = interner.resolve_atom_ref(*text);
-            // The escape sequence should be preserved in the text
-            assert!(resolved.contains("\\n"));
-        }
+    // With optimization, text-only template literals become string literals
+    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
+        let resolved = interner.resolve_atom_ref(atom);
+        // The escape sequence should be preserved in the string
+        assert!(
+            resolved.contains("\\n"),
+            "Escape sequence should be preserved"
+        );
     } else {
-        panic!("Expected template literal");
+        panic!(
+            "Expected string literal for text-only template, got {:?}",
+            interner.lookup(template)
+        );
     }
 }
 
@@ -43955,15 +44000,22 @@ fn test_keyof_object_with_template_literal_computed_keys() {
 fn test_empty_template_literal() {
     let interner = TypeInterner::new();
 
-    // Empty template literal
+    // Empty template literal is optimized to an empty string literal
     let template = interner.template_literal(vec![]);
 
-    // Verify it was created
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 0);
+    // With the template literal optimization, empty template literals become empty string literals
+    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
+        let s = interner.resolve_atom_ref(atom);
+        assert_eq!(
+            s.as_ref(),
+            "",
+            "Empty template literal should be empty string"
+        );
     } else {
-        panic!("Expected empty template literal");
+        panic!(
+            "Expected empty string literal for empty template literal, got {:?}",
+            interner.lookup(template)
+        );
     }
 }
 
@@ -43973,18 +44025,26 @@ fn test_empty_template_literal() {
 fn test_template_literal_only_text() {
     let interner = TypeInterner::new();
 
+    // Template literal with only text is optimized to a string literal
     let template =
         interner.template_literal(vec![TemplateSpan::Text(interner.intern_string("hello"))]);
 
-    // Verify it was created
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 1);
+    // With the template literal optimization, text-only template literals become string literals
+    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
+        let s = interner.resolve_atom_ref(atom);
+        assert_eq!(
+            s.as_ref(),
+            "hello",
+            "Text-only template literal should be 'hello' string literal"
+        );
     } else {
-        panic!("Expected template literal");
+        panic!(
+            "Expected string literal for text-only template literal, got {:?}",
+            interner.lookup(template)
+        );
     }
 
-    // keyof of template literal returns apparent keys of string (same as keyof string)
+    // keyof of string literal returns apparent keys of string (same as keyof string)
     let result = evaluate_keyof(&interner, template);
     let expected = evaluate_keyof(&interner, TypeId::STRING);
     assert_eq!(result, expected);
@@ -44298,12 +44358,18 @@ fn test_template_literal_nested_union_interpolation() {
         TemplateSpan::Type(nested_union),
     ]);
 
-    // Verify template was created
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 2);
-    } else {
-        panic!("Expected template literal");
+    // With optimization, nested unions in template literals should be expanded
+    // The nested union is flattened to "a" | "b" | "c" | "d" and template expands to
+    // "prefixa" | "prefixb" | "prefixc" | "prefixd"
+    match interner.lookup(template) {
+        Some(TypeKey::Union(members_id)) => {
+            let members = interner.type_list(members_id);
+            assert_eq!(members.len(), 4, "Expected 4 members in expanded union");
+        }
+        _ => panic!(
+            "Expected Union type for template with nested union interpolation, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
