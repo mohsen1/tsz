@@ -631,6 +631,29 @@ impl<'a> CheckerContext<'a> {
         false
     }
 
+    /// Check if Symbol is available in lib files or global scope.
+    /// Returns true if Symbol is declared in lib contexts, globals, or type declarations.
+    pub fn has_symbol_in_lib(&self) -> bool {
+        // Check lib contexts first
+        for lib_ctx in &self.lib_contexts {
+            if lib_ctx.binder.file_locals.has("Symbol") {
+                return true;
+            }
+        }
+
+        // Check if Symbol is available in current scope/global context
+        if self.binder.current_scope.has("Symbol") {
+            return true;
+        }
+
+        // Check current file locals as fallback
+        if self.binder.file_locals.has("Symbol") {
+            return true;
+        }
+
+        false
+    }
+
     /// Check if a modifier list contains a specific modifier kind.
     pub fn has_modifier(&self, modifiers: &Option<crate::parser::NodeList>, kind: u16) -> bool {
         if let Some(mods) = modifiers {

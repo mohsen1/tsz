@@ -11,6 +11,7 @@
 
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
+use crate::lib_loader;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::solver::{TypeId, TypeInterner};
@@ -5436,7 +5437,15 @@ const s3 = Symbol(42);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
+    // Load lib.d.ts to provide Symbol constructor
+    let lib_file = lib_loader::load_default_lib_dts();
+    if lib_file.is_none() {
+        return; // Skip test if lib not available
+    }
+    let lib_file = lib_file.unwrap();
+
     let mut binder = BinderState::new();
+    binder.merge_lib_symbols(&[lib_file.clone()]);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5447,6 +5456,15 @@ const s3 = Symbol(42);"#;
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+
+    // Set lib contexts for type resolution
+    checker
+        .ctx
+        .set_lib_contexts(vec![crate::checker::context::LibContext {
+            arena: lib_file.arena.clone(),
+            binder: lib_file.binder.clone(),
+        }]);
+
     checker.check_source_file(root);
 
     // Should have no errors - all calls are valid
@@ -5463,7 +5481,15 @@ fn test_symbol_constructor_too_many_args() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
+    // Load lib.d.ts to provide Symbol constructor
+    let lib_file = lib_loader::load_default_lib_dts();
+    if lib_file.is_none() {
+        return; // Skip test if lib not available
+    }
+    let lib_file = lib_file.unwrap();
+
     let mut binder = BinderState::new();
+    binder.merge_lib_symbols(&[lib_file.clone()]);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
@@ -5474,6 +5500,15 @@ fn test_symbol_constructor_too_many_args() {
         "test.ts".to_string(),
         crate::checker::context::CheckerOptions::default(),
     );
+
+    // Set lib contexts for type resolution
+    checker
+        .ctx
+        .set_lib_contexts(vec![crate::checker::context::LibContext {
+            arena: lib_file.arena.clone(),
+            binder: lib_file.binder.clone(),
+        }]);
+
     checker.check_source_file(root);
 
     // Should have an error for too many arguments

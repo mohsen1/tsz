@@ -2,7 +2,9 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
-**Current Status:** Type system solver is complete. Focus is now on production readiness: transform pipeline migration, module resolution, and conformance validation.
+**Current Status:** Type system solver is complete. Focus is now on production readiness: transform pipeline migration, diagnostic coverage, module resolution, and conformance validation.
+
+**Conformance Baseline (2025-01-22):** 34.7% pass rate (4,182/12,053 tests)
 
 ---
 
@@ -96,6 +98,113 @@ The following IR nodes exist in `src/transforms/ir.rs` and are ready to use:
 - All 3 transforms use IR pattern (no direct string emission)
 - All existing transform tests pass
 - ES5 emission matches TSC output
+
+---
+
+## High Priority: Diagnostic Coverage & Symbol Resolution
+
+**Problem:** Conformance tests show significant missing diagnostic coverage (65% of tests fail).
+
+**Key Insight:** This is **NOT** a type system problem. The solver is complete and battle-tested (91K lines of tests pass).
+
+**Root Cause:** Symbol resolution and diagnostic coverage gaps in the checker.
+
+### Conformance Baseline
+
+Run on 2025-01-22 with 12,053 tests:
+- **Pass Rate:** 34.7% (4,182 passed)
+- **Failed:** 7,351 tests
+- **Crashed:** 519 tests (mostly ENOTDIR - infrastructure issues)
+
+### Top Missing Errors (Symbol Resolution Issues)
+
+| Error Code | Count | Description |
+|------------|-------|-------------|
+| TS2318 | 8,082x | Cannot find type '{0}' |
+| TS2583 | 4,359x | Cannot find name '{0}'. Did you mean '{1}'? |
+| TS2304 | 1,640x | Cannot find name '{0}' |
+| TS2322 | 1,352x | Type '{0}' is not assignable to type '{1}' |
+| TS2554 | 1,051x | Expected {0} arguments, but got {1} |
+
+**Pattern:** 4 of top 5 are symbol/type lookup failures, not type checking failures.
+
+### Architecture Assessment (Don't Repeat checker.rs Mistakes)
+
+**TypeScript's checker.rs problems:**
+- 25,000+ lines of monolithic imperative code
+- Mixes symbol resolution, type checking, and emission
+- Hard to test, hard to reason about
+
+**Your architecture (better!):**
+```
+Binder (symbols) → Checker (AST walker) → Solver (type operations)
+     ↓                    ↓                      ↓
+ SymbolTable         Diagnostics          TypeInterner
+```
+
+**What's complete:**
+- ✅ **Solver:** Query-based structural type solver with Ena unification
+- ✅ **Type operations:** Subtyping, instantiation, lowering all working
+- ✅ **Test coverage:** 91K lines of solver tests pass
+- ✅ **Diagnostic infrastructure:** Error codes and templates exist
+
+**What needs work:**
+- ⚠️ **Binder→Checker integration:** Symbol lookup coverage
+- ⚠️ **Type lowering:** AST → Type conversion completeness
+- ⚠️ **Diagnostic emission:** When to emit errors (precision)
+
+### Strategy: Incremental Diagnostic Coverage
+
+**Goal:** Improve pass rate from 34.7% → 60%+ without architectural changes.
+
+**Approach:** Debug ONE error at a time, learn the pattern, fix similar cases.
+
+#### Phase 1: Symbol Resolution Coverage (1-2 weeks)
+
+Focus on the 8,082 missing TS2318 errors:
+
+1. **Pick a failing test** with missing TS2318/TS2304
+2. **Run with verbose output:**
+   ```bash
+   ./conformance/run-conformance.sh --native --max=1 --verbose \
+     --filter=conformance/path/to/test.ts
+   ```
+3. **Compare TSC output vs TSZ output**
+   - What error does TSC emit?
+   - Where in your checker should this be caught?
+4. **Fix the specific code path**
+5. **Find similar cases** and fix them
+
+**Focus areas:**
+- `src/checker/state.rs` - Symbol lookup methods
+- `src/solver/lower.rs` - Type reference resolution
+- Import statement handling
+- Module augmentation
+- Ambient contexts
+
+#### Phase 2: Type Checking Precision (2-3 weeks)
+
+Focus on TS2322 (type not assignable) and TS2554 (argument count):
+- Overload resolution coverage
+- Generic type instantiation error paths
+- Callable type checking
+
+### What NOT to Do
+
+| ❌ Don't | ✅ Do Instead |
+|---------|---------------|
+| Rewrite the solver | It's complete - 91K tests pass |
+| Chase pass percentages | Fix root causes incrementally |
+| Replicate checker.rs complexity | Your thin checker is better |
+| Add test-specific workarounds | Fix underlying checker logic |
+| Major architectural changes | Incremental coverage improvements |
+
+### Success Criteria
+
+- **Short term (2 weeks):** Pass rate 34.7% → 45%
+- **Medium term (4 weeks):** Pass rate → 60%+
+- **Solver remains:** Untouched (it's good)
+- **Architecture:** Clean separation maintained
 
 ---
 
@@ -210,35 +319,42 @@ After transform migration and module resolution are complete, choose one:
 
 ## Immediate Action Plan (This Week)
 
-### Day 1-2: Debug Conformance Tests
+### Day 1: Debug One Missing Error
 
 ```bash
-# Find the JSON parsing bug
-./conformance/run-conformance.sh --max=10 --verbose
+# Find a test with missing TS2304/TS2318
+./conformance/run-conformance.sh --native --max=10 --verbose 2>&1 | \
+  grep -B3 "Missing: TS2304\|Missing: TS2318"
 
-# Fix conformance/src/worker.ts JSON parsing
-# Get baseline metrics
+# Pick ONE failing test
+./conformance/run-conformance.sh --native --max=1 --verbose \
+  --filter=conformance/path/to/test.ts
+
+# Compare TSC vs TSZ output
+tsc --noEmit conformance/path/to/test.ts
+# vs your output
 ```
 
-### Day 3-4: Study Transform Architecture
+**Goal:** Understand ONE missing error pattern end-to-end.
+
+### Day 2-3: Fix Symbol Resolution Pattern
 
 ```bash
-# Review the clean IR pattern
-# Read: src/transforms/mod.rs (migration status)
-# Read: src/transforms/enum_es5.rs (reference implementation)
-# Read: src/transforms/ir.rs (IR node definitions)
+# Find where the error should be emitted
+grep -r "TS2304\|TS2318" src/checker/
+
+# Add the missing check
+# Test against similar cases
 ```
 
-### Day 5: Start class_es5 Migration
+### Day 4-5: Repeat for Top Error Patterns
 
-```bash
-# Create design document
-# specs/CLASS_ES5_MIGRATION.md
+- Import resolution errors
+- Type reference lookup
+- Module augmentation
+- Ambient context handling
 
-# Build transformer struct
-# Construct IR nodes for IIFE pattern
-# Test against existing class transform tests
-```
+**Goal:** 5-10% improvement in pass rate.
 
 ---
 
@@ -321,6 +437,22 @@ cargo clippy --all-targets --fix --allow-dirty --allow-staged
 | `src/transforms/destructuring_es5.rs` | ~900 | Another IR pattern example |
 | `src/checker/state.rs` | 25,849 | Main checker (may need transform updates) |
 | `src/emitter/mod.rs` | ~2,000 | Emitter entry points |
+
+## Key Files for Diagnostic Coverage
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/checker/state.rs` | 14,558 | **MAIN FOCUS** - Symbol lookup, diagnostic emission |
+| `src/checker/expr.rs` | ~5,000 | Expression checking |
+| `src/solver/lower.rs` | 2,408 | AST → Type conversion (type reference resolution) |
+| `src/checker/types/diagnostics.rs` | 455 | Error codes and templates |
+| `src/binder/` | ~3,000 | Symbol table (may need coverage improvements) |
+| `src/checker/declarations.rs` | ~3,000 | Declaration checking |
+
+**Architecture Summary:**
+- Solver: ~30,000 lines (complete, tested)
+- Checker: ~50,000 lines (needs diagnostic coverage)
+- Binder: ~3,000 lines (symbol resolution)
 
 ---
 

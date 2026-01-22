@@ -95,6 +95,7 @@ pub mod diagnostic_messages {
     pub const TYPES_OF_PROPERTY_INCOMPATIBLE: &str = "Types of property '{0}' are incompatible.";
     pub const ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE: &str =
         "'{0}' only refers to a type, but is being used as a value here.";
+    pub const ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB: &str = "'{0}' only refers to a type, but is being used as a value here. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.";
     pub const ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE: &str =
         "'{0}' refers to a value, but is being used as a type here. Did you mean 'typeof {0}'?";
     pub const LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS: &str =
@@ -277,6 +278,7 @@ pub mod diagnostic_codes {
     pub const PROPERTY_DOES_NOT_EXIST_ON_TYPE: u32 = 2339;
     pub const TYPE_HAS_NO_PROPERTY: u32 = 2339;
     pub const ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE: u32 = 2693;
+    pub const ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB: u32 = 2585;
     pub const LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS: u32 = 2695;
     pub const ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE: u32 = 2749;
 

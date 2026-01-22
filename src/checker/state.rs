@@ -686,6 +686,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                eprintln!("[RESOLVE_PHASE4] Found '{}' in lib binder[{}]", name, i);
                 if debug {
                     trace!(
                         name = %name,
@@ -5800,8 +5801,38 @@ impl<'a> CheckerState<'a> {
         match name.as_str() {
             "undefined" => TypeId::UNDEFINED,
             "NaN" | "Infinity" => TypeId::NUMBER,
-            // Symbol constructor - synthesize proper type for call signature validation
-            "Symbol" => self.get_symbol_constructor_type(),
+            // Symbol constructor - only synthesize if available in lib contexts or merged into binder
+            "Symbol" => {
+                // Check if Symbol is available from lib contexts or merged lib symbols
+                // This uses has_symbol_in_lib which checks lib_contexts, current_scope, and file_locals
+                let symbol_available = self.ctx.has_symbol_in_lib();
+
+                if !symbol_available {
+                    // Symbol is not available via lib, check if it resolves to a symbol in scope
+                    // If resolve_identifier_symbol already failed (we're here), then Symbol is not in scope
+                    // Emit TS2585: Symbol only refers to a type, suggest changing lib
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    if let Some(loc) = self.get_source_location(idx) {
+                        let message = format_message(
+                            diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                            &[name],
+                        );
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            start: loc.start,
+                            length: loc.length(),
+                            file: self.ctx.file_name.clone(),
+                            related_information: Vec::new(),
+                        });
+                    }
+                    return TypeId::ERROR;
+                }
+                self.get_symbol_constructor_type()
+            }
             _ if self.is_known_global_value_name(name) => {
                 // Return ANY for known globals to allow property access
                 TypeId::ANY
