@@ -4,8 +4,8 @@
 //! explicit APIs and compiler options, not by file naming patterns.
 
 use crate::Parser;
-use crate::syntax_kind_ext;
 use crate::parser::node::NodeArena;
+use crate::parser::syntax_kind_ext;
 
 /// Test that WasmProgram treats lib files explicitly via addLibFile
 /// and not via file name detection
@@ -44,19 +44,19 @@ class MyClass {
     // Test with various file names that previously might have triggered
     // special behavior in other compilers
     let test_filenames = [
-        "test.ts",              // Generic name
-        "classTest.ts",         // Contains "class"
-        "myClass.ts",           // Contains "Class"
-        "methodTests.ts",       // Contains "method"
-        "MyMethod.ts",          // Contains "Method"
-        "some_random_file.ts",  // No special keywords
+        "test.ts",             // Generic name
+        "classTest.ts",        // Contains "class"
+        "myClass.ts",          // Contains "Class"
+        "methodTests.ts",      // Contains "method"
+        "MyMethod.ts",         // Contains "Method"
+        "some_random_file.ts", // No special keywords
     ];
 
     for filename in test_filenames {
-        let mut parser = Parser::new(filename, source);
+        let mut parser = Parser::new(filename.to_string(), source.to_string());
         let _ = parser.parse_source_file();
 
-        let arena = parser.into_arena();
+        let arena = parser.parser.into_arena();
 
         // Find the class declaration node
         let class_count = count_nodes_by_kind(&arena, syntax_kind_ext::CLASS_DECLARATION);
@@ -69,8 +69,8 @@ class MyClass {
             filename, class_count
         );
 
-        // Find method nodes
-        let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
+        // Find method nodes (class methods are METHOD_DECLARATION, not FUNCTION_DECLARATION)
+        let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::METHOD_DECLARATION);
 
         // We should find exactly 1 method in all cases
         assert_eq!(
@@ -100,16 +100,16 @@ class Example {
 
     // These filenames contain keywords that were previously checked
     let filenames_with_keywords = [
-        "classStandalone.ts",  // Contains "class"
-        "MethodTest.ts",       // Contains "Method"
-        "classAndMethod.ts",   // Contains both
+        "classStandalone.ts", // Contains "class"
+        "MethodTest.ts",      // Contains "Method"
+        "classAndMethod.ts",  // Contains both
     ];
 
     for filename in filenames_with_keywords {
-        let mut parser = Parser::new(filename, source);
+        let mut parser = Parser::new(filename.to_string(), source.to_string());
         let _ = parser.parse_source_file();
 
-        let arena = parser.into_arena();
+        let arena = parser.parser.into_arena();
 
         // Should find exactly 1 class regardless of filename
         let class_count = count_nodes_by_kind(&arena, syntax_kind_ext::CLASS_DECLARATION);
@@ -119,12 +119,20 @@ class Example {
             filename, class_count
         );
 
-        // Should find exactly 2 functions (standalone + method)
+        // Should find exactly 1 standalone function (class method is METHOD_DECLARATION, not FUNCTION_DECLARATION)
         let func_count = count_nodes_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
         assert_eq!(
-            func_count, 2,
-            "Should find exactly 2 functions in {}, got {}",
+            func_count, 1,
+            "Should find exactly 1 function in {}, got {}",
             filename, func_count
+        );
+
+        // Should find exactly 1 method in the class
+        let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::METHOD_DECLARATION);
+        assert_eq!(
+            method_count, 1,
+            "Should find exactly 1 method in {}, got {}",
+            filename, method_count
         );
     }
 }
