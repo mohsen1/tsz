@@ -309,6 +309,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.cache.borrow_mut().insert(type_id, result);
                 result
             }
+            TypeKey::TemplateLiteral(spans) => {
+                let result = self.evaluate_template_literal(*spans);
+                self.visiting.borrow_mut().remove(&type_id);
+                self.cache.borrow_mut().insert(type_id, result);
+                result
+            }
             // Resolve Ref types to their structural form
             TypeKey::Ref(symbol) => {
                 let result =
@@ -488,6 +494,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.collect_type_params(obj, seen, params);
                 self.collect_type_params(idx, seen, params);
             }
+            TypeKey::TemplateLiteral(spans) => {
+                // Extract type params from template literal interpolations
+                let spans = self.interner.template_list(spans);
+                for span in spans.iter() {
+                    if let TemplateSpan::Type(inner) = span {
+                        self.collect_type_params(*inner, seen, params);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -526,6 +541,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Evaluate mapped types in type arguments
                 let mapped = self.interner.mapped_type(mapped_id);
                 self.evaluate_mapped(mapped.as_ref())
+            }
+            TypeKey::TemplateLiteral(spans) => {
+                // Evaluate template literal types in type arguments
+                self.evaluate_template_literal(spans)
             }
             _ => arg,
         }
@@ -2014,6 +2033,95 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(obj)
             }
             _ => None,
+        }
+    }
+
+    /// Evaluate a template literal type: `hello${T}world`
+    ///
+    /// Template literals evaluate to a union of all possible literal string combinations.
+    /// For example: `get${K}` where K = "a" | "b" evaluates to "geta" | "getb"
+    fn evaluate_template_literal(&self, spans: TemplateLiteralId) -> TypeId {
+        let span_list = self.interner.template_list(spans);
+
+        // Check if all spans are just text (no interpolation)
+        let all_text = span_list.iter().all(|span| matches!(span, TemplateSpan::Text(_)));
+
+        if all_text {
+            // Concatenate all text spans into a single string literal
+            let mut result = String::new();
+            for span in span_list.iter() {
+                if let TemplateSpan::Text(atom) = span {
+                    result.push_str(self.interner.resolve_atom_ref(*atom).as_ref());
+                }
+            }
+            return self.interner.literal_string(&result);
+        }
+
+        // Check if we can fully evaluate to a union of literals
+        let mut combinations = vec![String::new()];
+
+        for span in span_list.iter() {
+            match span {
+                TemplateSpan::Text(atom) => {
+                    let text = self.interner.resolve_atom_ref(*atom).to_string();
+                    for combo in &mut combinations {
+                        combo.push_str(&text);
+                    }
+                }
+                TemplateSpan::Type(type_id) => {
+                    let evaluated = self.evaluate(*type_id);
+
+                    // Check if this is a union of literal strings
+                    if let Some(TypeKey::Union(members)) = self.interner.lookup(evaluated) {
+                        let members = self.interner.type_list(members);
+                        let mut new_combinations = Vec::new();
+
+                        for combo in &combinations {
+                            for &member in members.iter() {
+                                if let Some(TypeKey::Literal(LiteralValue::String(atom))) =
+                                    self.interner.lookup(member)
+                                {
+                                    let text = self.interner.resolve_atom_ref(atom).to_string();
+                                    new_combinations.push(format!("{}{}", combo, text));
+                                } else {
+                                    // Can't fully evaluate - return template literal as-is
+                                    return self.interner.template_literal(span_list.to_vec());
+                                }
+                            }
+                        }
+                        combinations = new_combinations;
+                    } else if let Some(TypeKey::Literal(LiteralValue::String(atom))) =
+                        self.interner.lookup(evaluated)
+                    {
+                        let text = self.interner.resolve_atom_ref(atom).to_string();
+                        for combo in &mut combinations {
+                            combo.push_str(&text);
+                        }
+                    } else if evaluated == TypeId::STRING {
+                        // String type in template means any string - can't fully evaluate
+                        return self.interner.template_literal(span_list.to_vec());
+                    } else {
+                        // Can't evaluate this type - return template literal as-is
+                        return self.interner.template_literal(span_list.to_vec());
+                    }
+                }
+            }
+        }
+
+        // Convert combinations to union of literal strings
+        if combinations.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        let literal_types: Vec<TypeId> = combinations
+            .iter()
+            .map(|s| self.interner.literal_string(s))
+            .collect();
+
+        if literal_types.len() == 1 {
+            literal_types[0]
+        } else {
+            self.interner.union(literal_types)
         }
     }
 
