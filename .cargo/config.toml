@@ -1,0 +1,53 @@
+# Cargo configuration for tsz - optimized for orchestrator-driven development
+#
+# This configuration ensures all worktrees share build artifacts, preventing
+# the 6GB+ duplication that occurs when the orchestrator creates multiple
+# worker worktrees.
+#
+# The orchestrator will override CARGO_TARGET_DIR via environment variables
+# to point to this shared location.
+
+[build]
+# Enable incremental compilation for faster rebuilds
+incremental = true
+
+# Use all available cores for parallel builds
+# Jobs = number of compiler jobs to run in parallel
+jobs = 14
+
+[profile.dev]
+# Faster builds for development
+opt-level = 0
+incremental = true
+codegen-units = 256
+
+[profile.orchestrator]
+# Optimized profile for orchestrator workers
+# Faster builds than dev, decent runtime performance
+inherits = "dev"
+opt-level = 0
+incremental = true
+codegen-units = 256
+lto = false
+debug = false
+strip = false
+
+[profile.orchestrator-release]
+# Release profile with incremental compilation for orchestrator
+inherits = "release"
+incremental = true
+codegen-units = 256
+lto = "thin"
+debug = false
+
+[env]
+# Default target dir (can be overridden by orchestrator)
+CARGO_TARGET_DIR = { value = "/Users/mohsenazimi/code/tsz/target-shared", relative = false }
+
+# Optimizations for build speed
+CARGO_BUILD_JOBS = { value = "14", relative = false }
+CARGO_INCREMENTAL = { value = "1", relative = false }
+
+[net]
+# Faster dependency fetching
+git-fetch-with-cli = true
