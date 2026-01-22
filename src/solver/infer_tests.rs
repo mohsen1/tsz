@@ -14864,3 +14864,490 @@ fn test_inference_with_constraints() {
 
     assert_eq!(resolved, forty_two);
 }
+
+// =============================================================================
+// Template Literal Inference Tests
+// =============================================================================
+
+#[test]
+fn test_template_literal_contains_inference_var() {
+    // Test that contains_inference_var properly detects infer in template literals
+    use crate::solver::types::TemplateSpan;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var_t = ctx.fresh_type_param(t_name);
+
+    // Create a TypeParameter representing T
+    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal: `prefix${T}suffix`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(t_type),
+        TemplateSpan::Text(interner.intern_string("suffix")),
+    ]);
+
+    // Should detect that the template contains inference var T
+    assert!(ctx.contains_inference_var(template, var_t));
+}
+
+#[test]
+fn test_template_literal_does_not_contain_unrelated_var() {
+    // Test that contains_inference_var returns false for unrelated var
+    use crate::solver::types::TemplateSpan;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let _var_t = ctx.fresh_type_param(t_name);
+    let var_u = ctx.fresh_type_param(u_name);
+
+    // Create a TypeParameter representing T
+    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal: `prefix${T}suffix`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(t_type),
+        TemplateSpan::Text(interner.intern_string("suffix")),
+    ]);
+
+    // Should not detect U in template containing T
+    assert!(!ctx.contains_inference_var(template, var_u));
+}
+
+#[test]
+fn test_template_literal_text_only_no_inference_var() {
+    // Test that text-only template literals don't contain inference vars
+    use crate::solver::types::TemplateSpan;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var_t = ctx.fresh_type_param(t_name);
+
+    // Create text-only template literal: `hello world`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("hello world")),
+    ]);
+
+    // Should not detect any inference var
+    assert!(!ctx.contains_inference_var(template, var_t));
+}
+
+#[test]
+fn test_template_literal_multiple_inference_positions() {
+    // Test template literal with multiple type positions
+    use crate::solver::types::TemplateSpan;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let var_t = ctx.fresh_type_param(t_name);
+    let var_u = ctx.fresh_type_param(u_name);
+
+    // Create type parameters
+    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let u_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal: `${T}-${U}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(t_type),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(u_type),
+    ]);
+
+    // Should detect both T and U
+    assert!(ctx.contains_inference_var(template, var_t));
+    assert!(ctx.contains_inference_var(template, var_u));
+}
+
+#[test]
+fn test_template_literal_infer_from_conditional() {
+    // Test that infer_from_conditional properly traverses template literals in true_type branch
+    use crate::solver::types::TemplateSpan;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
+
+    let var_t = ctx.fresh_type_param(t_name);
+
+    // Create a TypeParameter representing T with constraint string
+    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+    }));
+
+    // Create template literal: `get${T}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(t_type),
+    ]);
+
+    // Use infer_from_conditional (which is public) with template in true_type
+    // T extends string ? `get${T}` : never
+    ctx.infer_from_conditional(
+        var_t,
+        t_type,         // check_type: T
+        TypeId::STRING, // extends_type: string
+        template,       // true_type: `get${T}`
+        TypeId::NEVER,  // false_type: never
+    );
+
+    // Should have added string as upper bound from extends_type detection
+    // The infer_from_conditional adds upper bound when check_type matches var
+    let constraints = ctx.get_constraints(var_t).unwrap();
+    assert!(constraints.upper_bounds.contains(&TypeId::STRING));
+}
+
+#[test]
+fn test_template_literal_inference_context_integration() {
+    // Integration test for template literal inference with InferenceContext
+    // This tests the scenario: T extends `get${infer K}` ? K : never
+    // When T = "getName", K should be "Name"
+    use crate::solver::types::TemplateSpan;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let k_name = interner.intern_string("K");
+
+    let var_k = ctx.fresh_type_param(k_name);
+
+    // Create infer type representing "infer K"
+    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal pattern: `get${infer K}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(infer_k),
+    ]);
+
+    // Verify that infer K is detectable in the pattern
+    assert!(ctx.contains_inference_var(pattern, var_k));
+
+    // The actual inference from string literal to infer type is done in
+    // TypeEvaluator::match_template_literal_string, not in InferenceContext.
+    // InferenceContext just tracks the bounds and constraints.
+    // This test verifies the traversal works correctly.
+}
+
+#[test]
+fn test_nested_template_literal_in_conditional() {
+    // Test nested template literal in conditional type
+    use crate::solver::types::TemplateSpan;
+
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let k_name = interner.intern_string("K");
+
+    let var_k = ctx.fresh_type_param(k_name);
+
+    // Create infer type representing "infer K"
+    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal pattern: `get${infer K}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(infer_k),
+    ]);
+
+    // Create check type parameter T
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create conditional: T extends `get${infer K}` ? K : never
+    let cond = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: pattern,
+        true_type: infer_k,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+
+    // Verify that the conditional contains the inference var K
+    assert!(ctx.contains_inference_var(cond, var_k));
+}
+
+#[test]
+fn test_template_literal_inference_end_to_end() {
+    // End-to-end test: T extends `get${infer K}` ? K : never
+    // When T = "getName", result should be "Name"
+    use crate::solver::types::TemplateSpan;
+    use crate::solver::evaluate::evaluate_conditional;
+
+    let interner = TypeInterner::new();
+
+    // Create infer type: infer K
+    let k_name = interner.intern_string("K");
+    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal pattern: `get${infer K}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(infer_k),
+    ]);
+
+    // Create input: "getName"
+    let get_name = interner.literal_string("getName");
+
+    // Create conditional: "getName" extends `get${infer K}` ? K : never
+    let cond = ConditionalType {
+        check_type: get_name,
+        extends_type: pattern,
+        true_type: infer_k,
+        false_type: TypeId::NEVER,
+        is_distributive: false, // Not distributive for this simple case
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Result should be "Name" (the inferred K)
+    let name_literal = interner.literal_string("Name");
+    assert_eq!(
+        result, name_literal,
+        "T extends `get${{infer K}}` ? K : never should infer K='Name' from T='getName'"
+    );
+}
+
+#[test]
+fn test_template_literal_inference_no_match() {
+    // Test: T extends `get${infer K}` ? K : never
+    // When T = "setValue", result should be never (no match)
+    use crate::solver::types::TemplateSpan;
+    use crate::solver::evaluate::evaluate_conditional;
+
+    let interner = TypeInterner::new();
+
+    // Create infer type: infer K
+    let k_name = interner.intern_string("K");
+    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal pattern: `get${infer K}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(infer_k),
+    ]);
+
+    // Create input: "setValue" (doesn't match pattern)
+    let set_value = interner.literal_string("setValue");
+
+    // Create conditional
+    let cond = ConditionalType {
+        check_type: set_value,
+        extends_type: pattern,
+        true_type: infer_k,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Result should be never (false branch)
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "T extends `get${{infer K}}` ? K : never should return never when T doesn't match"
+    );
+}
+
+#[test]
+fn test_template_literal_inference_prefix_suffix() {
+    // Test: T extends `prefix-${infer R}-suffix` ? R : never
+    // When T = "prefix-middle-suffix", result should be "middle"
+    use crate::solver::types::TemplateSpan;
+    use crate::solver::evaluate::evaluate_conditional;
+
+    let interner = TypeInterner::new();
+
+    // Create infer type: infer R
+    let r_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: r_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal pattern: `prefix-${infer R}-suffix`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix-")),
+        TemplateSpan::Type(infer_r),
+        TemplateSpan::Text(interner.intern_string("-suffix")),
+    ]);
+
+    // Create input: "prefix-middle-suffix"
+    let input = interner.literal_string("prefix-middle-suffix");
+
+    // Create conditional
+    let cond = ConditionalType {
+        check_type: input,
+        extends_type: pattern,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Result should be "middle" (the inferred R)
+    let middle = interner.literal_string("middle");
+    assert_eq!(
+        result, middle,
+        "T extends `prefix-${{infer R}}-suffix` ? R : never should infer R='middle'"
+    );
+}
+
+#[test]
+fn test_template_literal_inference_multiple_infers() {
+    // Test: T extends `${infer A}-${infer B}` ? [A, B] : never
+    // When T = "hello-world", result should be tuple ["hello", "world"]
+    use crate::solver::types::TemplateSpan;
+    use crate::solver::evaluate::evaluate_conditional;
+
+    let interner = TypeInterner::new();
+
+    // Create infer types
+    let a_name = interner.intern_string("A");
+    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+    }));
+    let b_name = interner.intern_string("B");
+    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: b_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal pattern: `${infer A}-${infer B}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_a),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(infer_b),
+    ]);
+
+    // Create input: "hello-world"
+    let input = interner.literal_string("hello-world");
+
+    // For true_type, we'll just use infer_a to check A is inferred correctly
+    // (Testing full tuple would require more complex setup)
+    let cond = ConditionalType {
+        check_type: input,
+        extends_type: pattern,
+        true_type: infer_a, // Return A
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Result should be "hello" (the inferred A)
+    let hello = interner.literal_string("hello");
+    assert_eq!(
+        result, hello,
+        "First infer in template literal should capture 'hello'"
+    );
+}
+
+#[test]
+fn test_template_literal_inference_distributive() {
+    // Test distributive conditional: T extends `get${infer K}` ? K : never
+    // When T = "getName" | "getValue", result should be "Name" | "Value"
+    use crate::solver::types::TemplateSpan;
+    use crate::solver::evaluate::evaluate_conditional;
+
+    let interner = TypeInterner::new();
+
+    // Create infer type: infer K
+    let k_name = interner.intern_string("K");
+    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create template literal pattern: `get${infer K}`
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(infer_k),
+    ]);
+
+    // Create union input: "getName" | "getValue"
+    let get_name = interner.literal_string("getName");
+    let get_value = interner.literal_string("getValue");
+    let union_input = interner.union(vec![get_name, get_value]);
+
+    // Create conditional with distributive = true
+    let cond = ConditionalType {
+        check_type: union_input,
+        extends_type: pattern,
+        true_type: infer_k,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Result should be "Name" | "Value"
+    // The result is a union of inferred values
+    assert!(result != TypeId::NEVER, "Result should not be never");
+    assert!(result != TypeId::ERROR, "Result should not be error");
+
+    // Check that we got a union or at least one of the expected values
+    let name = interner.literal_string("Name");
+    let value = interner.literal_string("Value");
+    let expected_union = interner.union(vec![name, value]);
+
+    // The result should be equivalent to "Name" | "Value"
+    // (order may vary in union)
+    assert_eq!(
+        result, expected_union,
+        "Distributive conditional should produce 'Name' | 'Value'"
+    );
+}
