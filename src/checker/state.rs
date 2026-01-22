@@ -14324,14 +14324,14 @@ impl<'a> CheckerState<'a> {
                 (
                     lib_loader::MISSING_ES2015_LIB_SUPPORT,
                     format!(
-                        "Cannot find name '{}'. Do you need to change your target library?",
+                        "Cannot find name '{}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.",
                         name
                     ),
                 )
             } else {
                 (
                     lib_loader::CANNOT_FIND_GLOBAL_TYPE,
-                    format!("Cannot find global type '{}'", name),
+                    format!("Cannot find global type '{}'.", name),
                 )
             };
 
@@ -14824,59 +14824,125 @@ impl<'a> CheckerState<'a> {
     fn is_known_global_type_name(&self, name: &str) -> bool {
         matches!(
             name,
+            // Core built-in objects
             "Object"
                 | "String"
                 | "Number"
                 | "Boolean"
                 | "Symbol"
                 | "Function"
-                | "Promise"
-                | "PromiseLike"
-                | "PromiseConstructor"
-                | "PromiseConstructorLike"
-                | "Awaited"
+                | "Date"
+                | "RegExp"
+                | "RegExpExecArray"
+                | "RegExpMatchArray"
+                // Arrays and collections
                 | "Array"
                 | "ReadonlyArray"
                 | "ArrayLike"
+                | "ArrayBuffer"
+                | "SharedArrayBuffer"
+                | "DataView"
+                | "TypedArray"
+                | "Int8Array"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Int16Array"
+                | "Uint16Array"
+                | "Int32Array"
+                | "Uint32Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "BigInt64Array"
+                | "BigUint64Array"
+                // ES2015+ collection types
                 | "Map"
                 | "Set"
                 | "WeakMap"
                 | "WeakSet"
                 | "WeakRef"
-                | "Date"
-                | "RegExp"
-                | "RegExpExecArray"
+                | "ReadonlyMap"
+                | "ReadonlySet"
+                // Promise types
+                | "Promise"
+                | "PromiseLike"
+                | "PromiseConstructor"
+                | "PromiseConstructorLike"
+                | "Awaited"
+                // Iterator/Generator types
+                | "Iterator"
+                | "IteratorResult"
+                | "IteratorYieldResult"
+                | "IteratorReturnResult"
+                | "Iterable"
+                | "IterableIterator"
+                | "AsyncIterator"
+                | "AsyncIterable"
+                | "AsyncIterableIterator"
+                | "Generator"
+                | "GeneratorFunction"
+                | "AsyncGenerator"
+                | "AsyncGeneratorFunction"
+                // Utility types
                 | "Partial"
                 | "Required"
                 | "Readonly"
                 | "Record"
                 | "Pick"
                 | "Omit"
-                | "Iterator"
-                | "Iterable"
-                | "AsyncIterator"
-                | "AsyncIterable"
-                | "Generator"
-                | "AsyncGenerator"
                 | "NonNullable"
                 | "Extract"
+                | "Exclude"
+                | "ReturnType"
+                | "Parameters"
+                | "ConstructorParameters"
+                | "InstanceType"
+                | "ThisParameterType"
+                | "OmitThisParameter"
                 | "ThisType"
+                | "Uppercase"
+                | "Lowercase"
+                | "Capitalize"
+                | "Uncapitalize"
+                | "NoInfer"
+                // Object types
                 | "PropertyKey"
                 | "PropertyDescriptor"
-                | "Element"
-                | "HTMLElement"
-                | "Document"
-                | "Window"
-                | "Event"
-                | "NodeList"
-                | "NodeListOf"
+                | "PropertyDescriptorMap"
+                | "ObjectConstructor"
+                | "FunctionConstructor"
+                // Error types
                 | "Error"
+                | "ErrorConstructor"
                 | "TypeError"
                 | "RangeError"
                 | "EvalError"
                 | "URIError"
                 | "ReferenceError"
                 | "SyntaxError"
+                | "AggregateError"
+                // Math and JSON
+                | "Math"
+                | "JSON"
+                // Proxy and Reflect
+                | "Proxy"
+                | "ProxyHandler"
+                | "Reflect"
+                // BigInt
+                | "BigInt"
+                | "BigIntConstructor"
+                // ES2021+
+                | "FinalizationRegistry"
+                // DOM types (commonly used)
+                | "Element"
+                | "HTMLElement"
+                | "Document"
+                | "Window"
+                | "Event"
+                | "EventTarget"
+                | "NodeList"
+                | "NodeListOf"
+                | "Console"
+                | "Atomics"
                 // Primitive types (lowercase)
                 | "number"
                 | "string"
@@ -14887,6 +14953,9 @@ impl<'a> CheckerState<'a> {
                 | "never"
                 | "unknown"
                 | "any"
+                | "object"
+                | "bigint"
+                | "symbol"
         )
     }
 
