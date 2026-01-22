@@ -11139,14 +11139,153 @@ let s: S = "a";
     );
     checker.check_source_file(root);
 
-    // TODO: Implement string enum assignment checking (TS2322)
-    // Currently this check is not implemented, so we skip the assertion
-    // let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // assert!(
-    //     codes.contains(&2322),
-    //     "Expected error 2322 for string enum assignment, got: {:?}",
-    //     codes
-    // );
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "Expected error 2322 for string enum assignment, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_numeric_enum_number_bidirectional() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+enum E { A = 0, B = 1 }
+let e: E = 1;
+let n: number = e;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        count_2322, 0,
+        "Expected no errors for numeric enum <-> number bidirectional assignability, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_string_enum_not_assignable_to_string() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+enum S { A = "a", B = "b" }
+let s: S = S.A;
+let str: string = s;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "Expected error 2322 for string enum to string assignment, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_cross_enum_nominal_incompatibility() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+enum E1 { A = 0, B = 1 }
+enum E2 { X = 0, Y = 1 }
+let e1: E1 = E1.A;
+let e2: E2 = e1;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        count_2322, 1,
+        "Expected one 2322 error for cross-enum assignment, got: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_string_enum_cross_incompatibility() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+enum S1 { A = "a", B = "b" }
+enum S2 { X = "a", Y = "b" }
+let s1: S1 = S1.A;
+let s2: S2 = s1;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        count_2322, 1,
+        "Expected one 2322 error for cross-string-enum assignment, got: {:?}",
+        codes
+    );
 }
 
 #[test]
