@@ -47,6 +47,30 @@
 //!     return Dog;
 //! }(Animal));
 //! ```
+//!
+//! ## Current Limitations (Migration Notes)
+//!
+//! This transformer produces the class IIFE structure but uses `IRNode::ASTRef` for:
+//! - Method bodies
+//! - Constructor body statements
+//! - Property initializers
+//! - Getter/setter bodies
+//!
+//! `ASTRef` nodes copy raw source text via `IRPrinter`, which means:
+//! 1. Source text must be available during printing
+//! 2. **No ES5 transformations are applied** to method body contents
+//!
+//! For a complete migration to replace `class_es5.rs`, this transformer would need to:
+//! - Fully transform all expressions/statements into IR nodes (no ASTRef)
+//! - Handle arrow function → regular function with `_this` capture
+//! - Handle `super` property access and method calls
+//! - Handle template literals → string concatenation
+//! - Handle destructuring in parameters
+//! - Handle for-of/for-in → ES5 loops
+//! - Handle all other ES6+ → ES5 transformations
+//!
+//! The legacy `class_es5.rs` handles all these cases with its own expression emission.
+//! Until this transformer is complete, `class_es5.rs` remains the primary implementation.
 
 use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
