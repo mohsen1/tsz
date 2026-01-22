@@ -971,12 +971,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check if this is a homomorphic mapped type (template is T[K])
         // If so, we should preserve the original property modifiers
         let is_homomorphic = match self.interner.lookup(mapped.template) {
-            Some(TypeKey::IndexAccess(_obj, idx)) => {
-                match self.interner.lookup(idx) {
-                    Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
-                    _ => false,
-                }
-            }
+            Some(TypeKey::IndexAccess(_obj, idx)) => match self.interner.lookup(idx) {
+                Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
+                _ => false,
+            },
             _ => false,
         };
 
@@ -1000,7 +998,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             return (prop.optional, prop.readonly);
                         }
                     }
-                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) = self.interner.lookup(source_obj) {
+                } else if let Some(TypeKey::ObjectWithIndex(shape_id)) =
+                    self.interner.lookup(source_obj)
+                {
                     let shape = self.interner.object_shape(shape_id);
                     for prop in &shape.properties {
                         if prop.name == key_name {
@@ -1033,7 +1033,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 Some(MappedModifier::Remove) => false,
                 None => {
                     // For homomorphic types, preserve original
-                    if is_homomorphic { original_optional } else { false }
+                    if is_homomorphic {
+                        original_optional
+                    } else {
+                        false
+                    }
                 }
             };
             let readonly = match mapped.readonly_modifier {
@@ -1041,7 +1045,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 Some(MappedModifier::Remove) => false,
                 None => {
                     // For homomorphic types, preserve original
-                    if is_homomorphic { original_readonly } else { false }
+                    if is_homomorphic {
+                        original_readonly
+                    } else {
+                        false
+                    }
                 }
             };
 

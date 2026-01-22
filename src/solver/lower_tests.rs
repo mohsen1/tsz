@@ -2144,7 +2144,11 @@ fn test_template_literal_empty_string() {
     match key {
         TypeKey::TemplateLiteral(spans) => {
             let spans = interner.template_list(spans);
-            assert_eq!(spans.len(), 0, "Empty template literal should have no spans");
+            assert_eq!(
+                spans.len(),
+                0,
+                "Empty template literal should have no spans"
+            );
         }
         _ => panic!("Expected TemplateLiteral type, got {:?}", key),
     }
@@ -2355,9 +2359,8 @@ fn test_template_literal_escape_dollar_brace() {
 
 #[test]
 fn test_template_literal_with_union() {
-    let (arena, template_idx) = parse_template_literal_type(
-        "type T = `prefix-${\"a\" | \"b\"}-suffix`;",
-    );
+    let (arena, template_idx) =
+        parse_template_literal_type("type T = `prefix-${\"a\" | \"b\"}-suffix`;");
     let interner = TypeInterner::new();
     let lowering = TypeLowering::new(&arena, &interner);
 
@@ -2476,4 +2479,3 @@ fn test_template_literal_is_text_only() {
     // Non-template literal type
     assert!(!interner.template_literal_is_text_only(TypeId::STRING));
 }
-

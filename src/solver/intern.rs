@@ -825,10 +825,12 @@ impl TypeInterner {
                     }
                     // Merge properties
                     for prop in &callable.properties {
-                        if let Some(existing) = properties.iter_mut().find(|p| p.name == prop.name) {
+                        if let Some(existing) = properties.iter_mut().find(|p| p.name == prop.name)
+                        {
                             // Intersect property types
                             existing.type_id = self.intersection2(existing.type_id, prop.type_id);
-                            existing.write_type = self.intersection2(existing.write_type, prop.write_type);
+                            existing.write_type =
+                                self.intersection2(existing.write_type, prop.write_type);
                             existing.optional = existing.optional && prop.optional;
                             existing.readonly = existing.readonly || prop.readonly;
                         } else {

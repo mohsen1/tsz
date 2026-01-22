@@ -687,7 +687,9 @@ impl<'a> InferenceContext<'a> {
                     TemplateSpan::Type(inner) => self.type_contains_param(*inner, target, visited),
                 })
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => self.type_contains_param(type_arg, target, visited),
+            TypeKey::StringIntrinsic { type_arg, .. } => {
+                self.type_contains_param(type_arg, target, visited)
+            }
             TypeKey::Infer(info) => info.name == target,
             TypeKey::Intrinsic(_)
             | TypeKey::Literal(_)

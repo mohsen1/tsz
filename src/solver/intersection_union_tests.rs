@@ -91,7 +91,11 @@ fn test_intersection_different_string_literals_is_never() {
 
     // "hello" & "world" = never
     let result = interner.intersection2(hello, world);
-    assert_eq!(result, TypeId::NEVER, "\"hello\" & \"world\" should be never");
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "\"hello\" & \"world\" should be never"
+    );
 }
 
 #[test]
@@ -128,27 +132,23 @@ fn test_intersection_literal_with_primitive_is_literal() {
 fn test_intersection_object_merge_properties() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_a = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
-    let obj_b = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_b = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("b"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
     // A & B should merge properties
     let result = interner.intersection2(obj_a, obj_b);
@@ -159,12 +159,18 @@ fn test_intersection_object_merge_properties() {
         assert_eq!(shape.properties.len(), 2, "Should have both properties");
 
         // Check property "a"
-        let prop_a = shape.properties.iter().find(|p| p.name == interner.intern_string("a"));
+        let prop_a = shape
+            .properties
+            .iter()
+            .find(|p| p.name == interner.intern_string("a"));
         assert!(prop_a.is_some(), "Should have property 'a'");
         assert_eq!(prop_a.unwrap().type_id, TypeId::STRING);
 
         // Check property "b"
-        let prop_b = shape.properties.iter().find(|p| p.name == interner.intern_string("b"));
+        let prop_b = shape
+            .properties
+            .iter()
+            .find(|p| p.name == interner.intern_string("b"));
         assert!(prop_b.is_some(), "Should have property 'b'");
         assert_eq!(prop_b.unwrap().type_id, TypeId::NUMBER);
     } else {
@@ -176,27 +182,23 @@ fn test_intersection_object_merge_properties() {
 fn test_intersection_object_same_property_intersect_types() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_a = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
-    let obj_b = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_b = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
     // A & B should have property x: string & number = never
     let result = interner.intersection2(obj_a, obj_b);
@@ -205,9 +207,16 @@ fn test_intersection_object_same_property_intersect_types() {
     // This is different from the whole intersection being never
     if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
-        let prop_x = shape.properties.iter().find(|p| p.name == interner.intern_string("x"));
+        let prop_x = shape
+            .properties
+            .iter()
+            .find(|p| p.name == interner.intern_string("x"));
         assert!(prop_x.is_some());
-        assert_eq!(prop_x.unwrap().type_id, TypeId::NEVER, "Property type should be never");
+        assert_eq!(
+            prop_x.unwrap().type_id,
+            TypeId::NEVER,
+            "Property type should be never"
+        );
     } else {
         panic!("Expected object type with never property");
     }
@@ -217,34 +226,33 @@ fn test_intersection_object_same_property_intersect_types() {
 fn test_intersection_required_wins_over_optional() {
     let interner = TypeInterner::new();
 
-    let obj_optional = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_optional = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
 
-    let obj_required = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_required = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
     // optional & required = required (required wins)
     let result = interner.intersection2(obj_optional, obj_required);
 
     if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
-        let prop_x = shape.properties.iter().find(|p| p.name == interner.intern_string("x"));
+        let prop_x = shape
+            .properties
+            .iter()
+            .find(|p| p.name == interner.intern_string("x"));
         assert!(prop_x.is_some());
         assert!(!prop_x.unwrap().optional, "Property should be required");
     } else {
@@ -256,34 +264,33 @@ fn test_intersection_required_wins_over_optional() {
 fn test_intersection_readonly_is_cumulative() {
     let interner = TypeInterner::new();
 
-    let obj_readonly = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: true,
-            is_method: false,
-        },
-    ]);
+    let obj_readonly = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: true,
+        is_method: false,
+    }]);
 
-    let obj_mutable = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_mutable = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
     // readonly & mutable = readonly (readonly is cumulative)
     let result = interner.intersection2(obj_readonly, obj_mutable);
 
     if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
-        let prop_x = shape.properties.iter().find(|p| p.name == interner.intern_string("x"));
+        let prop_x = shape
+            .properties
+            .iter()
+            .find(|p| p.name == interner.intern_string("x"));
         assert!(prop_x.is_some());
         assert!(prop_x.unwrap().readonly, "Property should be readonly");
     } else {
@@ -295,34 +302,33 @@ fn test_intersection_readonly_is_cumulative() {
 fn test_intersection_both_optional_stays_optional() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_a = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
 
-    let obj_b = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("x"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_b = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
 
     // optional & optional = optional
     let result = interner.intersection2(obj_a, obj_b);
 
     if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
-        let prop_x = shape.properties.iter().find(|p| p.name == interner.intern_string("x"));
+        let prop_x = shape
+            .properties
+            .iter()
+            .find(|p| p.name == interner.intern_string("x"));
         assert!(prop_x.is_some());
         assert!(prop_x.unwrap().optional, "Property should be optional");
     } else {
@@ -341,14 +347,12 @@ fn test_intersection_function_overloads() {
     // Create first function signature: (x: string) => number
     let func1 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![
-            ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-            }
-        ],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
@@ -359,14 +363,12 @@ fn test_intersection_function_overloads() {
     // Create second function signature: (x: number) => string
     let func2 = interner.function(FunctionShape {
         type_params: vec![],
-        params: vec![
-            ParamInfo {
-                name: Some(interner.intern_string("x")),
-                type_id: TypeId::NUMBER,
-                optional: false,
-                rest: false,
-            }
-        ],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
@@ -379,7 +381,11 @@ fn test_intersection_function_overloads() {
 
     if let Some(TypeKey::Callable(shape_id)) = interner.lookup(result) {
         let shape = interner.callable_shape(shape_id);
-        assert_eq!(shape.call_signatures.len(), 2, "Should have both call signatures");
+        assert_eq!(
+            shape.call_signatures.len(),
+            2,
+            "Should have both call signatures"
+        );
     } else {
         panic!("Expected callable type with overloaded signatures");
     }
@@ -399,7 +405,11 @@ fn test_union_literal_absorbed_into_primitive() {
     // "hello" | "world" | string should normalize to just string
     let result = interner.union3(hello, world, TypeId::STRING);
 
-    assert_eq!(result, TypeId::STRING, "Literals should be absorbed into primitive");
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "Literals should be absorbed into primitive"
+    );
 }
 
 #[test]
@@ -413,7 +423,11 @@ fn test_union_number_literals_absorbed_into_number() {
     // 1 | 2 | 3 | number should normalize to just number
     let result = interner.union(vec![one, two, three, TypeId::NUMBER]);
 
-    assert_eq!(result, TypeId::NUMBER, "Number literals should be absorbed into number");
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "Number literals should be absorbed into number"
+    );
 }
 
 #[test]
@@ -423,7 +437,11 @@ fn test_union_boolean_literals_absorbed_into_boolean() {
     // true | false | boolean should normalize to just boolean
     let result = interner.union3(TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN);
 
-    assert_eq!(result, TypeId::BOOLEAN, "Boolean literals should be absorbed into boolean");
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN,
+        "Boolean literals should be absorbed into boolean"
+    );
 }
 
 #[test]
@@ -436,7 +454,11 @@ fn test_union_bigint_literals_absorbed_into_bigint() {
     // 1n | 2n | bigint should normalize to just bigint
     let result = interner.union3(bigint1, bigint2, TypeId::BIGINT);
 
-    assert_eq!(result, TypeId::BIGINT, "Bigint literals should be absorbed into bigint");
+    assert_eq!(
+        result,
+        TypeId::BIGINT,
+        "Bigint literals should be absorbed into bigint"
+    );
 }
 
 #[test]
@@ -519,7 +541,11 @@ fn test_union_multiple_never_removed() {
 
     if let Some(TypeKey::Union(list_id)) = interner.lookup(result) {
         let members = interner.type_list(list_id);
-        assert_eq!(members.len(), 2, "Should have 2 members after removing never");
+        assert_eq!(
+            members.len(),
+            2,
+            "Should have 2 members after removing never"
+        );
     } else {
         panic!("Expected union type");
     }
@@ -539,11 +565,7 @@ fn test_union_deduplicates() {
     let interner = TypeInterner::new();
 
     // string | string | number should normalize to string | number
-    let result = interner.union(vec![
-        TypeId::STRING,
-        TypeId::STRING,
-        TypeId::NUMBER,
-    ]);
+    let result = interner.union(vec![TypeId::STRING, TypeId::STRING, TypeId::NUMBER]);
 
     if let Some(TypeKey::Union(list_id)) = interner.lookup(result) {
         let members = interner.type_list(list_id);
@@ -577,7 +599,11 @@ fn test_intersection_remove_unknown() {
 
     // string & unknown should normalize to string
     let result = interner.intersection2(TypeId::STRING, TypeId::UNKNOWN);
-    assert_eq!(result, TypeId::STRING, "unknown should be removed from intersection");
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "unknown should be removed from intersection"
+    );
 }
 
 #[test]
@@ -586,34 +612,34 @@ fn test_intersection_any_is_identity() {
 
     // string & any = string (any is identity for intersection in practice)
     let result = interner.intersection2(TypeId::STRING, TypeId::ANY);
-    assert_eq!(result, TypeId::ANY, "any in intersection should result in any");
+    assert_eq!(
+        result,
+        TypeId::ANY,
+        "any in intersection should result in any"
+    );
 }
 
 #[test]
 fn test_intersection_flattens_nested() {
     let interner = TypeInterner::new();
 
-    let obj_a = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_a = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("a"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
-    let obj_b = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("b"),
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: false,
-            readonly: false,
-            is_method: false,
-        },
-    ]);
+    let obj_b = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("b"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
 
     let inner = interner.intersection2(obj_a, obj_b);
     let outer = interner.intersection2(inner, obj_a);
@@ -668,7 +694,11 @@ fn test_intersection_empty_is_unknown() {
 
     // Empty intersection should be unknown (identity element)
     let result = interner.intersection(vec![]);
-    assert_eq!(result, TypeId::UNKNOWN, "Empty intersection should be unknown");
+    assert_eq!(
+        result,
+        TypeId::UNKNOWN,
+        "Empty intersection should be unknown"
+    );
 }
 
 #[test]
@@ -677,7 +707,11 @@ fn test_intersection_single_member_is_itself() {
 
     // Single-member intersection should be that member
     let result = interner.intersection(vec![TypeId::STRING]);
-    assert_eq!(result, TypeId::STRING, "Single-member intersection should be that member");
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "Single-member intersection should be that member"
+    );
 }
 
 #[test]
@@ -695,5 +729,9 @@ fn test_union_single_member_is_itself() {
 
     // Single-member union should be that member
     let result = interner.union(vec![TypeId::STRING]);
-    assert_eq!(result, TypeId::STRING, "Single-member union should be that member");
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "Single-member union should be that member"
+    );
 }
