@@ -1,8 +1,10 @@
 /**
  * Persistent worker thread for test execution
- * 
+ *
  * Loads WASM once at startup, then processes tests as messages arrive.
  * Includes crash detection and graceful error reporting.
+ *
+ * Uses pre-computed TSC results from cache when available.
  */
 
 import { parentPort, workerData } from 'worker_threads';
@@ -10,6 +12,7 @@ import { createRequire } from 'module';
 import * as ts from 'typescript';
 import * as fs from 'fs';
 import * as path from 'path';
+import { hashContent, type CacheEntry } from './tsc-cache.js';
 
 const require = createRequire(import.meta.url);
 
@@ -51,6 +54,7 @@ let workerId = -1;
 let useWasm = true;
 let nativeBinaryPath = '';
 let nativeBinary: any = null;
+let tscCacheEntries: Record<string, CacheEntry> | undefined = undefined;
 
 // Memory monitoring
 const getMemoryUsage = () => process.memoryUsage().heapUsed;
@@ -511,8 +515,18 @@ async function processTest(job: TestJob): Promise<WorkerResult> {
     const code = fs.readFileSync(job.filePath, 'utf8');
     const testCase = parseTestDirectives(code, job.filePath);
 
-    // Run TSC first (more stable)
-    const tscCodes = runTsc(testCase);
+    // Try to use cached TSC result
+    let tscCodes: number[];
+    const relPath = job.filePath.replace(job.testsBasePath + path.sep, '');
+    const cachedEntry = tscCacheEntries?.[relPath];
+
+    if (cachedEntry && cachedEntry.hash === hashContent(code)) {
+      // Use cached result
+      tscCodes = cachedEntry.codes;
+    } else {
+      // Run TSC (cache miss or file changed)
+      tscCodes = runTsc(testCase);
+    }
     lastActivity = Date.now();
 
     // Run compiler (WASM or native, may crash)
@@ -598,11 +612,12 @@ process.on('unhandledRejection', (reason) => {
 
 // Initialize worker
 (async () => {
-  const data = workerData as { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; id: number };
+  const data = workerData as { wasmPkgPath: string; libPath: string; useWasm: boolean; nativeBinaryPath?: string; id: number; tscCacheEntries?: Record<string, CacheEntry> };
   workerId = data.id;
   libPath = data.libPath;
   useWasm = data.useWasm;
   nativeBinaryPath = data.nativeBinaryPath || '';
+  tscCacheEntries = data.tscCacheEntries;
 
   // Load WASM module once (if using WASM)
   if (useWasm) {

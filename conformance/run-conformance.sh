@@ -18,11 +18,34 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Detect CPU cores
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    CPU_CORES=$(sysctl -n hw.ncpu)
-else
-    CPU_CORES=$(nproc 2>/dev/null || echo 4)
+# Handle cache commands first (before anything else)
+if [[ "${1:-}" == cache:* ]]; then
+    CACHE_CMD="${1#cache:}"
+    cd "$SCRIPT_DIR"
+
+    # Build conformance runner if needed
+    if [ ! -d "node_modules" ] || [ ! -d "node_modules/typescript" ]; then
+        npm install --silent 2>/dev/null
+    fi
+    npm run build --silent 2>/dev/null
+
+    case "$CACHE_CMD" in
+        generate)
+            node dist/generate-cache.js
+            ;;
+        status)
+            node dist/generate-cache.js --status
+            ;;
+        clear)
+            node dist/generate-cache.js --clear
+            ;;
+        *)
+            echo "Unknown cache command: $CACHE_CMD"
+            echo "Available: cache:generate, cache:status, cache:clear"
+            exit 1
+            ;;
+    esac
+    exit 0
 fi
 
 # Defaults
@@ -32,7 +55,7 @@ USE_WASM=true     # WASM by default
 VERBOSE=false
 CATEGORIES="conformance,compiler"
 TIMEOUT=600
-WORKERS=$CPU_CORES
+WORKERS=8  # Optimal for WASM - more workers cause contention
 
 # Parse arguments
 SawAll=false

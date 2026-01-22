@@ -7,6 +7,9 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
+    "cache:generate": "node dist/generate-cache.js",
+    "cache:status": "node dist/generate-cache.js --status",
+    "cache:clear": "node dist/generate-cache.js --clear",
     "test": "cd .. && ./conformance/run-conformance.sh",
     "test:native": "cd .. && ./conformance/run-conformance.sh --max=100",
     "test:native:500": "cd .. && ./conformance/run-conformance.sh --max=500",
@@ -16,7 +19,7 @@
     "test:wasm:all": "cd .. && ./conformance/run-conformance.sh --wasm --all"
   },
   "dependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.0-dev.20260116"
   },
   "devDependencies": {
     "@types/node": "^20.10.0"
