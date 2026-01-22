@@ -553,12 +553,29 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // StringIntrinsic: instantiate the type argument
+            // After substitution, if the type argument becomes a concrete type that can
+            // be evaluated (like a string literal or union), trigger evaluation.
             TypeKey::StringIntrinsic { kind, type_arg } => {
                 let inst_arg = self.instantiate(*type_arg);
-                self.interner.intern(TypeKey::StringIntrinsic {
+                let string_intrinsic = self.interner.intern(TypeKey::StringIntrinsic {
                     kind: *kind,
                     type_arg: inst_arg,
-                })
+                });
+
+                // Check if we can evaluate the result
+                if let Some(key) = self.interner.lookup(inst_arg) {
+                    match key {
+                        TypeKey::Union(_)
+                        | TypeKey::Literal(LiteralValue::String(_))
+                        | TypeKey::TemplateLiteral(_)
+                        | TypeKey::Intrinsic(IntrinsicKind::String) => {
+                            crate::solver::evaluate::evaluate_type(self.interner, string_intrinsic)
+                        }
+                        _ => string_intrinsic,
+                    }
+                } else {
+                    string_intrinsic
+                }
             }
 
             // Infer: keep as-is unless explicitly substituting inference variables
