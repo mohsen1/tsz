@@ -93,6 +93,89 @@ pub struct ConditionalTypeId(pub u32);
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MappedTypeId(pub u32);
 
+/// Well-known Symbol property keys used in the iterator protocol.
+/// These are used to represent `[Symbol.iterator]` and `[Symbol.asyncIterator]` property names.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum WellKnownSymbolKey {
+    /// Symbol.iterator - used for sync iterables
+    Iterator,
+    /// Symbol.asyncIterator - used for async iterables
+    AsyncIterator,
+    /// Symbol.hasInstance - used for instanceof checks
+    HasInstance,
+    /// Symbol.isConcatSpreadable - used for array concat behavior
+    IsConcatSpreadable,
+    /// Symbol.match - used for String.match
+    Match,
+    /// Symbol.matchAll - used for String.matchAll
+    MatchAll,
+    /// Symbol.replace - used for String.replace
+    Replace,
+    /// Symbol.search - used for String.search
+    Search,
+    /// Symbol.split - used for String.split
+    Split,
+    /// Symbol.species - used for derived constructors
+    Species,
+    /// Symbol.toPrimitive - used for type coercion
+    ToPrimitive,
+    /// Symbol.toStringTag - used for Object.prototype.toString
+    ToStringTag,
+    /// Symbol.unscopables - used for with statement
+    Unscopables,
+    /// Symbol.dispose - used for using declarations
+    Dispose,
+    /// Symbol.asyncDispose - used for async using declarations
+    AsyncDispose,
+}
+
+impl WellKnownSymbolKey {
+    /// Returns the conventional string property name for this well-known symbol.
+    /// This follows the convention of using `"[Symbol.iterator]"` etc. as property names.
+    pub fn as_property_name(&self) -> &'static str {
+        match self {
+            WellKnownSymbolKey::Iterator => "[Symbol.iterator]",
+            WellKnownSymbolKey::AsyncIterator => "[Symbol.asyncIterator]",
+            WellKnownSymbolKey::HasInstance => "[Symbol.hasInstance]",
+            WellKnownSymbolKey::IsConcatSpreadable => "[Symbol.isConcatSpreadable]",
+            WellKnownSymbolKey::Match => "[Symbol.match]",
+            WellKnownSymbolKey::MatchAll => "[Symbol.matchAll]",
+            WellKnownSymbolKey::Replace => "[Symbol.replace]",
+            WellKnownSymbolKey::Search => "[Symbol.search]",
+            WellKnownSymbolKey::Split => "[Symbol.split]",
+            WellKnownSymbolKey::Species => "[Symbol.species]",
+            WellKnownSymbolKey::ToPrimitive => "[Symbol.toPrimitive]",
+            WellKnownSymbolKey::ToStringTag => "[Symbol.toStringTag]",
+            WellKnownSymbolKey::Unscopables => "[Symbol.unscopables]",
+            WellKnownSymbolKey::Dispose => "[Symbol.dispose]",
+            WellKnownSymbolKey::AsyncDispose => "[Symbol.asyncDispose]",
+        }
+    }
+
+    /// Parses a property name string into a well-known symbol key.
+    /// Returns `None` if the string is not a well-known symbol property name.
+    pub fn from_property_name(name: &str) -> Option<Self> {
+        match name {
+            "[Symbol.iterator]" => Some(WellKnownSymbolKey::Iterator),
+            "[Symbol.asyncIterator]" => Some(WellKnownSymbolKey::AsyncIterator),
+            "[Symbol.hasInstance]" => Some(WellKnownSymbolKey::HasInstance),
+            "[Symbol.isConcatSpreadable]" => Some(WellKnownSymbolKey::IsConcatSpreadable),
+            "[Symbol.match]" => Some(WellKnownSymbolKey::Match),
+            "[Symbol.matchAll]" => Some(WellKnownSymbolKey::MatchAll),
+            "[Symbol.replace]" => Some(WellKnownSymbolKey::Replace),
+            "[Symbol.search]" => Some(WellKnownSymbolKey::Search),
+            "[Symbol.split]" => Some(WellKnownSymbolKey::Split),
+            "[Symbol.species]" => Some(WellKnownSymbolKey::Species),
+            "[Symbol.toPrimitive]" => Some(WellKnownSymbolKey::ToPrimitive),
+            "[Symbol.toStringTag]" => Some(WellKnownSymbolKey::ToStringTag),
+            "[Symbol.unscopables]" => Some(WellKnownSymbolKey::Unscopables),
+            "[Symbol.dispose]" => Some(WellKnownSymbolKey::Dispose),
+            "[Symbol.asyncDispose]" => Some(WellKnownSymbolKey::AsyncDispose),
+            _ => None,
+        }
+    }
+}
+
 /// The structural "shape" of a type.
 /// This is the key used for interning - structurally identical types
 /// will have the same TypeKey and therefore the same TypeId.
