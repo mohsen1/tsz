@@ -7116,28 +7116,48 @@ impl<'a> CheckerState<'a> {
         {
             if !value_decl.is_none()
                 && let Some(node) = self.ctx.arena.get(value_decl)
-                && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
             {
-                // First try type annotation using type-node lowering (resolves through binder).
-                if !var_decl.type_annotation.is_none() {
-                    return (
-                        self.get_type_from_type_node(var_decl.type_annotation),
-                        Vec::new(),
-                    );
+                // Check if this is a variable declaration
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+                    // First try type annotation using type-node lowering (resolves through binder).
+                    if !var_decl.type_annotation.is_none() {
+                        return (
+                            self.get_type_from_type_node(var_decl.type_annotation),
+                            Vec::new(),
+                        );
+                    }
+                    if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
+                        return (jsdoc_type, Vec::new());
+                    }
+                    if !var_decl.initializer.is_none()
+                        && self.is_const_variable_declaration(value_decl)
+                        && let Some(literal_type) =
+                            self.literal_type_from_initializer(var_decl.initializer)
+                    {
+                        return (literal_type, Vec::new());
+                    }
+                    // Fall back to inferring from initializer
+                    if !var_decl.initializer.is_none() {
+                        return (self.get_type_of_node(var_decl.initializer), Vec::new());
+                    }
                 }
-                if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
-                    return (jsdoc_type, Vec::new());
-                }
-                if !var_decl.initializer.is_none()
-                    && self.is_const_variable_declaration(value_decl)
-                    && let Some(literal_type) =
-                        self.literal_type_from_initializer(var_decl.initializer)
-                {
-                    return (literal_type, Vec::new());
-                }
-                // Fall back to inferring from initializer
-                if !var_decl.initializer.is_none() {
-                    return (self.get_type_of_node(var_decl.initializer), Vec::new());
+                // Check if this is a function parameter
+                else if let Some(param) = self.ctx.arena.get_parameter(node) {
+                    // Get type from annotation
+                    if !param.type_annotation.is_none() {
+                        return (
+                            self.get_type_from_type_node(param.type_annotation),
+                            Vec::new(),
+                        );
+                    }
+                    // Check for JSDoc type
+                    if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
+                        return (jsdoc_type, Vec::new());
+                    }
+                    // Fall back to inferring from initializer (default value)
+                    if !param.initializer.is_none() {
+                        return (self.get_type_of_node(param.initializer), Vec::new());
+                    }
                 }
             }
             // Variable without type annotation or initializer gets implicit 'any'
@@ -14867,6 +14887,19 @@ impl<'a> CheckerState<'a> {
             Some(TypeKey::Callable(shape_id)) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 !shape.construct_signatures.is_empty()
+            }
+            // For type parameters, check if the constraint is a constructor type
+            Some(TypeKey::TypeParameter(info)) => {
+                if let Some(constraint) = info.constraint {
+                    self.is_constructor_type(constraint)
+                } else {
+                    false
+                }
+            }
+            // For intersection types, check if any member is a constructor type
+            Some(TypeKey::Intersection(members)) => {
+                let member_types = self.ctx.types.type_list(members);
+                member_types.iter().any(|&m| self.is_constructor_type(m))
             }
             _ => false,
         }
