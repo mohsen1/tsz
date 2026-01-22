@@ -2015,6 +2015,15 @@ impl<'a> InferenceContext<'a> {
                     cond.false_type,
                 );
             }
+            Some(TypeKey::TemplateLiteral(spans)) => {
+                // Traverse template literal spans to find inference variables
+                let spans = self.interner.template_list(spans);
+                for span in spans.iter() {
+                    if let TemplateSpan::Type(inner) = span {
+                        self.infer_from_type(var, *inner);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -2024,7 +2033,7 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
 
         match self.interner.lookup(ty) {
-            Some(TypeKey::TypeParameter(info)) => {
+            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => {
                 if let Some(param_var) = self.find_type_param(info.name) {
                     self.table.find(param_var) == root
                 } else {
@@ -2089,6 +2098,13 @@ impl<'a> InferenceContext<'a> {
                     || self.contains_inference_var(cond.extends_type, var)
                     || self.contains_inference_var(cond.true_type, var)
                     || self.contains_inference_var(cond.false_type, var)
+            }
+            Some(TypeKey::TemplateLiteral(spans)) => {
+                let spans = self.interner.template_list(spans);
+                spans.iter().any(|span| match span {
+                    TemplateSpan::Text(_) => false,
+                    TemplateSpan::Type(inner) => self.contains_inference_var(*inner, var),
+                })
             }
             _ => false,
         }
