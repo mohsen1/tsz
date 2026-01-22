@@ -2350,6 +2350,37 @@ fn test_tuple_to_array_mixed_types() {
 }
 
 #[test]
+fn test_tuple_to_array_number_number() {
+    // [number, number] IS assignable to number[]
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let number_array = interner.array(TypeId::NUMBER);
+
+    // [number, number]
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // number[]
+    let target = number_array;
+
+    // This should SUCCEED - all fixed elements are numbers
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
 fn test_tuple_array_assignment_tuple_to_union_array() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);

@@ -4719,10 +4719,10 @@ fn test_keyof_union_contravariance() {
     }]);
 
     // keyof A should be "name"
-    let keyof_a = interner.intern(TypeKey::KeyOf(type_a));
+    let _keyof_a = interner.intern(TypeKey::KeyOf(type_a));
 
     // keyof B should be "age"
-    let keyof_b = interner.intern(TypeKey::KeyOf(type_b));
+    let _keyof_b = interner.intern(TypeKey::KeyOf(type_b));
 
     // keyof (A | B) should be keyof A & keyof B
     // which is ("name" | "age")
@@ -4928,7 +4928,8 @@ fn test_best_common_type_with_supertype() {
     let bct = ctx.best_common_type(&types);
 
     // Animal should be assignable to BCT
-    assert!(ctx.is_subtype_of(animal, bct),
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(animal, bct),
             "Animal should be subtype of BCT");
 }
 
