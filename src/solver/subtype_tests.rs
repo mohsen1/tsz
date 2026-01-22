@@ -28154,8 +28154,8 @@ fn test_tuple_to_readonly_array() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let string_array = interner.array(TypeId::STRING);
-    let readonly_string_array = interner.readonly_array(string_array);
+    // readonly_array takes the element type, not an array type
+    let readonly_string_array = interner.readonly_array(TypeId::STRING);
     let source = interner.tuple(vec![
         TupleElement {
             type_id: TypeId::STRING,

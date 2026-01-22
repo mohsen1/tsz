@@ -13,8 +13,8 @@
 //!
 //! ## Usage
 //!
-//! ```rust
-//! use crate::solver::unsoundness_audit::UnsoundnessAudit;
+//! ```rust,ignore
+//! use wasm::solver::unsoundness_audit::UnsoundnessAudit;
 //!
 //! let audit = UnsoundnessAudit::new();
 //! let status = audit.get_rule_status(7); // Open Numeric Enums

@@ -556,6 +556,12 @@ impl TypeInterner {
             TypeId::BIGINT => Some(TypeKey::Intrinsic(IntrinsicKind::Bigint)),
             TypeId::SYMBOL => Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)),
             TypeId::OBJECT => Some(TypeKey::Intrinsic(IntrinsicKind::Object)),
+            TypeId::FUNCTION => Some(TypeKey::Intrinsic(IntrinsicKind::Function)),
+            TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE => {
+                // These are literal boolean types, not intrinsics
+                // They're handled as literal values, not via lookup
+                None
+            }
             _ => None,
         }
     }
