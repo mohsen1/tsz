@@ -44389,3 +44389,630 @@ fn test_template_literal_conditional_same_pattern() {
     // Should match and return true branch
     assert_eq!(result, TypeId::STRING);
 }
+
+// ============================================================================
+// String Intrinsic with Template Literal Tests
+// ============================================================================
+
+/// Test Uppercase applied to a template literal with type interpolation
+/// Uppercase<`hello-${string}`> should produce `HELLO-${Uppercase<string>}`
+#[test]
+fn test_string_intrinsic_uppercase_template_literal_with_interpolation() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create template literal: `hello-${string}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("hello-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // Create Uppercase<template>
+    let uppercase_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: template,
+    });
+
+    // Evaluate
+    let result = evaluate_type(&interner, uppercase_template);
+
+    // Should be a template literal with uppercase text
+    match interner.lookup(result) {
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            assert_eq!(spans.len(), 2);
+
+            // First span should be "HELLO-"
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "HELLO-");
+            } else {
+                panic!("Expected text span at position 0");
+            }
+
+            // Second span should be Uppercase<string>
+            if let TemplateSpan::Type(type_id) = &spans[1] {
+                match interner.lookup(*type_id) {
+                    Some(TypeKey::StringIntrinsic {
+                        kind: StringIntrinsicKind::Uppercase,
+                        type_arg,
+                    }) => {
+                        assert_eq!(type_arg, TypeId::STRING);
+                    }
+                    _ => panic!("Expected StringIntrinsic Uppercase"),
+                }
+            } else {
+                panic!("Expected type span at position 1");
+            }
+        }
+        _ => panic!("Expected template literal result"),
+    }
+}
+
+/// Test Lowercase applied to a template literal with type interpolation
+/// Lowercase<`HELLO-${string}`> should produce `hello-${Lowercase<string>}`
+#[test]
+fn test_string_intrinsic_lowercase_template_literal_with_interpolation() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create template literal: `HELLO-${string}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("HELLO-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // Create Lowercase<template>
+    let lowercase_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Lowercase,
+        type_arg: template,
+    });
+
+    // Evaluate
+    let result = evaluate_type(&interner, lowercase_template);
+
+    // Should be a template literal with lowercase text
+    match interner.lookup(result) {
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            assert_eq!(spans.len(), 2);
+
+            // First span should be "hello-"
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "hello-");
+            } else {
+                panic!("Expected text span at position 0");
+            }
+
+            // Second span should be Lowercase<string>
+            if let TemplateSpan::Type(type_id) = &spans[1] {
+                match interner.lookup(*type_id) {
+                    Some(TypeKey::StringIntrinsic {
+                        kind: StringIntrinsicKind::Lowercase,
+                        type_arg,
+                    }) => {
+                        assert_eq!(type_arg, TypeId::STRING);
+                    }
+                    _ => panic!("Expected StringIntrinsic Lowercase"),
+                }
+            } else {
+                panic!("Expected type span at position 1");
+            }
+        }
+        _ => panic!("Expected template literal result"),
+    }
+}
+
+/// Test Capitalize applied to a template literal with type interpolation at start
+/// Capitalize<`${string}-world`> should produce `${Capitalize<string>}-world`
+#[test]
+fn test_string_intrinsic_capitalize_template_literal_type_first() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create template literal: `${string}-world`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-world")),
+    ]);
+
+    // Create Capitalize<template>
+    let capitalize_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Capitalize,
+        type_arg: template,
+    });
+
+    // Evaluate
+    let result = evaluate_type(&interner, capitalize_template);
+
+    // Should be a template literal
+    match interner.lookup(result) {
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            assert_eq!(spans.len(), 2);
+
+            // First span should be Capitalize<string>
+            if let TemplateSpan::Type(type_id) = &spans[0] {
+                match interner.lookup(*type_id) {
+                    Some(TypeKey::StringIntrinsic {
+                        kind: StringIntrinsicKind::Capitalize,
+                        type_arg,
+                    }) => {
+                        assert_eq!(type_arg, TypeId::STRING);
+                    }
+                    _ => panic!("Expected StringIntrinsic Capitalize"),
+                }
+            } else {
+                panic!("Expected type span at position 0");
+            }
+
+            // Second span should be "-world" (unchanged - capitalize only affects first char)
+            if let TemplateSpan::Text(atom) = &spans[1] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "-world");
+            } else {
+                panic!("Expected text span at position 1");
+            }
+        }
+        _ => panic!("Expected template literal result"),
+    }
+}
+
+/// Test Capitalize applied to a template literal with text first
+/// Capitalize<`hello-${string}`> should produce `Hello-${string}`
+#[test]
+fn test_string_intrinsic_capitalize_template_literal_text_first() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create template literal: `hello-${string}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("hello-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // Create Capitalize<template>
+    let capitalize_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Capitalize,
+        type_arg: template,
+    });
+
+    // Evaluate
+    let result = evaluate_type(&interner, capitalize_template);
+
+    // Should be a template literal with capitalized first text
+    match interner.lookup(result) {
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            assert_eq!(spans.len(), 2);
+
+            // First span should be "Hello-" (capitalized)
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "Hello-");
+            } else {
+                panic!("Expected text span at position 0");
+            }
+
+            // Second span should just be string (not wrapped - capitalize doesn't affect non-first)
+            if let TemplateSpan::Type(type_id) = &spans[1] {
+                assert_eq!(*type_id, TypeId::STRING);
+            } else {
+                panic!("Expected type span at position 1");
+            }
+        }
+        _ => panic!("Expected template literal result"),
+    }
+}
+
+/// Test Uncapitalize applied to a template literal with text first
+/// Uncapitalize<`HELLO-${string}`> should produce `hELLO-${string}`
+#[test]
+fn test_string_intrinsic_uncapitalize_template_literal_text_first() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create template literal: `HELLO-${string}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("HELLO-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    // Create Uncapitalize<template>
+    let uncapitalize_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uncapitalize,
+        type_arg: template,
+    });
+
+    // Evaluate
+    let result = evaluate_type(&interner, uncapitalize_template);
+
+    // Should be a template literal with uncapitalized first text
+    match interner.lookup(result) {
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            assert_eq!(spans.len(), 2);
+
+            // First span should be "hELLO-" (first char lowercased)
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "hELLO-");
+            } else {
+                panic!("Expected text span at position 0");
+            }
+
+            // Second span should just be string (not wrapped)
+            if let TemplateSpan::Type(type_id) = &spans[1] {
+                assert_eq!(*type_id, TypeId::STRING);
+            } else {
+                panic!("Expected type span at position 1");
+            }
+        }
+        _ => panic!("Expected template literal result"),
+    }
+}
+
+/// Test Uppercase applied to template literal with multiple interpolations
+/// Uppercase<`a-${string}-b-${number}`> should transform all text spans
+#[test]
+fn test_string_intrinsic_uppercase_template_literal_multiple_interpolations() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create template literal: `a-${string}-b-${number}`
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a-")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-b-")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+
+    // Create Uppercase<template>
+    let uppercase_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: template,
+    });
+
+    // Evaluate
+    let result = evaluate_type(&interner, uppercase_template);
+
+    // Should be a template literal with all text spans uppercased
+    match interner.lookup(result) {
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            assert_eq!(spans.len(), 4);
+
+            // First span should be "A-"
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "A-");
+            } else {
+                panic!("Expected text span at position 0");
+            }
+
+            // Second span should be Uppercase<string>
+            if let TemplateSpan::Type(type_id) = &spans[1] {
+                match interner.lookup(*type_id) {
+                    Some(TypeKey::StringIntrinsic {
+                        kind: StringIntrinsicKind::Uppercase,
+                        type_arg,
+                    }) => {
+                        assert_eq!(type_arg, TypeId::STRING);
+                    }
+                    _ => panic!("Expected StringIntrinsic Uppercase"),
+                }
+            } else {
+                panic!("Expected type span at position 1");
+            }
+
+            // Third span should be "-B-"
+            if let TemplateSpan::Text(atom) = &spans[2] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "-B-");
+            } else {
+                panic!("Expected text span at position 2");
+            }
+
+            // Fourth span should be Uppercase<number>
+            if let TemplateSpan::Type(type_id) = &spans[3] {
+                match interner.lookup(*type_id) {
+                    Some(TypeKey::StringIntrinsic {
+                        kind: StringIntrinsicKind::Uppercase,
+                        type_arg,
+                    }) => {
+                        assert_eq!(type_arg, TypeId::NUMBER);
+                    }
+                    _ => panic!("Expected StringIntrinsic Uppercase"),
+                }
+            } else {
+                panic!("Expected type span at position 3");
+            }
+        }
+        _ => panic!("Expected template literal result"),
+    }
+}
+
+/// Test chained string intrinsics: Capitalize<Lowercase<T>>
+#[test]
+fn test_string_intrinsic_chained_capitalize_lowercase() {
+    use crate::solver::types::{StringIntrinsicKind, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create Lowercase<"HELLO">
+    let hello_upper = interner.literal_string("HELLO");
+    let lowercase_hello = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Lowercase,
+        type_arg: hello_upper,
+    });
+
+    // Create Capitalize<Lowercase<"HELLO">>
+    let capitalize_lowercase = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Capitalize,
+        type_arg: lowercase_hello,
+    });
+
+    // Evaluate - should produce "Hello"
+    let result = evaluate_type(&interner, capitalize_lowercase);
+
+    match interner.lookup(result) {
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let text = interner.resolve_atom_ref(atom);
+            assert_eq!(text.as_ref(), "Hello");
+        }
+        _ => panic!("Expected string literal 'Hello'"),
+    }
+}
+
+/// Test chained string intrinsics: Uppercase<Lowercase<T>> where T is a type parameter
+#[test]
+fn test_string_intrinsic_chained_with_type_param() {
+    use crate::solver::types::{StringIntrinsicKind, TypeKey, TypeParamInfo};
+
+    let interner = TypeInterner::new();
+
+    // Create type parameter T
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+
+    // Create Lowercase<T>
+    let lowercase_t = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Lowercase,
+        type_arg: t_param,
+    });
+
+    // Create Uppercase<Lowercase<T>>
+    let uppercase_lowercase_t = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: lowercase_t,
+    });
+
+    // Evaluate - should remain as chained intrinsic since T is unresolved
+    let result = evaluate_type(&interner, uppercase_lowercase_t);
+
+    // Should be Uppercase<Lowercase<T>>
+    match interner.lookup(result) {
+        Some(TypeKey::StringIntrinsic {
+            kind: StringIntrinsicKind::Uppercase,
+            type_arg,
+        }) => {
+            // Inner should be Lowercase<T>
+            match interner.lookup(type_arg) {
+                Some(TypeKey::StringIntrinsic {
+                    kind: StringIntrinsicKind::Lowercase,
+                    type_arg: inner_arg,
+                }) => {
+                    // Innermost should be T
+                    match interner.lookup(inner_arg) {
+                        Some(TypeKey::TypeParameter(info)) => {
+                            assert_eq!(info.name, t_name);
+                        }
+                        _ => panic!("Expected TypeParameter T"),
+                    }
+                }
+                _ => panic!("Expected StringIntrinsic Lowercase"),
+            }
+        }
+        _ => panic!("Expected StringIntrinsic Uppercase"),
+    }
+}
+
+/// Test string intrinsic distributed over evaluated template literal unions
+/// Uppercase<`${"a" | "b"}`> should produce "A" | "B"
+#[test]
+fn test_string_intrinsic_template_literal_union_evaluation() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create union "a" | "b"
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let union_ab = interner.union(vec![lit_a, lit_b]);
+
+    // Create template literal: `${union_ab}`
+    let template = interner.template_literal(vec![TemplateSpan::Type(union_ab)]);
+
+    // Create Uppercase<template>
+    let uppercase_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: template,
+    });
+
+    // Evaluate - template should first expand to "a" | "b", then uppercase to "A" | "B"
+    let result = evaluate_type(&interner, uppercase_template);
+
+    // Result should be "A" | "B"
+    match interner.lookup(result) {
+        Some(TypeKey::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert_eq!(members.len(), 2);
+
+            let mut found_a = false;
+            let mut found_b = false;
+            for &member in members.iter() {
+                if let Some(TypeKey::Literal(LiteralValue::String(atom))) =
+                    interner.lookup(member)
+                {
+                    let text = interner.resolve_atom_ref(atom);
+                    if text.as_ref() == "A" {
+                        found_a = true;
+                    } else if text.as_ref() == "B" {
+                        found_b = true;
+                    }
+                }
+            }
+            assert!(found_a, "Expected 'A' in union");
+            assert!(found_b, "Expected 'B' in union");
+        }
+        _ => panic!("Expected union result"),
+    }
+}
+
+/// Test all 4 string intrinsic kinds on a simple template literal
+#[test]
+fn test_all_string_intrinsic_kinds_on_template_literal() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Test Uppercase
+    let template_upper = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("hello")),
+        TemplateSpan::Text(interner.intern_string("world")),
+    ]);
+    let uppercase = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: template_upper,
+    });
+    let result_upper = evaluate_type(&interner, uppercase);
+    match interner.lookup(result_upper) {
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let text = interner.resolve_atom_ref(atom);
+            assert_eq!(text.as_ref(), "HELLOWORLD");
+        }
+        _ => panic!("Expected string literal 'HELLOWORLD'"),
+    }
+
+    // Test Lowercase
+    let template_lower = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("HELLO")),
+        TemplateSpan::Text(interner.intern_string("WORLD")),
+    ]);
+    let lowercase = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Lowercase,
+        type_arg: template_lower,
+    });
+    let result_lower = evaluate_type(&interner, lowercase);
+    match interner.lookup(result_lower) {
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let text = interner.resolve_atom_ref(atom);
+            assert_eq!(text.as_ref(), "helloworld");
+        }
+        _ => panic!("Expected string literal 'helloworld'"),
+    }
+
+    // Test Capitalize
+    let template_cap = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("hello")),
+        TemplateSpan::Text(interner.intern_string("world")),
+    ]);
+    let capitalize = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Capitalize,
+        type_arg: template_cap,
+    });
+    let result_cap = evaluate_type(&interner, capitalize);
+    match interner.lookup(result_cap) {
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let text = interner.resolve_atom_ref(atom);
+            assert_eq!(text.as_ref(), "Helloworld");
+        }
+        _ => panic!("Expected string literal 'Helloworld'"),
+    }
+
+    // Test Uncapitalize
+    let template_uncap = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("HELLO")),
+        TemplateSpan::Text(interner.intern_string("WORLD")),
+    ]);
+    let uncapitalize = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uncapitalize,
+        type_arg: template_uncap,
+    });
+    let result_uncap = evaluate_type(&interner, uncapitalize);
+    match interner.lookup(result_uncap) {
+        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+            let text = interner.resolve_atom_ref(atom);
+            assert_eq!(text.as_ref(), "hELLOWORLD");
+        }
+        _ => panic!("Expected string literal 'hELLOWORLD'"),
+    }
+}
+
+/// Test Uppercase on template literal that starts with type span (no leading text)
+/// Uppercase<`${string}world`> should apply Uppercase to the first type span
+#[test]
+fn test_string_intrinsic_template_literal_empty_first_text() {
+    use crate::solver::types::{StringIntrinsicKind, TemplateSpan, TypeKey};
+
+    let interner = TypeInterner::new();
+
+    // Create template literal: `${string}world` (without explicit empty text at start)
+    // Note: The interner may optimize away empty text spans
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("world")),
+    ]);
+
+    // Create Uppercase<template>
+    let uppercase_template = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: template,
+    });
+
+    // Evaluate
+    let result = evaluate_type(&interner, uppercase_template);
+
+    // Should be a template literal
+    match interner.lookup(result) {
+        Some(TypeKey::TemplateLiteral(spans_id)) => {
+            let spans = interner.template_list(spans_id);
+            assert_eq!(spans.len(), 2);
+
+            // First span should be Uppercase<string> (since type is first)
+            if let TemplateSpan::Type(type_id) = &spans[0] {
+                match interner.lookup(*type_id) {
+                    Some(TypeKey::StringIntrinsic {
+                        kind: StringIntrinsicKind::Uppercase,
+                        type_arg,
+                    }) => {
+                        assert_eq!(type_arg, TypeId::STRING);
+                    }
+                    _ => panic!("Expected StringIntrinsic Uppercase"),
+                }
+            } else {
+                panic!("Expected type span at position 0");
+            }
+
+            // Second span should be "WORLD"
+            if let TemplateSpan::Text(atom) = &spans[1] {
+                let text = interner.resolve_atom_ref(*atom);
+                assert_eq!(text.as_ref(), "WORLD");
+            } else {
+                panic!("Expected text span at position 1");
+            }
+        }
+        _ => panic!("Expected template literal result"),
+    }
+}
