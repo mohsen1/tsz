@@ -57,7 +57,7 @@ for arg in "$@"; do
             echo "  --native        Use native binary in Docker (faster, still isolated)"
             echo "  --max=N         Run N tests (default: 500)"
             echo "  --all           Run all tests"
-            echo "  --category=X    Test category: conformance, compiler, or both"
+            echo "  --category=X    Test category: conformance, compiler, projects, or comma-separated list"
             echo "  --verbose, -v   Show detailed output"
             echo "  --help, -h      Show this help"
             echo ""
