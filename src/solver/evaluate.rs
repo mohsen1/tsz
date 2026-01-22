@@ -2236,7 +2236,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 | IntrinsicKind::Void
                 | IntrinsicKind::Null
                 | IntrinsicKind::Undefined
-                | IntrinsicKind::Object => TypeId::NEVER,
+                | IntrinsicKind::Object
+                | IntrinsicKind::Function => TypeId::NEVER,
                 IntrinsicKind::String
                 | IntrinsicKind::Number
                 | IntrinsicKind::Boolean

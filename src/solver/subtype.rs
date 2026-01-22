@@ -431,6 +431,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Union source: all members must be subtypes of target
             (TypeKey::Union(members), _) => {
+                // Distributivity: (A | B) & C distributes to (A & C) | (B & C)
+                // When checking union against intersection, distribute
+                if let TypeKey::Intersection(inter_members) = &target_key {
+                    let inter_members = self.interner.type_list(*inter_members);
+                    let union_members = self.interner.type_list(*members);
+
+                    // Check: (A | B) <: (C & D)
+                    // This is equivalent to: (A <: C & D) && (B <: C & D)
+                    // Which distributes to: ((A & C) | (A & D)) && ((B & C) | (B & D))
+                    for &union_member in union_members.iter() {
+                        let mut satisfies_all = true;
+                        for &inter_member in inter_members.iter() {
+                            // Check if union_member is a subtype of this intersection member
+                            if !self.check_subtype(union_member, inter_member).is_true() {
+                                satisfies_all = false;
+                                break;
+                            }
+                        }
+                        if !satisfies_all {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    return SubtypeResult::True;
+                }
+
                 let members = self.interner.type_list(*members);
                 for &member in members.iter() {
                     // Don't accept `any` as universal subtype in union checks
@@ -562,6 +587,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // object keyword accepts any non-primitive type
             (_, TypeKey::Intrinsic(IntrinsicKind::Object)) => {
                 if self.is_object_keyword_type(source) {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
+            }
+
+            // Rule #29: The Global Function type - Intrinsic(Function) as untyped callable supertype
+            // Any callable type (function or callable) is a subtype of Function
+            (_, TypeKey::Intrinsic(IntrinsicKind::Function)) => {
+                if self.is_callable_type(source) {
                     SubtypeResult::True
                 } else {
                     SubtypeResult::False
@@ -1263,6 +1298,50 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             TypeKey::Ref(sym) => {
                 if let Some(resolved) = self.resolver.resolve_ref(*sym, self.interner) {
                     self.check_subtype(resolved, TypeId::OBJECT).is_true()
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type is callable (function or callable type).
+    /// Rule #29: Function intrinsic accepts any callable type as a subtype.
+    fn is_callable_type(&mut self, source: TypeId) -> bool {
+        match source {
+            TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
+            TypeId::FUNCTION => return true,
+            _ => {}
+        }
+
+        let key = match self.interner.lookup(source) {
+            Some(key) => key,
+            None => return false,
+        };
+
+        match &key {
+            TypeKey::Function(_) | TypeKey::Callable(_) => true,
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(*members);
+                // A union is callable if all members are callable
+                members.iter().all(|&m| self.is_callable_type(m))
+            }
+            TypeKey::Intersection(members) => {
+                let members = self.interner.type_list(*members);
+                // An intersection is callable if at least one member is callable
+                members.iter().any(|&m| self.is_callable_type(m))
+            }
+            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+                // Type parameters are not inherently callable without a callable constraint
+                match info.constraint {
+                    Some(constraint) => self.is_callable_type(constraint),
+                    None => false,
+                }
+            }
+            TypeKey::Ref(sym) => {
+                if let Some(resolved) = self.resolver.resolve_ref(*sym, self.interner) {
+                    self.is_callable_type(resolved)
                 } else {
                     false
                 }
