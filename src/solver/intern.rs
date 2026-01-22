@@ -556,6 +556,10 @@ impl TypeInterner {
             TypeId::BIGINT => Some(TypeKey::Intrinsic(IntrinsicKind::Bigint)),
             TypeId::SYMBOL => Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)),
             TypeId::OBJECT => Some(TypeKey::Intrinsic(IntrinsicKind::Object)),
+            TypeId::BOOLEAN_TRUE => Some(TypeKey::Literal(LiteralValue::Boolean(true))),
+            TypeId::BOOLEAN_FALSE => Some(TypeKey::Literal(LiteralValue::Boolean(false))),
+            TypeId::FUNCTION => Some(TypeKey::Intrinsic(IntrinsicKind::Function)),
+            TypeId::PROMISE_BASE => Some(TypeKey::Intrinsic(IntrinsicKind::Object)), // Promise base treated as object
             _ => None,
         }
     }
