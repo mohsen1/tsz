@@ -116,6 +116,9 @@ pub enum IRNode {
     /// Array literal: `[a, b, c]`
     ArrayLiteral(Vec<IRNode>),
 
+    /// Spread element: `...expr`
+    SpreadElement(Box<IRNode>),
+
     /// Object literal: `{ key: value, ... }`
     ObjectLiteral(Vec<IRProperty>),
 

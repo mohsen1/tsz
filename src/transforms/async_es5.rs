@@ -66,7 +66,7 @@ use crate::transform_context::{TransformContext, TransformDirective};
 use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::emit_utils;
 use crate::transforms::helpers::HelpersNeeded;
-use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam};
+use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam, IRProperty, IRPropertyKey, IRPropertyKind};
 use crate::transforms::private_fields_es5::{get_private_field_name, is_private_identifier};
 use memchr;
 
@@ -742,7 +742,278 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
             }
 
+            // NEW_EXPRESSION: `new Foo(args)`
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                if let Some(call) = self.arena.get_call_expr(node) {
+                    let callee = self.expression_to_ir(call.expression);
+                    let mut args = Vec::new();
+                    if let Some(arg_list) = &call.arguments {
+                        for &arg_idx in &arg_list.nodes {
+                            args.push(self.expression_to_ir(arg_idx));
+                        }
+                    }
+                    IRNode::NewExpr {
+                        callee: Box::new(callee),
+                        arguments: args,
+                    }
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            // SPREAD_ELEMENT: `...expr`
+            k if k == syntax_kind_ext::SPREAD_ELEMENT => {
+                if let Some(spread) = self.arena.get_spread(node) {
+                    IRNode::SpreadElement(Box::new(self.expression_to_ir(spread.expression)))
+                } else if let Some(unary_ex) = self.arena.get_unary_expr_ex(node) {
+                    // Fallback: Some spread elements use UnaryExprDataEx
+                    IRNode::SpreadElement(Box::new(self.expression_to_ir(unary_ex.expression)))
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            // CONDITIONAL_EXPRESSION: `a ? b : c`
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.arena.get_conditional_expr(node) {
+                    IRNode::ConditionalExpr {
+                        condition: Box::new(self.expression_to_ir(cond.condition)),
+                        when_true: Box::new(self.expression_to_ir(cond.when_true)),
+                        when_false: Box::new(self.expression_to_ir(cond.when_false)),
+                    }
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            // PREFIX_UNARY_EXPRESSION: `!x`, `-x`, `++x`, `--x`
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr(node) {
+                    let op = self.get_unary_operator_text(unary.operator);
+                    IRNode::PrefixUnaryExpr {
+                        operator: op,
+                        operand: Box::new(self.expression_to_ir(unary.operand)),
+                    }
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            // POSTFIX_UNARY_EXPRESSION: `x++`, `x--`
+            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.arena.get_unary_expr(node) {
+                    let op = self.get_unary_operator_text(unary.operator);
+                    IRNode::PostfixUnaryExpr {
+                        operand: Box::new(self.expression_to_ir(unary.operand)),
+                        operator: op,
+                    }
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            // ELEMENT_ACCESS_EXPRESSION: `object[index]`
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    let obj = self.expression_to_ir(access.expression);
+                    let index = self.expression_to_ir(access.name_or_argument);
+                    IRNode::ElementAccess {
+                        object: Box::new(obj),
+                        index: Box::new(index),
+                    }
+                } else {
+                    IRNode::Undefined
+                }
+            }
+
+            // OBJECT_LITERAL_EXPRESSION: `{ key: value, ... }`
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(obj) = self.arena.get_literal_expr(node) {
+                    let props = self.convert_object_properties(&obj.elements.nodes);
+                    IRNode::ObjectLiteral(props)
+                } else {
+                    IRNode::ObjectLiteral(vec![])
+                }
+            }
+
+            // TEMPLATE_EXPRESSION: `hello ${name}!`
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                self.convert_template_expression(idx)
+            }
+
+            // NoSubstitutionTemplateLiteral: `hello world`
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(node) {
+                    // Return the text as a string literal with quotes
+                    IRNode::StringLiteral(lit.text.clone())
+                } else {
+                    IRNode::StringLiteral("".to_string())
+                }
+            }
+
             _ => IRNode::ASTRef(idx),
+        }
+    }
+
+    /// Convert object literal properties to IRProperty
+    fn convert_object_properties(&self, nodes: &[NodeIndex]) -> Vec<IRProperty> {
+        let mut props = Vec::new();
+        for &prop_idx in nodes {
+            let Some(prop_node) = self.arena.get(prop_idx) else {
+                continue;
+            };
+
+            match prop_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    if let Some(pa) = self.arena.get_property_assignment(prop_node) {
+                        let key = self.convert_property_key(pa.name);
+                        let value = self.expression_to_ir(pa.initializer);
+                        props.push(IRProperty {
+                            key,
+                            value,
+                            kind: IRPropertyKind::Init,
+                        });
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    if let Some(sp) = self.arena.get_shorthand_property(prop_node) {
+                        let name = self.get_identifier_text(sp.name);
+                        props.push(IRProperty {
+                            key: IRPropertyKey::Identifier(name.clone()),
+                            value: IRNode::Identifier(name),
+                            kind: IRPropertyKind::Init,
+                        });
+                    }
+                }
+                k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    if let Some(spread) = self.arena.get_spread(prop_node) {
+                        // For spread in objects, use SpreadElement
+                        props.push(IRProperty {
+                            key: IRPropertyKey::Identifier("...".to_string()),
+                            value: IRNode::SpreadElement(Box::new(
+                                self.expression_to_ir(spread.expression),
+                            )),
+                            kind: IRPropertyKind::Init,
+                        });
+                    }
+                }
+                // Skip other property types (getters/setters would need special handling)
+                _ => {}
+            }
+        }
+        props
+    }
+
+    /// Convert a property name node to IRPropertyKey
+    fn convert_property_key(&self, idx: NodeIndex) -> IRPropertyKey {
+        let Some(node) = self.arena.get(idx) else {
+            return IRPropertyKey::Identifier(String::new());
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                IRPropertyKey::Identifier(self.get_identifier_text(idx))
+            }
+            k if k == SyntaxKind::StringLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(node) {
+                    IRPropertyKey::StringLiteral(lit.text.clone())
+                } else {
+                    IRPropertyKey::StringLiteral(String::new())
+                }
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                if let Some(lit) = self.arena.get_literal(node) {
+                    IRPropertyKey::NumericLiteral(lit.text.clone())
+                } else {
+                    IRPropertyKey::NumericLiteral("0".to_string())
+                }
+            }
+            k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
+                // Computed property: [expr]
+                if let Some(computed) = self.arena.get_computed_property(node) {
+                    IRPropertyKey::Computed(Box::new(self.expression_to_ir(computed.expression)))
+                } else {
+                    IRPropertyKey::Identifier(String::new())
+                }
+            }
+            _ => IRPropertyKey::Identifier(String::new()),
+        }
+    }
+
+    /// Convert a template expression to IR (concatenation of strings)
+    fn convert_template_expression(&self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::StringLiteral("".to_string());
+        };
+
+        let Some(template) = self.arena.get_template_expr(node) else {
+            return IRNode::StringLiteral("".to_string());
+        };
+
+        // Get head (the initial string before first ${...})
+        let mut parts: Vec<IRNode> = Vec::new();
+        if let Some(head_node) = self.arena.get(template.head) {
+            if let Some(lit) = self.arena.get_literal(head_node) {
+                if !lit.text.is_empty() {
+                    parts.push(IRNode::StringLiteral(lit.text.clone()));
+                }
+            }
+        }
+
+        // Process template spans (expression + literal pairs)
+        for &span_idx in &template.template_spans.nodes {
+            let Some(span_node) = self.arena.get(span_idx) else {
+                continue;
+            };
+            if let Some(span) = self.arena.get_template_span(span_node) {
+                // Add the expression
+                parts.push(self.expression_to_ir(span.expression));
+
+                // Add the literal part after the expression
+                if let Some(lit_node) = self.arena.get(span.literal) {
+                    if let Some(lit) = self.arena.get_literal(lit_node) {
+                        if !lit.text.is_empty() {
+                            parts.push(IRNode::StringLiteral(lit.text.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        // If there's only one part, return it directly
+        if parts.len() == 1 {
+            return parts.remove(0);
+        }
+
+        // Otherwise, build a concatenation chain: part1 + part2 + part3 + ...
+        if parts.is_empty() {
+            return IRNode::StringLiteral("".to_string());
+        }
+
+        let mut result = parts.remove(0);
+        for part in parts {
+            result = IRNode::BinaryExpr {
+                left: Box::new(result),
+                operator: "+".to_string(),
+                right: Box::new(part),
+            };
+        }
+        result
+    }
+
+    /// Get unary operator text from a token kind
+    pub fn get_unary_operator_text(&self, op: u16) -> String {
+        match op {
+            k if k == SyntaxKind::PlusPlusToken as u16 => "++".to_string(),
+            k if k == SyntaxKind::MinusMinusToken as u16 => "--".to_string(),
+            k if k == SyntaxKind::ExclamationToken as u16 => "!".to_string(),
+            k if k == SyntaxKind::TildeToken as u16 => "~".to_string(),
+            k if k == SyntaxKind::PlusToken as u16 => "+".to_string(),
+            k if k == SyntaxKind::MinusToken as u16 => "-".to_string(),
+            k if k == SyntaxKind::TypeOfKeyword as u16 => "typeof ".to_string(),
+            k if k == SyntaxKind::VoidKeyword as u16 => "void ".to_string(),
+            k if k == SyntaxKind::DeleteKeyword as u16 => "delete ".to_string(),
+            _ => "".to_string(),
         }
     }
 
