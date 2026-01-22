@@ -30,8 +30,8 @@
 //! | `optional_chain` | ✅ Migrated | Uses IR nodes |
 //! | `generators` | ✅ Migrated | Uses `GeneratorTransformer` |
 //! | `decorators` | ✅ Migrated | Uses IR nodes |
-//! | `class_es5` | ⚠️ Partial | `ES5ClassTransformer` in `class_es5_ir.rs` (core IR-based) |
-//! | `namespace_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
+//! | `namespace_es5` | ✅ Migrated | Uses `NamespaceES5Transformer` + `IRPrinter` |
+//! | `class_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
 //! | `async_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
 //! | `arrow_es5` | ℹ️ Helper | Analysis only, no emit |
 //! | `block_scoping_es5` | ℹ️ Helper | Analysis only, no emit |
