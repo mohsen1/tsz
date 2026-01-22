@@ -118,6 +118,7 @@ pub struct ModuleGraph {
     /// Detected circular dependencies
     circular_dependencies: Vec<CircularDependency>,
     /// Module resolver (optional)
+    #[allow(dead_code)] // Infrastructure for module resolution
     resolver: Option<ModuleResolver>,
 }
 

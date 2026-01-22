@@ -760,6 +760,7 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
+    #[allow(dead_code)] // Infrastructure for ES5 transforms
     fn get_temp_var_name(&mut self) -> String {
         let name = format!("_{}", (b'a' + (self.temp_var_counter % 26) as u8) as char);
         self.temp_var_counter += 1;

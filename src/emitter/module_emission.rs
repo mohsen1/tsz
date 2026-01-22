@@ -1302,6 +1302,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit CommonJS module preamble
+    #[allow(dead_code)] // Infrastructure for CommonJS module emit
     pub(super) fn emit_commonjs_preamble(&mut self, statements: &NodeList) {
         use crate::transforms::module_commonjs;
 

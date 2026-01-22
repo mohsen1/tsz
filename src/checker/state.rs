@@ -1815,6 +1815,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a node is a `require()` call expression.
     /// This is used to detect import equals declarations like `import x = require('./module')`
     /// where we want to return ANY type instead of the literal string type.
+    #[allow(dead_code)] // Infrastructure for module resolution
     fn is_require_call(&self, idx: NodeIndex) -> bool {
         let node = match self.ctx.arena.get(idx) {
             Some(n) => n,
@@ -3418,6 +3419,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.object(properties)
     }
 
+    #[allow(dead_code)] // Infrastructure for type parameter lowering
     fn lower_type_parameter_info(
         &mut self,
         idx: NodeIndex,
@@ -12238,6 +12240,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    #[allow(dead_code)] // Infrastructure for constructor type checking
     fn is_concrete_constructor_target(
         &self,
         type_id: TypeId,
@@ -12247,6 +12250,7 @@ impl<'a> CheckerState<'a> {
         self.is_concrete_constructor_target_inner(type_id, env, &mut visited)
     }
 
+    #[allow(dead_code)] // Infrastructure for constructor type checking
     fn is_concrete_constructor_target_inner(
         &self,
         type_id: TypeId,
@@ -14553,6 +14557,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if two symbol declarations can merge (for TS2403 checking).
     /// Returns true if the declarations are mergeable and should NOT trigger TS2403.
+    #[allow(dead_code)] // Infrastructure for symbol merging validation
     fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
         // Interface can merge with interface
         if (existing_flags & symbol_flags::INTERFACE) != 0
@@ -20082,6 +20087,7 @@ impl<'a> CheckerState<'a> {
 
     /// Determine if an async function should be validated for Promise return type
     /// even without explicit type annotation. Used for TS2705 validation.
+    #[allow(dead_code)] // Infrastructure for async function validation
     fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
         // Enhanced validation to catch more TS2705 cases (we have 34 missing)
         // Need to be more liberal while maintaining precision
@@ -20130,6 +20136,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if the current file is a module (has import/export declarations).
     /// Uses AST-based detection instead of filename heuristics.
+    #[allow(dead_code)] // Infrastructure for module detection
     fn is_file_module(&self) -> bool {
         // Get the root source file node
         let Some(root_node) = self.ctx.arena.nodes.last() else {
@@ -20182,6 +20189,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node's modifiers include the 'export' keyword.
     /// Helper for is_file_module to check export on declarations.
+    #[allow(dead_code)] // Infrastructure for module detection
     fn has_export_modifier_on_modifiers(&self, node: &crate::parser::node::Node) -> bool {
         let modifiers = match node.kind {
             syntax_kind_ext::FUNCTION_DECLARATION => self
@@ -24681,11 +24689,13 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    #[allow(dead_code)] // Infrastructure for type checking
     fn type_contains_any(&self, type_id: TypeId) -> bool {
         let mut visited = Vec::new();
         self.type_contains_any_inner(type_id, &mut visited)
     }
 
+    #[allow(dead_code)] // Infrastructure for type checking
     fn type_contains_any_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
         use crate::solver::{TemplateSpan, TypeKey};
 
@@ -25680,6 +25690,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a property in a derived class is redeclaring a base class property
+    #[allow(dead_code)] // Infrastructure for class inheritance checking
     fn is_derived_property_redeclaration(
         &self,
         member_idx: NodeIndex,
@@ -25702,6 +25713,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find the containing class for a member node by walking up the parent chain
+    #[allow(dead_code)] // Infrastructure for class member resolution
     fn find_containing_class(&self, _member_idx: NodeIndex) -> Option<NodeIndex> {
         // Check if this member is directly in a class
         // Since we don't have parent pointers, we need to search through classes

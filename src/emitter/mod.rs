@@ -22,9 +22,6 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
-// Allow dead code for emitter infrastructure methods that will be used in future phases
-#![allow(dead_code)]
-
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
 use crate::parser::node::{Node, NodeArena};
@@ -252,6 +249,7 @@ pub struct Printer<'a> {
     pub(super) source_map_text: Option<&'a str>,
 
     /// Last processed position in source text for comment gap detection
+    #[allow(dead_code)] // Infrastructure for comment emission
     pub(super) last_processed_pos: u32,
 
     /// Pending source position for mapping the next write.
