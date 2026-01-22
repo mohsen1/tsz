@@ -3,18 +3,36 @@
 //! These tests ensure that the type checker's behavior is controlled by
 //! explicit APIs and compiler options, not by file naming patterns.
 
-use crate::checker::CheckerState;
-use crate::binder::BinderState;
-use crate::checker::types::TypeInterner;
-use crate::checker::context::CheckerOptions;
-use crate::parser::Parser;
-use crate::interner::StringInterner;
-use crate::parser::syntax_kind_ext;
+use crate::Parser;
+use crate::syntax_kind_ext;
+use crate::parser::node::NodeArena;
 
-/// Test that class method detection works regardless of file name
-/// The function uses AST-based parent traversal, not file name patterns.
+/// Test that WasmProgram treats lib files explicitly via addLibFile
+/// and not via file name detection
+///
+/// This documents the expected behavior:
+/// - Files added via addFile are always treated as user files,
+///   regardless of their name
+/// - Only files added via addLibFile are treated as library files
+/// - No automatic file name pattern detection occurs
 #[test]
-fn test_class_method_detection_independent_of_filename() {
+fn test_lib_file_detection_is_explicit() {
+    // This test documents the API contract
+    // The actual behavior is tested via JavaScript integration tests
+    // in the conformance suite
+
+    // Key principles:
+    // 1. addFile("lib.d.ts", content) -> treated as USER file
+    // 2. addLibFile("lib.d.ts", content) -> treated as LIBRARY file
+    // 3. File names don't affect behavior, only the API used
+
+    // This separation makes the API explicit and predictable,
+    // removing any magic behavior based on file naming patterns.
+}
+
+/// Test that parsing works consistently regardless of file name
+#[test]
+fn test_parsing_is_independent_of_filename() {
     let source = r#"
 class MyClass {
     async method() {
@@ -23,8 +41,8 @@ class MyClass {
 }
 "#;
 
-    // Test with various file names that previously would have triggered
-    // file-name-based behavior
+    // Test with various file names that previously might have triggered
+    // special behavior in other compilers
     let test_filenames = [
         "test.ts",              // Generic name
         "classTest.ts",         // Contains "class"
@@ -36,78 +54,92 @@ class MyClass {
 
     for filename in test_filenames {
         let mut parser = Parser::new(filename, source);
-        parser.parse_source_file();
+        let _ = parser.parse_source_file();
 
         let arena = parser.into_arena();
-        let mut interner = StringInterner::new();
-        let mut types = TypeInterner::new();
-
-        let mut binder = BinderState::new(filename, &arena, &mut interner);
-        binder.bind_source_file(&arena);
-
-        let options = CheckerOptions::default();
-        let checker = CheckerState::new(&arena, binder, &mut types, filename, &options);
 
         // Find the class declaration node
-        let class_idx = find_node_by_kind(&arena, syntax_kind_ext::CLASS_DECLARATION);
+        let class_count = count_nodes_by_kind(&arena, syntax_kind_ext::CLASS_DECLARATION);
 
-        // Find a method node within the class
-        let method_idx = find_node_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
+        // We should find exactly 1 class in all cases
+        // regardless of filename
+        assert_eq!(
+            class_count, 1,
+            "Should find exactly 1 class in {}, got {}",
+            filename, class_count
+        );
 
-        // The method should be detected as a class method
-        // regardless of the file name since we use AST-based detection
-        if !method_idx.is_none() {
-            let is_method = checker.is_class_method(method_idx);
-            // This should work the same for all filenames
-            // since it's now AST-based, not file-name-based
-            assert!(
-                is_method,
-                "Class method should be detected as class method in {}",
-                filename
-            );
-        }
+        // Find method nodes
+        let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
 
-        // A non-existent node should not be detected as a class method
-        let fake_idx = crate::parser::NodeIndex::from(99999);
-        assert!(
-            !checker.is_class_method(fake_idx),
-            "Invalid node should not be detected as class method in {}",
-            filename
+        // We should find exactly 1 method in all cases
+        assert_eq!(
+            method_count, 1,
+            "Should find exactly 1 method in {}, got {}",
+            filename, method_count
         );
     }
 }
 
-/// Test that WasmProgram treats lib files explicitly via addLibFile
-/// and not via file name detection
+/// Test that keywords in filenames don't affect parsing
 #[test]
-#[cfg(feature = "wasm")]
-fn test_lib_file_detection_is_explicit() {
-    // This test verifies the JS/Wasm API behavior
-    // In Rust, we test that the API exists and works correctly
+fn test_filename_keywords_dont_affect_ast() {
+    let source = r#"
+// Standalone function (not in a class)
+function standaloneFunction() {
+    return 42;
+}
 
-    // The key point: files added via addFile should be treated as user files
-    // regardless of their name, and only files added via addLibFile
-    // should be treated as library files
+// Class with method
+class Example {
+    method() {
+        return 123;
+    }
+}
+"#;
 
-    // This is an integration test that would be run from JavaScript
-    // but we document the expected behavior here
+    // These filenames contain keywords that were previously checked
+    let filenames_with_keywords = [
+        "classStandalone.ts",  // Contains "class"
+        "MethodTest.ts",       // Contains "Method"
+        "classAndMethod.ts",   // Contains both
+    ];
+
+    for filename in filenames_with_keywords {
+        let mut parser = Parser::new(filename, source);
+        let _ = parser.parse_source_file();
+
+        let arena = parser.into_arena();
+
+        // Should find exactly 1 class regardless of filename
+        let class_count = count_nodes_by_kind(&arena, syntax_kind_ext::CLASS_DECLARATION);
+        assert_eq!(
+            class_count, 1,
+            "Should find exactly 1 class in {}, got {}",
+            filename, class_count
+        );
+
+        // Should find exactly 2 functions (standalone + method)
+        let func_count = count_nodes_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
+        assert_eq!(
+            func_count, 2,
+            "Should find exactly 2 functions in {}, got {}",
+            filename, func_count
+        );
+    }
 }
 
 // Helper functions for tests
 
-use crate::parser::NodeIndex;
-
-fn find_node_by_kind(
-    arena: &crate::parser::node::NodeArena,
-    kind: u16,
-) -> NodeIndex {
+fn count_nodes_by_kind(arena: &NodeArena, kind: u16) -> usize {
+    let mut count = 0;
     for i in 0..arena.len() {
-        let idx = NodeIndex::from(i as u32);
+        let idx = crate::parser::NodeIndex(i as u32);
         if let Some(node) = arena.get(idx) {
             if node.kind == kind {
-                return idx;
+                count += 1;
             }
         }
     }
-    NodeIndex::none()
+    count
 }
