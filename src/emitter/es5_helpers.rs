@@ -568,6 +568,7 @@ impl<'a> Printer<'a> {
         self.write("}");
     }
 
+    #[allow(dead_code)] // Infrastructure for ES5 parameter transforms
     pub(super) fn function_parameters_need_es5_transform(&self, params: &[NodeIndex]) -> bool {
         params.iter().any(|&param_idx| {
             let Some(param_node) = self.arena.get(param_idx) else {
@@ -1115,6 +1116,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit the __extends helper function
+    #[allow(dead_code)] // Infrastructure for ES5 class transforms
     pub(super) fn emit_extends_helper(&mut self) {
         // TypeScript's ES5 __extends helper
         self.write("var __extends = (this && this.__extends) || (function () {");

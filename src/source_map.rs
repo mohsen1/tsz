@@ -379,13 +379,18 @@ pub mod vlq {
 }
 
 /// VLQ (Variable-Length Quantity) encoding for source maps
+#[allow(dead_code)] // Infrastructure for source map generation
 const VLQ_BASE_SHIFT: i32 = 5;
+#[allow(dead_code)]
 const VLQ_BASE: i32 = 1 << VLQ_BASE_SHIFT;
+#[allow(dead_code)]
 const VLQ_BASE_MASK: i32 = VLQ_BASE - 1;
+#[allow(dead_code)]
 const VLQ_CONTINUATION_BIT: i32 = VLQ_BASE;
 
 const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+#[allow(dead_code)] // Infrastructure for source map generation
 fn vlq_encode(value: i32) -> String {
     let mut result = String::new();
 

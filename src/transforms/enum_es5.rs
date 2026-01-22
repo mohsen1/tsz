@@ -460,6 +460,7 @@ impl<'a> EnumES5Transformer<'a> {
 
 /// Legacy enum ES5 emitter for backward compatibility
 /// Deprecated: Use EnumES5Transformer + IRPrinter instead
+#[allow(dead_code)] // Legacy infrastructure, kept for compatibility
 pub struct EnumES5Emitter<'a> {
     arena: &'a NodeArena,
     output: String,

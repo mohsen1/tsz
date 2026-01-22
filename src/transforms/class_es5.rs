@@ -1520,6 +1520,7 @@ impl<'a> ClassES5Emitter<'a> {
         }
     }
 
+    #[allow(dead_code)] // Infrastructure for ES5 class transforms
     fn emit_accessor(&mut self, class_name: &str, accessor_idx: NodeIndex, is_getter: bool) {
         let Some(accessor_node) = self.arena.get(accessor_idx) else {
             return;
@@ -2817,6 +2818,7 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Emit a single variable declaration (for for-loop initializers, etc.)
+    #[allow(dead_code)] // Infrastructure for ES5 class transforms
     fn emit_variable_declaration(&mut self, decl_idx: NodeIndex) {
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return;
@@ -4338,6 +4340,7 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Check if a name is a valid identifier (can use dot notation) or needs bracket notation
+    #[allow(dead_code)] // Infrastructure for ES5 class transforms
     fn is_valid_identifier_name(&self, idx: NodeIndex) -> bool {
         if let Some(node) = self.arena.get(idx) {
             // Identifiers use dot notation
@@ -4356,6 +4359,7 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Get the property name for bracket notation (with quotes for strings)
+    #[allow(dead_code)] // Infrastructure for ES5 class transforms
     fn get_computed_property_name(&self, idx: NodeIndex) -> String {
         if let Some(node) = self.arena.get(idx) {
             // String literals need quotes in bracket notation
@@ -4416,6 +4420,7 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Check if heritage clauses contain an `extends` clause (not just `implements`)
+    #[allow(dead_code)] // Infrastructure for ES5 class transforms
     fn has_extends_clause(&self, heritage_clauses: &Option<NodeList>) -> bool {
         self.get_extends_class_name(heritage_clauses).is_some()
     }

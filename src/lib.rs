@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use wasm_bindgen::prelude::*;
 
 // String interning for identifier deduplication (Performance optimization)
@@ -203,6 +202,7 @@ struct ImportCandidateInput {
 /// Maps to TypeScript compiler options.
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Fields are deserialized but some not yet used
 struct CompilerOptions {
     /// Enable all strict type checking options.
     #[serde(default)]
