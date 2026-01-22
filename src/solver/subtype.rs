@@ -1453,6 +1453,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check if a literal string matches a template literal pattern
+    /// Uses a backtracking algorithm to handle wildcards (string type holes)
     fn check_literal_matches_template_literal(
         &self,
         literal: Atom,
@@ -1464,93 +1465,370 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Get the template literal spans
         let spans = self.interner.template_list(template_spans);
 
-        // Reconstruct the expected pattern and check if literal matches
-        let mut current_pos = 0;
+        // Use backtracking to match the literal against the pattern
+        if self.match_template_literal_recursive(literal_str.as_str(), &spans, 0) {
+            SubtypeResult::True
+        } else {
+            SubtypeResult::False
+        }
+    }
 
-        for (span_idx, span) in spans.iter().enumerate() {
-            match span {
-                TemplateSpan::Text(text) => {
-                    let text_str = self.interner.resolve_atom(*text);
-                    // Check if the literal starts with this text at current position
-                    if !literal_str[current_pos..].starts_with(text_str.as_str()) {
-                        return SubtypeResult::False;
-                    }
-                    current_pos += text_str.len();
+    /// Recursively match a string against template literal spans using backtracking
+    fn match_template_literal_recursive(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+    ) -> bool {
+        // Base case: if we've processed all spans, check if we've consumed the entire string
+        if span_idx >= spans.len() {
+            return remaining.is_empty();
+        }
+
+        match &spans[span_idx] {
+            TemplateSpan::Text(text) => {
+                let text_str = self.interner.resolve_atom(*text);
+                // Check if the remaining string starts with this text
+                if remaining.starts_with(text_str.as_str()) {
+                    // Continue matching with the rest of the string and spans
+                    self.match_template_literal_recursive(
+                        &remaining[text_str.len()..],
+                        spans,
+                        span_idx + 1,
+                    )
+                } else {
+                    false
                 }
-                TemplateSpan::Type(type_id) => {
-                    // For a type hole, we need to check if the remaining string
-                    // matches the expected type
-                    let is_last_span = span_idx == spans.len() - 1;
-                    match self.interner.lookup(*type_id) {
-                        Some(TypeKey::Intrinsic(IntrinsicKind::String)) => {
-                            // string type matches any remaining characters
-                            // If this is the last span, we can immediately succeed
-                            if is_last_span {
-                                return SubtypeResult::True;
-                            }
-                            // Otherwise, continue to next span without advancing position
-                            // (the string matched the empty string at this position)
+            }
+            TemplateSpan::Type(type_id) => {
+                // Determine what kind of pattern this type represents
+                match self.interner.lookup(*type_id) {
+                    Some(TypeKey::Intrinsic(IntrinsicKind::String)) => {
+                        // String type can match any substring (including empty)
+                        // Try all possible lengths using backtracking
+                        self.match_string_wildcard(remaining, spans, span_idx)
+                    }
+                    Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => {
+                        // Number type matches numeric strings
+                        self.match_number_pattern(remaining, spans, span_idx)
+                    }
+                    Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)) => {
+                        // Boolean type matches "true" or "false"
+                        self.match_boolean_pattern(remaining, spans, span_idx)
+                    }
+                    Some(TypeKey::Intrinsic(IntrinsicKind::Bigint)) => {
+                        // Bigint type matches integer strings (potentially with n suffix in template context)
+                        self.match_bigint_pattern(remaining, spans, span_idx)
+                    }
+                    Some(TypeKey::Literal(LiteralValue::String(pattern))) => {
+                        let pattern_str = self.interner.resolve_atom(pattern);
+                        // Literal string must match exactly at this position
+                        if remaining.starts_with(pattern_str.as_str()) {
+                            self.match_template_literal_recursive(
+                                &remaining[pattern_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
                         }
-                        Some(TypeKey::Literal(LiteralValue::String(pattern))) => {
-                            let pattern_str = self.interner.resolve_atom(pattern);
-                            // The literal must contain this pattern at the current position
-                            if !literal_str[current_pos..].starts_with(pattern_str.as_str()) {
-                                return SubtypeResult::False;
-                            }
-                            current_pos += pattern_str.len();
+                    }
+                    Some(TypeKey::Literal(LiteralValue::Number(num))) => {
+                        // Literal number - convert to string and match
+                        let num_str = format_number_for_template(num.0);
+                        if remaining.starts_with(&num_str) {
+                            self.match_template_literal_recursive(
+                                &remaining[num_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
                         }
-                        Some(TypeKey::Union(members)) => {
-                            // For unions of literals, check if any of them match
-                            let members = self.interner.type_list(members);
-                            let mut matched = false;
-                            for &member in members.iter() {
-                                if let Some(TypeKey::Literal(LiteralValue::String(pattern))) =
-                                    self.interner.lookup(member)
-                                {
-                                    let pattern_str = self.interner.resolve_atom(pattern);
-                                    if literal_str[current_pos..].starts_with(pattern_str.as_str())
-                                    {
-                                        current_pos += pattern_str.len();
-                                        matched = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if !matched {
-                                return SubtypeResult::False;
-                            }
+                    }
+                    Some(TypeKey::Literal(LiteralValue::Boolean(b))) => {
+                        // Literal boolean - convert to string and match
+                        let bool_str = if b { "true" } else { "false" };
+                        if remaining.starts_with(bool_str) {
+                            self.match_template_literal_recursive(
+                                &remaining[bool_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
                         }
-                        // For other types, we need to check the subtype relationship
-                        // This is complex - for now, we'll just check that the remaining
-                        // part is compatible with the type
-                        _ => {
-                            // For general types, we need to verify the remaining string
-                            // matches the type. This requires parsing the remaining part
-                            // as a literal and checking subtype.
-                            // For simplicity, we'll conservatively accept if the type
-                            // is string-compatible
-                            match self.apparent_primitive_kind_for_type(*type_id) {
-                                Some(IntrinsicKind::String) => {
-                                    // If this is the last span and it's string-compatible, succeed
-                                    if is_last_span {
-                                        return SubtypeResult::True;
-                                    }
-                                    // Otherwise continue processing
-                                }
-                                _ => return SubtypeResult::False,
+                    }
+                    Some(TypeKey::Literal(LiteralValue::BigInt(n))) => {
+                        // Literal bigint - convert to string and match
+                        let bigint_str = self.interner.resolve_atom(n);
+                        if remaining.starts_with(bigint_str.as_str()) {
+                            self.match_template_literal_recursive(
+                                &remaining[bigint_str.len()..],
+                                spans,
+                                span_idx + 1,
+                            )
+                        } else {
+                            false
+                        }
+                    }
+                    Some(TypeKey::Union(members)) => {
+                        // For unions, try each member
+                        self.match_union_pattern(remaining, spans, span_idx, members)
+                    }
+                    _ => {
+                        // For other types, check if they're string-compatible
+                        match self.apparent_primitive_kind_for_type(*type_id) {
+                            Some(IntrinsicKind::String) => {
+                                // Treat as string wildcard
+                                self.match_string_wildcard(remaining, spans, span_idx)
                             }
+                            Some(IntrinsicKind::Number) => {
+                                self.match_number_pattern(remaining, spans, span_idx)
+                            }
+                            Some(IntrinsicKind::Boolean) => {
+                                self.match_boolean_pattern(remaining, spans, span_idx)
+                            }
+                            _ => false,
                         }
                     }
                 }
             }
         }
+    }
 
-        // After processing all spans, check if we've consumed the entire literal
-        if current_pos == literal_str.len() {
-            SubtypeResult::True
-        } else {
-            SubtypeResult::False
+    /// Match a string wildcard using backtracking
+    /// Tries all possible lengths from 0 to remaining.len()
+    fn match_string_wildcard(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+    ) -> bool {
+        let is_last_span = span_idx == spans.len() - 1;
+
+        // If this is the last span, any remaining string is valid
+        if is_last_span {
+            return true;
         }
+
+        // Find the next text span to use as an anchor for optimization
+        if let Some(next_text_pos) = self.find_next_text_span(spans, span_idx + 1) {
+            if let TemplateSpan::Text(text) = &spans[next_text_pos] {
+                let text_str = self.interner.resolve_atom(*text);
+                // Optimization: only try positions where the next text could match
+                for match_pos in remaining.match_indices(text_str.as_str()) {
+                    // Try matching from this position
+                    if self.match_template_literal_recursive(
+                        &remaining[match_pos.0..],
+                        spans,
+                        span_idx + 1,
+                    ) {
+                        return true;
+                    }
+                }
+                // Also try if the pattern can match with empty wildcard
+                // (in case the next span is also a type that could consume the text)
+                if self.match_template_literal_recursive(remaining, spans, span_idx + 1) {
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        // No optimization available, try all possible lengths
+        for len in 0..=remaining.len() {
+            if self.match_template_literal_recursive(&remaining[len..], spans, span_idx + 1) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Find the next text span after the given index
+    fn find_next_text_span(&self, spans: &[TemplateSpan], start_idx: usize) -> Option<usize> {
+        for i in start_idx..spans.len() {
+            if matches!(spans[i], TemplateSpan::Text(_)) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Match a number pattern - matches valid numeric strings
+    fn match_number_pattern(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+    ) -> bool {
+        let is_last_span = span_idx == spans.len() - 1;
+
+        // Find the longest valid number at the start of remaining
+        let num_len = find_number_length(remaining);
+
+        if num_len == 0 {
+            // No valid number found, but empty match might be valid for last span
+            if is_last_span {
+                return remaining.is_empty();
+            }
+            return false;
+        }
+
+        // Try all valid number lengths from longest to shortest
+        for len in (1..=num_len).rev() {
+            // Verify this is a valid number
+            if is_valid_number(&remaining[..len]) {
+                if self.match_template_literal_recursive(&remaining[len..], spans, span_idx + 1) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Match a boolean pattern - matches "true" or "false"
+    fn match_boolean_pattern(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+    ) -> bool {
+        // Try "true"
+        if remaining.starts_with("true") {
+            if self.match_template_literal_recursive(&remaining[4..], spans, span_idx + 1) {
+                return true;
+            }
+        }
+        // Try "false"
+        if remaining.starts_with("false") {
+            if self.match_template_literal_recursive(&remaining[5..], spans, span_idx + 1) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Match a bigint pattern - matches integer strings
+    fn match_bigint_pattern(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+    ) -> bool {
+        let is_last_span = span_idx == spans.len() - 1;
+
+        // Find the longest valid bigint at the start of remaining
+        let int_len = find_integer_length(remaining);
+
+        if int_len == 0 {
+            if is_last_span {
+                return remaining.is_empty();
+            }
+            return false;
+        }
+
+        // Try all valid integer lengths from longest to shortest
+        for len in (1..=int_len).rev() {
+            if self.match_template_literal_recursive(&remaining[len..], spans, span_idx + 1) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Match a union pattern - try each member of the union
+    fn match_union_pattern(
+        &self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+        members: TypeListId,
+    ) -> bool {
+        let members = self.interner.type_list(members);
+
+        for &member in members.iter() {
+            match self.interner.lookup(member) {
+                Some(TypeKey::Literal(LiteralValue::String(pattern))) => {
+                    let pattern_str = self.interner.resolve_atom(pattern);
+                    if remaining.starts_with(pattern_str.as_str()) {
+                        if self.match_template_literal_recursive(
+                            &remaining[pattern_str.len()..],
+                            spans,
+                            span_idx + 1,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                Some(TypeKey::Literal(LiteralValue::Number(num))) => {
+                    let num_str = format_number_for_template(num.0);
+                    if remaining.starts_with(&num_str) {
+                        if self.match_template_literal_recursive(
+                            &remaining[num_str.len()..],
+                            spans,
+                            span_idx + 1,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                Some(TypeKey::Literal(LiteralValue::BigInt(n))) => {
+                    let bigint_str = self.interner.resolve_atom(n);
+                    if remaining.starts_with(bigint_str.as_str()) {
+                        if self.match_template_literal_recursive(
+                            &remaining[bigint_str.len()..],
+                            spans,
+                            span_idx + 1,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                Some(TypeKey::Literal(LiteralValue::Boolean(b))) => {
+                    let bool_str = if b { "true" } else { "false" };
+                    if remaining.starts_with(bool_str) {
+                        if self.match_template_literal_recursive(
+                            &remaining[bool_str.len()..],
+                            spans,
+                            span_idx + 1,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                Some(TypeKey::Intrinsic(IntrinsicKind::String)) => {
+                    // String in union acts as a wildcard
+                    if self.match_string_wildcard(remaining, spans, span_idx) {
+                        return true;
+                    }
+                }
+                Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => {
+                    if self.match_number_pattern(remaining, spans, span_idx) {
+                        return true;
+                    }
+                }
+                Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)) => {
+                    if self.match_boolean_pattern(remaining, spans, span_idx) {
+                        return true;
+                    }
+                }
+                _ => {
+                    // For other types, check primitive kind
+                    match self.apparent_primitive_kind_for_type(member) {
+                        Some(IntrinsicKind::String) => {
+                            if self.match_string_wildcard(remaining, spans, span_idx) {
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Get the apparent primitive kind for a type (helper for template literal checking)
@@ -4272,6 +4550,131 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         None
     }
+}
+
+/// Format a number for template literal string coercion
+/// Follows JavaScript's number-to-string conversion rules
+fn format_number_for_template(num: f64) -> String {
+    if num.is_nan() {
+        return "NaN".to_string();
+    }
+    if num.is_infinite() {
+        return if num.is_sign_positive() {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        };
+    }
+    // Use JavaScript-like formatting (no trailing .0 for integers)
+    if num.fract() == 0.0 && num.abs() < 1e15 {
+        format!("{:.0}", num)
+    } else {
+        // Use default Rust formatting which is close enough for most cases
+        let s = format!("{}", num);
+        // Remove unnecessary trailing zeros after decimal point
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// Find the length of a valid number at the start of a string
+fn find_number_length(s: &str) -> usize {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+
+    // Handle optional sign
+    if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+        i += 1;
+    }
+
+    // Check for special values
+    if s.len() > i && s[i..].starts_with("Infinity") {
+        return i + 8;
+    }
+    if s.len() > i && s[i..].starts_with("NaN") {
+        return i + 3;
+    }
+
+    let start = i;
+    let mut has_digits = false;
+    let mut has_dot = false;
+    let mut has_exponent = false;
+
+    // Integer or decimal part
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() {
+            has_digits = true;
+            i += 1;
+        } else if chars[i] == '.' && !has_dot && !has_exponent {
+            has_dot = true;
+            i += 1;
+        } else if (chars[i] == 'e' || chars[i] == 'E') && has_digits && !has_exponent {
+            has_exponent = true;
+            i += 1;
+            // Optional sign after exponent
+            if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+                i += 1;
+            }
+            // Must have at least one digit after exponent
+            if i >= chars.len() || !chars[i].is_ascii_digit() {
+                // Invalid exponent, backtrack
+                i = if has_dot { i - 2 } else { i - 1 };
+                if i > 0 && (chars[i - 1] == '+' || chars[i - 1] == '-') {
+                    i -= 1;
+                }
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    if !has_digits {
+        return 0;
+    }
+
+    // Don't count trailing dot without digits
+    if i > start && chars[i - 1] == '.' && (i == start + 1 || !chars[i - 2].is_ascii_digit()) {
+        i -= 1;
+    }
+
+    i
+}
+
+/// Check if a string is a valid number representation
+fn is_valid_number(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    // Handle special values
+    if s == "NaN" || s == "Infinity" || s == "-Infinity" || s == "+Infinity" {
+        return true;
+    }
+    // Try parsing as f64
+    s.parse::<f64>().is_ok()
+}
+
+/// Find the length of a valid integer at the start of a string
+fn find_integer_length(s: &str) -> usize {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+
+    // Handle optional sign
+    if i < chars.len() && (chars[i] == '+' || chars[i] == '-') {
+        i += 1;
+    }
+
+    let start = i;
+
+    // Must have at least one digit
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+
+    if i == start {
+        return 0;
+    }
+
+    i
 }
 
 /// Convenience function for one-off subtype checks (without resolver)
