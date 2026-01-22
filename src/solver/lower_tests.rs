@@ -2128,3 +2128,352 @@ fn test_lower_interface_method_overload_accumulates() {
         _ => panic!("Expected Object type, got {:?}", key),
     }
 }
+
+// ============================================================================
+// Template Literal Edge Case Tests
+// ============================================================================
+
+#[test]
+fn test_template_literal_empty_string() {
+    let (arena, template_idx) = parse_template_literal_type("type T = ``;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 0, "Empty template literal should have no spans");
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_single_text_span() {
+    let (arena, template_idx) = parse_template_literal_type("type T = `hello`;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 1);
+            match &spans[0] {
+                TemplateSpan::Text(atom) => {
+                    assert_eq!(interner.resolve_atom(*atom), "hello");
+                }
+                _ => panic!("Expected text span"),
+            }
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_multiple_interpolations() {
+    let (arena, template_idx) =
+        parse_template_literal_type("type T = `${string}-${number}-${boolean}`;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 5); // type, text, type, text, type
+
+            assert!(matches!(spans[0], TemplateSpan::Type(TypeId::STRING)));
+            if let TemplateSpan::Text(atom) = &spans[1] {
+                assert_eq!(interner.resolve_atom(*atom), "-");
+            } else {
+                panic!("Expected text span");
+            }
+            assert!(matches!(spans[2], TemplateSpan::Type(TypeId::NUMBER)));
+            if let TemplateSpan::Text(atom) = &spans[3] {
+                assert_eq!(interner.resolve_atom(*atom), "-");
+            } else {
+                panic!("Expected text span");
+            }
+            assert!(matches!(spans[4], TemplateSpan::Type(TypeId::BOOLEAN)));
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_consecutive_text_normalization() {
+    let (arena, template_idx) = parse_template_literal_type("type T = `hello${string}world`;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            // Should have 3 spans: "hello", string, "world"
+            assert_eq!(spans.len(), 3);
+
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                assert_eq!(interner.resolve_atom(*atom), "hello");
+            } else {
+                panic!("Expected text span");
+            }
+
+            if let TemplateSpan::Type(t) = spans[1] {
+                assert_eq!(t, TypeId::STRING);
+            } else {
+                panic!("Expected type span");
+            }
+
+            if let TemplateSpan::Text(atom) = &spans[2] {
+                assert_eq!(interner.resolve_atom(*atom), "world");
+            } else {
+                panic!("Expected text span");
+            }
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_only_interpolation() {
+    let (arena, template_idx) = parse_template_literal_type("type T = `${string}`;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 1);
+            assert!(matches!(spans[0], TemplateSpan::Type(TypeId::STRING)));
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_trailing_text() {
+    let (arena, template_idx) = parse_template_literal_type("type T = `${string}!`;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 2);
+            assert!(matches!(spans[0], TemplateSpan::Type(TypeId::STRING)));
+            if let TemplateSpan::Text(atom) = &spans[1] {
+                assert_eq!(interner.resolve_atom(*atom), "!");
+            } else {
+                panic!("Expected text span");
+            }
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_leading_text() {
+    let (arena, template_idx) = parse_template_literal_type("type T = `!${string}`;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 2);
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                assert_eq!(interner.resolve_atom(*atom), "!");
+            } else {
+                panic!("Expected text span");
+            }
+            assert!(matches!(spans[1], TemplateSpan::Type(TypeId::STRING)));
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_escape_sequences() {
+    let (arena, template_idx) = parse_template_literal_type(r#"type T = `hello\nworld`;"#);
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 1);
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                // The escape sequence should be processed
+                let text = interner.resolve_atom(*atom);
+                assert_eq!(text, "hello\nworld");
+            } else {
+                panic!("Expected text span");
+            }
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_escape_dollar_brace() {
+    let (arena, template_idx) = parse_template_literal_type(r#"type T = `hello\${string}`;"#);
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans) => {
+            let spans = interner.template_list(spans);
+            assert_eq!(spans.len(), 1);
+            if let TemplateSpan::Text(atom) = &spans[0] {
+                // The escaped ${ should become literal ${ (not an interpolation)
+                let text = interner.resolve_atom(*atom);
+                assert_eq!(text, "hello${string}");
+            } else {
+                panic!("Expected text span");
+            }
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_with_union() {
+    let (arena, template_idx) = parse_template_literal_type(
+        "type T = `prefix-${\"a\" | \"b\"}-suffix`;",
+    );
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(template_idx);
+    // Should not exceed expansion limit and create a union
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::Union(list_id) => {
+            let members = interner.type_list(list_id);
+            // Should have expanded to "prefix-a-suffix" | "prefix-b-suffix"
+            assert_eq!(members.len(), 2);
+        }
+        _ => panic!("Expected Union type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_normalization_merges_consecutive_texts() {
+    let interner = TypeInterner::new();
+
+    // Create spans with consecutive text that should be merged
+    let spans = vec![
+        TemplateSpan::Text(interner.intern_string("hello")),
+        TemplateSpan::Text(interner.intern_string(" ")),
+        TemplateSpan::Text(interner.intern_string("world")),
+    ];
+
+    let type_id = interner.template_literal(spans);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(spans_id) => {
+            let normalized_spans = interner.template_list(spans_id);
+            // After normalization, consecutive texts should be merged
+            assert_eq!(normalized_spans.len(), 1);
+            if let TemplateSpan::Text(atom) = &normalized_spans[0] {
+                assert_eq!(interner.resolve_atom(*atom), "hello world");
+            } else {
+                panic!("Expected merged text span");
+            }
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_interpolation_positions() {
+    let interner = TypeInterner::new();
+
+    let spans = vec![
+        TemplateSpan::Text(interner.intern_string("prefix")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ];
+
+    let type_id = interner.template_literal(spans);
+    let positions = interner.template_literal_interpolation_positions(type_id);
+
+    assert_eq!(positions, vec![1, 3]); // Type spans at indices 1 and 3
+}
+
+#[test]
+fn test_template_literal_get_span() {
+    let interner = TypeInterner::new();
+
+    let spans = vec![
+        TemplateSpan::Text(interner.intern_string("hello")),
+        TemplateSpan::Type(TypeId::STRING),
+    ];
+
+    let type_id = interner.template_literal(spans);
+
+    let span_0 = interner.template_literal_get_span(type_id, 0);
+    assert!(span_0.is_some());
+    assert!(span_0.unwrap().is_text());
+
+    let span_1 = interner.template_literal_get_span(type_id, 1);
+    assert!(span_1.is_some());
+    assert!(span_1.unwrap().is_type());
+
+    let span_2 = interner.template_literal_get_span(type_id, 2);
+    assert!(span_2.is_none()); // Out of bounds
+}
+
+#[test]
+fn test_template_literal_span_count() {
+    let interner = TypeInterner::new();
+
+    let spans = vec![
+        TemplateSpan::Text(interner.intern_string("hello")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("world")),
+    ];
+
+    let type_id = interner.template_literal(spans);
+    assert_eq!(interner.template_literal_span_count(type_id), 3);
+}
+
+#[test]
+fn test_template_literal_is_text_only() {
+    let interner = TypeInterner::new();
+
+    // Text only
+    let spans_text_only = vec![TemplateSpan::Text(interner.intern_string("hello"))];
+    let type_id_text_only = interner.template_literal(spans_text_only);
+    assert!(interner.template_literal_is_text_only(type_id_text_only));
+
+    // With interpolation
+    let spans_with_type = vec![
+        TemplateSpan::Text(interner.intern_string("hello")),
+        TemplateSpan::Type(TypeId::STRING),
+    ];
+    let type_id_with_type = interner.template_literal(spans_with_type);
+    assert!(!interner.template_literal_is_text_only(type_id_with_type));
+
+    // Non-template literal type
+    assert!(!interner.template_literal_is_text_only(TypeId::STRING));
+}
+
