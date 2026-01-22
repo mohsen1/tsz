@@ -2237,13 +2237,14 @@ impl<'a> TypeLowering<'a> {
         if let Some(data) = self.arena.get_template_literal_type(node) {
             let mut spans: Vec<TemplateSpan> = Vec::new();
 
-            // Add the head text if present
+            // Add the head text if present, processing escape sequences
             if let Some(head_node) = self.arena.get(data.head)
                 && let Some(head_lit) = self.arena.get_literal(head_node)
                 && !head_lit.text.is_empty()
             {
+                let processed = crate::solver::types::process_template_escape_sequences(&head_lit.text);
                 spans.push(TemplateSpan::Text(
-                    self.interner.intern_string(&head_lit.text),
+                    self.interner.intern_string(&processed),
                 ));
             }
 
@@ -2261,8 +2262,11 @@ impl<'a> TypeLowering<'a> {
                         && let Some(lit_data) = self.arena.get_literal(lit_node)
                         && !lit_data.text.is_empty()
                     {
+                        // Process escape sequences in the text part
+                        let processed =
+                            crate::solver::types::process_template_escape_sequences(&lit_data.text);
                         spans.push(TemplateSpan::Text(
-                            self.interner.intern_string(&lit_data.text),
+                            self.interner.intern_string(&processed),
                         ));
                     }
                 }

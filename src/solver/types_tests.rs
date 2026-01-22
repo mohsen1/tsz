@@ -157,3 +157,169 @@ fn test_ordered_float_infinity() {
     assert_eq!(neg_inf, OrderedFloat(f64::NEG_INFINITY));
     assert_ne!(pos_inf, neg_inf);
 }
+
+// ============================================================================
+// Template Literal Tests
+// ============================================================================
+
+#[test]
+fn test_template_span_is_text() {
+    let interner = crate::interner::ShardedInterner::new();
+    let atom = interner.intern("hello");
+    let text_span = TemplateSpan::Text(atom);
+    assert!(text_span.is_text());
+    assert!(!text_span.is_type());
+}
+
+#[test]
+fn test_template_span_is_type() {
+    let type_span = TemplateSpan::Type(TypeId::STRING);
+    assert!(type_span.is_type());
+    assert!(!type_span.is_text());
+}
+
+#[test]
+fn test_template_span_as_text() {
+    let interner = crate::interner::ShardedInterner::new();
+    let atom = interner.intern("hello");
+    let text_span = TemplateSpan::Text(atom);
+    assert_eq!(text_span.as_text(), Some(atom));
+    assert_eq!(text_span.as_type(), None);
+}
+
+#[test]
+fn test_template_span_as_type() {
+    let type_span = TemplateSpan::Type(TypeId::STRING);
+    assert_eq!(type_span.as_type(), Some(TypeId::STRING));
+    assert_eq!(type_span.as_text(), None);
+}
+
+#[test]
+fn test_template_span_type_from_id() {
+    let span = TemplateSpan::type_from_id(TypeId::NUMBER);
+    assert!(span.is_type());
+    assert_eq!(span.as_type(), Some(TypeId::NUMBER));
+}
+
+#[test]
+fn test_process_template_escape_sequences_backslash_dollar() {
+    // \${ should become $ (not an interpolation marker)
+    let result = process_template_escape_sequences("\\${");
+    assert_eq!(result, "${");
+}
+
+#[test]
+fn test_process_template_escape_sequences_double_backslash() {
+    let result = process_template_escape_sequences("\\\\");
+    assert_eq!(result, "\\");
+}
+
+#[test]
+fn test_process_template_escape_sequences_newline() {
+    let result = process_template_escape_sequences("\\n");
+    assert_eq!(result, "\n");
+}
+
+#[test]
+fn test_process_template_escape_sequences_carriage_return() {
+    let result = process_template_escape_sequences("\\r");
+    assert_eq!(result, "\r");
+}
+
+#[test]
+fn test_process_template_escape_sequences_tab() {
+    let result = process_template_escape_sequences("\\t");
+    assert_eq!(result, "\t");
+}
+
+#[test]
+fn test_process_template_escape_sequences_backspace() {
+    let result = process_template_escape_sequences("\\b");
+    assert_eq!(result, "\x08");
+}
+
+#[test]
+fn test_process_template_escape_sequences_form_feed() {
+    let result = process_template_escape_sequences("\\f");
+    assert_eq!(result, "\x0c");
+}
+
+#[test]
+fn test_process_template_escape_sequences_vertical_tab() {
+    let result = process_template_escape_sequences("\\v");
+    assert_eq!(result, "\x0b");
+}
+
+#[test]
+fn test_process_template_escape_sequences_null() {
+    let result = process_template_escape_sequences("\\0");
+    assert_eq!(result, "\0");
+}
+
+#[test]
+fn test_process_template_escape_sequences_hex() {
+    let result = process_template_escape_sequences("\\x41");
+    assert_eq!(result, "A");
+}
+
+#[test]
+fn test_process_template_escape_sequences_unicode_4_digit() {
+    let result = process_template_escape_sequences("\\u0041");
+    assert_eq!(result, "A");
+}
+
+#[test]
+fn test_process_template_escape_sequences_unicode_braced() {
+    let result = process_template_escape_sequences("\\u{41}");
+    assert_eq!(result, "A");
+}
+
+#[test]
+fn test_process_template_escape_sequences_unicode_emoji() {
+    let result = process_template_escape_sequences("\\u{1F600}");
+    assert_eq!(result, "😀");
+}
+
+#[test]
+fn test_process_template_escape_sequences_mixed() {
+    let result = process_template_escape_sequences("hello\\nworld\\t!");
+    assert_eq!(result, "hello\nworld\t!");
+}
+
+#[test]
+fn test_process_template_escape_sequences_unknown_escape() {
+    // Unknown escape sequences should preserve the backslash
+    let result = process_template_escape_sequences("\\z");
+    assert_eq!(result, "\\z");
+}
+
+#[test]
+fn test_process_template_escape_sequences_trailing_backslash() {
+    let result = process_template_escape_sequences("abc\\");
+    assert_eq!(result, "abc\\");
+}
+
+#[test]
+fn test_process_template_escape_sequences_in_template_literal() {
+    let result = process_template_escape_sequences("prefix-\\${string}-suffix");
+    assert_eq!(result, "prefix-${string}-suffix");
+}
+
+#[test]
+fn test_process_template_escape_sequences_empty_string() {
+    let result = process_template_escape_sequences("");
+    assert_eq!(result, "");
+}
+
+#[test]
+fn test_process_template_escape_sequences_no_escapes() {
+    let result = process_template_escape_sequences("hello world");
+    assert_eq!(result, "hello world");
+}
+
+#[test]
+fn test_process_template_escape_sequences_multiple_interpolation_markers() {
+    let result = process_template_escape_sequences("\\$\\$\\$");
+    assert_eq!(result, "$$$");
+}
+
