@@ -84,3 +84,5 @@ mod type_law_tests;
 mod types_tests;
 #[cfg(test)]
 mod union_tests;
+#[cfg(test)]
+mod intersection_union_tests;
