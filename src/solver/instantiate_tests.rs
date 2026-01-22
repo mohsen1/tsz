@@ -1035,3 +1035,185 @@ fn test_instantiate_template_literal_in_conditional_type() {
         }
     }
 }
+
+// ============================================
+// String Intrinsic Instantiation Tests
+// ============================================
+
+#[test]
+fn test_instantiate_string_intrinsic_uppercase_with_literal() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create Uppercase<T>
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let uppercase = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: type_param_t,
+    });
+
+    // Substitute T = "hello" -> should evaluate to "HELLO"
+    let hello_lit = interner.literal_string("hello");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, hello_lit);
+    let result = instantiate_type(&interner, uppercase, &subst);
+
+    let expected = interner.literal_string("HELLO");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_string_intrinsic_lowercase_with_union() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create Lowercase<T>
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let lowercase = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Lowercase,
+        type_arg: type_param_t,
+    });
+
+    // Substitute T = "ABC" | "XYZ" -> should evaluate to "abc" | "xyz"
+    let abc_lit = interner.literal_string("ABC");
+    let xyz_lit = interner.literal_string("XYZ");
+    let union = interner.union(vec![abc_lit, xyz_lit]);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, union);
+    let result = instantiate_type(&interner, lowercase, &subst);
+
+    // The result should be a union of "abc" | "xyz"
+    let abc_lower = interner.literal_string("abc");
+    let xyz_lower = interner.literal_string("xyz");
+    let expected = interner.union(vec![abc_lower, xyz_lower]);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_string_intrinsic_capitalize() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create Capitalize<T>
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let capitalize = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Capitalize,
+        type_arg: type_param_t,
+    });
+
+    // Substitute T = "hello" -> should evaluate to "Hello"
+    let hello_lit = interner.literal_string("hello");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, hello_lit);
+    let result = instantiate_type(&interner, capitalize, &subst);
+
+    let expected = interner.literal_string("Hello");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_string_intrinsic_uncapitalize() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create Uncapitalize<T>
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let uncapitalize = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uncapitalize,
+        type_arg: type_param_t,
+    });
+
+    // Substitute T = "Hello" -> should evaluate to "hello"
+    let hello_lit = interner.literal_string("Hello");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, hello_lit);
+    let result = instantiate_type(&interner, uncapitalize, &subst);
+
+    let expected = interner.literal_string("hello");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_string_intrinsic_with_template_literal() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    // Create `get${T}` template literal
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("get")),
+        TemplateSpan::Type(type_param_t),
+    ]);
+
+    // Create Uppercase<`get${T}`>
+    let uppercase = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: template,
+    });
+
+    // Substitute T = "Name" -> should evaluate to "GETNAME"
+    let name_lit = interner.literal_string("Name");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, name_lit);
+    let result = instantiate_type(&interner, uppercase, &subst);
+
+    let expected = interner.literal_string("GETNAME");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_instantiate_string_intrinsic_preserves_type_param() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    // Create Uppercase<T>
+    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+    let uppercase = interner.intern(TypeKey::StringIntrinsic {
+        kind: StringIntrinsicKind::Uppercase,
+        type_arg: type_param_t,
+    });
+
+    // Substitute U = "hello" (T is not substituted)
+    let hello_lit = interner.literal_string("hello");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(u_name, hello_lit);
+    let result = instantiate_type(&interner, uppercase, &subst);
+
+    // T should stay as is - result should still be StringIntrinsic<T>
+    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(result) {
+        assert_eq!(kind, StringIntrinsicKind::Uppercase);
+        // type_arg should still be T
+        if let Some(TypeKey::TypeParameter(info)) = interner.lookup(type_arg) {
+            assert_eq!(info.name, t_name);
+        } else {
+            panic!("Expected type parameter T in StringIntrinsic");
+        }
+    } else {
+        panic!("Expected StringIntrinsic type");
+    }
+}
