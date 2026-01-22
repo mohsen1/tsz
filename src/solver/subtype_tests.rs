@@ -27123,3 +27123,1119 @@ fn test_intrinsic_to_literal_fails() {
         other => panic!("Expected TypeMismatch, got {:?}", other),
     }
 }
+
+// ============================================================================
+// Tuple-to-Array Assignability Tests
+// These tests document TypeScript behavior for assigning tuples to arrays
+// ============================================================================
+
+// --- Homogeneous Tuples to Arrays ---
+
+#[test]
+fn test_tuple_to_array_homogeneous_two_strings() {
+    // [string, string] -> string[] should succeed
+    // In TypeScript: const arr: string[] = ["a", "b"]; // OK
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, string_array),
+        "[string, string] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_array_homogeneous_three_numbers() {
+    // [number, number, number] -> number[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let number_array = interner.array(TypeId::NUMBER);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, number_array),
+        "[number, number, number] should be assignable to number[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_array_homogeneous_booleans() {
+    // [boolean, boolean] -> boolean[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let boolean_array = interner.array(TypeId::BOOLEAN);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, boolean_array),
+        "[boolean, boolean] should be assignable to boolean[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_array_homogeneous_literal_to_base() {
+    // ["hello", "world"] -> string[] should succeed (literals widen to base type)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let hello = interner.literal_string("hello");
+    let world = interner.literal_string("world");
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: hello,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: world,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, string_array),
+        "[\"hello\", \"world\"] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_array_homogeneous_number_literals() {
+    // [1, 2, 3] -> number[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_number(2.0);
+    let three = interner.literal_number(3.0);
+    let number_array = interner.array(TypeId::NUMBER);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: one,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: two,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: three,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, number_array),
+        "[1, 2, 3] should be assignable to number[]"
+    );
+}
+
+// --- Heterogeneous Tuples to Union Arrays ---
+
+#[test]
+fn test_tuple_to_union_array_string_number() {
+    // [string, number] -> (string | number)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string, number] should be assignable to (string | number)[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_union_array_number_boolean() {
+    // [number, boolean] -> (number | boolean)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::NUMBER, TypeId::BOOLEAN]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[number, boolean] should be assignable to (number | boolean)[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_union_array_three_types() {
+    // [string, number, boolean] -> (string | number | boolean)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string, number, boolean] should be assignable to (string | number | boolean)[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_union_array_literals_to_base() {
+    // ["a", 1] -> (string | number)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let a_literal = interner.literal_string("a");
+    let one_literal = interner.literal_number(1.0);
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: a_literal,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: one_literal,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[\"a\", 1] should be assignable to (string | number)[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_union_array_subset_elements() {
+    // [string, string] -> (string | number)[] should succeed
+    // All elements match a subset of the union
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string, string] should be assignable to (string | number)[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_union_array_fails_missing_element_type() {
+    // [string, boolean] -> (string | number)[] should FAIL
+    // boolean is not in the union (string | number)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        !checker.is_subtype_of(source, union_array),
+        "[string, boolean] should NOT be assignable to (string | number)[] - boolean is not in union"
+    );
+}
+
+// --- Tuples with Rest Elements to Arrays ---
+
+#[test]
+fn test_tuple_rest_to_array_matching() {
+    // [number, ...string[]] -> (number | string)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    let union_array = interner.array(union_elem);
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[number, ...string[]] should be assignable to (number | string)[]"
+    );
+}
+
+#[test]
+fn test_tuple_rest_to_array_homogeneous() {
+    // [string, ...string[]] -> string[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, string_array),
+        "[string, ...string[]] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_rest_to_array_prefix_not_matching() {
+    // [boolean, ...string[]] -> string[] should FAIL
+    // The first element (boolean) is not string
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: string_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    assert!(
+        !checker.is_subtype_of(source, string_array),
+        "[boolean, ...string[]] should NOT be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_rest_to_array_rest_not_matching() {
+    // [string, ...number[]] -> string[] should FAIL
+    // The rest element (number[]) is not compatible with string[]
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let number_array = interner.array(TypeId::NUMBER);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: number_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    assert!(
+        !checker.is_subtype_of(source, string_array),
+        "[string, ...number[]] should NOT be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_rest_multiple_prefix_to_union_array() {
+    // [string, number, ...boolean[]] -> (string | number | boolean)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
+    let union_array = interner.array(union_elem);
+    let boolean_array = interner.array(TypeId::BOOLEAN);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: boolean_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string, number, ...boolean[]] should be assignable to (string | number | boolean)[]"
+    );
+}
+
+#[test]
+fn test_tuple_only_rest_to_array() {
+    // [...number[]] -> number[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let number_array = interner.array(TypeId::NUMBER);
+    let source = interner.tuple(vec![TupleElement {
+        type_id: number_array,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+
+    assert!(
+        checker.is_subtype_of(source, number_array),
+        "[...number[]] should be assignable to number[]"
+    );
+}
+
+// --- Edge Cases: Empty Tuples ---
+
+#[test]
+fn test_empty_tuple_to_string_array() {
+    // [] -> string[] should succeed (empty tuple is compatible with any array)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let empty_tuple = interner.tuple(Vec::new());
+
+    assert!(
+        checker.is_subtype_of(empty_tuple, string_array),
+        "[] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_empty_tuple_to_number_array() {
+    // [] -> number[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let number_array = interner.array(TypeId::NUMBER);
+    let empty_tuple = interner.tuple(Vec::new());
+
+    assert!(
+        checker.is_subtype_of(empty_tuple, number_array),
+        "[] should be assignable to number[]"
+    );
+}
+
+#[test]
+fn test_empty_tuple_to_union_array() {
+    // [] -> (string | number)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let empty_tuple = interner.tuple(Vec::new());
+
+    assert!(
+        checker.is_subtype_of(empty_tuple, union_array),
+        "[] should be assignable to (string | number)[]"
+    );
+}
+
+#[test]
+fn test_empty_tuple_to_any_array() {
+    // [] -> any[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let any_array = interner.array(TypeId::ANY);
+    let empty_tuple = interner.tuple(Vec::new());
+
+    assert!(
+        checker.is_subtype_of(empty_tuple, any_array),
+        "[] should be assignable to any[]"
+    );
+}
+
+#[test]
+fn test_empty_tuple_to_never_array() {
+    // [] -> never[] should succeed (empty tuple has zero elements, all of which are never)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let never_array = interner.array(TypeId::NEVER);
+    let empty_tuple = interner.tuple(Vec::new());
+
+    assert!(
+        checker.is_subtype_of(empty_tuple, never_array),
+        "[] should be assignable to never[]"
+    );
+}
+
+// --- Edge Cases: Single-Element Tuples ---
+
+#[test]
+fn test_single_element_tuple_to_array() {
+    // [string] -> string[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    assert!(
+        checker.is_subtype_of(source, string_array),
+        "[string] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_single_element_tuple_type_mismatch() {
+    // [number] -> string[] should FAIL
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    assert!(
+        !checker.is_subtype_of(source, string_array),
+        "[number] should NOT be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_single_element_tuple_to_union_array() {
+    // [string] -> (string | number)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string] should be assignable to (string | number)[]"
+    );
+}
+
+// --- Edge Cases: Tuples with Optional Elements ---
+
+#[test]
+fn test_tuple_optional_to_array() {
+    // [string, number?] -> (string | number)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string, number?] should be assignable to (string | number)[]"
+    );
+}
+
+#[test]
+fn test_tuple_all_optional_to_array() {
+    // [string?, number?] -> (string | number)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string?, number?] should be assignable to (string | number)[]"
+    );
+}
+
+#[test]
+fn test_tuple_optional_homogeneous_to_array() {
+    // [string, string?] -> string[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, string_array),
+        "[string, string?] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_optional_element_type_mismatch() {
+    // [string, boolean?] -> string[] should FAIL
+    // Optional element type (boolean) doesn't match array element type (string)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        !checker.is_subtype_of(source, string_array),
+        "[string, boolean?] should NOT be assignable to string[] - boolean is not string"
+    );
+}
+
+#[test]
+fn test_tuple_optional_with_rest_to_array() {
+    // [string?, ...number[]] -> (string | number)[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let number_array = interner.array(TypeId::NUMBER);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        TupleElement {
+            type_id: number_array,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[string?, ...number[]] should be assignable to (string | number)[]"
+    );
+}
+
+// --- Edge Cases: Named Tuple Elements ---
+
+#[test]
+fn test_named_tuple_to_array() {
+    // [name: string, age: number] -> (string | number)[] should succeed
+    // Named tuple elements don't affect assignability to arrays
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let name_atom = interner.intern_string("name");
+    let age_atom = interner.intern_string("age");
+    let union_elem = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let union_array = interner.array(union_elem);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: Some(name_atom),
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: Some(age_atom),
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, union_array),
+        "[name: string, age: number] should be assignable to (string | number)[]"
+    );
+}
+
+// --- Edge Cases: Special Types ---
+
+#[test]
+fn test_tuple_with_any_to_string_array() {
+    // [any, any] -> string[] should succeed (any is assignable to anything)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, string_array),
+        "[any, any] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_any_array() {
+    // [string, number] -> any[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let any_array = interner.array(TypeId::ANY);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, any_array),
+        "[string, number] should be assignable to any[]"
+    );
+}
+
+#[test]
+fn test_tuple_with_never_to_string_array() {
+    // [never, never] -> string[] should succeed (never is subtype of all types)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NEVER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NEVER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, string_array),
+        "[never, never] should be assignable to string[]"
+    );
+}
+
+#[test]
+fn test_tuple_to_unknown_array() {
+    // [string, number] -> unknown[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, unknown_array),
+        "[string, number] should be assignable to unknown[]"
+    );
+}
+
+#[test]
+fn test_tuple_with_unknown_to_string_array() {
+    // [unknown, unknown] -> string[] should FAIL
+    // unknown is not assignable to string
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::UNKNOWN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        !checker.is_subtype_of(source, string_array),
+        "[unknown, unknown] should NOT be assignable to string[]"
+    );
+}
+
+// --- Edge Cases: Readonly arrays ---
+
+#[test]
+fn test_tuple_to_readonly_array() {
+    // [string, string] -> readonly string[] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let readonly_string_array = interner.readonly_array(string_array);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, readonly_string_array),
+        "[string, string] should be assignable to readonly string[]"
+    );
+}
+
+// --- Edge Cases: Nested tuples ---
+
+#[test]
+fn test_nested_tuple_to_array() {
+    // [[string, number], [string, number]] -> [string, number][] should succeed
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let inner_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let tuple_array = interner.array(inner_tuple);
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: inner_tuple,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: inner_tuple,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        checker.is_subtype_of(source, tuple_array),
+        "[[string, number], [string, number]] should be assignable to [string, number][]"
+    );
+}
+
+// --- Negative Cases: Array to Tuple (reverse direction) ---
+
+#[test]
+fn test_array_to_tuple_fails_fixed() {
+    // string[] -> [string] should FAIL (array has unknown length)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let target = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    assert!(
+        !checker.is_subtype_of(string_array, target),
+        "string[] should NOT be assignable to [string]"
+    );
+}
+
+#[test]
+fn test_array_to_tuple_fails_multi_element() {
+    // string[] -> [string, string] should FAIL
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let string_array = interner.array(TypeId::STRING);
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(
+        !checker.is_subtype_of(string_array, target),
+        "string[] should NOT be assignable to [string, string]"
+    );
+}
