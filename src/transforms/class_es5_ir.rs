@@ -57,6 +57,7 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
     is_private_identifier,
 };
+use std::collections::HashMap;
 
 /// Context for ES5 class transformation
 pub struct ES5ClassTransformer<'a> {
@@ -743,6 +744,50 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         };
 
+        // First pass: collect accessors by name to combine getter/setter pairs
+        let mut accessor_map: HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> =
+            HashMap::new();
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                if let Some(accessor_data) = self.arena.get_accessor(member_node) {
+                    // Skip static (handled in emit_static_members_ir)
+                    if has_static_modifier(self.arena, &accessor_data.modifiers) {
+                        continue;
+                    }
+                    // Skip abstract
+                    if has_abstract_modifier(self.arena, &accessor_data.modifiers) {
+                        continue;
+                    }
+                    // Skip private
+                    if is_private_identifier(self.arena, accessor_data.name) {
+                        continue;
+                    }
+
+                    let name =
+                        get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
+                    let entry = accessor_map.entry(name).or_insert((None, None));
+
+                    if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        entry.0 = Some(member_idx);
+                    } else {
+                        entry.1 = Some(member_idx);
+                    }
+                }
+            }
+        }
+
+        // Track which accessor names we've emitted
+        let mut emitted_accessors: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        // Second pass: emit methods and accessors in source order
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -766,6 +811,20 @@ impl<'a> ES5ClassTransformer<'a> {
                 let method_name = self.get_method_name_ir(method_data.name);
                 let params = self.extract_parameters(&method_data.parameters);
 
+                // Check if async method (not generator)
+                let is_async = has_async_modifier(self.arena, &method_data.modifiers)
+                    && !method_data.asterisk_token;
+
+                let method_body = if is_async {
+                    // Async method: wrap body in __awaiter call
+                    vec![IRNode::AwaiterCall {
+                        this_arg: Box::new(IRNode::this()),
+                        generator_body: Box::new(IRNode::ASTRef(method_data.body)),
+                    }]
+                } else {
+                    vec![IRNode::ASTRef(method_data.body)]
+                };
+
                 // ClassName.prototype.methodName = function () { body };
                 body.push(IRNode::PrototypeMethod {
                     class_name: self.class_name.clone(),
@@ -773,87 +832,100 @@ impl<'a> ES5ClassTransformer<'a> {
                     function: Box::new(IRNode::FunctionExpr {
                         name: None,
                         parameters: params,
-                        body: vec![IRNode::ASTRef(method_data.body)],
+                        body: method_body,
                         is_expression_body: false,
                     }),
                 });
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
-                // Handle accessor (getter/setter)
+                // Handle accessor (getter/setter) - combine pairs
                 if let Some(accessor_data) = self.arena.get_accessor(member_node) {
-                    // Skip static
-                    if has_static_modifier(self.arena, &accessor_data.modifiers) {
-                        continue;
-                    }
-                    // Skip abstract
-                    if has_abstract_modifier(self.arena, &accessor_data.modifiers) {
-                        continue;
-                    }
-                    // Skip private
-                    if is_private_identifier(self.arena, accessor_data.name) {
+                    // Skip static/abstract/private (already filtered in first pass)
+                    if has_static_modifier(self.arena, &accessor_data.modifiers)
+                        || has_abstract_modifier(self.arena, &accessor_data.modifiers)
+                        || is_private_identifier(self.arena, accessor_data.name)
+                    {
                         continue;
                     }
 
-                    // For simplicity, emit each accessor independently
-                    // A more complete implementation would combine getter/setter pairs
                     let accessor_name =
                         get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
 
-                    if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        let descriptor = IRPropertyDescriptor {
-                            get: Some(Box::new(IRNode::FunctionExpr {
-                                name: None,
-                                parameters: vec![],
-                                body: if accessor_data.body.is_none() {
-                                    vec![]
-                                } else {
-                                    vec![IRNode::ASTRef(accessor_data.body)]
-                                },
-                                is_expression_body: false,
-                            })),
-                            set: None,
-                            enumerable: false,
-                            configurable: true,
+                    // Skip if already emitted
+                    if emitted_accessors.contains(&accessor_name) {
+                        continue;
+                    }
+
+                    // Emit combined getter/setter
+                    if let Some(&(getter_idx, setter_idx)) = accessor_map.get(&accessor_name) {
+                        let get_fn = if let Some(getter_idx) = getter_idx {
+                            self.build_getter_function_ir(getter_idx)
+                        } else {
+                            None
                         };
+
+                        let set_fn = if let Some(setter_idx) = setter_idx {
+                            self.build_setter_function_ir(setter_idx)
+                        } else {
+                            None
+                        };
+
                         body.push(IRNode::DefineProperty {
                             target: Box::new(IRNode::prop(
                                 IRNode::id(&self.class_name),
                                 "prototype",
                             )),
-                            property_name: accessor_name,
-                            descriptor,
+                            property_name: accessor_name.clone(),
+                            descriptor: IRPropertyDescriptor {
+                                get: get_fn.map(Box::new),
+                                set: set_fn.map(Box::new),
+                                enumerable: false,
+                                configurable: true,
+                            },
                         });
-                    } else {
-                        // Setter
-                        let params = self.extract_parameters(&accessor_data.parameters);
-                        let descriptor = IRPropertyDescriptor {
-                            get: None,
-                            set: Some(Box::new(IRNode::FunctionExpr {
-                                name: None,
-                                parameters: params,
-                                body: if accessor_data.body.is_none() {
-                                    vec![]
-                                } else {
-                                    vec![IRNode::ASTRef(accessor_data.body)]
-                                },
-                                is_expression_body: false,
-                            })),
-                            enumerable: false,
-                            configurable: true,
-                        };
-                        body.push(IRNode::DefineProperty {
-                            target: Box::new(IRNode::prop(
-                                IRNode::id(&self.class_name),
-                                "prototype",
-                            )),
-                            property_name: accessor_name,
-                            descriptor,
-                        });
+
+                        emitted_accessors.insert(accessor_name);
                     }
                 }
             }
         }
+    }
+
+    /// Build a getter function IR from an accessor node
+    fn build_getter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        let accessor_node = self.arena.get(accessor_idx)?;
+        let accessor_data = self.arena.get_accessor(accessor_node)?;
+
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: vec![],
+            body: if accessor_data.body.is_none() {
+                vec![]
+            } else {
+                vec![IRNode::ASTRef(accessor_data.body)]
+            },
+            is_expression_body: false,
+        })
+    }
+
+    /// Build a setter function IR from an accessor node
+    fn build_setter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
+        let accessor_node = self.arena.get(accessor_idx)?;
+        let accessor_data = self.arena.get_accessor(accessor_node)?;
+
+        let params = self.extract_parameters(&accessor_data.parameters);
+
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: params,
+            body: if accessor_data.body.is_none() {
+                vec![]
+            } else {
+                vec![IRNode::ASTRef(accessor_data.body)]
+            },
+            is_expression_body: false,
+        })
     }
 
     /// Emit static members as IR
@@ -865,6 +937,48 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         };
 
+        // First pass: collect static accessors by name to combine getter/setter pairs
+        let mut static_accessor_map: HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> =
+            HashMap::new();
+
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                if let Some(accessor_data) = self.arena.get_accessor(member_node)
+                    && has_static_modifier(self.arena, &accessor_data.modifiers)
+                {
+                    // Skip abstract
+                    if has_abstract_modifier(self.arena, &accessor_data.modifiers) {
+                        continue;
+                    }
+                    // Skip private
+                    if is_private_identifier(self.arena, accessor_data.name) {
+                        continue;
+                    }
+
+                    let name =
+                        get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
+                    let entry = static_accessor_map.entry(name).or_insert((None, None));
+
+                    if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        entry.0 = Some(member_idx);
+                    } else {
+                        entry.1 = Some(member_idx);
+                    }
+                }
+            }
+        }
+
+        // Track which static accessor names we've emitted
+        let mut emitted_static_accessors: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        // Second pass: emit static members in source order
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -888,6 +1002,20 @@ impl<'a> ES5ClassTransformer<'a> {
                 let method_name = self.get_method_name_ir(method_data.name);
                 let params = self.extract_parameters(&method_data.parameters);
 
+                // Check if async method (not generator)
+                let is_async = has_async_modifier(self.arena, &method_data.modifiers)
+                    && !method_data.asterisk_token;
+
+                let method_body = if is_async {
+                    // Async method: wrap body in __awaiter call
+                    vec![IRNode::AwaiterCall {
+                        this_arg: Box::new(IRNode::this()),
+                        generator_body: Box::new(IRNode::ASTRef(method_data.body)),
+                    }]
+                } else {
+                    vec![IRNode::ASTRef(method_data.body)]
+                };
+
                 // ClassName.methodName = function () { body };
                 body.push(IRNode::StaticMethod {
                     class_name: self.class_name.clone(),
@@ -895,7 +1023,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     function: Box::new(IRNode::FunctionExpr {
                         name: None,
                         parameters: params,
-                        body: vec![IRNode::ASTRef(method_data.body)],
+                        body: method_body,
                         is_expression_body: false,
                     }),
                 });
@@ -940,6 +1068,72 @@ impl<'a> ES5ClassTransformer<'a> {
                         target,
                         IRNode::ASTRef(prop_data.initializer),
                     )));
+                }
+            } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                // Static block: emit contents as a Sequence node
+                // The static block node itself has a block structure
+                if let Some(block_data) = self.arena.get_block(member_node) {
+                    let statements: Vec<IRNode> = block_data
+                        .statements
+                        .nodes
+                        .iter()
+                        .map(|&stmt_idx| IRNode::ASTRef(stmt_idx))
+                        .collect();
+
+                    if !statements.is_empty() {
+                        body.push(IRNode::Sequence(statements));
+                    }
+                }
+            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                // Handle static accessor - combine pairs
+                if let Some(accessor_data) = self.arena.get_accessor(member_node)
+                    && has_static_modifier(self.arena, &accessor_data.modifiers)
+                {
+                    // Skip abstract/private
+                    if has_abstract_modifier(self.arena, &accessor_data.modifiers)
+                        || is_private_identifier(self.arena, accessor_data.name)
+                    {
+                        continue;
+                    }
+
+                    let accessor_name =
+                        get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
+
+                    // Skip if already emitted
+                    if emitted_static_accessors.contains(&accessor_name) {
+                        continue;
+                    }
+
+                    // Emit combined getter/setter
+                    if let Some(&(getter_idx, setter_idx)) = static_accessor_map.get(&accessor_name)
+                    {
+                        let get_fn = if let Some(getter_idx) = getter_idx {
+                            self.build_getter_function_ir(getter_idx)
+                        } else {
+                            None
+                        };
+
+                        let set_fn = if let Some(setter_idx) = setter_idx {
+                            self.build_setter_function_ir(setter_idx)
+                        } else {
+                            None
+                        };
+
+                        body.push(IRNode::DefineProperty {
+                            target: Box::new(IRNode::id(&self.class_name)),
+                            property_name: accessor_name.clone(),
+                            descriptor: IRPropertyDescriptor {
+                                get: get_fn.map(Box::new),
+                                set: set_fn.map(Box::new),
+                                enumerable: false,
+                                configurable: true,
+                            },
+                        });
+
+                        emitted_static_accessors.insert(accessor_name);
+                    }
                 }
             }
         }
@@ -1021,6 +1215,10 @@ fn has_static_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool 
 
 fn has_abstract_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::AbstractKeyword as u16)
+}
+
+fn has_async_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
+    has_modifier(arena, modifiers, SyntaxKind::AsyncKeyword as u16)
 }
 
 fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
@@ -1222,5 +1420,174 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_none());
+    }
+
+    #[test]
+    fn test_accessor_pair_combined() {
+        let source = r#"class Person {
+            _name: string = "";
+            get name() { return this._name; }
+            set name(value: string) { this._name = value; }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Should have single Object.defineProperty call with both get and set
+        assert!(output.contains("Object.defineProperty"));
+        assert!(output.contains("get:"));
+        assert!(output.contains("set:"));
+        assert!(output.contains("enumerable: false"));
+        assert!(output.contains("configurable: true"));
+    }
+
+    #[test]
+    fn test_static_accessor_combined() {
+        let source = r#"class Config {
+            static _instance: Config | null = null;
+            static get instance() { return Config._instance; }
+            static set instance(value: Config) { Config._instance = value; }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Should have Object.defineProperty on class directly (not prototype)
+        assert!(output.contains("Object.defineProperty(Config,"));
+        assert!(output.contains("get:"));
+        assert!(output.contains("set:"));
+    }
+
+    #[test]
+    fn test_async_method() {
+        let source = r#"class Fetcher {
+            async fetch() {
+                return await Promise.resolve(42);
+            }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Async method should have __awaiter wrapper
+        assert!(output.contains("__awaiter"));
+    }
+
+    #[test]
+    fn test_static_async_method() {
+        let source = r#"class API {
+            static async request() {
+                return await fetch("/api");
+            }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Static async method should have __awaiter wrapper
+        assert!(output.contains("API.request = function ()"));
+        assert!(output.contains("__awaiter"));
+    }
+
+    #[test]
+    fn test_computed_method_name() {
+        let source = r#"class Container {
+            [Symbol.iterator]() {
+                return this;
+            }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Computed method name should use bracket notation
+        assert!(output.contains("Container.prototype[Symbol.iterator]"));
+    }
+
+    #[test]
+    fn test_getter_only() {
+        let source = r#"class ReadOnly {
+            get value() { return 42; }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Should have DefineProperty with only get
+        assert!(output.contains("Object.defineProperty"));
+        assert!(output.contains("get:"));
+        // Should still have enumerable and configurable
+        assert!(output.contains("enumerable: false"));
+        assert!(output.contains("configurable: true"));
+    }
+
+    #[test]
+    fn test_setter_only() {
+        let source = r#"class WriteOnly {
+            set value(v: number) { console.log(v); }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Should have DefineProperty with only set
+        assert!(output.contains("Object.defineProperty"));
+        assert!(output.contains("set:"));
+    }
+
+    #[test]
+    fn test_static_block() {
+        let source = r#"class Initializer {
+            static value: number;
+            static {
+                Initializer.value = 42;
+            }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Static block content should be emitted
+        assert!(output.contains("Initializer.value = 42"));
+    }
+
+    #[test]
+    fn test_string_method_name() {
+        let source = r#"class StringMethods {
+            "my-method"() {
+                return 1;
+            }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // String literal method name should use bracket notation
+        assert!(output.contains("StringMethods.prototype[\"my-method\"]"));
+    }
+
+    #[test]
+    fn test_numeric_method_name() {
+        let source = r#"class NumericMethods {
+            42() {
+                return "answer";
+            }
+        }"#;
+
+        let output = transform_class(source);
+        assert!(output.is_some());
+        let output = output.unwrap();
+
+        // Numeric literal method name should use bracket notation
+        assert!(output.contains("NumericMethods.prototype[42]"));
     }
 }
