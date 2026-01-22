@@ -2141,16 +2141,12 @@ fn test_template_literal_empty_string() {
 
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
+    // Empty template literal is collapsed to empty string literal
     match key {
-        TypeKey::TemplateLiteral(spans) => {
-            let spans = interner.template_list(spans);
-            assert_eq!(
-                spans.len(),
-                0,
-                "Empty template literal should have no spans"
-            );
+        TypeKey::Literal(LiteralValue::String(atom)) => {
+            assert_eq!(interner.resolve_atom(atom), "");
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected empty string Literal type, got {:?}", key),
     }
 }
 
@@ -2162,18 +2158,12 @@ fn test_template_literal_single_text_span() {
 
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
+    // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::TemplateLiteral(spans) => {
-            let spans = interner.template_list(spans);
-            assert_eq!(spans.len(), 1);
-            match &spans[0] {
-                TemplateSpan::Text(atom) => {
-                    assert_eq!(interner.resolve_atom(*atom), "hello");
-                }
-                _ => panic!("Expected text span"),
-            }
+        TypeKey::Literal(LiteralValue::String(atom)) => {
+            assert_eq!(interner.resolve_atom(atom), "hello");
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {:?}", key),
     }
 }
 
@@ -2317,19 +2307,14 @@ fn test_template_literal_escape_sequences() {
 
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
+    // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::TemplateLiteral(spans) => {
-            let spans = interner.template_list(spans);
-            assert_eq!(spans.len(), 1);
-            if let TemplateSpan::Text(atom) = &spans[0] {
-                // The escape sequence should be processed
-                let text = interner.resolve_atom(*atom);
-                assert_eq!(text, "hello\nworld");
-            } else {
-                panic!("Expected text span");
-            }
+        TypeKey::Literal(LiteralValue::String(atom)) => {
+            // The escape sequence should be processed
+            let text = interner.resolve_atom(atom);
+            assert_eq!(text, "hello\nworld");
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {:?}", key),
     }
 }
 
@@ -2341,24 +2326,18 @@ fn test_template_literal_escape_dollar_brace() {
 
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
+    // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::TemplateLiteral(spans) => {
-            let spans = interner.template_list(spans);
-            assert_eq!(spans.len(), 1);
-            if let TemplateSpan::Text(atom) = &spans[0] {
-                // The escaped ${ should become literal ${ (not an interpolation)
-                let text = interner.resolve_atom(*atom);
-                assert_eq!(text, "hello${string}");
-            } else {
-                panic!("Expected text span");
-            }
+        TypeKey::Literal(LiteralValue::String(atom)) => {
+            // The escaped ${ should become literal ${ (not an interpolation)
+            let text = interner.resolve_atom(atom);
+            assert_eq!(text, "hello${string}");
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {:?}", key),
     }
 }
 
 #[test]
-#[ignore = "TODO: Template literal union expansion not yet implemented"]
 fn test_template_literal_with_union() {
     let (arena, template_idx) =
         parse_template_literal_type("type T = `prefix-${\"a\" | \"b\"}-suffix`;");
@@ -2379,6 +2358,116 @@ fn test_template_literal_with_union() {
 }
 
 #[test]
+fn test_template_literal_with_multiple_unions() {
+    // Test Cartesian product: `${"a" | "b"}-${"x" | "y"}` should produce 4 combinations
+    let interner = TypeInterner::new();
+
+    let a = interner.literal_string("a");
+    let b = interner.literal_string("b");
+    let union1 = interner.union(vec![a, b]);
+
+    let x = interner.literal_string("x");
+    let y = interner.literal_string("y");
+    let union2 = interner.union(vec![x, y]);
+
+    let spans = vec![
+        TemplateSpan::Type(union1),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(union2),
+    ];
+
+    let type_id = interner.template_literal(spans);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::Union(list_id) => {
+            let members = interner.type_list(list_id);
+            // Should have 4 combinations: "a-x", "a-y", "b-x", "b-y"
+            assert_eq!(members.len(), 4);
+
+            // Verify all expected strings are present
+            let mut strings: Vec<String> = members
+                .iter()
+                .filter_map(|&m| match interner.lookup(m) {
+                    Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                        Some(interner.resolve_atom(atom))
+                    }
+                    _ => None,
+                })
+                .collect();
+            strings.sort();
+            assert_eq!(strings, vec!["a-x", "a-y", "b-x", "b-y"]);
+        }
+        _ => panic!("Expected Union type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_single_string_literal() {
+    // Template literal with single string literal interpolation should collapse to string literal
+    let interner = TypeInterner::new();
+
+    let a = interner.literal_string("hello");
+    let spans = vec![
+        TemplateSpan::Text(interner.intern_string("prefix-")),
+        TemplateSpan::Type(a),
+        TemplateSpan::Text(interner.intern_string("-suffix")),
+    ];
+
+    let type_id = interner.template_literal(spans);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::Literal(LiteralValue::String(atom)) => {
+            let text = interner.resolve_atom(atom);
+            assert_eq!(text, "prefix-hello-suffix");
+        }
+        _ => panic!("Expected Literal type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_only_texts_becomes_literal() {
+    // Template literal with only text spans should collapse to string literal
+    let interner = TypeInterner::new();
+
+    let spans = vec![
+        TemplateSpan::Text(interner.intern_string("hello")),
+        TemplateSpan::Text(interner.intern_string(" ")),
+        TemplateSpan::Text(interner.intern_string("world")),
+    ];
+
+    let type_id = interner.template_literal(spans);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::Literal(LiteralValue::String(atom)) => {
+            let text = interner.resolve_atom(atom);
+            assert_eq!(text, "hello world");
+        }
+        _ => panic!("Expected Literal type, got {:?}", key),
+    }
+}
+
+#[test]
+fn test_template_literal_with_non_string_literal_stays_template() {
+    // Template literal with non-expandable types should stay as template literal
+    let interner = TypeInterner::new();
+
+    let spans = vec![
+        TemplateSpan::Text(interner.intern_string("prefix-")),
+        TemplateSpan::Type(TypeId::STRING), // string primitive, not expandable
+        TemplateSpan::Text(interner.intern_string("-suffix")),
+    ];
+
+    let type_id = interner.template_literal(spans);
+    let key = interner.lookup(type_id).expect("Type should exist");
+    match key {
+        TypeKey::TemplateLiteral(_) => {
+            // Expected: remains as template literal type
+        }
+        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+    }
+}
+
+#[test]
 fn test_template_literal_normalization_merges_consecutive_texts() {
     let interner = TypeInterner::new();
 
@@ -2391,18 +2480,13 @@ fn test_template_literal_normalization_merges_consecutive_texts() {
 
     let type_id = interner.template_literal(spans);
     let key = interner.lookup(type_id).expect("Type should exist");
+    // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::TemplateLiteral(spans_id) => {
-            let normalized_spans = interner.template_list(spans_id);
-            // After normalization, consecutive texts should be merged
-            assert_eq!(normalized_spans.len(), 1);
-            if let TemplateSpan::Text(atom) = &normalized_spans[0] {
-                assert_eq!(interner.resolve_atom(*atom), "hello world");
-            } else {
-                panic!("Expected merged text span");
-            }
+        TypeKey::Literal(LiteralValue::String(atom)) => {
+            // After normalization and expansion, text-only becomes string literal
+            assert_eq!(interner.resolve_atom(atom), "hello world");
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {:?}", key),
     }
 }
 
