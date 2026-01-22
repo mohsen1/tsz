@@ -112,12 +112,15 @@ struct FlowContext {
     /// Finally block to execute on exit (for try statements)
     finally_block: NodeIndex,
     /// Flow state before entering finally (for routing exits through finally)
+    #[allow(dead_code)] // Infrastructure for try-finally flow analysis
     pre_finally_flow: FlowNodeId,
     /// Flow state after exiting finally (for routing exits through finally)
+    #[allow(dead_code)] // Infrastructure for try-finally flow analysis
     post_finally_flow: FlowNodeId,
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)] // Infrastructure for flow control analysis
 enum FlowContextType {
     Loop,
     Switch,
@@ -1061,6 +1064,7 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Returns
     /// true if the node kind creates a new control flow block
+    #[allow(dead_code)] // Infrastructure for advanced flow analysis
     fn is_block_boundary(kind: u16) -> bool {
         kind == syntax_kind_ext::BLOCK
             || kind == syntax_kind_ext::IF_STATEMENT
@@ -1080,6 +1084,7 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Returns
     /// true if the node kind is a loop statement
+    #[allow(dead_code)] // Infrastructure for advanced flow analysis
     fn is_loop_statement(kind: u16) -> bool {
         kind == syntax_kind_ext::WHILE_STATEMENT
             || kind == syntax_kind_ext::DO_STATEMENT
@@ -1095,6 +1100,7 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Returns
     /// true if the node kind is a conditional statement
+    #[allow(dead_code)] // Infrastructure for advanced flow analysis
     fn is_conditional_statement(kind: u16) -> bool {
         kind == syntax_kind_ext::IF_STATEMENT || kind == syntax_kind_ext::SWITCH_STATEMENT
     }
@@ -1106,6 +1112,7 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Returns
     /// true if the node kind is a variable declaration
+    #[allow(dead_code)] // Infrastructure for advanced flow analysis
     fn is_variable_declaration(kind: u16) -> bool {
         kind == syntax_kind_ext::VARIABLE_DECLARATION
             || kind == syntax_kind_ext::VARIABLE_STATEMENT
@@ -1118,6 +1125,7 @@ impl<'a> FlowGraphBuilder<'a> {
     ///
     /// # Returns
     /// true if the node kind is an assignment expression
+    #[allow(dead_code)] // Infrastructure for advanced flow analysis
     fn is_assignment(kind: u16) -> bool {
         kind == syntax_kind_ext::BINARY_EXPRESSION
             || kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION

@@ -1097,6 +1097,7 @@ impl TypeInterner {
         matches!(self.lookup(type_id), Some(TypeKey::Literal(_)))
     }
 
+    #[allow(dead_code)] // Infrastructure for type introspection
     fn is_object_like_type(&self, type_id: TypeId) -> bool {
         match self.lookup(type_id) {
             Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_)) => true,

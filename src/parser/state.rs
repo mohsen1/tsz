@@ -4037,6 +4037,7 @@ impl ParserState {
     }
 
     /// Parse index signature: [key: string]: value
+    #[allow(dead_code)] // Infrastructure for full TypeScript parsing
     fn parse_index_signature(&mut self) -> NodeIndex {
         self.parse_index_signature_with_modifiers(None, self.token_pos())
     }
@@ -4609,6 +4610,7 @@ impl ParserState {
     }
 
     /// Parse module name (can be dotted: A.B.C)
+    #[allow(dead_code)] // Infrastructure for full TypeScript parsing
     fn parse_module_name(&mut self) -> NodeIndex {
         let mut left = self.parse_identifier();
 
@@ -4756,6 +4758,7 @@ impl ParserState {
     }
 
     /// Check if next token is "from" keyword
+    #[allow(dead_code)] // Infrastructure for full TypeScript parsing
     fn is_next_token_from(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -10289,6 +10292,7 @@ impl ParserState {
     }
 
     /// Check if this is a JSX fragment: <>
+    #[allow(dead_code)] // Infrastructure for JSX parsing
     fn look_ahead_is_jsx_fragment(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;

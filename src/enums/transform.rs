@@ -440,6 +440,7 @@ impl<'a> EnumTransformer<'a> {
 }
 
 /// Inline const enum usages in a source file
+#[allow(dead_code)] // Infrastructure for const enum inlining
 pub struct ConstEnumInliner<'a> {
     transformer: EnumTransformer<'a>,
     source_text: &'a str,

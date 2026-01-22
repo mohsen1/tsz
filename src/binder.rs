@@ -7,9 +7,6 @@
 //! - `FlowNode`, `FlowNodeId`, `FlowNodeArena`
 //! - `Scope`, `ScopeId`, `ContainerKind`, `ScopeContext`
 
-// Allow dead code for binder infrastructure methods that will be used in future phases
-#![allow(dead_code)]
-
 use crate::parser::NodeIndex;
 use rustc_hash::FxHashMap;
 use serde::Serialize;

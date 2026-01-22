@@ -2,8 +2,6 @@
 //!
 //! This module provides character code constants used by the scanner.
 
-#![allow(dead_code)]
-
 /// Character codes used throughout the scanner.
 pub struct CharacterCodes;
 

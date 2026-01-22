@@ -15,6 +15,7 @@ impl<'a> Printer<'a> {
 
     /// Safely get a slice of text, returning empty string if out of bounds.
     /// This prevents panics from invalid string indices.
+    #[allow(dead_code)] // Infrastructure for safe text slicing
     pub(super) fn safe_slice_text<'b>(&self, text: &'b str, start: u32, end: u32) -> &'b str {
         safe_slice::slice(text, start as usize, end as usize)
     }

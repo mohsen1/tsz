@@ -207,6 +207,7 @@ pub struct ModuleResolver {
     /// Extensions to try for JavaScript resolution
     js_extensions: Vec<&'static str>,
     /// Declaration extensions to try
+    #[allow(dead_code)] // Infrastructure for .d.ts resolution
     dts_extensions: Vec<&'static str>,
 }
 
