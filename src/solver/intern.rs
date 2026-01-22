@@ -1398,6 +1398,103 @@ impl TypeInterner {
         false
     }
 
+    /// Check if a template literal can be expanded to a union of string literals.
+    /// Returns true if all type interpolations are string literals or unions of string literals.
+    fn can_expand_template_literal(&self, spans: &[TemplateSpan]) -> bool {
+        for span in spans {
+            if let TemplateSpan::Type(type_id) = span {
+                if self.template_span_cardinality(*type_id).is_none() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Get the string literal values from a type (single literal or union of literals).
+    /// Returns None if the type is not a string literal or union of string literals.
+    fn get_string_literal_values(&self, type_id: TypeId) -> Option<Vec<String>> {
+        match self.lookup(type_id) {
+            Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                Some(vec![self.resolve_atom_ref(atom).to_string()])
+            }
+            Some(TypeKey::Union(list_id)) => {
+                let members = self.type_list(list_id);
+                let mut values = Vec::with_capacity(members.len());
+                for member in members.iter() {
+                    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = self.lookup(*member)
+                    {
+                        values.push(self.resolve_atom_ref(atom).to_string());
+                    } else {
+                        return None;
+                    }
+                }
+                Some(values)
+            }
+            _ => None,
+        }
+    }
+
+    /// Expand a template literal with union interpolations into a union of string literals.
+    /// For example: `prefix-${"a" | "b"}-suffix` -> "prefix-a-suffix" | "prefix-b-suffix"
+    fn expand_template_literal_to_union(&self, spans: &[TemplateSpan]) -> TypeId {
+        // Collect text parts and interpolation alternatives
+        let mut parts: Vec<Vec<String>> = Vec::new();
+
+        for span in spans {
+            match span {
+                TemplateSpan::Text(atom) => {
+                    let text = self.resolve_atom_ref(*atom).to_string();
+                    parts.push(vec![text]);
+                }
+                TemplateSpan::Type(type_id) => {
+                    if let Some(values) = self.get_string_literal_values(*type_id) {
+                        parts.push(values);
+                    } else {
+                        // Should not happen if can_expand_template_literal returned true
+                        return TypeId::STRING;
+                    }
+                }
+            }
+        }
+
+        // Generate all combinations using Cartesian product
+        let mut combinations: Vec<String> = vec![String::new()];
+
+        for part in &parts {
+            let mut new_combinations = Vec::with_capacity(combinations.len() * part.len());
+            for prefix in &combinations {
+                for suffix in part {
+                    let mut combined = prefix.clone();
+                    combined.push_str(suffix);
+                    new_combinations.push(combined);
+                }
+            }
+            combinations = new_combinations;
+
+            // Safety check: should not exceed limit at this point, but verify
+            if combinations.len() > TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                return TypeId::STRING;
+            }
+        }
+
+        // Create union of string literals
+        if combinations.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        if combinations.len() == 1 {
+            return self.literal_string(&combinations[0]);
+        }
+
+        let members: Vec<TypeId> = combinations
+            .iter()
+            .map(|s| self.literal_string(s))
+            .collect();
+
+        self.union(members)
+    }
+
     /// Normalize template literal spans by merging consecutive text spans
     fn normalize_template_spans(&self, spans: Vec<TemplateSpan>) -> Vec<TemplateSpan> {
         if spans.len() <= 1 {
@@ -1451,9 +1548,32 @@ impl TypeInterner {
         // Normalize spans by merging consecutive text spans
         let normalized = self.normalize_template_spans(spans);
 
+        // Check if expansion would exceed the limit
         if self.template_literal_exceeds_limit(&normalized) {
             return TypeId::STRING;
         }
+
+        // Try to expand to union of string literals if all interpolations are expandable
+        if self.can_expand_template_literal(&normalized) {
+            // Check if there are any type interpolations
+            let has_type_interpolations = normalized.iter().any(|s| matches!(s, TemplateSpan::Type(_)));
+
+            if has_type_interpolations {
+                return self.expand_template_literal_to_union(&normalized);
+            }
+
+            // If only text spans, combine them into a single string literal
+            if normalized.iter().all(|s| matches!(s, TemplateSpan::Text(_))) {
+                let mut combined = String::new();
+                for span in &normalized {
+                    if let TemplateSpan::Text(atom) = span {
+                        combined.push_str(&self.resolve_atom_ref(*atom));
+                    }
+                }
+                return self.literal_string(&combined);
+            }
+        }
+
         let list_id = self.intern_template_list(normalized);
         self.intern(TypeKey::TemplateLiteral(list_id))
     }
@@ -1500,12 +1620,15 @@ impl TypeInterner {
     }
 
     /// Check if a template literal contains only text (no interpolations)
+    /// Also returns true for string literals (which are the result of text-only template expansion)
     pub fn template_literal_is_text_only(&self, type_id: TypeId) -> bool {
         match self.lookup(type_id) {
             Some(TypeKey::TemplateLiteral(spans_id)) => {
                 let spans = self.template_list(spans_id);
                 spans.iter().all(|span| span.is_text())
             }
+            // String literals are the result of text-only template expansion
+            Some(TypeKey::Literal(LiteralValue::String(_))) => true,
             _ => false,
         }
     }
