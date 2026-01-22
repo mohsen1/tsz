@@ -274,7 +274,6 @@ impl<'a> NamespaceES5Emitter<'a> {
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                eprintln!("DEBUG: Found FUNCTION_DECLARATION (non-exported)");
                 self.emit_function_in_namespace(ns_name, member_idx);
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -308,7 +307,6 @@ impl<'a> NamespaceES5Emitter<'a> {
 
         match decl_node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                eprintln!("DEBUG: Found FUNCTION_DECLARATION (non-exported)");
                 self.emit_function_in_namespace_exported(ns_name, decl_idx);
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
