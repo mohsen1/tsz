@@ -2,9 +2,7 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
-## Address code review comments
 
-See `docs/CODE_REVIEW_efd539a62.md` to find and address outstanding code review comments.q
 
 ## Strategy Shift: Solver Foundation First
 
