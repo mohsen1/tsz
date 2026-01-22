@@ -17,6 +17,7 @@ use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
+use tracing::{debug, span, warn, Level};
 
 /// Lib file context for global type resolution.
 /// This mirrors the definition in checker::context to avoid circular dependencies.
@@ -345,6 +346,8 @@ impl BinderState {
     /// - Falls through to lib_binders
     /// - Resolution failures
     pub fn resolve_identifier(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<SymbolId> {
+        let _span = span!(Level::DEBUG, "resolve_identifier", node_idx = node_idx.0).entered();
+
         let node = arena.get(node_idx)?;
 
         // Get the identifier text
@@ -354,7 +357,7 @@ impl BinderState {
             return None;
         };
 
-        let debug_enabled = crate::module_resolution_debug::is_debug_enabled();
+        debug!("[RESOLVE] Looking up identifier '{}'", name);
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
             // Walk up the scope chain
@@ -362,12 +365,10 @@ impl BinderState {
             while !scope_id.is_none() {
                 if let Some(scope) = self.scopes.get(scope_id.0 as usize) {
                     if let Some(sym_id) = scope.table.get(name) {
-                        if debug_enabled {
-                            eprintln!(
-                                "[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
-                                name, scope_depth, sym_id.0
-                            );
-                        }
+                        debug!(
+                            "[RESOLVE] '{}' FOUND in scope at depth {} (id={})",
+                            name, scope_depth, sym_id.0
+                        );
                         // Resolve import if this symbol is imported from another module
                         if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
                             return Some(resolved);
@@ -384,12 +385,10 @@ impl BinderState {
 
         // Fallback for bound-state binders without persistent scopes.
         if let Some(sym_id) = self.resolve_parameter_fallback(arena, node_idx, name) {
-            if debug_enabled {
-                eprintln!(
-                    "[RESOLVE] '{}' FOUND via parameter fallback (id={})",
-                    name, sym_id.0
-                );
-            }
+            debug!(
+                "[RESOLVE] '{}' FOUND via parameter fallback (id={})",
+                name, sym_id.0
+            );
             // Resolve import if this symbol is imported from another module
             if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
                 return Some(resolved);
@@ -399,12 +398,10 @@ impl BinderState {
 
         // Finally check file locals / globals
         if let Some(sym_id) = self.file_locals.get(name) {
-            if debug_enabled {
-                eprintln!(
-                    "[RESOLVE] '{}' FOUND in file_locals (id={})",
-                    name, sym_id.0
-                );
-            }
+            debug!(
+                "[RESOLVE] '{}' FOUND in file_locals (id={})",
+                name, sym_id.0
+            );
             // Resolve import if this symbol is imported from another module
             if let Some(resolved) = self.resolve_import_if_needed(sym_id) {
                 return Some(resolved);
@@ -416,25 +413,21 @@ impl BinderState {
         // This enables resolving console, Array, Object, etc. from lib.d.ts
         for (i, lib_binder) in self.lib_binders.iter().enumerate() {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                if debug_enabled {
-                    eprintln!(
-                        "[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
-                        name, i, sym_id.0
-                    );
-                }
+                debug!(
+                    "[RESOLVE] '{}' FOUND in lib_binder[{}] (id={}) - LIB SYMBOL",
+                    name, i, sym_id.0
+                );
                 // Note: lib symbols are not imports, so no need to resolve
                 return Some(sym_id);
             }
         }
 
         // Symbol not found - log the failure
-        if debug_enabled {
-            eprintln!(
-                "[RESOLVE] '{}' NOT FOUND - searched scopes, file_locals, and {} lib binders",
-                name,
-                self.lib_binders.len()
-            );
-        }
+        debug!(
+            "[RESOLVE] '{}' NOT FOUND - searched scopes, file_locals, and {} lib binders",
+            name,
+            self.lib_binders.len()
+        );
 
         None
     }
@@ -500,18 +493,16 @@ impl BinderState {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<SymbolId> {
-        let debug_enabled = crate::module_resolution_debug::is_debug_enabled();
+        let _span = span!(Level::DEBUG, "resolve_import_with_reexports", %module_specifier, %export_name).entered();
 
         // First, check if it's a direct export from this module
         if let Some(module_table) = self.module_exports.get(module_specifier)
             && let Some(sym_id) = module_table.get(export_name)
         {
-            if debug_enabled {
-                eprintln!(
-                    "[RESOLVE_IMPORT] '{}' from module '{}' -> direct export symbol id={}",
-                    export_name, module_specifier, sym_id.0
-                );
-            }
+            debug!(
+                "[RESOLVE_IMPORT] '{}' from module '{}' -> direct export symbol id={}",
+                export_name, module_specifier, sym_id.0
+            );
             return Some(sym_id);
         }
 
@@ -520,34 +511,28 @@ impl BinderState {
             // Check for named re-export: `export { foo } from 'bar'`
             if let Some((source_module, original_name)) = file_reexports.get(export_name) {
                 let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
-                if debug_enabled {
-                    eprintln!(
-                        "[RESOLVE_IMPORT] '{}' from module '{}' -> following named re-export from '{}', original name='{}'",
-                        export_name, module_specifier, source_module, name_to_lookup
-                    );
-                }
+                debug!(
+                    "[RESOLVE_IMPORT] '{}' from module '{}' -> following named re-export from '{}', original name='{}'",
+                    export_name, module_specifier, source_module, name_to_lookup
+                );
                 return self.resolve_import_with_reexports(source_module, name_to_lookup);
             }
 
             // Check for wildcard re-export: `export * from 'bar'`
             if let Some((source_module, _)) = file_reexports.get("*") {
-                if debug_enabled {
-                    eprintln!(
-                        "[RESOLVE_IMPORT] '{}' from module '{}' -> following wildcard re-export from '{}'",
-                        export_name, module_specifier, source_module
-                    );
-                }
+                debug!(
+                    "[RESOLVE_IMPORT] '{}' from module '{}' -> following wildcard re-export from '{}'",
+                    export_name, module_specifier, source_module
+                );
                 return self.resolve_import_with_reexports(source_module, export_name);
             }
         }
 
         // Export not found
-        if debug_enabled {
-            eprintln!(
-                "[RESOLVE_IMPORT] '{}' from module '{}' -> NOT FOUND",
-                export_name, module_specifier
-            );
-        }
+        debug!(
+            "[RESOLVE_IMPORT] '{}' from module '{}' -> NOT FOUND",
+            export_name, module_specifier
+        );
         None
     }
 
@@ -4362,25 +4347,23 @@ impl BinderState {
         let missing = self.validate_global_symbols();
 
         if !missing.is_empty() {
-            eprintln!(
+            warn!(
                 "[LIB_SYMBOL_WARNING] Missing {} expected global symbols: {:?}",
                 missing.len(),
                 missing
             );
-            eprintln!(
+            warn!(
                 "[LIB_SYMBOL_WARNING] This may cause test failures due to unresolved symbols."
             );
-            eprintln!(
+            warn!(
                 "[LIB_SYMBOL_WARNING] Ensure lib.d.ts is loaded via addLibFile() before binding."
             );
             true
         } else {
-            if crate::module_resolution_debug::is_debug_enabled() {
-                eprintln!(
-                    "[LIB_SYMBOL_INFO] All {} expected global symbols are present.",
-                    Self::EXPECTED_GLOBAL_SYMBOLS.len()
-                );
-            }
+            debug!(
+                "[LIB_SYMBOL_INFO] All {} expected global symbols are present.",
+                Self::EXPECTED_GLOBAL_SYMBOLS.len()
+            );
             false
         }
     }

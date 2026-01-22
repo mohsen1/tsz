@@ -37,6 +37,8 @@ dashmap = "6.1"  # Lock-free concurrent HashMap for sharded type storage
 ena = "0.14"  # Union-Find for type unification
 indexmap = "2.6"  # Deterministic iteration for structural keys (preserves insertion order)
 bitflags = "2.6"  # Efficient TypeFlags for fast rejection
+tracing = "0.1"  # Structured tracing for diagnostics
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # Trining subscriber with RUST_LOG support
 
 [dev-dependencies]
 criterion = "0.5"

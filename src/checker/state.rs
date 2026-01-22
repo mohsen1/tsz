@@ -29,6 +29,7 @@ use crate::scanner::SyntaxKind;
 use crate::solver::{ContextualTypeContext, TypeId, TypeInterner};
 use rustc_hash::FxHashSet;
 use std::sync::Arc;
+use tracing::{debug, span, trace, Level};
 
 // =============================================================================
 // CheckerState
@@ -419,31 +420,30 @@ impl<'a> CheckerState<'a> {
 
         // === PHASE 1: Initial logging ===
         if debug {
-            eprintln!("\n[BIND_RESOLVE] ========================================");
-            eprintln!("[BIND_RESOLVE] Looking up identifier '{}'", name);
-            eprintln!("[BIND_RESOLVE]   Node index: {:?}", idx);
-            eprintln!(
-                "[BIND_RESOLVE]   Lib contexts available: {}",
-                self.ctx.lib_contexts.len()
+            trace!("\n[BIND_RESOLVE] ========================================");
+            trace!(name = %name, idx = ?idx, "[BIND_RESOLVE] Looking up identifier");
+            trace!(
+                lib_contexts = self.ctx.lib_contexts.len(),
+                "[BIND_RESOLVE] Lib contexts available"
             );
-            eprintln!(
-                "[BIND_RESOLVE]   Lib binders collected: {}",
-                lib_binders.len()
+            trace!(
+                lib_binders = lib_binders.len(),
+                "[BIND_RESOLVE] Lib binders collected"
             );
-            eprintln!(
-                "[BIND_RESOLVE]   Total scopes in binder: {}",
-                self.ctx.binder.scopes.len()
+            trace!(
+                scopes = self.ctx.binder.scopes.len(),
+                "[BIND_RESOLVE] Total scopes in binder"
             );
-            eprintln!(
-                "[BIND_RESOLVE]   file_locals size: {}",
-                self.ctx.binder.file_locals.len()
+            trace!(
+                file_locals = self.ctx.binder.file_locals.len(),
+                "[BIND_RESOLVE] file_locals size"
             );
         }
 
         // === PHASE 2: Scope chain traversal (local -> parent -> ... -> module) ===
         if let Some(mut scope_id) = self.find_enclosing_scope(idx) {
             if debug {
-                eprintln!("[BIND_RESOLVE] Starting scope chain from: {:?}", scope_id);
+                trace!(scope_id = ?scope_id, "[BIND_RESOLVE] Starting scope chain");
             }
             let require_export = false;
             let mut scope_depth = 0;
@@ -451,22 +451,23 @@ impl<'a> CheckerState<'a> {
                 scope_depth += 1;
                 if let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) {
                     if debug {
-                        eprintln!(
-                            "[BIND_RESOLVE]   [Scope {}] id={:?}, kind={:?}, parent={:?}, table_size={}",
+                        trace!(
                             scope_depth,
-                            scope_id,
-                            scope.kind,
-                            scope.parent,
-                            scope.table.len()
+                            id = ?scope_id,
+                            kind = ?scope.kind,
+                            parent = ?scope.parent,
+                            table_size = scope.table.len(),
+                            "[BIND_RESOLVE] Scope"
                         );
                     }
 
                     // Check scope's local symbol table
                     if let Some(sym_id) = scope.table.get(name) {
                         if debug {
-                            eprintln!(
-                                "[BIND_RESOLVE]     -> Found '{}' in scope table as {:?}",
-                                name, sym_id
+                            trace!(
+                                name = %name,
+                                sym_id = ?sym_id,
+                                "[BIND_RESOLVE] Found in scope table"
                             );
                         }
                         // Use get_symbol_with_libs to check lib binders
@@ -479,59 +480,62 @@ impl<'a> CheckerState<'a> {
                                 || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
                             let is_class_member = Self::is_class_member_symbol(symbol.flags);
                             if debug {
-                                eprintln!(
-                                    "[BIND_RESOLVE]        Symbol flags: 0x{:x}",
-                                    symbol.flags
+                                trace!(
+                                    flags = format_args!("0x{:x}", symbol.flags),
+                                    "[BIND_RESOLVE] Symbol flags"
                                 );
-                                eprintln!(
-                                    "[BIND_RESOLVE]        is_exported: {}, export_ok: {}, is_class_member: {}",
-                                    symbol.is_exported, export_ok, is_class_member
+                                trace!(
+                                    is_exported = symbol.is_exported,
+                                    export_ok,
+                                    is_class_member,
+                                    "[BIND_RESOLVE] Symbol status"
                                 );
                             }
                             if export_ok && !is_class_member {
                                 if debug {
-                                    eprintln!(
-                                        "[BIND_RESOLVE]     -> SUCCESS: Returning {:?} from scope {:?}",
-                                        sym_id, scope_id
+                                    trace!(
+                                        sym_id = ?sym_id,
+                                        scope_id = ?scope_id,
+                                        "[BIND_RESOLVE] SUCCESS: Returning from scope"
                                     );
                                 }
                                 return Some(sym_id);
                             } else if debug {
-                                eprintln!(
-                                    "[BIND_RESOLVE]        SKIPPED: export_ok={}, is_class_member={}",
-                                    export_ok, is_class_member
+                                trace!(
+                                    export_ok,
+                                    is_class_member,
+                                    "[BIND_RESOLVE] SKIPPED: export_ok or class_member"
                                 );
                             }
                         } else if !require_export || scope.kind != ContainerKind::Module {
                             if debug {
-                                eprintln!(
-                                    "[BIND_RESOLVE]     -> SUCCESS: Found '{}' in scope {:?} (no symbol data, returning anyway)",
-                                    name, scope_id
+                                trace!(
+                                    name = %name,
+                                    scope_id = ?scope_id,
+                                    "[BIND_RESOLVE] SUCCESS: Found in scope (no symbol data)"
                                 );
                             }
                             return Some(sym_id);
                         } else if debug {
-                            eprintln!(
-                                "[BIND_RESOLVE]        SKIPPED: No symbol data and require_export or module scope"
-                            );
+                            trace!("[BIND_RESOLVE] SKIPPED: No symbol data and require_export or module scope");
                         }
                     }
 
                     // Check module exports
                     if scope.kind == ContainerKind::Module {
                         if debug {
-                            eprintln!(
-                                "[BIND_RESOLVE]     Checking module exports (container_node: {:?})",
-                                scope.container_node
+                            trace!(
+                                container_node = ?scope.container_node,
+                                "[BIND_RESOLVE] Checking module exports"
                             );
                         }
                         if let Some(container_sym_id) =
                             self.ctx.binder.get_node_symbol(scope.container_node)
                         {
                             if debug {
-                                eprintln!(
-                                    "[BIND_RESOLVE]       Container symbol: {:?}",
-                                    container_sym_id
+                                trace!(
+                                    container_sym_id = ?container_sym_id,
+                                    "[BIND_RESOLVE] Container symbol"
                                 );
                             }
                             if let Some(container_symbol) = self
@@ -541,16 +545,17 @@ impl<'a> CheckerState<'a> {
                             {
                                 if let Some(exports) = container_symbol.exports.as_ref() {
                                     if debug {
-                                        eprintln!(
-                                            "[BIND_RESOLVE]       Module has {} exports",
-                                            exports.len()
+                                        trace!(
+                                            exports_count = exports.len(),
+                                            "[BIND_RESOLVE] Module exports count"
                                         );
                                     }
                                     if let Some(member_id) = exports.get(name) {
                                         if debug {
-                                            eprintln!(
-                                                "[BIND_RESOLVE]       -> Found '{}' in exports as {:?}",
-                                                name, member_id
+                                            trace!(
+                                                name = %name,
+                                                member_id = ?member_id,
+                                                "[BIND_RESOLVE] Found in exports"
                                             );
                                         }
                                         if let Some(member_symbol) = self
@@ -561,40 +566,39 @@ impl<'a> CheckerState<'a> {
                                             let is_class_member =
                                                 Self::is_class_member_symbol(member_symbol.flags);
                                             if debug {
-                                                eprintln!(
-                                                    "[BIND_RESOLVE]          Member flags: 0x{:x}, is_class_member: {}",
-                                                    member_symbol.flags, is_class_member
+                                                trace!(
+                                                    flags = format_args!("0x{:x}", member_symbol.flags),
+                                                    is_class_member,
+                                                    "[BIND_RESOLVE] Member flags"
                                                 );
                                             }
                                             if !is_class_member {
                                                 if debug {
-                                                    eprintln!(
-                                                        "[BIND_RESOLVE]       -> SUCCESS: Returning {:?} from module exports",
-                                                        member_id
+                                                    trace!(
+                                                        member_id = ?member_id,
+                                                        "[BIND_RESOLVE] SUCCESS: Returning from module exports"
                                                     );
                                                 }
                                                 return Some(member_id);
                                             }
                                         } else {
                                             if debug {
-                                                eprintln!(
-                                                    "[BIND_RESOLVE]       -> SUCCESS: Found '{}' in module exports (no symbol data)",
-                                                    name
+                                                trace!(
+                                                    name = %name,
+                                                    "[BIND_RESOLVE] SUCCESS: Found in module exports (no symbol data)"
                                                 );
                                             }
                                             return Some(member_id);
                                         }
                                     }
                                 } else if debug {
-                                    eprintln!("[BIND_RESOLVE]       Container has no exports");
+                                    trace!("[BIND_RESOLVE] Container has no exports");
                                 }
                             } else if debug {
-                                eprintln!(
-                                    "[BIND_RESOLVE]       Could not get container symbol data"
-                                );
+                                trace!("[BIND_RESOLVE] Could not get container symbol data");
                             }
                         } else if debug {
-                            eprintln!("[BIND_RESOLVE]       No container symbol for module");
+                            trace!("[BIND_RESOLVE] No container symbol for module");
                         }
                     }
 
@@ -603,64 +607,67 @@ impl<'a> CheckerState<'a> {
                     scope_id = parent_id;
                 } else {
                     if debug {
-                        eprintln!(
-                            "[BIND_RESOLVE]   [Scope {}] INVALID scope_id={:?} - breaking",
-                            scope_depth, scope_id
+                        trace!(
+                            scope_depth,
+                            scope_id = ?scope_id,
+                            "[BIND_RESOLVE] INVALID scope_id - breaking"
                         );
                     }
                     break;
                 }
             }
             if debug {
-                eprintln!(
-                    "[BIND_RESOLVE] Exhausted scope chain after {} scopes",
-                    scope_depth
+                trace!(
+                    scope_depth,
+                    "[BIND_RESOLVE] Exhausted scope chain"
                 );
             }
         } else if debug {
-            eprintln!("[BIND_RESOLVE] No enclosing scope found for node {:?}", idx);
+            trace!(idx = ?idx, "[BIND_RESOLVE] No enclosing scope found for node");
         }
 
         // === PHASE 3: Check file_locals (global scope from lib.d.ts) ===
         if debug {
-            eprintln!(
-                "[BIND_RESOLVE] Checking file_locals ({} symbols)",
-                self.ctx.binder.file_locals.len()
+            trace!(
+                file_locals_count = self.ctx.binder.file_locals.len(),
+                "[BIND_RESOLVE] Checking file_locals"
             );
         }
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             if debug {
-                eprintln!(
-                    "[BIND_RESOLVE]   -> Found '{}' in file_locals as {:?}",
-                    name, sym_id
+                trace!(
+                    name = %name,
+                    sym_id = ?sym_id,
+                    "[BIND_RESOLVE] Found in file_locals"
                 );
             }
             // Use get_symbol_with_libs to check lib binders
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                 let is_class_member = Self::is_class_member_symbol(symbol.flags);
                 if debug {
-                    eprintln!(
-                        "[BIND_RESOLVE]      Symbol flags: 0x{:x}, is_class_member: {}",
-                        symbol.flags, is_class_member
+                    trace!(
+                        flags = format_args!("0x{:x}", symbol.flags),
+                        is_class_member,
+                        "[BIND_RESOLVE] Symbol flags"
                     );
                 }
                 if !is_class_member {
                     if debug {
-                        eprintln!(
-                            "[BIND_RESOLVE]   -> SUCCESS: Returning {:?} from file_locals",
-                            sym_id
+                        trace!(
+                            sym_id = ?sym_id,
+                            "[BIND_RESOLVE] SUCCESS: Returning from file_locals"
                         );
                     }
                     return Some(sym_id);
                 } else if debug {
-                    eprintln!("[BIND_RESOLVE]      SKIPPED: is_class_member");
+                    trace!("[BIND_RESOLVE] SKIPPED: is_class_member");
                 }
             } else {
                 if debug {
-                    eprintln!(
-                        "[BIND_RESOLVE]   -> SUCCESS: Found '{}' in file_locals (no symbol data)",
-                        name
+                    trace!(
+                        name = %name,
+                        "[BIND_RESOLVE] SUCCESS: Found in file_locals (no symbol data)"
                     );
                 }
                 return Some(sym_id);
@@ -669,24 +676,26 @@ impl<'a> CheckerState<'a> {
 
         // === PHASE 4: Check lib binders' file_locals directly ===
         if debug {
-            eprintln!(
-                "[BIND_RESOLVE] Checking {} lib binders' file_locals...",
-                lib_binders.len()
+            trace!(
+                lib_binders_count = lib_binders.len(),
+                "[BIND_RESOLVE] Checking lib binders' file_locals"
             );
         }
         for (i, lib_binder) in lib_binders.iter().enumerate() {
             if debug {
-                eprintln!(
-                    "[BIND_RESOLVE]   [Lib {}] file_locals size: {}",
-                    i,
-                    lib_binder.file_locals.len()
+                trace!(
+                    lib_index = i,
+                    file_locals_size = lib_binder.file_locals.len(),
+                    "[BIND_RESOLVE] Lib binder file_locals"
                 );
             }
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 if debug {
-                    eprintln!(
-                        "[BIND_RESOLVE]     -> Found '{}' in lib binder {} as {:?}",
-                        name, i, sym_id
+                    trace!(
+                        name = %name,
+                        lib_index = i,
+                        sym_id = ?sym_id,
+                        "[BIND_RESOLVE] Found in lib binder"
                     );
                 }
 
@@ -697,9 +706,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol) = symbol_opt {
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if debug {
-                        eprintln!(
-                            "[BIND_RESOLVE]        Symbol flags: 0x{:x}, is_class_member: {}",
-                            symbol.flags, is_class_member
+                        trace!(
+                            flags = format_args!("0x{:x}", symbol.flags),
+                            is_class_member,
+                            "[BIND_RESOLVE] Symbol flags"
                         );
                     }
                     // For lib binders, be more permissive with class members
@@ -707,24 +717,24 @@ impl<'a> CheckerState<'a> {
                     // but should still be accessible as global values
                     if !is_class_member || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0 {
                         if debug {
-                            eprintln!(
-                                "[BIND_RESOLVE]     -> SUCCESS: Returning {:?} from lib binder {}",
-                                sym_id, i
+                            trace!(
+                                sym_id = ?sym_id,
+                                lib_index = i,
+                                "[BIND_RESOLVE] SUCCESS: Returning from lib binder"
                             );
                         }
                         return Some(sym_id);
                     } else if debug {
-                        eprintln!(
-                            "[BIND_RESOLVE]        SKIPPED: is_class_member without EXPORT_VALUE"
-                        );
+                        trace!("[BIND_RESOLVE] SKIPPED: is_class_member without EXPORT_VALUE");
                     }
                 } else {
                     // No symbol data available - return sym_id anyway
                     // This handles cross-arena references and ambient declarations
                     if debug {
-                        eprintln!(
-                            "[BIND_RESOLVE]     -> SUCCESS: Found '{}' in lib binder {} (no symbol data)",
-                            name, i
+                        trace!(
+                            name = %name,
+                            lib_index = i,
+                            "[BIND_RESOLVE] SUCCESS: Found in lib binder (no symbol data)"
                         );
                     }
                     return Some(sym_id);
@@ -734,14 +744,13 @@ impl<'a> CheckerState<'a> {
 
         // === PHASE 5: Symbol not found - diagnostic dump ===
         if debug {
-            eprintln!(
-                "[BIND_RESOLVE] FAILED: '{}' NOT FOUND in any location",
-                name
+            trace!(
+                name = %name,
+                "[BIND_RESOLVE] FAILED: NOT FOUND in any location"
             );
-            eprintln!("[BIND_RESOLVE] Diagnostic dump:");
-            eprintln!(
-                "[BIND_RESOLVE]   - Searched {} scope chain levels",
-                self.find_enclosing_scope(idx).map_or(0, |s| {
+            trace!("[BIND_RESOLVE] Diagnostic dump");
+            trace!(
+                scope_chain_levels = self.find_enclosing_scope(idx).map_or(0, |s| {
                     let mut count = 0;
                     let mut sid = s;
                     while !sid.is_none() {
@@ -753,49 +762,50 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     count
-                })
+                }),
+                "[BIND_RESOLVE] Searched scope chain levels"
             );
-            eprintln!(
-                "[BIND_RESOLVE]   - Searched file_locals ({} entries)",
-                self.ctx.binder.file_locals.len()
+            trace!(
+                file_locals_entries = self.ctx.binder.file_locals.len(),
+                "[BIND_RESOLVE] Searched file_locals"
             );
-            eprintln!(
-                "[BIND_RESOLVE]   - Searched {} lib binders",
-                lib_binders.len()
+            trace!(
+                lib_binders_count = lib_binders.len(),
+                "[BIND_RESOLVE] Searched lib binders"
             );
 
             // Dump file_locals for debugging (if not too large)
             if self.ctx.binder.file_locals.len() < 50 {
-                eprintln!("[BIND_RESOLVE]   Main binder file_locals:");
+                trace!("[BIND_RESOLVE] Main binder file_locals:");
                 for (n, id) in self.ctx.binder.file_locals.iter() {
-                    eprintln!("     - {} -> {:?}", n, id);
+                    trace!(name = %n, id = ?id, "[BIND_RESOLVE] file_local");
                 }
             } else {
-                eprintln!(
-                    "[BIND_RESOLVE]   (file_locals too large to dump: {} entries)",
-                    self.ctx.binder.file_locals.len()
+                trace!(
+                    file_locals_count = self.ctx.binder.file_locals.len(),
+                    "[BIND_RESOLVE] file_locals too large to dump"
                 );
             }
 
             // Sample lib binder file_locals
             for (i, lib_binder) in lib_binders.iter().enumerate() {
                 if lib_binder.file_locals.len() < 30 {
-                    eprintln!("[BIND_RESOLVE]   Lib binder {} file_locals:", i);
+                    trace!(lib_index = i, "[BIND_RESOLVE] Lib binder file_locals");
                     for (n, id) in lib_binder.file_locals.iter() {
-                        eprintln!("     - {} -> {:?}", n, id);
+                        trace!(name = %n, id = ?id, "[BIND_RESOLVE] file_local");
                     }
                 } else {
-                    eprintln!(
-                        "[BIND_RESOLVE]   Lib binder {} has {} file_locals (sampling first 10):",
-                        i,
-                        lib_binder.file_locals.len()
+                    trace!(
+                        lib_index = i,
+                        count = lib_binder.file_locals.len(),
+                        "[BIND_RESOLVE] Lib binder has many file_locals (sampling first 10)"
                     );
                     for (n, id) in lib_binder.file_locals.iter().take(10) {
-                        eprintln!("     - {} -> {:?}", n, id);
+                        trace!(name = %n, id = ?id, "[BIND_RESOLVE] file_local");
                     }
                 }
             }
-            eprintln!("[BIND_RESOLVE] ========================================\n");
+            trace!("[BIND_RESOLVE] ========================================\n");
         }
 
         None
@@ -2798,18 +2808,18 @@ impl<'a> CheckerState<'a> {
 
         let base =
             if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
-                eprintln!("=== get_type_from_type_query ===");
-                eprintln!("  name: {:?}, sym_id: {:?}", name_text, sym_id);
+                trace!("=== get_type_from_type_query ===");
+                trace!(name = ?name_text, sym_id, "get_type_from_type_query");
                 if !has_type_args {
                     let resolved = self.get_type_of_symbol(crate::binder::SymbolId(sym_id));
-                    eprintln!("  resolved type: {:?}", resolved);
+                    trace!(resolved = ?resolved, "resolved type");
                     if resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                        eprintln!("  => returning resolved type directly");
+                        trace!("=> returning resolved type directly");
                         return resolved;
                     }
                 }
                 let typequery_type = self.ctx.types.intern(TypeKey::TypeQuery(SymbolRef(sym_id)));
-                eprintln!("  => returning TypeQuery type: {:?}", typequery_type);
+                trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
                 typequery_type
             } else if self
                 .resolve_type_symbol_for_lowering(type_query.expr_name)
@@ -7040,12 +7050,12 @@ impl<'a> CheckerState<'a> {
                                 self.push_type_parameters(&interface.type_parameters);
                         }
                     } else if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
-                        eprintln!(
-                            "[DEBUG] Interface {} (sym_id={}): first_decl={:?} NOT FOUND in arena (arena has {} nodes)",
-                            symbol.escaped_name,
-                            sym_id.0,
-                            first_decl,
-                            self.ctx.arena.len()
+                        debug!(
+                            name = %symbol.escaped_name,
+                            sym_id = sym_id.0,
+                            first_decl = ?first_decl,
+                            arena_len = self.ctx.arena.len(),
+                            "[DEBUG] Interface first_decl NOT FOUND in arena"
                         );
                     }
                 }
@@ -7214,9 +7224,12 @@ impl<'a> CheckerState<'a> {
                 {
                     let result = self.get_type_of_symbol(export_sym_id);
                     if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
-                        eprintln!(
-                            "[DEBUG] ALIAS '{}' from '{}': export_sym_id={}, result_type_id={}",
-                            export_name, module_name, export_sym_id.0, result.0
+                        debug!(
+                            export_name = %export_name,
+                            module_name = %module_name,
+                            export_sym_id = export_sym_id.0,
+                            result_type_id = result.0,
+                            "[DEBUG] ALIAS"
                         );
                     }
                     return (result, Vec::new());
@@ -15293,6 +15306,8 @@ impl<'a> CheckerState<'a> {
     /// Check a source file and populate diagnostics.
     /// This is the entry point for type checking a parsed and bound file.
     pub fn check_source_file(&mut self, root_idx: NodeIndex) {
+        let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
+
         let Some(node) = self.ctx.arena.get(root_idx) else {
             return;
         };

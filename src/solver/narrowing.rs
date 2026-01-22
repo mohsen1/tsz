@@ -20,6 +20,7 @@
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
+use tracing::{span, trace, Level};
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
@@ -49,12 +50,15 @@ impl<'a> NarrowingContext<'a> {
     /// 1. All union members have the property
     /// 2. Each member has a unique literal type for that property
     pub fn find_discriminants(&self, union_type: TypeId) -> Vec<DiscriminantInfo> {
+        let _span = span!(Level::TRACE, "find_discriminants", union_type = union_type.0).entered();
+
         let members = match self.interner.lookup(union_type) {
             Some(TypeKey::Union(m)) => self.interner.type_list(m),
             _ => return vec![],
         };
 
         if members.len() < 2 {
+            trace!("Union has fewer than 2 members, skipping discriminant search");
             return vec![];
         }
 
@@ -143,6 +147,8 @@ impl<'a> NarrowingContext<'a> {
         property_name: Atom,
         literal_value: TypeId,
     ) -> TypeId {
+        let _span = span!(Level::TRACE, "narrow_by_discriminant", union_type = union_type.0, ?property_name, literal_value = literal_value.0).entered();
+
         let discriminants = self.find_discriminants(union_type);
 
         for disc in &discriminants {
@@ -169,6 +175,8 @@ impl<'a> NarrowingContext<'a> {
         property_name: Atom,
         excluded_value: TypeId,
     ) -> TypeId {
+        let _span = span!(Level::TRACE, "narrow_by_excluding_discriminant", union_type = union_type.0, ?property_name, excluded_value = excluded_value.0).entered();
+
         let members = match self.interner.lookup(union_type) {
             Some(TypeKey::Union(m)) => self.interner.type_list(m),
             _ => return union_type,
@@ -211,6 +219,8 @@ impl<'a> NarrowingContext<'a> {
     ///
     /// Example: `typeof x === "string"` narrows `string | number` to `string`
     pub fn narrow_by_typeof(&self, source_type: TypeId, typeof_result: &str) -> TypeId {
+        let _span = span!(Level::TRACE, "narrow_by_typeof", source_type = source_type.0, %typeof_result).entered();
+
         if source_type == TypeId::ANY {
             return TypeId::ANY;
         }
@@ -246,14 +256,18 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type to include only members assignable to target.
     pub fn narrow_to_type(&self, source_type: TypeId, target_type: TypeId) -> TypeId {
+        let _span = span!(Level::TRACE, "narrow_to_type", source_type = source_type.0, target_type = target_type.0).entered();
+
         // If source is the target, return it
         if source_type == target_type {
+            trace!("Source type equals target type, returning unchanged");
             return source_type;
         }
 
         // If source is a union, filter members
         if let Some(TypeKey::Union(members)) = self.interner.lookup(source_type) {
             let members = self.interner.type_list(members);
+            trace!("Narrowing union with {} members to type {}", members.len(), target_type.0);
             let matching: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
@@ -268,22 +282,28 @@ impl<'a> NarrowingContext<'a> {
                 .collect();
 
             if matching.is_empty() {
+                trace!("No matching members found, returning NEVER");
                 return TypeId::NEVER;
             } else if matching.len() == 1 {
+                trace!("Found single matching member, returning {}", matching[0].0);
                 return matching[0];
             } else {
+                trace!("Found {} matching members, creating new union", matching.len());
                 return self.interner.union(matching);
             }
         }
 
         if let Some(narrowed) = self.narrow_type_param(source_type, target_type) {
+            trace!("Narrowed type parameter to {}", narrowed.0);
             return narrowed;
         }
 
         // Check if source is assignable to target
         if self.is_assignable_to(source_type, target_type) {
+            trace!("Source type is assignable to target, returning source");
             source_type
         } else {
+            trace!("Source type is not assignable to target, returning NEVER");
             TypeId::NEVER
         }
     }
