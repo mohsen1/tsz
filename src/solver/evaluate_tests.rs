@@ -36210,9 +36210,7 @@ fn test_distributive_two_infers_different_positions() {
 fn test_distributive_infer_return_type() {
     // T extends () => infer R ? R : never
     // with T = (() => string) | (() => number) | string
-    // TODO: Expected result is string | number, but function return type infer pattern
-    // matching is not yet fully implemented in the distributive case.
-    // Currently returns never because the pattern match fails.
+    // Expected result is string | number (extracted from function return types)
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
@@ -36277,8 +36275,7 @@ fn test_distributive_infer_return_type() {
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    // TODO: Should be string | number once function return type infer is fully implemented
-    // For now, the pattern match partially succeeds and returns the inferred union
+    // Function return type infer pattern extraction works correctly in distributive context
     let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
