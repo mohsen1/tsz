@@ -610,6 +610,7 @@ impl<'a> TypeFormatter<'a> {
             IntrinsicKind::Bigint => "bigint",
             IntrinsicKind::Symbol => "symbol",
             IntrinsicKind::Object => "object",
+            IntrinsicKind::Function => "Function",
         }
         .to_string()
     }
