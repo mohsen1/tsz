@@ -769,15 +769,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
     // Populate globals from merged_symbols (contains all symbols across all files)
     // This ensures cross-file merged symbols are properly registered in globals.
-    // IMPORTANT: Only add symbols that were in file_locals (root-level), not nested symbols.
-    // We've already added file_locals symbols to globals above (line 736).
-    // The merged_symbols map may contain non-root symbols (e.g., from namespaces),
-    // which should NOT be added to globals.
-    //
-    // Skip this loop - globals are already populated from file_locals at line 736.
-    // for (name, sym_id) in merged_symbols.iter() {
-    //     globals.set(name.clone(), *sym_id);
-    // }
+    for (name, sym_id) in merged_symbols.iter() {
+        globals.set(name.clone(), *sym_id);
+    }
 
     MergedProgram {
         files,

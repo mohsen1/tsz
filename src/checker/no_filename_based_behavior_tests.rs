@@ -69,8 +69,8 @@ class MyClass {
             filename, class_count
         );
 
-        // Find method nodes
-        let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
+        // Find method nodes (class methods are METHOD_DECLARATION, not FUNCTION_DECLARATION)
+        let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::METHOD_DECLARATION);
 
         // We should find exactly 1 method in all cases
         assert_eq!(
@@ -119,12 +119,20 @@ class Example {
             filename, class_count
         );
 
-        // Should find exactly 2 functions (standalone + method)
+        // Should find exactly 1 standalone function (class method is METHOD_DECLARATION, not FUNCTION_DECLARATION)
         let func_count = count_nodes_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
         assert_eq!(
-            func_count, 2,
-            "Should find exactly 2 functions in {}, got {}",
+            func_count, 1,
+            "Should find exactly 1 function in {}, got {}",
             filename, func_count
+        );
+
+        // Should find exactly 1 method in the class
+        let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::METHOD_DECLARATION);
+        assert_eq!(
+            method_count, 1,
+            "Should find exactly 1 method in {}, got {}",
+            filename, method_count
         );
     }
 }
