@@ -33,7 +33,7 @@ const DEFAULT_CONFIG: RunnerConfig = {
   libPath: path.resolve(__dirname, '../../TypeScript/tests/lib/lib.d.ts'),
   maxTests: 500,
   verbose: false,
-  categories: ['conformance', 'compiler'],
+  categories: ['conformance', 'compiler', 'projects'],
   workers: Math.max(1, os.cpus().length),
   testTimeout: 10000,
   useWasm: true,
@@ -106,6 +106,33 @@ function collectTestFiles(dir: string, maxFiles: number): string[] {
       }
     } catch {}
   }
+  walk(dir);
+  return files;
+}
+
+// Specialized collector for projects directory
+// Projects are organized in subdirectories, with each subdir being a test case
+// We look for test files in each project subdirectory
+function collectProjectFiles(dir: string, maxFiles: number): string[] {
+  const files: string[] = [];
+
+  function walk(d: string): void {
+    if (files.length >= maxFiles) return;
+    try {
+      const entries = fs.readdirSync(d);
+      for (const entry of entries) {
+        if (files.length >= maxFiles) break;
+        const p = path.join(d, entry);
+        const stat = fs.statSync(p);
+        if (stat.isDirectory()) {
+          walk(p);
+        } else if (entry.endsWith('.ts') && !entry.endsWith('.d.ts')) {
+          files.push(p);
+        }
+      }
+    } catch {}
+  }
+
   walk(dir);
   return files;
 }
@@ -433,7 +460,10 @@ export async function runConformanceTests(config: Partial<RunnerConfig> = {}): P
     const dir = path.join(cfg.testsBasePath, cat);
     if (fs.existsSync(dir)) {
       const remaining = cfg.maxTests - allTestFiles.length;
-      const files = collectTestFiles(dir, Math.min(perCat, remaining));
+      // Use specialized collector for projects category
+      const files = cat === 'projects'
+        ? collectProjectFiles(dir, Math.min(perCat, remaining))
+        : collectTestFiles(dir, Math.min(perCat, remaining));
       allTestFiles.push(...files);
       log(`  ${cat}: ${files.length} files`, colors.dim);
     }
