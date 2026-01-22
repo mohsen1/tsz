@@ -43644,9 +43644,9 @@ fn test_template_literal_escape_sequences() {
     let interner = TypeInterner::new();
 
     // Template with newline escape sequence
-    let template = interner.template_literal(vec![
-        TemplateSpan::Text(interner.intern_string("line1\\nline2")),
-    ]);
+    let template = interner.template_literal(vec![TemplateSpan::Text(
+        interner.intern_string("line1\\nline2"),
+    )]);
 
     if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
         let spans = interner.template_list(spans);
@@ -43972,9 +43972,8 @@ fn test_empty_template_literal() {
 fn test_template_literal_only_text() {
     let interner = TypeInterner::new();
 
-    let template = interner.template_literal(vec![
-        TemplateSpan::Text(interner.intern_string("hello")),
-    ]);
+    let template =
+        interner.template_literal(vec![TemplateSpan::Text(interner.intern_string("hello"))]);
 
     // Verify it was created
     if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
@@ -43995,9 +43994,7 @@ fn test_template_literal_only_text() {
 fn test_template_literal_only_type_interpolation() {
     let interner = TypeInterner::new();
 
-    let template = interner.template_literal(vec![
-        TemplateSpan::Type(TypeId::STRING),
-    ]);
+    let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
 
     // Verify it was created
     if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
