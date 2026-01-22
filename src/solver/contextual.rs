@@ -932,9 +932,10 @@ pub fn is_sync_generator_type(interner: &dyn TypeDatabase, type_id: TypeId) -> b
                     // If return type is a union or object without 'then', it's a sync generator
                     if let Some(TypeKey::Object(ret_shape_id)) = interner.lookup(func.return_type) {
                         let ret_shape = interner.object_shape(ret_shape_id);
-                        let has_then = ret_shape.properties.iter().any(|p| {
-                            interner.resolve_atom_ref(p.name).as_ref() == "then"
-                        });
+                        let has_then = ret_shape
+                            .properties
+                            .iter()
+                            .any(|p| interner.resolve_atom_ref(p.name).as_ref() == "then");
                         if !has_then {
                             return true;
                         }

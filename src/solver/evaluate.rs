@@ -2207,7 +2207,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 LiteralValue::Boolean(b) => {
-                    vec![if b { "true".to_string() } else { "false".to_string() }]
+                    vec![if b {
+                        "true".to_string()
+                    } else {
+                        "false".to_string()
+                    }]
                 }
                 LiteralValue::BigInt(atom) => {
                     // BigInt literals are stored without the 'n' suffix
@@ -2549,8 +2553,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     type_arg: *type_id,
                                 })
                             }
-                            StringIntrinsicKind::Capitalize
-                            | StringIntrinsicKind::Uncapitalize => {
+                            StringIntrinsicKind::Capitalize | StringIntrinsicKind::Uncapitalize => {
                                 // Capitalize/Uncapitalize don't affect non-first positions
                                 *type_id
                             }

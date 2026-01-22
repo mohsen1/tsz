@@ -1955,9 +1955,8 @@ mod full_pipeline_integration_tests {
         );
 
         // (string | number | boolean)[]
-        let union_array = interner.array(
-            interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN])
-        );
+        let union_array =
+            interner.array(interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]));
 
         // Should be assignable to union array containing all element types
         assert!(
@@ -2058,9 +2057,8 @@ mod full_pipeline_integration_tests {
         ]);
 
         // (string | number | undefined)[]
-        let union_array = interner.array(
-            interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED])
-        );
+        let union_array =
+            interner.array(interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]));
 
         // Tuple with optional should be assignable to array with union including undefined
         assert!(
@@ -2342,9 +2340,8 @@ mod typescript_parity_tuple_array_tests {
         ]);
 
         // readonly string[]
-        let readonly_string_array = interner.intern(TypeKey::ReadonlyType(
-            interner.array(TypeId::STRING)
-        ));
+        let readonly_string_array =
+            interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
 
         // Tuple should be assignable to readonly array
         assert!(

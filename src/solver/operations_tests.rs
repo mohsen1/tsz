@@ -5112,8 +5112,18 @@ fn test_infer_generic_tuple_rest_type_param() {
     );
     // Tuple [string, boolean] satisfies array constraint any[] - tuples are subtypes of arrays
     let expected = interner.tuple(vec![
-        TupleElement { type_id: TypeId::STRING, name: None, optional: false, rest: false },
-        TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
     ]);
     assert_eq!(result, expected);
 }
@@ -5816,8 +5826,18 @@ fn test_tuple_rest_captures_remaining() {
     );
     // Tuple [string, boolean] satisfies array constraint any[] - tuples are subtypes of arrays
     let expected = interner.tuple(vec![
-        TupleElement { type_id: TypeId::STRING, name: None, optional: false, rest: false },
-        TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
     ]);
     assert_eq!(result, expected);
 }
@@ -5887,8 +5907,18 @@ fn test_tuple_rest_with_multiple_prefix() {
     );
     // Tuple [boolean, boolean] satisfies array constraint any[] - tuples are subtypes of arrays
     let expected = interner.tuple(vec![
-        TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
-        TupleElement { type_id: TypeId::BOOLEAN, name: None, optional: false, rest: false },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
     ]);
     assert_eq!(result, expected);
 }
@@ -5945,9 +5975,12 @@ fn test_tuple_rest_single_capture() {
         &[TypeId::NUMBER, TypeId::STRING],
     );
     // Tuple [string] satisfies array constraint any[] - tuples are subtypes of arrays
-    let expected = interner.tuple(vec![
-        TupleElement { type_id: TypeId::STRING, name: None, optional: false, rest: false },
-    ]);
+    let expected = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
     assert_eq!(result, expected);
 }
 
@@ -6599,11 +6632,7 @@ fn test_array_element_type_empty_tuple() {
     let empty_tuple = interner.tuple(Vec::new());
 
     let result = evaluator.array_element_type(empty_tuple);
-    assert_eq!(
-        result,
-        TypeId::NEVER,
-        "[] should have element type never"
-    );
+    assert_eq!(result, TypeId::NEVER, "[] should have element type never");
 }
 
 /// Test array_element_type with single-element tuple
@@ -6809,7 +6838,10 @@ fn test_generic_function_heterogeneous_tuple_fails_homogeneous_array_constraint(
     let type_args = vec![tuple_arg];
     let result = solve_generic_instantiation(&type_params, &type_args, &mut checker);
     assert!(
-        matches!(result, GenericInstantiationResult::ConstraintViolation { .. }),
+        matches!(
+            result,
+            GenericInstantiationResult::ConstraintViolation { .. }
+        ),
         "[string, number] should NOT satisfy T extends string[] constraint"
     );
 }

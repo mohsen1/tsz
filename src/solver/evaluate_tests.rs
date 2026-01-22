@@ -40263,9 +40263,16 @@ fn test_template_literal_cartesian_product() {
     match interner.lookup(template) {
         Some(TypeKey::Union(members_id)) => {
             let members = interner.type_list(members_id);
-            assert_eq!(members.len(), 4, "Expected 4 members in cartesian product union");
+            assert_eq!(
+                members.len(),
+                4,
+                "Expected 4 members in cartesian product union"
+            );
         }
-        _ => panic!("Expected Union type for template with multiple union interpolations, got {:?}", interner.lookup(template)),
+        _ => panic!(
+            "Expected Union type for template with multiple union interpolations, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -40315,9 +40322,16 @@ fn test_template_literal_concatenation() {
     match interner.lookup(template) {
         Some(TypeKey::Literal(LiteralValue::String(atom))) => {
             let s = interner.resolve_atom_ref(atom);
-            assert_eq!(s.as_ref(), "helloworld", "Expected concatenated string literal");
+            assert_eq!(
+                s.as_ref(),
+                "helloworld",
+                "Expected concatenated string literal"
+            );
         }
-        _ => panic!("Expected string literal for concatenated string interpolations, got {:?}", interner.lookup(template)),
+        _ => panic!(
+            "Expected string literal for concatenated string interpolations, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -40402,7 +40416,10 @@ fn test_template_literal_multiple_adjacent_types() {
             let s = interner.resolve_atom_ref(atom);
             assert_eq!(s.as_ref(), "xyz", "Expected concatenated string literal");
         }
-        _ => panic!("Expected string literal for concatenated string interpolations, got {:?}", interner.lookup(template)),
+        _ => panic!(
+            "Expected string literal for concatenated string interpolations, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -40429,7 +40446,10 @@ fn test_template_literal_union_in_middle() {
             let members = interner.type_list(members_id);
             assert_eq!(members.len(), 3, "Expected 3 members in union");
         }
-        _ => panic!("Expected Union type for template with union interpolation, got {:?}", interner.lookup(template)),
+        _ => panic!(
+            "Expected Union type for template with union interpolation, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -43545,7 +43565,10 @@ fn test_template_literal_with_uppercase_intrinsic_pattern() {
             let members = interner.type_list(members_id);
             assert_eq!(members.len(), 2, "Expected 2 members in expanded union");
         }
-        _ => panic!("Expected Union type for template with union interpolation, got {:?}", interner.lookup(template)),
+        _ => panic!(
+            "Expected Union type for template with union interpolation, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
@@ -43672,9 +43695,15 @@ fn test_template_literal_escape_sequences() {
     if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let resolved = interner.resolve_atom_ref(atom);
         // The escape sequence should be preserved in the string
-        assert!(resolved.contains("\\n"), "Escape sequence should be preserved");
+        assert!(
+            resolved.contains("\\n"),
+            "Escape sequence should be preserved"
+        );
     } else {
-        panic!("Expected string literal for text-only template, got {:?}", interner.lookup(template));
+        panic!(
+            "Expected string literal for text-only template, got {:?}",
+            interner.lookup(template)
+        );
     }
 }
 
@@ -43977,9 +44006,16 @@ fn test_empty_template_literal() {
     // With the template literal optimization, empty template literals become empty string literals
     if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let s = interner.resolve_atom_ref(atom);
-        assert_eq!(s.as_ref(), "", "Empty template literal should be empty string");
+        assert_eq!(
+            s.as_ref(),
+            "",
+            "Empty template literal should be empty string"
+        );
     } else {
-        panic!("Expected empty string literal for empty template literal, got {:?}", interner.lookup(template));
+        panic!(
+            "Expected empty string literal for empty template literal, got {:?}",
+            interner.lookup(template)
+        );
     }
 }
 
@@ -43996,9 +44032,16 @@ fn test_template_literal_only_text() {
     // With the template literal optimization, text-only template literals become string literals
     if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let s = interner.resolve_atom_ref(atom);
-        assert_eq!(s.as_ref(), "hello", "Text-only template literal should be 'hello' string literal");
+        assert_eq!(
+            s.as_ref(),
+            "hello",
+            "Text-only template literal should be 'hello' string literal"
+        );
     } else {
-        panic!("Expected string literal for text-only template literal, got {:?}", interner.lookup(template));
+        panic!(
+            "Expected string literal for text-only template literal, got {:?}",
+            interner.lookup(template)
+        );
     }
 
     // keyof of string literal returns apparent keys of string (same as keyof string)
@@ -44323,7 +44366,10 @@ fn test_template_literal_nested_union_interpolation() {
             let members = interner.type_list(members_id);
             assert_eq!(members.len(), 4, "Expected 4 members in expanded union");
         }
-        _ => panic!("Expected Union type for template with nested union interpolation, got {:?}", interner.lookup(template)),
+        _ => panic!(
+            "Expected Union type for template with nested union interpolation, got {:?}",
+            interner.lookup(template)
+        ),
     }
 }
 
