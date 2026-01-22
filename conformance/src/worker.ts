@@ -373,9 +373,9 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
       if (testCase.isMultiFile || testCase.files.length > 1) {
         const program = new wasmModule.WasmProgram();
 
-        // Add lib.d.ts unless noLib
+        // Add lib.d.ts unless noLib - use addLibFile for library files
         if (!testCase.options.nolib && libSource) {
-          program.addFile('lib.d.ts', libSource);
+          program.addLibFile('lib.d.ts', libSource);
         }
 
         for (const file of testCase.files) {
