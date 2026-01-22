@@ -20965,10 +20965,16 @@ fn test_constructor_parameters_callable_construct_signature() {
 
     let result = evaluate_conditional(&interner, &cond);
 
-    // TODO: Callable construct signature inference not implemented.
-    // Expected: [string] tuple
-    // Current: returns never because Callable construct signatures aren't matched.
-    assert_eq!(result, TypeId::NEVER);
+    // Should extract the constructor parameters as a tuple [string]
+    // Check if result is a tuple with string element
+    match interner.lookup(result) {
+        Some(TypeKey::Tuple(elems)) => {
+            let elems = interner.tuple_list(elems);
+            assert_eq!(elems.len(), 1);
+            assert_eq!(elems[0].type_id, TypeId::STRING);
+        }
+        _ => panic!("Expected tuple, got {:?}", result),
+    }
 }
 
 /// Test ReturnType with union of function types (distributive).
