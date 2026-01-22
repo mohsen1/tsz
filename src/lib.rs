@@ -1788,8 +1788,7 @@ impl WasmProgram {
     /// Files are accumulated and compiled together when `checkAll` is called.
     /// The file_name should be a relative path like "src/a.ts".
     ///
-    /// Lib files (detected by name patterns like "lib.d.ts", "lib.dom.d.ts", etc.)
-    /// are automatically tracked separately and used for global symbol resolution.
+    /// For TypeScript library files (lib.d.ts, lib.dom.d.ts, etc.), use `addLibFile` instead.
     #[wasm_bindgen(js_name = addFile)]
     pub fn add_file(&mut self, file_name: String, source_text: String) {
         // Invalidate any previous compilation
@@ -1801,18 +1800,30 @@ impl WasmProgram {
             return;
         }
 
-        // Detect lib files by name pattern
-        let is_lib_file = file_name.contains("lib.d.ts")
-            || file_name.contains("lib.es")
-            || file_name.contains("lib.dom")
-            || file_name.contains("lib.webworker")
-            || file_name.contains("lib.scripthost");
+        self.files.push((file_name, source_text));
+    }
 
-        if is_lib_file {
-            self.lib_files.push((file_name, source_text));
-        } else {
-            self.files.push((file_name, source_text));
-        }
+    /// Add a TypeScript library file (lib.d.ts, lib.dom.d.ts, etc.) to the program.
+    ///
+    /// Lib files are used for global symbol resolution and are merged into
+    /// the symbol table before user files are processed.
+    ///
+    /// Use this method explicitly instead of relying on automatic file name detection.
+    /// This makes the API behavior predictable and explicit.
+    ///
+    /// # Example (JavaScript)
+    /// ```javascript
+    /// const program = new WasmProgram();
+    /// program.addLibFile("lib.d.ts", libContent);
+    /// program.addFile("src/a.ts", userCode);
+    /// ```
+    #[wasm_bindgen(js_name = addLibFile)]
+    pub fn add_lib_file(&mut self, file_name: String, source_text: String) {
+        // Invalidate any previous compilation
+        self.merged = None;
+        self.bind_results = None;
+
+        self.lib_files.push((file_name, source_text));
     }
 
     /// Get the number of files in the program.
