@@ -66,7 +66,9 @@ use crate::transform_context::{TransformContext, TransformDirective};
 use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::emit_utils;
 use crate::transforms::helpers::HelpersNeeded;
-use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam, IRProperty, IRPropertyKey, IRPropertyKind};
+use crate::transforms::ir::{
+    IRGeneratorCase, IRNode, IRParam, IRProperty, IRPropertyKey, IRPropertyKind,
+};
 use crate::transforms::private_fields_es5::{get_private_field_name, is_private_identifier};
 use memchr;
 
@@ -837,9 +839,7 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             // TEMPLATE_EXPRESSION: `hello ${name}!`
-            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
-                self.convert_template_expression(idx)
-            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => self.convert_template_expression(idx),
 
             // NoSubstitutionTemplateLiteral: `hello world`
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
