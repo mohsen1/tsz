@@ -1257,13 +1257,116 @@ impl TypeInterner {
         false
     }
 
+    /// Normalize template literal spans by merging consecutive text spans
+    fn normalize_template_spans(&self, spans: Vec<TemplateSpan>) -> Vec<TemplateSpan> {
+        if spans.len() <= 1 {
+            return spans;
+        }
+
+        let mut normalized = Vec::with_capacity(spans.len());
+        let mut pending_text: Option<String> = None;
+        let mut has_consecutive_texts = false;
+
+        for span in &spans {
+            match span {
+                TemplateSpan::Text(atom) => {
+                    let text = self.resolve_atom_ref(*atom).to_string();
+                    if let Some(ref mut pt) = pending_text {
+                        pt.push_str(&text);
+                        has_consecutive_texts = true;
+                    } else {
+                        pending_text = Some(text);
+                    }
+                }
+                TemplateSpan::Type(type_id) => {
+                    // Flush any pending text before adding a type span
+                    if let Some(text) = pending_text.take() {
+                        if !text.is_empty() {
+                            normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+                        }
+                    }
+                    normalized.push(TemplateSpan::Type(*type_id));
+                }
+            }
+        }
+
+        // Flush any remaining pending text
+        if let Some(text) = pending_text {
+            if !text.is_empty() {
+                normalized.push(TemplateSpan::Text(self.intern_string(&text)));
+            }
+        }
+
+        // If no normalization occurred, return original to avoid unnecessary allocation
+        if !has_consecutive_texts && normalized.len() == spans.len() {
+            return spans;
+        }
+
+        normalized
+    }
+
     /// Intern a template literal type
     pub fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
-        if self.template_literal_exceeds_limit(&spans) {
+        // Normalize spans by merging consecutive text spans
+        let normalized = self.normalize_template_spans(spans);
+
+        if self.template_literal_exceeds_limit(&normalized) {
             return TypeId::STRING;
         }
-        let list_id = self.intern_template_list(spans);
+        let list_id = self.intern_template_list(normalized);
         self.intern(TypeKey::TemplateLiteral(list_id))
+    }
+
+    /// Get the interpolation positions from a template literal type
+    /// Returns indices of type interpolation spans
+    pub fn template_literal_interpolation_positions(&self, type_id: TypeId) -> Vec<usize> {
+        match self.lookup(type_id) {
+            Some(TypeKey::TemplateLiteral(spans_id)) => {
+                let spans = self.template_list(spans_id);
+                spans
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, span)| match span {
+                        TemplateSpan::Type(_) => Some(idx),
+                        _ => None,
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Get the span at a given position from a template literal type
+    pub fn template_literal_get_span(&self, type_id: TypeId, index: usize) -> Option<TemplateSpan> {
+        match self.lookup(type_id) {
+            Some(TypeKey::TemplateLiteral(spans_id)) => {
+                let spans = self.template_list(spans_id);
+                spans.get(index).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the number of spans in a template literal type
+    pub fn template_literal_span_count(&self, type_id: TypeId) -> usize {
+        match self.lookup(type_id) {
+            Some(TypeKey::TemplateLiteral(spans_id)) => {
+                let spans = self.template_list(spans_id);
+                spans.len()
+            }
+            _ => 0,
+        }
+    }
+
+    /// Check if a template literal contains only text (no interpolations)
+    pub fn template_literal_is_text_only(&self, type_id: TypeId) -> bool {
+        match self.lookup(type_id) {
+            Some(TypeKey::TemplateLiteral(spans_id)) => {
+                let spans = self.template_list(spans_id);
+                spans.iter().all(|span| span.is_text())
+            }
+            _ => false,
+        }
     }
 
     /// Intern a conditional type

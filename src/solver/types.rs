@@ -412,6 +412,121 @@ pub enum TemplateSpan {
     Type(TypeId),
 }
 
+impl TemplateSpan {
+    /// Check if this span is a text span
+    pub fn is_text(&self) -> bool {
+        matches!(self, TemplateSpan::Text(_))
+    }
+
+    /// Check if this span is a type interpolation
+    pub fn is_type(&self) -> bool {
+        matches!(self, TemplateSpan::Type(_))
+    }
+
+    /// Get the text content if this is a text span
+    pub fn as_text(&self) -> Option<Atom> {
+        match self {
+            TemplateSpan::Text(atom) => Some(*atom),
+            _ => None,
+        }
+    }
+
+    /// Get the type ID if this is a type span
+    pub fn as_type(&self) -> Option<TypeId> {
+        match self {
+            TemplateSpan::Type(type_id) => Some(*type_id),
+            _ => None,
+        }
+    }
+
+    /// Create a type span
+    pub fn type_from_id(type_id: TypeId) -> Self {
+        TemplateSpan::Type(type_id)
+    }
+}
+
+/// Process escape sequences in a template literal string
+/// Handles: \${, \\, \n, \r, \t, \b, \f, \v, \0, \xXX, \uXXXX, \u{X...}
+pub fn process_template_escape_sequences(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars();
+    let mut last_was_backslash = false;
+
+    while let Some(c) = chars.next() {
+        if last_was_backslash {
+            last_was_backslash = false;
+            match c {
+                '$' => {
+                    // \$${ becomes $ (not an interpolation)
+                    result.push('$');
+                }
+                '\\' => result.push('\\'),
+                'n' => result.push('\n'),
+                'r' => result.push('\r'),
+                't' => result.push('\t'),
+                'b' => result.push('\x08'),
+                'f' => result.push('\x0c'),
+                'v' => result.push('\x0b'),
+                '0' => result.push('\0'),
+                'x' => {
+                    // \xXX - exactly 2 hex digits
+                    let hex1 = chars.next().unwrap_or('0');
+                    let hex2 = chars.next().unwrap_or('0');
+                    let code = u8::from_str_radix(&format!("{}{}", hex1, hex2), 16).unwrap_or(0);
+                    result.push(code as char);
+                }
+                'u' => {
+                    // \uXXXX or \u{X...}
+                    if let Some('{') = chars.next() {
+                        // \u{X...} - Unicode code point
+                        let mut code_str = String::new();
+                        while let Some(nc) = chars.next() {
+                            if nc == '}' {
+                                break;
+                            }
+                            code_str.push(nc);
+                        }
+                        if let Ok(code) = u32::from_str_radix(&code_str, 16) {
+                            if let Some(c) = char::from_u32(code) {
+                                result.push(c);
+                            }
+                        }
+                    } else {
+                        // \uXXXX - exactly 4 hex digits
+                        let mut code_str = String::new();
+                        for _ in 0..4 {
+                            if let Some(nc) = chars.next() {
+                                code_str.push(nc);
+                            }
+                        }
+                        if let Ok(code) = u16::from_str_radix(&code_str, 16) {
+                            if let Some(c) = char::from_u32(code as u32) {
+                                result.push(c);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // Unknown escape - preserve the backslash and character
+                    result.push('\\');
+                    result.push(c);
+                }
+            }
+        } else if c == '\\' {
+            last_was_backslash = true;
+        } else {
+            result.push(c);
+        }
+    }
+
+    // Handle trailing backslash
+    if last_was_backslash {
+        result.push('\\');
+    }
+
+    result
+}
+
 #[cfg(test)]
 #[path = "types_tests.rs"]
 mod tests;
