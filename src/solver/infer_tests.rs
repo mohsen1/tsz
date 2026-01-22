@@ -14941,9 +14941,9 @@ fn test_template_literal_text_only_no_inference_var() {
     let var_t = ctx.fresh_type_param(t_name);
 
     // Create text-only template literal: `hello world`
-    let template = interner.template_literal(vec![
-        TemplateSpan::Text(interner.intern_string("hello world")),
-    ]);
+    let template = interner.template_literal(vec![TemplateSpan::Text(
+        interner.intern_string("hello world"),
+    )]);
 
     // Should not detect any inference var
     assert!(!ctx.contains_inference_var(template, var_t));
@@ -15110,8 +15110,8 @@ fn test_nested_template_literal_in_conditional() {
 fn test_template_literal_inference_end_to_end() {
     // End-to-end test: T extends `get${infer K}` ? K : never
     // When T = "getName", result should be "Name"
-    use crate::solver::types::TemplateSpan;
     use crate::solver::evaluate::evaluate_conditional;
+    use crate::solver::types::TemplateSpan;
 
     let interner = TypeInterner::new();
 
@@ -15155,8 +15155,8 @@ fn test_template_literal_inference_end_to_end() {
 fn test_template_literal_inference_no_match() {
     // Test: T extends `get${infer K}` ? K : never
     // When T = "setValue", result should be never (no match)
-    use crate::solver::types::TemplateSpan;
     use crate::solver::evaluate::evaluate_conditional;
+    use crate::solver::types::TemplateSpan;
 
     let interner = TypeInterner::new();
 
@@ -15200,8 +15200,8 @@ fn test_template_literal_inference_no_match() {
 fn test_template_literal_inference_prefix_suffix() {
     // Test: T extends `prefix-${infer R}-suffix` ? R : never
     // When T = "prefix-middle-suffix", result should be "middle"
-    use crate::solver::types::TemplateSpan;
     use crate::solver::evaluate::evaluate_conditional;
+    use crate::solver::types::TemplateSpan;
 
     let interner = TypeInterner::new();
 
@@ -15246,8 +15246,8 @@ fn test_template_literal_inference_prefix_suffix() {
 fn test_template_literal_inference_multiple_infers() {
     // Test: T extends `${infer A}-${infer B}` ? [A, B] : never
     // When T = "hello-world", result should be tuple ["hello", "world"]
-    use crate::solver::types::TemplateSpan;
     use crate::solver::evaluate::evaluate_conditional;
+    use crate::solver::types::TemplateSpan;
 
     let interner = TypeInterner::new();
 
@@ -15299,8 +15299,8 @@ fn test_template_literal_inference_multiple_infers() {
 fn test_template_literal_inference_distributive() {
     // Test distributive conditional: T extends `get${infer K}` ? K : never
     // When T = "getName" | "getValue", result should be "Name" | "Value"
-    use crate::solver::types::TemplateSpan;
     use crate::solver::evaluate::evaluate_conditional;
+    use crate::solver::types::TemplateSpan;
 
     let interner = TypeInterner::new();
 

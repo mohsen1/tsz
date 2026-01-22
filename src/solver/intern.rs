@@ -1560,14 +1560,19 @@ impl TypeInterner {
         // Try to expand to union of string literals if all interpolations are expandable
         if self.can_expand_template_literal(&normalized) {
             // Check if there are any type interpolations
-            let has_type_interpolations = normalized.iter().any(|s| matches!(s, TemplateSpan::Type(_)));
+            let has_type_interpolations = normalized
+                .iter()
+                .any(|s| matches!(s, TemplateSpan::Type(_)));
 
             if has_type_interpolations {
                 return self.expand_template_literal_to_union(&normalized);
             }
 
             // If only text spans, combine them into a single string literal
-            if normalized.iter().all(|s| matches!(s, TemplateSpan::Text(_))) {
+            if normalized
+                .iter()
+                .all(|s| matches!(s, TemplateSpan::Text(_)))
+            {
                 let mut combined = String::new();
                 for span in &normalized {
                     if let TemplateSpan::Text(atom) = span {
