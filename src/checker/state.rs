@@ -24797,6 +24797,7 @@ impl<'a> CheckerState<'a> {
             | Some(TypeKey::Ref(_))
             | Some(TypeKey::Literal(_))
             | Some(TypeKey::Intrinsic(_))
+            | Some(TypeKey::StringIntrinsic { .. })
             | Some(TypeKey::Error)
             | None => false,
         }
@@ -24957,6 +24958,7 @@ impl<'a> CheckerState<'a> {
             | Some(TypeKey::Ref(_))
             | Some(TypeKey::Literal(_))
             | Some(TypeKey::Intrinsic(_))
+            | Some(TypeKey::StringIntrinsic { .. })
             | None => false,
         }
     }

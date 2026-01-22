@@ -170,6 +170,13 @@ pub enum TypeKey {
     /// This type (polymorphic this)
     ThisType,
 
+    /// String manipulation intrinsic types
+    /// Uppercase<T>, Lowercase<T>, Capitalize<T>, Uncapitalize<T>
+    StringIntrinsic {
+        kind: StringIntrinsicKind,
+        type_arg: TypeId,
+    },
+
     /// Error type for recovery
     Error,
 }
@@ -196,6 +203,15 @@ pub enum IntrinsicKind {
     Bigint,
     Symbol,
     Object,
+}
+
+/// String manipulation intrinsic kinds
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum StringIntrinsicKind {
+    Uppercase,
+    Lowercase,
+    Capitalize,
+    Uncapitalize,
 }
 
 impl IntrinsicKind {
