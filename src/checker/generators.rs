@@ -26,6 +26,14 @@ use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 
+/// Well-known symbol ID for the global Generator interface.
+/// This is a placeholder ID that should be resolved from lib.d.ts in a complete implementation.
+pub const GENERATOR_SYMBOL_ID: u32 = 0xFFFF_FF00;
+
+/// Well-known symbol ID for the global AsyncGenerator interface.
+/// This is a placeholder ID that should be resolved from lib.d.ts in a complete implementation.
+pub const ASYNC_GENERATOR_SYMBOL_ID: u32 = 0xFFFF_FF01;
+
 /// Type checker for generator functions and yield expressions.
 pub struct GeneratorChecker<'a, 'ctx> {
     ctx: &'a mut CheckerContext<'ctx>,
@@ -521,19 +529,69 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
     fn get_iterator_return_type(&self, type_id: TypeId) -> TypeId {
         // Get the return type of an iterator (the TReturn in Generator<Y, TReturn, N>)
         // This is used for yield* to get the result of the delegated iterator
+
+        // Check if this is a Generator type application
+        if let Some(type_key) = self.ctx.types.lookup(type_id) {
+            match type_key {
+                crate::solver::TypeKey::Application(app_id) => {
+                    let app = self.ctx.types.type_application(app_id);
+                    // Check if this is a Generator or Iterator type
+                    // Generator<Y, TReturn, TNext> has TReturn as the second argument
+                    // IterableIterator<T> / Iterator<T> returns T
+                    if app.args.len() >= 2 {
+                        // Assume Generator<Y, TReturn, TNext> format
+                        return app.args[1];
+                    } else if app.args.len() == 1 {
+                        // Single-argument Iterator<T> format
+                        return app.args[0];
+                    }
+                }
+                crate::solver::TypeKey::Array(elem_type) => {
+                    // Arrays return undefined when iteration is complete
+                    return TypeId::UNDEFINED;
+                }
+                crate::solver::TypeKey::Tuple(_) => {
+                    // Tuples return undefined when iteration is complete
+                    return TypeId::UNDEFINED;
+                }
+                _ => {}
+            }
+        }
+
         TypeId::ANY
     }
 
-    fn create_generator_type(&self, yield_type: TypeId, return_type: TypeId, next_type: TypeId) -> TypeId {
-        // Create Generator<Y, R, N> type
-        // This would create a TypeReference to the global Generator interface
-        // For now, return a placeholder
-        TypeId::ANY
+    /// Create Generator<Y, R, N> type as a type application.
+    ///
+    /// This creates a Generator type with the specified type arguments:
+    /// - Y: The yield type (values yielded by the generator)
+    /// - R: The return type (value returned when done)
+    /// - N: The next type (values passed to .next())
+    fn create_generator_type(&mut self, yield_type: TypeId, return_type: TypeId, next_type: TypeId) -> TypeId {
+        // Create a Generator<Y, R, N> type application
+        // We use a well-known symbol reference for the Generator interface
+        // The SymbolRef(0) represents the global Generator interface
+        // In a full implementation, this would be resolved from the global scope
+        let generator_symbol = crate::solver::SymbolRef(GENERATOR_SYMBOL_ID);
+        let generator_base = self.ctx.types.reference(generator_symbol);
+
+        // Create the type application Generator<Y, R, N>
+        self.ctx.types.application(generator_base, vec![yield_type, return_type, next_type])
     }
 
-    fn create_async_generator_type(&self, yield_type: TypeId, return_type: TypeId, next_type: TypeId) -> TypeId {
-        // Create AsyncGenerator<Y, R, N> type
-        TypeId::ANY
+    /// Create AsyncGenerator<Y, R, N> type as a type application.
+    ///
+    /// This creates an AsyncGenerator type with the specified type arguments:
+    /// - Y: The yield type (values yielded by the async generator)
+    /// - R: The return type (value returned when done)
+    /// - N: The next type (values passed to .next())
+    fn create_async_generator_type(&mut self, yield_type: TypeId, return_type: TypeId, next_type: TypeId) -> TypeId {
+        // Create an AsyncGenerator<Y, R, N> type application
+        let async_generator_symbol = crate::solver::SymbolRef(ASYNC_GENERATOR_SYMBOL_ID);
+        let async_generator_base = self.ctx.types.reference(async_generator_symbol);
+
+        // Create the type application AsyncGenerator<Y, R, N>
+        self.ctx.types.application(async_generator_base, vec![yield_type, return_type, next_type])
     }
 }
 
@@ -623,5 +681,147 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_infer_generator_type_mixed_yields_and_return() {
+        // Test: function* gen() { yield 1; yield 'a'; return true; }
+        // Expected: GeneratorTypeInfo with yield_type=number|string, return_type=boolean, next_type=unknown
+        let source = "function* gen() { yield 1; yield 'a'; return true; }";
+        let (parser, binder, types) = create_context(source);
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        if let Some(root_node) = parser.get_arena().get(parser.get_root()) {
+            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
+                if let Some(&func_idx) = sf_data.statements.nodes.first() {
+                    let mut checker = GeneratorChecker::new(&mut ctx);
+                    let info = checker.infer_generator_type(func_idx);
+
+                    // Verify yield_type is union of number and string
+                    // The actual union type will be created by the type interner
+                    if let Some(crate::solver::TypeKey::Union(list_id)) = types.lookup(info.yield_type) {
+                        let members = types.type_list(list_id);
+                        assert_eq!(members.len(), 2);
+                        // Members should be number and string (order may vary due to sorting)
+                        let mut has_number = false;
+                        let mut has_string = false;
+                        for member in members.iter() {
+                            if *member == TypeId::NUMBER {
+                                has_number = true;
+                            }
+                            if *member == TypeId::STRING {
+                                has_string = true;
+                            }
+                        }
+                        assert!(has_number, "yield_type should contain number");
+                        assert!(has_string, "yield_type should contain string");
+                    } else {
+                        panic!("Expected yield_type to be a union, got {:?}", info.yield_type);
+                    }
+
+                    // Verify return_type is boolean (literal true gets the literal boolean type)
+                    // The literal true type is created by types.literal_boolean(true)
+                    // but in the checker, it returns BOOLEAN_TRUE
+                    assert!(
+                        info.return_type == types.literal_boolean(true)
+                            || info.return_type == TypeId::BOOLEAN_TRUE,
+                        "return_type should be literal true (boolean), got {:?}",
+                        info.return_type
+                    );
+
+                    // Verify next_type is unknown
+                    assert_eq!(info.next_type, TypeId::UNKNOWN, "next_type should be unknown");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_infer_generator_type_no_yield() {
+        let source = "function* empty() { }";
+        let (parser, binder, types) = create_context(source);
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        if let Some(root_node) = parser.get_arena().get(parser.get_root()) {
+            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
+                if let Some(&func_idx) = sf_data.statements.nodes.first() {
+                    let mut checker = GeneratorChecker::new(&mut ctx);
+                    let info = checker.infer_generator_type(func_idx);
+
+                    // With no yields, yield_type should be never
+                    assert_eq!(info.yield_type, TypeId::NEVER, "yield_type should be never for empty generator");
+                    // With no returns, return_type should be void
+                    assert_eq!(info.return_type, TypeId::VOID, "return_type should be void for generator without explicit return");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_create_generator_type() {
+        let source = "function* gen() { yield 1; }";
+        let (parser, binder, types) = create_context(source);
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        if let Some(root_node) = parser.get_arena().get(parser.get_root()) {
+            if let Some(sf_data) = parser.get_arena().get_source_file(root_node) {
+                if let Some(&func_idx) = sf_data.statements.nodes.first() {
+                    let mut checker = GeneratorChecker::new(&mut ctx);
+                    let gen_type = checker.get_generator_return_type(func_idx);
+
+                    // Should be a type application
+                    if let Some(crate::solver::TypeKey::Application(app_id)) = types.lookup(gen_type) {
+                        let app = types.type_application(app_id);
+                        // Should have 3 type arguments: yield, return, next
+                        assert_eq!(app.args.len(), 3, "Generator type should have 3 type arguments");
+                    } else {
+                        panic!("Expected Generator type to be a type application, got {:?}", gen_type);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_iterator_return_type_for_array() {
+        let types = TypeInterner::new();
+
+        // Create an array type
+        let array_type = types.array(TypeId::NUMBER);
+
+        // Create a minimal context for testing
+        let parser = ParserState::new("test.ts".to_string(), "".to_string());
+        let binder = BinderState::new();
+        let mut ctx = CheckerContext::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::checker::context::CheckerOptions::default(),
+        );
+
+        let checker = GeneratorChecker::new(&mut ctx);
+        let return_type = checker.get_iterator_return_type(array_type);
+
+        // Arrays return undefined when iteration is complete
+        assert_eq!(return_type, TypeId::UNDEFINED);
     }
 }
