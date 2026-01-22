@@ -508,6 +508,140 @@ impl<'a> ContextualTypeContext<'a> {
             Some(self.interner.union(return_types))
         }
     }
+
+    /// Get the contextual yield type for a generator function.
+    ///
+    /// If the expected type is `Generator<Y, R, N>`, this returns Y.
+    /// This is used to contextually type yield expressions.
+    ///
+    /// Example:
+    /// ```typescript
+    /// function* gen(): Generator<number, void, unknown> {
+    ///     yield 1;  // 1 is contextually typed as number
+    /// }
+    /// ```
+    pub fn get_generator_yield_type(&self) -> Option<TypeId> {
+        let expected = self.expected?;
+        let key = self.interner.lookup(expected)?;
+
+        match key {
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Generator<Y, R, N> has Y as the first type argument
+                if !app.args.is_empty() {
+                    Some(app.args[0])
+                } else {
+                    None
+                }
+            }
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                let yield_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_generator_yield_type()
+                    })
+                    .collect();
+
+                if yield_types.is_empty() {
+                    None
+                } else if yield_types.len() == 1 {
+                    Some(yield_types[0])
+                } else {
+                    Some(self.interner.union(yield_types))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the contextual return type for a generator function (TReturn from Generator<Y, TReturn, N>).
+    ///
+    /// This is used to contextually type return statements in generators.
+    pub fn get_generator_return_type(&self) -> Option<TypeId> {
+        let expected = self.expected?;
+        let key = self.interner.lookup(expected)?;
+
+        match key {
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Generator<Y, R, N> has R as the second type argument
+                if app.args.len() >= 2 {
+                    Some(app.args[1])
+                } else {
+                    None
+                }
+            }
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                let return_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_generator_return_type()
+                    })
+                    .collect();
+
+                if return_types.is_empty() {
+                    None
+                } else if return_types.len() == 1 {
+                    Some(return_types[0])
+                } else {
+                    Some(self.interner.union(return_types))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the contextual next type for a generator function (TNext from Generator<Y, R, TNext>).
+    ///
+    /// This is used to determine the type of values passed to .next() and
+    /// the type of the yield expression result.
+    pub fn get_generator_next_type(&self) -> Option<TypeId> {
+        let expected = self.expected?;
+        let key = self.interner.lookup(expected)?;
+
+        match key {
+            TypeKey::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                // Generator<Y, R, N> has N as the third type argument
+                if app.args.len() >= 3 {
+                    Some(app.args[2])
+                } else {
+                    None
+                }
+            }
+            TypeKey::Union(members) => {
+                let members = self.interner.type_list(members);
+                let next_types: Vec<TypeId> = members
+                    .iter()
+                    .filter_map(|&m| {
+                        let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                        ctx.get_generator_next_type()
+                    })
+                    .collect();
+
+                if next_types.is_empty() {
+                    None
+                } else if next_types.len() == 1 {
+                    Some(next_types[0])
+                } else {
+                    Some(self.interner.union(next_types))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Create a child context for a yield expression in a generator.
+    pub fn for_yield(&self) -> ContextualTypeContext<'a> {
+        match self.get_generator_yield_type() {
+            Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
+            None => ContextualTypeContext::new(self.interner),
+        }
+    }
 }
 
 /// Apply contextual type to infer a more specific type.
