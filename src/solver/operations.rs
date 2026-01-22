@@ -303,6 +303,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             substitution.insert(tp.name, placeholder_id);
             var_map.insert(placeholder_id, var);
 
+            // Add the type parameter constraint as an upper bound for the inference variable.
+            // This ensures that inferred types like tuples [string, boolean] are validated
+            // against constraints like `T extends any[]` during resolution.
+            if let Some(constraint) = tp.constraint {
+                infer_ctx.add_upper_bound(var, constraint);
+            }
+
             if tp.default.is_some() {
                 self.defaulted_placeholders.insert(placeholder_id);
             }
@@ -741,24 +748,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Extract the arguments that should be inferred for the variadic type parameter,
-        // excluding trailing fixed elements.
-        // For example, for `...args: [...T, number]` with call `foo(1, 'a', 'b', 2)`:
-        //   - rest arguments are ['a', 'b', 2] (args after first param)
-        //   - trailing_count is 1 (the `number` element)
-        //   - we should infer T from ['a', 'b'], not ['a', 'b', 2]
-        let rest_arg_count = arg_types.len() - rest_start;
-        let infer_count = rest_arg_count.saturating_sub(trailing_count);
-
-        // Slice from rest_start, not start_index, since infer_count is relative to rest_start
-        let tuple_elements = arg_types[rest_start..rest_start + infer_count]
-            .iter()
-            .map(|&ty| TupleElement {
-                type_id: ty,
-                name: None,
-                optional: false,
-                rest: false,
-            })
-            .collect();
+        // excluding both prefix fixed elements and trailing fixed elements.
+        // For example, for `...args: [number, ...T, boolean]` with call `foo(1, 'a', 'b', true)`:
+        //   - rest_start = 0 (rest param index)
+        //   - start_index = 1 (after the prefix `number`)
+        //   - trailing_count = 1 (the trailing `boolean`)
+        //   - we should infer T from ['a', 'b'], not [1, 'a', 'b', true]
+        //
+        // The variadic arguments start at start_index and end before trailing elements.
+        let end_index = arg_types.len().saturating_sub(trailing_count);
+        let tuple_elements: Vec<TupleElement> = if start_index < end_index {
+            arg_types[start_index..end_index]
+                .iter()
+                .map(|&ty| TupleElement {
+                    type_id: ty,
+                    name: None,
+                    optional: false,
+                    rest: false,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Some((
             start_index,
             target_type,
