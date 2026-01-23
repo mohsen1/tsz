@@ -8106,6 +8106,7 @@ impl<'a> CheckerState<'a> {
                 k if k == SyntaxKind::AsteriskToken as u16 => "*",
                 k if k == SyntaxKind::SlashToken as u16 => "/",
                 k if k == SyntaxKind::PercentToken as u16 => "%",
+                k if k == SyntaxKind::AsteriskAsteriskToken as u16 => "**",
                 k if k == SyntaxKind::LessThanToken as u16 => "<",
                 k if k == SyntaxKind::GreaterThanToken as u16 => ">",
                 k if k == SyntaxKind::LessThanEqualsToken as u16 => "<=",
@@ -14993,8 +14994,8 @@ impl<'a> CheckerState<'a> {
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
-        // Check if this is an arithmetic operator (-, *, /, %)
-        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%");
+        // Check if this is an arithmetic operator (-, *, /, %, **)
+        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "**");
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)

@@ -3205,7 +3205,7 @@ impl<'a> BinaryOpEvaluator<'a> {
     pub fn evaluate(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
         match op {
             "+" => self.evaluate_plus(left, right),
-            "-" | "*" | "/" | "%" => self.evaluate_arithmetic(left, right, op),
+            "-" | "*" | "/" | "%" | "**" => self.evaluate_arithmetic(left, right, op),
             "==" | "!=" | "===" | "!==" => {
                 if self.has_overlap(left, right) {
                     BinaryOpResult::Success(TypeId::BOOLEAN)

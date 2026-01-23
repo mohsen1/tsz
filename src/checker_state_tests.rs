@@ -28151,3 +28151,227 @@ const result = big * num;  // TS2365: Operator '*' cannot be applied to types 'b
         codes
     );
 }
+
+// =============================================================================
+// TS2362/TS2363: Exponentiation (**) Operator Tests
+// =============================================================================
+
+#[test]
+fn test_ts2362_ts2363_exponentiation_operator() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    // Test the ** exponentiation operator with invalid operands
+    let source = r#"
+const str = "hello";
+const bool = true;
+const result1 = str ** 2;    // TS2362: left-hand side is string
+const result2 = 2 ** str;    // TS2363: right-hand side is string
+const result3 = bool ** 2;   // TS2362: left-hand side is boolean
+const result4 = 2 ** bool;   // TS2363: right-hand side is boolean
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2362_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .count();
+    let ts2363_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .count();
+
+    assert_eq!(
+        ts2362_count, 2,
+        "Expected 2 TS2362 errors for invalid left operands of **. All codes: {:?}",
+        codes
+    );
+    assert_eq!(
+        ts2363_count, 2,
+        "Expected 2 TS2363 errors for invalid right operands of **. All codes: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_exponentiation_valid_with_numbers() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    // Test valid ** operations with numbers
+    let source = r#"
+const a = 2;
+const b = 3;
+const result1 = a ** b;
+const result2 = 2 ** 10;
+const result3 = a ** 2;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2362_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .count();
+    let ts2363_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .count();
+
+    assert_eq!(
+        ts2362_count, 0,
+        "Expected no TS2362 errors for valid ** operations. All codes: {:?}",
+        codes
+    );
+    assert_eq!(
+        ts2363_count, 0,
+        "Expected no TS2363 errors for valid ** operations. All codes: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_exponentiation_valid_with_any() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    // Test ** with any type (should be valid)
+    let source = r#"
+declare const anyVal: any;
+const result1 = anyVal ** 2;
+const result2 = 2 ** anyVal;
+const result3 = anyVal ** anyVal;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2362_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .count();
+    let ts2363_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .count();
+
+    assert_eq!(
+        ts2362_count, 0,
+        "Expected no TS2362 errors when using 'any' with **. All codes: {:?}",
+        codes
+    );
+    assert_eq!(
+        ts2363_count, 0,
+        "Expected no TS2363 errors when using 'any' with **. All codes: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_ts2362_ts2363_all_arithmetic_operators_including_exponentiation() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+const str = "hello";
+const num = 10;
+const r1 = str - num;   // TS2362
+const r2 = str * num;   // TS2362
+const r3 = str / num;   // TS2362
+const r4 = str % num;   // TS2362
+const r5 = str ** num;  // TS2362
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2362_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER)
+        .count();
+
+    assert_eq!(
+        ts2362_count, 5,
+        "Expected 5 TS2362 errors for all arithmetic operators (-, *, /, %, **). All codes: {:?}",
+        codes
+    );
+}

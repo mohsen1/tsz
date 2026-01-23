@@ -7204,3 +7204,86 @@ fn test_is_arithmetic_operand_mixed_union_invalid() {
         "union of number and string should NOT be a valid arithmetic operand"
     );
 }
+
+// =============================================================================
+// BinaryOpEvaluator::evaluate tests for ** (exponentiation) operator
+// =============================================================================
+
+#[test]
+fn test_evaluate_exponentiation_number_number() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // number ** number = number
+    let result = evaluator.evaluate(TypeId::NUMBER, TypeId::NUMBER, "**");
+    assert!(
+        matches!(result, BinaryOpResult::Success(TypeId::NUMBER)),
+        "number ** number should be number"
+    );
+}
+
+#[test]
+fn test_evaluate_exponentiation_bigint_bigint() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // bigint ** bigint = bigint
+    let result = evaluator.evaluate(TypeId::BIGINT, TypeId::BIGINT, "**");
+    assert!(
+        matches!(result, BinaryOpResult::Success(TypeId::BIGINT)),
+        "bigint ** bigint should be bigint"
+    );
+}
+
+#[test]
+fn test_evaluate_exponentiation_any() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // any ** number = number (any allows operations)
+    let result = evaluator.evaluate(TypeId::ANY, TypeId::NUMBER, "**");
+    assert!(
+        matches!(result, BinaryOpResult::Success(TypeId::NUMBER)),
+        "any ** number should be number"
+    );
+
+    // number ** any = number
+    let result = evaluator.evaluate(TypeId::NUMBER, TypeId::ANY, "**");
+    assert!(
+        matches!(result, BinaryOpResult::Success(TypeId::NUMBER)),
+        "number ** any should be number"
+    );
+}
+
+#[test]
+fn test_evaluate_exponentiation_string_error() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // string ** number = TypeError
+    let result = evaluator.evaluate(TypeId::STRING, TypeId::NUMBER, "**");
+    assert!(
+        matches!(result, BinaryOpResult::TypeError { .. }),
+        "string ** number should be TypeError"
+    );
+
+    // number ** string = TypeError
+    let result = evaluator.evaluate(TypeId::NUMBER, TypeId::STRING, "**");
+    assert!(
+        matches!(result, BinaryOpResult::TypeError { .. }),
+        "number ** string should be TypeError"
+    );
+}
+
+#[test]
+fn test_evaluate_exponentiation_boolean_error() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // boolean ** number = TypeError
+    let result = evaluator.evaluate(TypeId::BOOLEAN, TypeId::NUMBER, "**");
+    assert!(
+        matches!(result, BinaryOpResult::TypeError { .. }),
+        "boolean ** number should be TypeError"
+    );
+}
