@@ -686,7 +686,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                eprintln!("[RESOLVE_PHASE4] Found '{}' in lib binder[{}]", name, i);
                 if debug {
                     trace!(
                         name = %name,
@@ -5853,8 +5852,29 @@ impl<'a> CheckerState<'a> {
                 self.get_symbol_constructor_type()
             }
             _ if self.is_known_global_value_name(name) => {
-                // Return ANY for known globals to allow property access
-                TypeId::ANY
+                // Node.js runtime globals are always available (injected by runtime)
+                // We return ANY without emitting an error for these
+                if self.is_nodejs_runtime_global(name) {
+                    return TypeId::ANY;
+                }
+
+                // Check if the global is actually available in lib contexts
+                if self.ctx.has_name_in_lib(name) {
+                    // Global is available - return ANY to allow property access
+                    TypeId::ANY
+                } else {
+                    // Global is not available - emit appropriate error
+                    // Use TS2583 for ES2015+ types, TS2304 for other globals
+                    use crate::lib_loader;
+                    if lib_loader::is_es2015_plus_type(name) {
+                        // ES2015+ type not available - suggest changing lib
+                        self.error_cannot_find_global_type(name, idx);
+                    } else {
+                        // Standard global not available
+                        self.error_cannot_find_name_at(name, idx);
+                    }
+                    TypeId::ERROR
+                }
             }
             _ => {
                 // Check if we're inside a class and the name matches a static member (error 2662)
@@ -14824,6 +14844,17 @@ impl<'a> CheckerState<'a> {
                 | "navigator"
                 | "location"
                 | "history"
+        )
+    }
+
+    /// Check if a name is a Node.js runtime global that is always available.
+    /// These globals are injected by the Node.js runtime and don't require lib.d.ts.
+    /// Note: console, globalThis, and process are NOT included here because they
+    /// require proper lib definitions (lib.dom.d.ts, lib.es2020.d.ts, @types/node).
+    fn is_nodejs_runtime_global(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "exports" | "module" | "require" | "__dirname" | "__filename"
         )
     }
 
