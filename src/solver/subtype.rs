@@ -3593,6 +3593,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Expand a tuple rest element into its constituent parts.
+    ///
+    /// Tuples can have rest elements like `[A, B, ...C[]]` which need to be expanded
+    /// for subtype checking. This function recursively expands rest elements to produce:
+    /// - `fixed`: Elements before the rest
+    /// - `variadic`: The rest element's type (e.g., C for ...C[])
+    /// - `tail`: Elements after the rest (rare, but valid in some TypeScript patterns)
+    ///
+    /// ## Examples:
+    /// - `[number, string]` → fixed: [number, string], variadic: None, tail: []
+    /// - `[number, ...string[]]` → fixed: [number], variadic: Some(string), tail: []
+    /// - `[...T[], number]` → fixed: [], variadic: Some(T), tail: [number]
+    ///
+    /// ## Recursive Expansion:
+    /// Nested rest elements are recursively expanded, so:
+    /// - `[A, ...[...B[], C]]` → fixed: [A], variadic: Some(B), tail: [C]
     fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
         match self.interner.lookup(type_id) {
             Some(TypeKey::Array(elem)) => TupleRestExpansion {
