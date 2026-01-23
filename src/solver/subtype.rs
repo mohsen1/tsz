@@ -2519,6 +2519,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check that source properties are compatible with target index signatures.
+    ///
+    /// When a target has an index signature, all source properties must satisfy it:
+    /// - String index: All string-named properties must be compatible with index type
+    /// - Number index: All numerically-named properties must be compatible with index type
+    ///
+    /// ## Additional Constraints:
+    /// - Readonly property in source cannot satisfy mutable index in target
+    /// - Methods use bivariant checking (both directions)
+    /// - Regular properties use contravariant checking
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Target {
+    ///   [key: string]: number;  // String index signature
+    /// }
+    /// interface Source {
+    ///   x: number;   // Compatible with [key: string]: number
+    ///   y: string;   // NOT compatible
+    /// }
+    /// ```
     fn check_properties_against_index_signatures(
         &mut self,
         source: &[PropertyInfo],
