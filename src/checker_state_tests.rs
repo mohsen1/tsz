@@ -28061,3 +28061,93 @@ const r4 = str % num;  // TS2362
         codes
     );
 }
+
+#[test]
+fn test_ts2365_mixing_number_and_bigint() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+const num = 10;
+const big: bigint = 20n;
+const result = num - big;  // TS2365: Operator '-' cannot be applied to types 'number' and 'bigint'
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2365_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES)
+        .count();
+
+    assert_eq!(
+        ts2365_count, 1,
+        "Expected 1 TS2365 for number - bigint mixing. All codes: {:?}",
+        codes
+    );
+}
+
+#[test]
+fn test_ts2365_mixing_bigint_and_number() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+const big: bigint = 10n;
+const num = 20;
+const result = big * num;  // TS2365: Operator '*' cannot be applied to types 'bigint' and 'number'
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2365_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES)
+        .count();
+
+    assert_eq!(
+        ts2365_count, 1,
+        "Expected 1 TS2365 for bigint * number mixing. All codes: {:?}",
+        codes
+    );
+}
