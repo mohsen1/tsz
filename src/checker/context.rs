@@ -207,6 +207,8 @@ pub struct CheckerContext<'a> {
     // --- Diagnostics ---
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
+    /// Set of already-emitted diagnostics (start, code) for deduplication.
+    pub emitted_diagnostics: FxHashSet<(u32, u32)>,
 
     // --- Recursion Guards ---
     /// Stack of symbols being resolved.
@@ -321,6 +323,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
+            emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             class_instance_resolution_set: HashSet::new(),
@@ -378,6 +381,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
+            emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             class_instance_resolution_set: HashSet::new(),
@@ -437,6 +441,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
+            emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             class_instance_resolution_set: HashSet::new(),
@@ -495,6 +500,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             diagnostics: Vec::new(),
+            emitted_diagnostics: FxHashSet::default(),
             symbol_resolution_stack: Vec::new(),
             symbol_resolution_set: HashSet::new(),
             class_instance_resolution_set: HashSet::new(),
@@ -559,8 +565,15 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Add an error diagnostic.
+    /// Add an error diagnostic (with deduplication).
+    /// Diagnostics with the same (start, code) are only emitted once.
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
+        // Check if we've already emitted this diagnostic
+        let key = (start, code);
+        if self.emitted_diagnostics.contains(&key) {
+            return;
+        }
+        self.emitted_diagnostics.insert(key);
         self.diagnostics.push(Diagnostic::error(
             self.file_name.clone(),
             start,
@@ -568,6 +581,17 @@ impl<'a> CheckerContext<'a> {
             message,
             code,
         ));
+    }
+
+    /// Push a diagnostic with deduplication.
+    /// Diagnostics with the same (start, code) are only emitted once.
+    pub fn push_diagnostic(&mut self, diag: Diagnostic) {
+        let key = (diag.start, diag.code);
+        if self.emitted_diagnostics.contains(&key) {
+            return;
+        }
+        self.emitted_diagnostics.insert(key);
+        self.diagnostics.push(diag);
     }
 
     /// Get node span (pos, end) from index.
