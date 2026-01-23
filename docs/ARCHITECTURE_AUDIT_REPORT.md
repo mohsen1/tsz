@@ -24,7 +24,7 @@
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Break up `solver/subtype.rs` check_subtype_inner | 🚧 Planned | 2,437-line function needs decomposition |
+| Break up `solver/subtype.rs` check_subtype_inner | 🚧 In Progress | ~223 lines extracted (2,437 → ~2,214 lines, 9% reduction) |
 | Break up `checker/state.rs` god object | ⏳ Pending | 27,525 lines, 554 functions |
 
 ### ⏳ Planned - Phase 3: Introduce Abstractions
@@ -563,6 +563,17 @@ checker/
 ```
 
 **solver/subtype.rs decomposition:**
+
+**Progress (2026-01-23):** Extracted 4 helper methods from `check_subtype_inner`:
+- `check_union_source_subtype` / `check_union_target_subtype` (union distribution logic)
+- `check_intersection_source_subtype` / `check_intersection_target_subtype` (intersection narrowing)
+- `check_type_parameter_subtype` (type parameter compatibility)
+- `check_tuple_to_array_subtype` (tuple rest expansion)
+- `check_function_to_callable_subtype` / `check_callable_to_function_subtype` (signature matching)
+
+**Result:** Reduced from 2,437 to ~2,214 lines (9% reduction, ~223 lines extracted)
+
+**Next steps:** Continue extracting more helper methods, then eventually move to module structure:
 ```
 solver/
 ├── subtype.rs         (reduced coordinator)
