@@ -3224,7 +3224,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if a source type is a subtype of an intersection type.
     ///
-    /// Intersection target: all members must be satisfied.
+    /// When the target is an intersection, the source must be a subtype of ALL
+    /// intersection members. This is the "forall" quantifier - for every member in
+    /// the intersection, the source must satisfy it.
+    ///
+    /// ## Intersection Target Rule:
+    /// `S <: (A & B & C)` if `S <: A` AND `S <: B` AND `S <: C`
+    ///
+    /// ## Dual to Union Source:
+    /// This is the dual of union source checking:
+    /// - Union source (S1 | S2) <: T requires BOTH S1 <: T AND S2 <: T
+    /// - Intersection target T <: (T1 & T2) requires T <: T1 AND T <: T2
+    /// - Intersection target: S <: (T1 & T2) requires S <: T1 AND S <: T2
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // { name: string; age: number } <: ({ name: string } & { age: number }) ✅
+    /// // { name: string } <: ({ name: string } & { age: number }) ❌
+    /// // never <: (string & number) ✅ (never is subtype of everything)
+    /// ```
     fn check_intersection_target_subtype(
         &mut self,
         source: TypeId,
