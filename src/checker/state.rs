@@ -6317,29 +6317,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a type is callable (has call signatures).
-    /// Callable types allow arbitrary property access because functions are objects at runtime.
-    fn is_callable_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        if let Some(key) = self.ctx.types.lookup(type_id) {
-            match key {
-                TypeKey::Callable(shape_id) => {
-                    let shape = self.ctx.types.callable_shape(shape_id);
-                    // A type is callable if it has at least one call signature
-                    !shape.call_signatures.is_empty()
-                }
-                TypeKey::Function(_) => {
-                    // Function types are always callable
-                    true
-                }
-                _ => false,
-            }
-        } else {
-            false
-        }
-    }
-
     fn should_check_definite_assignment(&mut self, sym_id: SymbolId, idx: NodeIndex) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
@@ -9563,15 +9540,12 @@ impl<'a> CheckerState<'a> {
                     }
                     // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
                     if !property_name.starts_with('#') {
-                        // Callable types (functions) allow arbitrary property access
-                        // because functions are objects at runtime and can have additional properties
-                        if !self.is_callable_type(object_type_for_access) {
-                            self.error_property_not_exist_at(
-                                property_name,
-                                object_type_for_access,
-                                idx,
-                            );
-                        }
+                        // TypeScript emits TS2339 for property access on any type, including functions
+                        self.error_property_not_exist_at(
+                            property_name,
+                            object_type_for_access,
+                            idx,
+                        );
                     }
                     TypeId::ERROR
                 }
