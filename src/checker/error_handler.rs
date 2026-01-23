@@ -6,6 +6,7 @@
 //! The trait provides a consistent API for error reporting across the codebase,
 //! eliminating code duplication and making error emission more maintainable.
 
+use crate::checker::state::CheckerState;
 use crate::checker::types::diagnostics::{Diagnostic, DiagnosticCategory};
 use crate::parser::NodeIndex;
 use crate::solver::TypeId;
@@ -46,12 +47,7 @@ pub trait ErrorHandler {
     ///
     /// This handles the common pattern where a source type cannot be
     /// assigned to a target type due to incompatibility.
-    fn emit_type_not_assignable(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-    );
+    fn emit_type_not_assignable(&mut self, source: TypeId, target: TypeId, idx: NodeIndex);
 
     /// Emit a "type not assignable" error with detailed reason.
     ///
@@ -100,20 +96,10 @@ pub trait ErrorHandler {
     );
 
     /// Emit an "argument count mismatch" error (TS2554).
-    fn emit_argument_count_mismatch(
-        &mut self,
-        expected: usize,
-        got: usize,
-        idx: NodeIndex,
-    );
+    fn emit_argument_count_mismatch(&mut self, expected: usize, got: usize, idx: NodeIndex);
 
     /// Emit an "expected at least N arguments" error (TS2555).
-    fn emit_expected_at_least_arguments(
-        &mut self,
-        expected_min: usize,
-        got: usize,
-        idx: NodeIndex,
-    );
+    fn emit_expected_at_least_arguments(&mut self, expected_min: usize, got: usize, idx: NodeIndex);
 
     /// Emit a "type is not callable" error.
     fn emit_not_callable(&mut self, type_id: TypeId, idx: NodeIndex);
@@ -282,15 +268,18 @@ impl<'a> DiagnosticBuilder<'a> {
     }
 }
 
-impl<'a> ErrorHandler for CheckerState {
+impl<'a> ErrorHandler for CheckerState<'a> {
     // =========================================================================
     // Core Error Emission
     // =========================================================================
 
     fn emit_error(&mut self, node_idx: NodeIndex, message: &str, code: u32) {
-        if let Some((start, end)) = self.get_node_span(node_idx) {
-            let length = end.saturating_sub(start);
-            self.emit_error_at(start, length, message, code);
+        match self.get_node_span(node_idx) {
+            Some((start, end)) => {
+                let length = end.saturating_sub(start);
+                self.emit_error_at(start, length, message, code);
+            }
+            None => {}
         }
     }
 
@@ -331,7 +320,7 @@ impl<'a> ErrorHandler for CheckerState {
         &mut self,
         source: TypeId,
         target: TypeId,
-        reason: &str,
+        _reason: &str,
         idx: NodeIndex,
     ) {
         // Error type suppression
@@ -343,7 +332,7 @@ impl<'a> ErrorHandler for CheckerState {
             return;
         }
 
-        self.error_type_not_assignable_with_reason_at(source, target, reason, idx);
+        self.error_type_not_assignable_with_reason_at(source, target, idx);
     }
 
     // =========================================================================
@@ -389,7 +378,12 @@ impl<'a> ErrorHandler for CheckerState {
         self.error_argument_count_mismatch_at(expected, got, idx);
     }
 
-    fn emit_expected_at_least_arguments(&mut self, expected_min: usize, got: usize, idx: NodeIndex) {
+    fn emit_expected_at_least_arguments(
+        &mut self,
+        expected_min: usize,
+        got: usize,
+        idx: NodeIndex,
+    ) {
         self.error_expected_at_least_arguments_at(expected_min, got, idx);
     }
 
@@ -499,7 +493,12 @@ impl<'a> ErrorHandler for CheckerState {
     // Module/Namespace Error Patterns
     // =========================================================================
 
-    fn emit_namespace_no_export(&mut self, namespace_name: &str, member_name: &str, idx: NodeIndex) {
+    fn emit_namespace_no_export(
+        &mut self,
+        namespace_name: &str,
+        member_name: &str,
+        idx: NodeIndex,
+    ) {
         self.error_namespace_no_export(namespace_name, member_name, idx);
     }
 
@@ -510,14 +509,21 @@ impl<'a> ErrorHandler for CheckerState {
     fn emit_get_accessor_must_return(&mut self, idx: NodeIndex) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        if let Some((start, end)) = self.get_node_span(idx) {
-            let length = end.saturating_sub(start);
-            self.emit_error_at(
-                start,
-                length,
-                diagnostic_messages::GET_ACCESSOR_MUST_RETURN_VALUE,
-                diagnostic_codes::GET_ACCESSOR_MUST_RETURN_VALUE,
-            );
+        match self.get_node_span(idx) {
+            Some((start, end)) => {
+                let length = end.saturating_sub(start);
+                let file = &self.ctx.file_name;
+                self.ctx.diagnostics.push(Diagnostic {
+                    file: file.clone(),
+                    start,
+                    length,
+                    message_text: diagnostic_messages::GET_ACCESSOR_MUST_RETURN_VALUE.to_string(),
+                    category: crate::checker::types::diagnostics::DiagnosticCategory::Error,
+                    code: diagnostic_codes::GET_ACCESSOR_MUST_RETURN_VALUE,
+                    related_information: Vec::new(),
+                });
+            }
+            None => {}
         }
     }
 
@@ -530,7 +536,7 @@ impl<'a> ErrorHandler for CheckerState {
 // Re-export the ErrorHandler implementation
 // =============================================================================
 
-impl ErrorHandler for &mut CheckerState {
+impl<'a> ErrorHandler for &mut CheckerState<'a> {
     fn emit_error(&mut self, node_idx: NodeIndex, message: &str, code: u32) {
         (*self).emit_error(node_idx, message, code);
     }
@@ -592,7 +598,12 @@ impl ErrorHandler for &mut CheckerState {
         (*self).emit_argument_count_mismatch(expected, got, idx);
     }
 
-    fn emit_expected_at_least_arguments(&mut self, expected_min: usize, got: usize, idx: NodeIndex) {
+    fn emit_expected_at_least_arguments(
+        &mut self,
+        expected_min: usize,
+        got: usize,
+        idx: NodeIndex,
+    ) {
         (*self).emit_expected_at_least_arguments(expected_min, got, idx);
     }
 
@@ -678,7 +689,12 @@ impl ErrorHandler for &mut CheckerState {
         (*self).emit_value_only_type(name, idx);
     }
 
-    fn emit_namespace_no_export(&mut self, namespace_name: &str, member_name: &str, idx: NodeIndex) {
+    fn emit_namespace_no_export(
+        &mut self,
+        namespace_name: &str,
+        member_name: &str,
+        idx: NodeIndex,
+    ) {
         (*self).emit_namespace_no_export(namespace_name, member_name, idx);
     }
 

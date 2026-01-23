@@ -146,6 +146,7 @@ pub mod diagnostic_messages {
         "Cannot assign to '{0}' because it is a read-only property.";
     pub const CANNOT_ASSIGN_PRIVATE_METHOD: &str =
         "Cannot assign to private method '{0}'. Private methods are not writable.";
+    pub const GET_ACCESSOR_MUST_RETURN_VALUE: &str = "A 'get' accessor must return a value.";
     pub const MEMBER_NOT_ACCESSIBLE: &str =
         "Property '{0}' is {1} and only accessible within class '{2}'.";
     pub const PRIVATE_IDENTIFIER_IN_AMBIENT_CONTEXT: &str =

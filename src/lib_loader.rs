@@ -1146,7 +1146,7 @@ let r: RegExp;
             .filter(|d| d.code == CANNOT_FIND_GLOBAL_TYPE)
             .count();
 
-        let ts2583_count = checker
+        let _ts2583_count = checker
             .ctx
             .diagnostics
             .iter()
