@@ -67,3 +67,24 @@ ALWAYS run commands with a reasonable timeout to avoid commands that will hang
 
 ## Run tests in docker
 Always run tests in docker to ensure a consistent environment. Using `scripts/test.sh` will automatically use docker
+
+## Disk Usage with Worktrees
+
+Each worktree maintains its own `.target/` directory (~400 MB) and `node_modules` (~185 MB). With incremental compilation enabled, these grow over time.
+
+**Periodic cleanup:**
+```bash
+# Clean incremental caches only (keeps compiled deps)
+rm -rf .target/*/incremental
+
+# Full clean (will require rebuild)
+cargo clean
+
+# Clean node_modules if not actively using
+rm -rf node_modules TypeScript/node_modules conformance/node_modules
+```
+
+**When to clean:**
+- Before switching to a worktree you haven't used in a while
+- When disk usage becomes problematic
+- After major dependency updates
