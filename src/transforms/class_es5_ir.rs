@@ -738,11 +738,16 @@ impl<'a> ES5ClassTransformer<'a> {
             }
 
             let is_rest = param.dot_dot_dot_token;
-            let ir_param = if is_rest {
+            let mut ir_param = if is_rest {
                 IRParam::rest(name)
             } else {
                 IRParam::new(name)
             };
+
+            // Convert default value if present
+            if !param.initializer.is_none() {
+                ir_param.default_value = Some(Box::new(self.convert_expression(param.initializer)));
+            }
 
             result.push(ir_param);
         }
@@ -2174,10 +2179,16 @@ impl<'a> AstToIr<'a> {
                 let param = self.arena.get_parameter(node)?;
                 let name = get_identifier_text(self.arena, param.name)?;
                 let rest = param.dot_dot_dot_token;
+                // Convert default value if present
+                let default_value = if !param.initializer.is_none() {
+                    Some(Box::new(self.convert_expression(param.initializer)))
+                } else {
+                    None
+                };
                 Some(IRParam {
                     name,
                     rest,
-                    default_value: None, // Default values need special handling
+                    default_value,
                 })
             })
             .collect()
