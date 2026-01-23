@@ -8103,7 +8103,7 @@ fn test_numeric_literal_types() {
     let two = interner.literal_number(2.0);
     let zero = interner.literal_number(0.0);
     let negative = interner.literal_number(-42.0);
-    let float = interner.literal_number(3.14);
+    let float = interner.literal_number(3.15); // Avoid clippy::approx_constant
 
     // Same literal is subtype of itself
     assert!(checker.is_subtype_of(one, one));
@@ -9213,8 +9213,8 @@ fn test_bivariant_method_vs_function_property() {
     // Test subtype relationship
     // Method sources can be bivariant
     let result = checker.is_subtype_of(obj_method, obj_fn_prop);
-    // Document the behavior
-    assert!(result || !result); // Just verify it doesn't panic
+    // Document the behavior - just verify it doesn't panic
+    let _ = result;
 }
 
 #[test]
@@ -9309,8 +9309,8 @@ fn test_bivariant_event_handler_pattern() {
     // With bivariance, handler expecting derived event should be assignable
     // to handler expecting base event (practical for event handling)
     let derived_to_base = checker.is_subtype_of(obj_derived_handler, obj_base_handler);
-    // This is the "unsound but practical" TypeScript behavior
-    assert!(derived_to_base || !derived_to_base); // Document behavior
+    // This is the "unsound but practical" TypeScript behavior - just ensure no panic
+    let _ = derived_to_base;
 }
 
 #[test]
@@ -18076,7 +18076,7 @@ fn test_index_signature_empty_object_to_indexed() {
     // This depends on strictness settings
     let result = checker.is_subtype_of(empty_obj, indexed_obj);
     // Just ensure it doesn't panic
-    assert!(result || !result);
+    let _ = result;
 }
 
 #[test]
@@ -18235,7 +18235,7 @@ fn test_index_signature_never_value() {
     let empty_obj = interner.object(vec![]);
     let result = checker.is_subtype_of(empty_obj, indexed_never);
     // Just ensure it handles the case
-    assert!(result || !result);
+    let _ = result;
 }
 
 #[test]

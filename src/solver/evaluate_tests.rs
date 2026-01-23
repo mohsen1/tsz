@@ -32289,8 +32289,8 @@ fn test_mixed_numeric_literal_types() {
 fn test_float_number_literal() {
     let interner = TypeInterner::new();
 
-    let float_pi = interner.literal_number(3.14159);
-    let float_e = interner.literal_number(2.71828);
+    let float_pi = interner.literal_number(3.15); // Avoid clippy::approx_constant
+    let float_e = interner.literal_number(2.72); // Avoid clippy::approx_constant
 
     assert_ne!(float_pi, float_e);
 
