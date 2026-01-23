@@ -1129,6 +1129,255 @@ fn test_weak_union_allows_overlap() {
 }
 
 #[test]
+fn test_weak_union_source_with_one_common_member_allows() {
+    // When source is a union, if ANY member has common property with target, allow assignment.
+    // Source: { a } | { c } (one member has common property "a" with target)
+    // Target: { a? } | { b? }
+    // This should be assignable because { a } has overlap with { a? }
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+
+    // Target: union of weak types { a?: number } | { b?: number }
+    let weak_a = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let weak_b = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.union(vec![weak_a, weak_b]);
+
+    // Source: union { a: number } | { c: number }
+    // { a: number } has common property with target's { a?: number }
+    // { c: number } does NOT have common property
+    // But since { a: number } has overlap, the source union overall should be allowed
+    let source_with_a = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let source_with_c = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let source = interner.union(vec![source_with_a, source_with_c]);
+
+    // Should be assignable: at least one member of source has common property
+    assert!(
+        checker.is_assignable(source, target),
+        "Union source with one overlapping member should be assignable to weak union target"
+    );
+}
+
+#[test]
+fn test_weak_union_source_all_members_lack_common_rejects() {
+    // When source is a union, if ALL members lack common property with target, reject.
+    // Source: { c } | { d } (no common properties with target)
+    // Target: { a? } | { b? }
+    // This should be rejected.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+    let d = interner.intern_string("d");
+
+    // Target: union of weak types { a?: number } | { b?: number }
+    let weak_a = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let weak_b = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.union(vec![weak_a, weak_b]);
+
+    // Source: union { c: number } | { d: number }
+    // Neither has common property with target
+    let source_with_c = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let source_with_d = interner.object(vec![PropertyInfo {
+        name: d,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let source = interner.union(vec![source_with_c, source_with_d]);
+
+    // Should be rejected: no member of source has common property
+    assert!(
+        !checker.is_assignable(source, target),
+        "Union source where all members lack common property should be rejected"
+    );
+}
+
+#[test]
+fn test_weak_union_nested_union_source() {
+    // Test with nested unions in source
+    // Source: ({ a } | { c }) | { d }
+    // Target: { a? } | { b? }
+    // Should be allowed because { a } in the nested union has overlap
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+    let d = interner.intern_string("d");
+
+    // Target: union of weak types { a?: number } | { b?: number }
+    let weak_a = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let weak_b = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.union(vec![weak_a, weak_b]);
+
+    // Source: nested union ({ a: number } | { c: number }) | { d: number }
+    let source_with_a = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let source_with_c = interner.object(vec![PropertyInfo {
+        name: c,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let source_with_d = interner.object(vec![PropertyInfo {
+        name: d,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let inner_union = interner.union(vec![source_with_a, source_with_c]);
+    let source = interner.union(vec![inner_union, source_with_d]);
+
+    // Should be assignable: { a } in nested union has overlap
+    assert!(
+        checker.is_assignable(source, target),
+        "Nested union source with one overlapping member should be assignable"
+    );
+}
+
+#[test]
+fn test_weak_union_with_intersection_source() {
+    // Test intersection source type
+    // Source: { a: number } & { c: number } (has property "a")
+    // Target: { a? } | { b? }
+    // Should be allowed because intersection has property "a"
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let c = interner.intern_string("c");
+
+    // Target: union of weak types { a?: number } | { b?: number }
+    let weak_a = interner.object(vec![PropertyInfo {
+        name: a,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let weak_b = interner.object(vec![PropertyInfo {
+        name: b,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: true,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.union(vec![weak_a, weak_b]);
+
+    // Source: { a: number, c: number } (as a single object with both properties)
+    // This represents the intersection semantically
+    let source = interner.object(vec![
+        PropertyInfo {
+            name: a,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name: c,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // Should be assignable: source has property "a" which overlaps with target
+    assert!(
+        checker.is_assignable(source, target),
+        "Intersection source with common property should be assignable to weak union"
+    );
+}
+
+#[test]
 fn test_rest_any_bivariant_even_strict() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
