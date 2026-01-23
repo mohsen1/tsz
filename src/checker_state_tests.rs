@@ -29537,3 +29537,557 @@ const handler: Handler = ([first, second]) => {
         type_errors
     );
 }
+
+// =============================================================================
+// TS2322 Type Not Assignable - Comprehensive Tests
+// =============================================================================
+
+/// Test TS2322 emission for variable declaration with type annotation mismatch
+#[test]
+fn test_ts2322_variable_declaration_type_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+let x: string = 42;
+let y: number = "hello";
+let z: boolean = null;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    // Should have at least 2 errors (x and y - z may or may not depending on strictNullChecks)
+    assert!(
+        ts2322_errors.len() >= 2,
+        "Expected at least 2 TS2322 errors for type mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        ts2322_errors
+    );
+}
+
+/// Test TS2322 emission for return statement type mismatch
+#[test]
+fn test_ts2322_return_statement_type_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+function getString(): string {
+    return 42;
+}
+
+function getNumber(): number {
+    return "hello";
+}
+
+function getBoolean(): boolean {
+    return {};
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors.len() >= 3,
+        "Expected at least 3 TS2322 errors for return type mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        ts2322_errors
+    );
+}
+
+/// Test TS2322 emission for class property initializer type mismatch
+#[test]
+fn test_ts2322_class_property_initializer_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+class Example {
+    stringProp: string = 42;
+    numberProp: number = "hello";
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors.len() >= 2,
+        "Expected at least 2 TS2322 errors for class property initializer mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        ts2322_errors
+    );
+}
+
+/// Test TS2322 emission for object literal property type mismatch
+#[test]
+fn test_ts2322_object_literal_property_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Person {
+    name: string;
+    age: number;
+}
+
+const p: Person = {
+    name: 123,
+    age: "thirty"
+};
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    // Object literal with mismatched property types should trigger TS2322
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected at least 1 TS2322 error for object literal property type mismatch. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test TS2322 emission for array element type mismatch
+#[test]
+fn test_ts2322_array_element_type_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+const arr: number[] = [1, 2, "three", 4];
+const arr2: string[] = ["a", "b", 3, "d"];
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    // Array literals with wrong element types should trigger TS2322
+    assert!(
+        ts2322_errors.len() >= 2,
+        "Expected at least 2 TS2322 errors for array element type mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test TS2322 is NOT emitted for valid assignments
+#[test]
+fn test_ts2322_valid_assignments_no_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+let x: string = "hello";
+let y: number = 42;
+let z: boolean = true;
+let a: any = 123;
+let b: unknown = "anything";
+
+function getString(): string {
+    return "valid";
+}
+
+function getNumber(): number {
+    return 42;
+}
+
+class Valid {
+    name: string = "test";
+    count: number = 0;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors.is_empty(),
+        "Expected no TS2322 errors for valid assignments. Got: {:?}",
+        ts2322_errors
+    );
+}
+
+/// Test TS2322 for function parameter default value mismatch
+#[test]
+fn test_ts2322_parameter_default_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+function greet(name: string = 42) {
+    return name;
+}
+
+function compute(value: number = "hello") {
+    return value;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors.len() >= 2,
+        "Expected at least 2 TS2322 errors for parameter default value mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        ts2322_errors
+    );
+}
+
+/// Test TS2322 for const assertion with type annotation
+#[test]
+fn test_ts2322_const_variable_type_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+const x: string = 42;
+const y: number = "hello";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors.len() >= 2,
+        "Expected at least 2 TS2322 errors for const variable type mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        ts2322_errors
+    );
+}
+
+/// Test TS2322 for union type assignments
+#[test]
+fn test_ts2322_union_type_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+let x: string | number = true;
+let y: "a" | "b" = "c";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors.len() >= 2,
+        "Expected at least 2 TS2322 errors for union type mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        ts2322_errors
+    );
+}
+
+/// Test TS2322 for tuple type assignments
+#[test]
+fn test_ts2322_tuple_type_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+let tuple: [string, number] = [1, "hello"];
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    // Tuple with swapped types should trigger TS2322
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected at least 1 TS2322 error for tuple type mismatch. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test TS2322 for generic type assignments
+#[test]
+fn test_ts2322_generic_type_mismatch() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Box<T> {
+    value: T;
+}
+
+const stringBox: Box<string> = { value: 42 };
+const numberBox: Box<number> = { value: "hello" };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2322_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        ts2322_errors.len() >= 2,
+        "Expected at least 2 TS2322 errors for generic type mismatches. Got {}: {:?}",
+        ts2322_errors.len(),
+        ts2322_errors
+    );
+}
