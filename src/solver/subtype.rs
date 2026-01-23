@@ -3385,6 +3385,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::False
     }
 
+    /// Get the effective type of an optional property for reading.
+    ///
+    /// Optional properties in TypeScript can be undefined even if their type doesn't
+    /// explicitly include undefined. This function adds undefined to the type unless
+    /// exactOptionalPropertyTypes is enabled.
+    ///
+    /// ## Behavior:
+    /// - If property is optional AND exact_optional_property_types is false:
+    ///   - Returns `T | undefined` where T is the property type
+    /// - Otherwise:
+    ///   - Returns the property type as-is
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Example {
+    ///   x?: number;  // Type is number, but effectively number | undefined
+    /// }
+    /// // exactOptionalPropertyTypes: false → x has type number | undefined
+    /// // exactOptionalPropertyTypes: true  → x has type number
+    /// ```
     fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
         if prop.optional && !self.exact_optional_property_types {
             self.interner.union2(prop.type_id, TypeId::UNDEFINED)
