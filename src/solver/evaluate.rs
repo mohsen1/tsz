@@ -532,6 +532,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Try to expand a type argument that may be a TypeQuery or Application.
     /// Returns the expanded type, or the original if it can't be expanded.
     /// This ensures type arguments are resolved before instantiation.
+    /// Try to expand a type argument that may be a TypeQuery or Application.
+    /// Returns the expanded type, or the original if it can't be expanded.
+    /// This ensures type arguments are resolved before instantiation.
+    ///
+    /// NOTE: This method uses self.evaluate() for Application, Conditional, Mapped,
+    /// and TemplateLiteral types to ensure recursion depth limits are enforced.
     fn try_expand_type_arg(&self, arg: TypeId) -> TypeId {
         let Some(key) = self.interner.lookup(arg) else {
             return arg;
@@ -543,9 +549,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .resolve_ref(sym_ref, self.interner)
                     .unwrap_or(arg)
             }
-            TypeKey::Application(app_id) => {
-                // Recursively evaluate the nested Application
-                self.evaluate_application(app_id)
+            TypeKey::Application(_) => {
+                // Use evaluate() to ensure depth limits are enforced
+                self.evaluate(arg)
             }
             TypeKey::Ref(sym_ref) => {
                 // Also try to resolve Ref types in type arguments
@@ -554,19 +560,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .resolve_ref(sym_ref, self.interner)
                     .unwrap_or(arg)
             }
-            TypeKey::Conditional(cond_id) => {
-                // Evaluate conditional types in type arguments
-                let cond = self.interner.conditional_type(cond_id);
-                self.evaluate_conditional(cond.as_ref())
+            TypeKey::Conditional(_) => {
+                // Use evaluate() to ensure depth limits are enforced
+                self.evaluate(arg)
             }
-            TypeKey::Mapped(mapped_id) => {
-                // Evaluate mapped types in type arguments
-                let mapped = self.interner.mapped_type(mapped_id);
-                self.evaluate_mapped(mapped.as_ref())
+            TypeKey::Mapped(_) => {
+                // Use evaluate() to ensure depth limits are enforced
+                self.evaluate(arg)
             }
-            TypeKey::TemplateLiteral(spans) => {
-                // Evaluate template literal types in type arguments
-                self.evaluate_template_literal(spans)
+            TypeKey::TemplateLiteral(_) => {
+                // Use evaluate() to ensure depth limits are enforced
+                self.evaluate(arg)
             }
             _ => arg,
         }
@@ -1239,8 +1243,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 is_distributive: false,
             };
 
-            // Recursively evaluate (handles nested unions, type parameters)
-            let result = self.evaluate_conditional(&member_cond);
+            // Recursively evaluate via evaluate() to respect depth limits
+            let cond_type = self.interner.conditional(member_cond);
+            let result = self.evaluate(cond_type);
             // Check if evaluation hit depth limit
             if result == TypeId::ERROR && *self.depth_exceeded.borrow() {
                 return TypeId::ERROR;
@@ -1252,6 +1257,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.interner.union(results)
     }
 
+    /// Helper to recursively evaluate an index access while respecting depth limits.
+    /// Creates an IndexAccess type and evaluates it through the main evaluate() method.
+    fn recurse_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        let index_access = self
+            .interner
+            .intern(TypeKey::IndexAccess(object_type, index_type));
+        self.evaluate(index_access)
+    }
+
     /// Evaluate an index access type: T[K]
     ///
     /// This resolves property access on object types.
@@ -1259,7 +1273,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let evaluated_object = self.evaluate(object_type);
         let evaluated_index = self.evaluate(index_type);
         if evaluated_object != object_type || evaluated_index != index_type {
-            return self.evaluate_index_access(evaluated_object, evaluated_index);
+            // Use recurse_index_access to respect depth limits
+            return self.recurse_index_access(evaluated_object, evaluated_index);
         }
         // Be more strict: don't fall back to 'any' for index access
         // This improves type safety by requiring proper types
@@ -1279,14 +1294,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         match obj_key {
-            TypeKey::ReadonlyType(inner) => self.evaluate_index_access(inner, index_type),
+            TypeKey::ReadonlyType(inner) => self.recurse_index_access(inner, index_type),
             TypeKey::Ref(sym) => {
                 if let Some(resolved) = self.resolver.resolve_ref(sym, self.interner) {
                     if resolved == object_type {
                         self.interner
                             .intern(TypeKey::IndexAccess(object_type, index_type))
                     } else {
-                        self.evaluate_index_access(resolved, index_type)
+                        self.recurse_index_access(resolved, index_type)
                     }
                 } else {
                     TypeId::ERROR
@@ -1298,7 +1313,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner
                             .intern(TypeKey::IndexAccess(object_type, index_type))
                     } else {
-                        self.evaluate_index_access(constraint, index_type)
+                        self.recurse_index_access(constraint, index_type)
                     }
                 } else {
                     self.interner
@@ -1327,7 +1342,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if *self.depth_exceeded.borrow() {
                         return TypeId::ERROR;
                     }
-                    let result = self.evaluate_index_access(member, index_type);
+                    // Use recurse_index_access to respect depth limits
+                    let result = self.recurse_index_access(member, index_type);
                     if result == TypeId::ERROR && *self.depth_exceeded.borrow() {
                         return TypeId::ERROR;
                     }
@@ -2288,6 +2304,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Helper to recursively evaluate keyof while respecting depth limits.
+    /// Creates a KeyOf type and evaluates it through the main evaluate() method.
+    fn recurse_keyof(&self, operand: TypeId) -> TypeId {
+        let keyof = self.interner.intern(TypeKey::KeyOf(operand));
+        self.evaluate(keyof)
+    }
+
     /// Evaluate keyof T - extract the keys of an object type
     pub fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
         // First evaluate the operand in case it's a meta-type
@@ -2299,13 +2322,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
-            TypeKey::ReadonlyType(inner) => self.evaluate_keyof(inner),
+            TypeKey::ReadonlyType(inner) => self.recurse_keyof(inner),
             TypeKey::Ref(sym) => {
                 if let Some(resolved) = self.resolver.resolve_ref(sym, self.interner) {
                     if resolved == evaluated_operand {
                         self.interner.intern(TypeKey::KeyOf(operand))
                     } else {
-                        self.evaluate_keyof(resolved)
+                        self.recurse_keyof(resolved)
                     }
                 } else {
                     TypeId::ERROR
@@ -2316,7 +2339,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if constraint == evaluated_operand {
                         self.interner.intern(TypeKey::KeyOf(operand))
                     } else {
-                        self.evaluate_keyof(constraint)
+                        self.recurse_keyof(constraint)
                     }
                 } else {
                     self.interner.intern(TypeKey::KeyOf(operand))
@@ -2406,8 +2429,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::Union(members) => {
                 let members = self.interner.type_list(members);
                 // keyof (A | B) = keyof A & keyof B
+                // Use recurse_keyof to respect depth limits
                 let key_sets: Vec<TypeId> =
-                    members.iter().map(|&m| self.evaluate_keyof(m)).collect();
+                    members.iter().map(|&m| self.recurse_keyof(m)).collect();
                 // Prefer explicit key-set intersection to avoid opaque literal intersections.
                 if let Some(intersection) = self.intersect_keyof_sets(&key_sets) {
                     intersection
@@ -2418,8 +2442,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 // keyof (A & B) = keyof A | keyof B
+                // Use recurse_keyof to respect depth limits
                 let key_sets: Vec<TypeId> =
-                    members.iter().map(|&m| self.evaluate_keyof(m)).collect();
+                    members.iter().map(|&m| self.recurse_keyof(m)).collect();
                 self.interner.union(key_sets)
             }
             // For other types (type parameters, etc.), keep as KeyOf (deferred)
@@ -2428,6 +2453,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate string manipulation intrinsic types (Uppercase, Lowercase, Capitalize, Uncapitalize)
+    /// Helper to recursively evaluate string intrinsic while respecting depth limits.
+    fn recurse_string_intrinsic(
+        &self,
+        kind: crate::solver::types::StringIntrinsicKind,
+        type_arg: TypeId,
+    ) -> TypeId {
+        let string_intrinsic = self.interner.intern(TypeKey::StringIntrinsic { kind, type_arg });
+        self.evaluate(string_intrinsic)
+    }
+
     /// These distribute over unions and transform string literal types
     fn evaluate_string_intrinsic(
         &self,
@@ -2446,11 +2481,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         match key {
             // Handle unions - distribute the operation over each member
+            // Use recurse_string_intrinsic to respect depth limits
             TypeKey::Union(members) => {
                 let members = self.interner.type_list(members);
                 let transformed: Vec<TypeId> = members
                     .iter()
-                    .map(|&member| self.evaluate_string_intrinsic(kind, member))
+                    .map(|&member| self.recurse_string_intrinsic(kind, member))
                     .collect();
                 self.interner.union(transformed)
             }
