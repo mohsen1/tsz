@@ -2056,54 +2056,71 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for t_prop in target {
             let s_prop = self.lookup_property(source, source_shape_id, t_prop.name);
 
-            match s_prop {
-                Some(sp) => {
-                    // Check optional compatibility
-                    // Optional in source can't satisfy required in target
-                    if sp.optional && !t_prop.optional {
-                        return SubtypeResult::False;
-                    }
-                    // Readonly in source can't satisfy mutable target
-                    if sp.readonly && !t_prop.readonly {
-                        return SubtypeResult::False;
-                    }
-                    // Property exists, check type compatibility
-                    let source_type = self.optional_property_type(sp);
-                    let target_type = self.optional_property_type(t_prop);
-                    let allow_bivariant = sp.is_method || t_prop.is_method;
-                    if !self
-                        .check_subtype_with_method_variance(
-                            source_type,
-                            target_type,
-                            allow_bivariant,
-                        )
-                        .is_true()
-                    {
-                        return SubtypeResult::False;
-                    }
-                    if !t_prop.readonly
-                        && (sp.write_type != sp.type_id || t_prop.write_type != t_prop.type_id)
-                    {
-                        let source_write = self.optional_property_write_type(sp);
-                        let target_write = self.optional_property_write_type(t_prop);
-                        if !self
-                            .check_subtype_with_method_variance(
-                                target_write,
-                                source_write,
-                                allow_bivariant,
-                            )
-                            .is_true()
-                        {
-                            return SubtypeResult::False;
-                        }
-                    }
-                }
+            let result = match s_prop {
+                Some(sp) => self.check_property_compatibility(sp, t_prop),
                 None => {
-                    // Property missing
-                    if !t_prop.optional {
-                        return SubtypeResult::False;
+                    // Property missing - only OK if target property is optional
+                    if t_prop.optional {
+                        SubtypeResult::True
+                    } else {
+                        SubtypeResult::False
                     }
                 }
+            };
+
+            if !result.is_true() {
+                return result;
+            }
+        }
+
+        SubtypeResult::True
+    }
+
+    /// Check if a source property is compatible with a target property.
+    ///
+    /// This validates:
+    /// - Optional compatibility (optional source can't satisfy required target)
+    /// - Readonly compatibility (readonly source can't satisfy mutable target)
+    /// - Type compatibility (including write types for non-readonly properties)
+    fn check_property_compatibility(
+        &mut self,
+        source: &PropertyInfo,
+        target: &PropertyInfo,
+    ) -> SubtypeResult {
+        // Check optional compatibility
+        // Optional in source can't satisfy required in target
+        if source.optional && !target.optional {
+            return SubtypeResult::False;
+        }
+
+        // Readonly in source can't satisfy mutable target
+        if source.readonly && !target.readonly {
+            return SubtypeResult::False;
+        }
+
+        // Property exists, check type compatibility
+        let source_type = self.optional_property_type(source);
+        let target_type = self.optional_property_type(target);
+        let allow_bivariant = source.is_method || target.is_method;
+
+        if !self
+            .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Check write type compatibility for non-readonly properties with different write types
+        if !target.readonly
+            && (source.write_type != source.type_id || target.write_type != target.type_id)
+        {
+            let source_write = self.optional_property_write_type(source);
+            let target_write = self.optional_property_write_type(target);
+            if !self
+                .check_subtype_with_method_variance(target_write, source_write, allow_bivariant)
+                .is_true()
+            {
+                return SubtypeResult::False;
             }
         }
 
