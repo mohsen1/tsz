@@ -914,7 +914,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check intrinsic to intrinsic subtyping
+    /// Check intrinsic type to intrinsic type subtyping.
+    ///
+    /// Handles subtype relationships between TypeScript's built-in primitive types:
+    /// - **Same type**: Always compatible (number <: number, string <: string)
+    /// - **Void accepts undefined**: undefined <: void (in non-strict mode)
+    /// - **Object keyword**: Handled in check_subtype_inner with structural rules
+    ///
+    /// ## TypeScript Intrinsic Hierarchy:
+    /// ```
+    /// never <: null <: undefined <: void
+    /// never <: bigint <: boolean <: number <: string
+    /// never <: object
+    /// ```
+    ///
+    /// Note: Most intrinsic type checking is done via direct equality in check_subtype_inner.
+    /// This function handles special cases and the void/undefined relationship.
     fn check_intrinsic_subtype(
         &self,
         source: IntrinsicKind,
