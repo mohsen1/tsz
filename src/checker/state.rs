@@ -15013,8 +15013,8 @@ impl<'a> CheckerState<'a> {
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
-        // Check if this is an arithmetic operator (-, *, /, % or the generic "arithmetic" tag)
-        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "arithmetic");
+        // Check if this is an arithmetic operator (-, *, /, %)
+        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%");
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
@@ -15024,6 +15024,7 @@ impl<'a> CheckerState<'a> {
 
         if is_arithmetic {
             // For arithmetic operators, emit specific left/right errors (TS2362, TS2363)
+            let mut emitted_specific_error = false;
             if !left_is_valid_arithmetic {
                 if let Some(loc) = self.get_source_location(left_idx) {
                     let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -15036,6 +15037,7 @@ impl<'a> CheckerState<'a> {
                         length: loc.length(),
                         related_information: Vec::new(),
                     });
+                    emitted_specific_error = true;
                 }
             }
             if !right_is_valid_arithmetic {
@@ -15043,6 +15045,26 @@ impl<'a> CheckerState<'a> {
                     let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                    emitted_specific_error = true;
+                }
+            }
+            // If both operands are valid arithmetic types but the operation still failed
+            // (e.g., mixing number and bigint), emit TS2365
+            if !emitted_specific_error {
+                if let Some(loc) = self.get_source_location(node_idx) {
+                    let message = format!(
+                        "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                        op, left_str, right_str
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
                         category: DiagnosticCategory::Error,
                         message_text: message,
                         file: self.ctx.file_name.clone(),
