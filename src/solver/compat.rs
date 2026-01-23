@@ -8,6 +8,50 @@ use rustc_hash::FxHashMap;
 #[cfg(test)]
 use crate::solver::TypeInterner;
 
+/// Trait for providing checker-specific assignability overrides.
+///
+/// This allows the solver's CompatChecker to call back into the checker
+/// for special cases that require binder/symbol information (enums,
+/// abstract constructors, constructor accessibility).
+pub trait AssignabilityOverrideProvider {
+    /// Override for enum assignability rules.
+    /// Returns Some(true/false) if the override applies, None to fall through to structural checking.
+    fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool>;
+
+    /// Override for abstract constructor assignability rules.
+    /// Returns Some(false) if abstract class cannot be assigned to concrete constructor, None otherwise.
+    fn abstract_constructor_assignability_override(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<bool>;
+
+    /// Override for constructor accessibility rules (private/protected).
+    /// Returns Some(false) if accessibility mismatch prevents assignment, None otherwise.
+    fn constructor_accessibility_override(&self, source: TypeId, target: TypeId) -> Option<bool>;
+}
+
+/// A no-op implementation of AssignabilityOverrideProvider for when no checker context is available.
+pub struct NoopOverrideProvider;
+
+impl AssignabilityOverrideProvider for NoopOverrideProvider {
+    fn enum_assignability_override(&self, _source: TypeId, _target: TypeId) -> Option<bool> {
+        None
+    }
+
+    fn abstract_constructor_assignability_override(
+        &self,
+        _source: TypeId,
+        _target: TypeId,
+    ) -> Option<bool> {
+        None
+    }
+
+    fn constructor_accessibility_override(&self, _source: TypeId, _target: TypeId) -> Option<bool> {
+        None
+    }
+}
+
 /// Compatibility checker that applies TypeScript's unsound rules
 /// before delegating to the structural subtype engine.
 ///
@@ -556,6 +600,108 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
 
     fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_assignable_strict(source, target)
+    }
+}
+
+// =============================================================================
+// Assignability Override Functions (moved from checker/state.rs)
+// =============================================================================
+
+impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    /// Check if `source` is assignable to `target` using TS compatibility rules,
+    /// with checker-provided overrides for enums, abstract constructors, and accessibility.
+    ///
+    /// This is the main entry point for assignability checking when checker context is available.
+    pub fn is_assignable_with_overrides<P: AssignabilityOverrideProvider>(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        overrides: &P,
+    ) -> bool {
+        // Check override provider for enum assignability
+        if let Some(result) = overrides.enum_assignability_override(source, target) {
+            return result;
+        }
+
+        // Check override provider for abstract constructor assignability
+        if let Some(result) = overrides.abstract_constructor_assignability_override(source, target)
+        {
+            return result;
+        }
+
+        // Check override provider for constructor accessibility
+        if let Some(result) = overrides.constructor_accessibility_override(source, target) {
+            return result;
+        }
+
+        // Check private brand assignability (can be done with TypeDatabase alone)
+        if let Some(result) = self.private_brand_assignability_override(source, target) {
+            return result;
+        }
+
+        // Fall through to regular assignability check
+        self.is_assignable(source, target)
+    }
+
+    /// Private brand assignability override.
+    /// If both source and target types have private brands, they must match exactly.
+    /// This implements nominal typing for classes with private fields.
+    pub fn private_brand_assignability_override(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<bool> {
+        let source_brand = self.get_private_brand(source);
+        let target_brand = self.get_private_brand(target);
+
+        match (source_brand, target_brand) {
+            (Some(brand1), Some(brand2)) => {
+                // Both types have private brands - they must match exactly
+                // Different private brands = different class declarations = not assignable
+                Some(brand1 == brand2)
+            }
+            (None, Some(_)) => {
+                // Target has a private brand but source doesn't
+                // Source cannot satisfy target's private requirements
+                Some(false)
+            }
+            (Some(_), None) => {
+                // Source has a private brand but target doesn't (e.g., interface)
+                // Fall through to structural check - a class can implement an interface
+                None
+            }
+            (None, None) => None, // Neither has private brand, fall through to normal check
+        }
+    }
+
+    /// Extract the private brand property name from a type if it has one.
+    /// Returns `Some(brand_name)` if the type has a private brand, `None` otherwise.
+    fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
+        let key = self.interner.lookup(type_id)?;
+        match key {
+            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                let shape = self.interner.object_shape(shape_id);
+                for prop in shape.properties.iter() {
+                    let name = self.interner.resolve_atom(prop.name);
+                    if name.starts_with("__private_brand_") {
+                        return Some(name);
+                    }
+                }
+                None
+            }
+            TypeKey::Callable(callable_id) => {
+                // Constructor types (Callable) can also have private brands for static members
+                let callable = self.interner.callable_shape(callable_id);
+                for prop in callable.properties.iter() {
+                    let name = self.interner.resolve_atom(prop.name);
+                    if name.starts_with("__private_brand_") {
+                        return Some(name);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 }
 
