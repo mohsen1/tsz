@@ -8,10 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Timeout for individual test (5 minutes)
   RUST_TEST_TIMEOUT: 300
+  # Shared cache key for all jobs
+  CACHE_KEY: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
 jobs:
+  # Fast checks - run in parallel with build
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -24,16 +26,15 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Cache cargo registry
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-lint-
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Check formatting
         run: cargo fmt --check
@@ -41,6 +42,7 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings || echo "Clippy warnings found (not failing build)"
 
+  # Build release only (debug not needed)
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -51,30 +53,31 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-build-
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Check
-        run: cargo check --all-targets
-
-      - name: Build (debug)
-        run: cargo build
-
-      - name: Build (release)
+      - name: Build release
         run: cargo build --release
 
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-build
+          path: target/release/
+          retention-days: 1
+
+  # Unit tests - uses cached build
   test:
-    name: Test Suite
+    name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -82,20 +85,18 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-test-
+          key: ${{ env.CACHE_KEY }}
+          restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run unit tests (with timeout)
+      - name: Run unit tests
         run: |
-          # Run tests with timeout to prevent hanging
           timeout ${RUST_TEST_TIMEOUT}s cargo test --lib --release -- --test-threads=4 2>&1 || {
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
@@ -105,55 +106,11 @@ jobs:
             exit $EXIT_CODE
           }
 
-  test-modules:
-    name: Test Modules
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - scanner
-          - thin_parser
-          - thin_binder
-          - thin_checker
-          - solver
-          - enums
-          - module_resolver
-          - module_graph
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-test-
-
-      - name: Run ${{ matrix.module }} tests
-        run: |
-          timeout 300s cargo test --lib ${{ matrix.module }} --release -- --test-threads=2 2>&1 || {
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 124 ]; then
-              echo "::error::${{ matrix.module }} tests timed out"
-              exit 1
-            fi
-            exit $EXIT_CODE
-          }
-
+  # WASM build - parallel with native build
   wasm-build:
     name: WASM Build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -165,53 +122,42 @@ jobs:
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
-      - name: Cache cargo registry
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ env.CACHE_KEY }}-wasm
           restore-keys: |
-            ${{ runner.os }}-wasm-
+            ${{ env.CACHE_KEY }}-wasm
+            ${{ runner.os }}-cargo-
 
-      - name: Build WASM
-        run: wasm-pack build --target web --out-dir pkg
+      - name: Build WASM (nodejs target for conformance)
+        run: wasm-pack build --target nodejs --out-dir pkg
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
         with:
           name: wasm-pkg
           path: pkg/
-          retention-days: 7
+          retention-days: 1
 
+  # Conformance - downloads WASM artifact instead of rebuilding
   conformance:
     name: Conformance Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     needs: wasm-build
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download WASM artifact
+        uses: actions/download-artifact@v4
         with:
-          targets: wasm32-unknown-unknown
-
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-wasm-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-wasm-
+          name: wasm-pkg
+          path: pkg/
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -221,16 +167,10 @@ jobs:
           cache-dependency-path: conformance/package.json
 
       - name: Install conformance dependencies
-        run: |
-          cd conformance && npm install
-
-      - name: Build WASM
-        run: wasm-pack build --target nodejs --out-dir pkg
+        run: cd conformance && npm install
 
       - name: Fetch TypeScript conformance tests
-        run: |
-          # Initialize and update submodule (sparse: tests/ only)
-          git submodule update --init --depth 1 -- TypeScript || echo "No TypeScript submodule"
+        run: git submodule update --init --depth 1 -- TypeScript || echo "No TypeScript submodule"
 
       - name: Run conformance tests (quick)
         run: |
@@ -239,13 +179,13 @@ jobs:
             EXIT_CODE=$?
             if [ $EXIT_CODE -eq 124 ]; then
               echo "::warning::Conformance tests timed out"
-              exit 1  # Fail on timeout (process hung)
+              exit 1
             fi
-            # Test failures (non-zero exit) are OK - don't fail CI
             echo "::notice::Conformance tests completed with exit code $EXIT_CODE (not failing CI)"
             exit 0
           }
 
+  # Summary - simplified
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
@@ -254,15 +194,12 @@ jobs:
     steps:
       - name: Check results
         run: |
-          if [ "${{ needs.lint.result }}" == "failure" ]; then
-            echo "::warning::Lint job failed"
-          fi
           if [ "${{ needs.build.result }}" == "failure" ]; then
-            echo "::error::Build job failed"
+            echo "::error::Build failed"
             exit 1
           fi
           if [ "${{ needs.test.result }}" == "failure" ]; then
-            echo "::error::Test job failed"
+            echo "::error::Tests failed"
             exit 1
           fi
           if [ "${{ needs.wasm-build.result }}" == "failure" ]; then
