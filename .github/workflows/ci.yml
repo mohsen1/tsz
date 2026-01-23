@@ -71,17 +71,27 @@ jobs:
           path: target/release/
           retention-days: 1
 
-  # Unit tests - uses cached build
+  # Unit tests - uses cached build with nextest partitioning
   test:
-    name: Unit Tests
+    name: Unit Tests (${{ matrix.partition }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache
         uses: actions/cache@v4
@@ -93,16 +103,12 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run unit tests
+      - name: Run unit tests (partition ${{ matrix.partition }}/4)
+        env:
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
         run: |
-          timeout ${RUST_TEST_TIMEOUT}s cargo test --lib --release -- --test-threads=4 2>&1 || {
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 124 ]; then
-              echo "::error::Tests timed out after ${RUST_TEST_TIMEOUT}s"
-              exit 1
-            fi
-            exit $EXIT_CODE
-          }
+          cargo nextest run --profile ci --release --partition count:${{ matrix.partition }}/4
 
   # WASM build - parallel with native build
   wasm-build:
