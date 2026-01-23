@@ -16,7 +16,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Defaults
 COMMIT=false
 MAX_TESTS="--all"
-WORKERS=8
+WORKERS=2
 
 # Parse arguments
 for arg in "$@"; do
@@ -32,7 +32,7 @@ for arg in "$@"; do
             echo "Options:"
             echo "  --commit      Commit and push changes to git"
             echo "  --max=N       Run only N tests (default: all)"
-            echo "  --workers=N   Number of workers (default: 8)"
+            echo "  --workers=N   Number of workers (default: 2)"
             echo "  --help        Show this help"
             exit 0
             ;;

@@ -32,9 +32,9 @@ for arg in "$@"; do
     esac
 done
 
-# Default to 8 workers (optimal for WASM - more causes contention)
+# Default to 2 workers to avoid OOM kills
 if [ -z "$WORKERS" ]; then
-    WORKERS=8
+    WORKERS=2
 fi
 
 # Check Docker is available

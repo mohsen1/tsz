@@ -35,7 +35,7 @@ const DEFAULT_CONFIG: RunnerConfig = {
   maxTests: 500,
   verbose: false,
   categories: ['conformance', 'compiler', 'projects'],
-  workers: 8, // Optimal for WASM - more workers cause contention
+  workers: 2, // Conservative default to avoid OOM kills
   testTimeout: 10000,
   useWasm: true,
   nativeBinaryPath: path.resolve(__dirname, '../../target/release/tsz'),
