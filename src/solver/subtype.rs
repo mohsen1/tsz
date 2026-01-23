@@ -3122,7 +3122,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if a source type is a subtype of a union type.
     ///
-    /// Union target: source must be subtype of at least one member.
+    /// When the target is a union, the source must be assignable to AT LEAST ONE
+    /// union member. This is the "exists" quantifier - there exists some union member
+    /// that the source is compatible with.
+    ///
+    /// ## Union Target Rule:
+    /// `S <: (A | B | C)` if `S <: A` OR `S <: B` OR `S <: C`
+    ///
+    /// ## Keyof Special Case:
+    /// If source is keyof T and the union includes all primitive types (string | number | symbol),
+    /// then it's compatible (keyof can match any property key type).
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // string <: (string | number) ✅
+    /// // string <: (number | boolean) ❌
+    /// // never <: (string | number) ✅ (never is subtype of everything)
+    /// // keyof T <: (string | number | symbol) ✅ (if union is all primitives)
+    /// ```
     fn check_union_target_subtype(
         &mut self,
         source: TypeId,
