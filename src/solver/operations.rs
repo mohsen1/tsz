@@ -3160,6 +3160,21 @@ pub fn is_readonly_index_signature(
     }
 }
 
+/// Check if a string represents a valid numeric property name.
+///
+/// Returns `true` only for non-negative finite integers that round-trip correctly
+/// through JavaScript's `Number.toString()` conversion.
+///
+/// This is used for determining if a property access can use numeric index signatures:
+/// - `"0"` through `"4294967295"` are valid numeric property names (fits in usize)
+/// - `"1.5"`, `"-1"`, `NaN`, `Infinity` are NOT valid numeric property names
+///
+/// # Examples
+/// - `is_numeric_index_name("0")` → `true`
+/// - `is_numeric_index_name("42")` → `true`
+/// - `is_numeric_index_name("1.5")` → `false` (fractional part)
+/// - `is_numeric_index_name("-1")` → `false` (negative)
+/// - `is_numeric_index_name("NaN")` → `false` (special value)
 fn is_numeric_index_name(name: &str) -> bool {
     let parsed: f64 = match name.parse() {
         Ok(value) => value,
