@@ -100,11 +100,19 @@ impl<'a> SpreadChecker<'a> {
             return false;
         };
 
-        matches!(type_key,
-            TypeKey::Array(_) |
-            TypeKey::Tuple(_) |
-            TypeKey::Literal(LiteralValue::String(_))
-        )
+        match type_key {
+            TypeKey::Array(_) | TypeKey::Tuple(_) => true,
+            TypeKey::Literal(LiteralValue::String(_)) => true,
+            TypeKey::Object(shape_id) => {
+                // Check for [Symbol.iterator] method
+                let shape = self.types.object_shape(shape_id);
+                shape.properties.iter().any(|prop| {
+                    let prop_name = self.types.resolve_atom_ref(prop.name);
+                    (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next") && prop.is_method
+                })
+            }
+            _ => false,
+        }
     }
 
     /// Get the element type of an iterable
@@ -127,8 +135,20 @@ impl<'a> SpreadChecker<'a> {
                     Some(self.types.union(types))
                 }
             }
-            TypeKey::Literal(LiteralValue::String(_)) => {
-                Some(TypeId::STRING)
+            TypeKey::Literal(LiteralValue::String(_)) => Some(TypeId::STRING),
+            TypeKey::Object(shape_id) => {
+                // For objects with [Symbol.iterator], we'd need to infer the element type
+                // from the iterator's return type. For now, return Any as a fallback.
+                let shape = self.types.object_shape(shape_id);
+                let has_iterator = shape.properties.iter().any(|prop| {
+                    let prop_name = self.types.resolve_atom_ref(prop.name);
+                    (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next") && prop.is_method
+                });
+                if has_iterator {
+                    Some(TypeId::ANY)
+                } else {
+                    None
+                }
             }
             _ => None,
         }

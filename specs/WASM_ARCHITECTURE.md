@@ -187,6 +187,27 @@ We use the **`ena`** crate (Union-Find) to solve generic constraints.
 
 The Checker (`checker/state.rs`) implements the TypeScript "Business Logic". It answers questions like "Is A a subtype of B?".
 
+#### 3.0. Why the Checker Stays Large (Even with a Solver)
+
+The Solver is the engine for **type relations** (subtype, assignable, inference unification),
+but the Checker still owns the **orchestration** that makes a TypeScript compiler behave like `tsc`.
+This means the Checker must remain substantial even with a strong solver.
+
+**Checker responsibilities that are not solved by the solver:**
+- **Type synthesis**: Map AST nodes to `TypeId` (contextual typing, literal widening, `this` typing).
+- **Control flow analysis**: Narrowing, definite assignment, reachability, and flow-sensitive errors.
+- **Symbol and scope resolution**: Binder integration, module/namespace handling, global lookup.
+- **Diagnostics**: Error locations, tailored messages, and recovery paths.
+- **Compiler options**: Enforce flags like `strictNullChecks`, `noImplicitAny`, `exactOptionalPropertyTypes`.
+
+**Solver responsibilities (what it should own):**
+- **Pure relational logic**: Subtype and assignability decisions.
+- **Unification mechanics**: Generic inference and constraint solving.
+- **Caching and cycle handling**: Structural comparisons without recursion blowups.
+
+The architectural goal is not to remove the Checker, but to **thin it** by delegating all
+pure relational logic to the Solver while keeping TypeScript-specific orchestration in the Checker.
+
 #### 3.1. The "Tracer" Pattern (Zero-Cost Abstraction) ❌ **ASPIRATIONAL / NOT IMPLEMENTED**
 
 To prevent logic drift between "Checking" (Fast/Bool) and "Explaining" (Slow/Diagnostic), we must **not** write duplicate algorithms.
@@ -371,3 +392,11 @@ The Parser produces "Error Nodes" or "Missing Nodes" when syntax is invalid. The
 | 3. **Refactor Logic**: Remove manual scope stacks from `Checker` | ⚠️ **PARTIAL** | Binder produces persistent scopes, but verify full removal |
 | 4. **Refactor Emitter**: Extract transform logic to `transforms/` | ❌ **TODO** | Known debt per `PROJECT_DIRECTION.md:86` |
 | 5. **Benchmark**: Verify parser > 200 MB/s | ⚠️ **UNKNOWN** | No current benchmark data found |
+
+---
+
+## References
+
+- `AGENTS.md` - Architecture rules and compatibility requirements for this repo
+- `specs/SOLVER.md` - Solver design and Judge/Lawyer architecture
+- `specs/TS_UNSOUNDNESS_CATALOG.md` - Compatibility layer rules
