@@ -2489,7 +2489,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         kind: crate::solver::types::StringIntrinsicKind,
         type_arg: TypeId,
     ) -> TypeId {
-        let string_intrinsic = self.interner.intern(TypeKey::StringIntrinsic { kind, type_arg });
+        let string_intrinsic = self
+            .interner
+            .intern(TypeKey::StringIntrinsic { kind, type_arg });
         self.evaluate(string_intrinsic)
     }
 

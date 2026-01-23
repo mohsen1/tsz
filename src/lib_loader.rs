@@ -976,4 +976,344 @@ let s: Set<string>;
             checker.ctx.diagnostics
         );
     }
+
+    #[test]
+    fn test_es2015_value_usage_emits_ts2583() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that uses ES2015+ types as values (e.g., new Map(), new Set())
+        let source = r#"
+const m = new Map();
+const s = new Set();
+const p = Promise.resolve(42);
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2583 for Map, Set, and Promise used as values
+        let ts2583_diagnostics: Vec<_> = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_CHANGE_LIB)
+            .collect();
+
+        assert!(
+            ts2583_diagnostics.len() >= 3,
+            "Expected at least 3 TS2583 errors for ES2015+ values (Map, Set, Promise), got {}: {:?}",
+            ts2583_diagnostics.len(),
+            checker.ctx.diagnostics
+        );
+
+        // Verify the error messages suggest changing the lib
+        for diag in &ts2583_diagnostics {
+            assert!(
+                diag.message_text.contains("change your target library")
+                    || diag.message_text.contains("lib' compiler option"),
+                "TS2583 message should suggest changing lib: {}",
+                diag.message_text
+            );
+        }
+    }
+
+    #[test]
+    fn test_symbol_value_usage_emits_ts2585() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that uses Symbol as a value
+        let source = r#"
+const sym = Symbol("test");
+const sym2 = Symbol.for("shared");
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2585 for Symbol used as a value
+        let ts2585_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.code == diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB
+            })
+            .count();
+
+        assert!(
+            ts2585_count >= 1,
+            "Expected at least 1 TS2585 error for Symbol value usage, got: {:?}",
+            checker.ctx.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_ts2318_for_pre_es2015_global_types() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that references pre-ES2015 global types (Date, RegExp)
+        // These should emit TS2318, not TS2583
+        let source = r#"
+let d: Date;
+let r: RegExp;
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2318 for Date/RegExp (pre-ES2015 types), not TS2583
+        let ts2318_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == CANNOT_FIND_GLOBAL_TYPE)
+            .count();
+
+        let ts2583_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == MISSING_ES2015_LIB_SUPPORT)
+            .count();
+
+        // Pre-ES2015 types should get TS2318
+        assert!(
+            ts2318_count >= 1,
+            "Expected at least 1 TS2318 error for pre-ES2015 global types, got: {:?}",
+            checker.ctx.diagnostics
+        );
+
+        // Ensure TS2583 is only for ES2015+ types
+        // Date and RegExp should not trigger TS2583
+        for diag in &checker.ctx.diagnostics {
+            if diag.code == MISSING_ES2015_LIB_SUPPORT {
+                assert!(
+                    !diag.message_text.contains("Date") && !diag.message_text.contains("RegExp"),
+                    "Pre-ES2015 types (Date, RegExp) should not get TS2583: {:?}",
+                    diag
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_ts2583_vs_ts2585_differentiation() {
+        // TS2583: "Cannot find name 'X'. Do you need to change your target library?"
+        //   - Used when the ES2015+ identifier is not found at all (value context)
+        // TS2585: "'X' only refers to a type, but is being used as a value here. ..."
+        //   - Used when a type-only symbol is being used as a value
+
+        // Both should suggest changing the lib for ES2015+ types
+        let test_cases = [
+            ("Promise", true),
+            ("Map", true),
+            ("Set", true),
+            ("WeakMap", true),
+            ("WeakSet", true),
+            ("Symbol", true),
+            ("Proxy", true),
+            ("Reflect", true),
+            ("BigInt", true),
+            ("Object", false), // Pre-ES2015
+            ("Array", false),  // Pre-ES2015
+            ("Date", false),   // Pre-ES2015
+            ("Error", false),  // Pre-ES2015
+        ];
+
+        for (name, should_be_es2015) in test_cases {
+            let is_es2015 = is_es2015_plus_type(name);
+            assert_eq!(
+                is_es2015, should_be_es2015,
+                "is_es2015_plus_type('{}') should be {}",
+                name, should_be_es2015
+            );
+        }
+    }
+
+    #[test]
+    fn test_weakref_and_finalizationregistry_es2021() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that uses ES2021 types
+        let source = r#"
+const ref = new WeakRef({});
+const registry = new FinalizationRegistry(() => {});
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2583 for WeakRef and FinalizationRegistry
+        let ts2583_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_CHANGE_LIB)
+            .count();
+
+        assert!(
+            ts2583_count >= 2,
+            "Expected at least 2 TS2583 errors for ES2021 types (WeakRef, FinalizationRegistry), got {}: {:?}",
+            ts2583_count,
+            checker.ctx.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_bigint_es2020() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that uses BigInt (ES2020)
+        let source = r#"
+const big = BigInt(123);
+const typed = new BigInt64Array(10);
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2583 for BigInt and BigInt64Array
+        let ts2583_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME_CHANGE_LIB)
+            .count();
+
+        assert!(
+            ts2583_count >= 2,
+            "Expected at least 2 TS2583 errors for ES2020 types (BigInt, BigInt64Array), got {}: {:?}",
+            ts2583_count,
+            checker.ctx.diagnostics
+        );
+    }
 }
