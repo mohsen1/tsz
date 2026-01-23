@@ -3,7 +3,7 @@
 **Date**: January 2026
 **Auditor**: Claude Code Deep Analysis
 **Codebase Version**: Branch `main`
-**Last Updated**: 2026-01-23 (Deep Analysis after 12 commits)
+**Last Updated**: 2026-01-23 (Ongoing - commits 13-18 pending analysis)
 
 ---
 
@@ -42,6 +42,91 @@ Extracted helper methods:
 | `solver/operations.rs` | Extracted `resolve_primitive_property`, `object_property_is_readonly` helpers | Consolidates property resolution logic |
 
 ### Line Count Analysis
+
+| File | Start | Current | Change | Status |
+|------|-------|---------|--------|--------|
+| `solver/subtype.rs` | 4,734 | 4,890 | +156 | ⚠️ Increased (helper extraction adds lines) |
+| `solver/compat.rs` | 712 | 764 | +52 | ⚠️ Increased (helper extraction) |
+| `solver/evaluate.rs` | 5,784 | 5,791 | +7 | ⚠️ Increased (helper extraction) |
+| `solver/operations.rs` | 3,416 | 3,477 | +61 | ⚠️ Increased (helper extraction) |
+| `checker/state.rs` | 27,525 | 28,084 | +559 | 🚨 CONCERNING - major growth |
+
+---
+
+## Deep Analysis: Commit Batch 13-18 (2026-01-23)
+
+### Summary of Refactoring Work
+
+This deep analysis covers commits 13-18, focused on continued god object decomposition
+and code organization improvements.
+
+#### Commit 13: Extract Promise/Async Type Checking (462 lines)
+**Goal**: Extract promise/async-related type checking from checker/state.rs
+
+Created `src/checker/promise_checker.rs` (521 lines):
+- **Promise type detection**: `is_promise_like_name`, `type_ref_is_promise_like`, `is_promise_type`
+- **Type argument extraction**: `promise_like_return_type_argument`, `from_base/alias/class`
+- **Return type checking**: `requires_return_value`, `return_type_for_implicit_return_check`
+- **Helper utilities**: `is_null_or_undefined_only`, `return_type_annotation_looks_like_promise`
+
+Modified `checker/state.rs`: 28,084 → 27,647 lines (-437 lines)
+
+**Impact**: First significant reduction in checker/state.rs god object
+
+#### Commits 14-16: Extract Object Subtype Helpers
+**Goal**: Improve modularity of object subtype checking in solver/subtype.rs
+
+Extracted helper methods:
+- **Commit 14**: `check_private_brand_compatibility` (40 lines)
+  - Validates private brand matching for nominal class typing
+- **Commit 15**: `check_property_compatibility` (65 lines)
+  - Validates optional/readonly modifiers and type compatibility
+  - Checks write type contravariance for mutable properties
+- **Commit 16**: `check_string_index_compatibility` (45 lines), `check_number_index_compatibility` (30 lines)
+  - Validates index signature compatibility between objects
+
+Modified `solver/subtype.rs`: 4,890 → 4,964 lines (+74 lines)
+
+**Result**: More modular, testable code despite net line increase
+
+#### Commits 17-18: Documentation Improvements
+**Goal**: Improve code documentation for complex type checking logic
+
+Enhanced documentation for:
+- **Commit 17**: `check_tuple_subtype` with comprehensive tuple subtyping rules and examples
+- **Commit 18**: `check_property_compatibility` with detailed property compatibility semantics
+
+**Impact**: Better maintainability and onboarding for future developers
+
+### Line Count Analysis (Updated)
+
+| File | Start | Batch 1-12 | Current | Total Change | Status |
+|------|-------|------------|---------|--------------|--------|
+| `solver/subtype.rs` | 4,734 | 4,890 | 4,964 | +230 | ⚠️ Increased (helper extraction) |
+| `checker/state.rs` | 27,525 | 28,084 | 27,647 | +122 | ✅ Reduced from peak |
+| `checker/promise_checker.rs` | N/A | N/A | 521 | +521 (new) | ✅ New module |
+
+**Key Insight**: Helper extraction increases line counts short-term but provides:
+- Better code organization
+- Improved testability
+- Enhanced maintainability
+- Clearer separation of concerns
+
+### Progress Assessment
+
+**Completed**:
+- ✅ Promise/async type checking fully extracted
+- ✅ Object subtype checking helpers extracted
+- ✅ Symbol.iterator protocol fixes completed
+- ✅ Documentation improved
+
+**Remaining Work**:
+- 🚧 Continue extracting from `solver/subtype.rs` (tuple subtyping, function subtyping)
+- 🚧 Continue extracting from `checker/state.rs` (27,647 lines still too large)
+- ⏳ Implement Type Visitor Pattern
+- ⏳ Work on missing error detection (TS2304, TS2318, TS2307)
+
+---
 
 | File | Start | Current | Change | Status |
 |------|-------|---------|--------|--------|
@@ -95,13 +180,14 @@ Extracted helper methods:
 | ErrorHandler trait | ✅ Complete | Implemented in `src/checker/error_handler.rs` |
 | Recursion depth limits | ✅ Complete | `MAX_INSTANTIATION_DEPTH=50`, `MAX_EVALUATE_DEPTH=50` |
 | Symbol.iterator protocol fixes | ✅ Complete | Fixed in iterators.rs, generators.rs, spread.rs |
+| Promise/async type extraction | ✅ Complete | Extracted to promise_checker.rs (521 lines, -437 from state.rs) |
 
 ### 🚧 In Progress - Phase 2: Break Up God Objects
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Break up `solver/subtype.rs` check_subtype_inner | 🚧 In Progress | Helper methods extracted (~316 lines active, down from 2,437) |
-| Break up `checker/state.rs` god object | 🔥 URGENT | 28,084 lines (+559 growth), needs immediate attention |
+| Break up `solver/subtype.rs` check_subtype_inner | 🚧 In Progress | Helper methods extracted, now 4,964 lines (+230 from original) |
+| Break up `checker/state.rs` god object | 🚧 In Progress | 27,647 lines (-437 from 28,084 via promise extraction) |
 
 ### ⏳ Planned - Phase 3: Introduce Abstractions
 
