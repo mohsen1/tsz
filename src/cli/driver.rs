@@ -523,6 +523,8 @@ fn build_program_with_cache(
                     parse_diagnostics: Vec::new(),
                     shorthand_ambient_modules: Default::default(),
                     global_augmentations: Default::default(),
+                    reexports: Default::default(),
+                    wildcard_reexports: Default::default(),
                 }
             }
         };
@@ -3048,6 +3050,7 @@ fn create_binder_from_bound_file(
         file.global_augmentations.clone(),
         program.module_exports.clone(),
         program.reexports.clone(),
+        program.wildcard_reexports.clone(),
         program.symbol_arenas.clone(),
         program.shorthand_ambient_modules.clone(),
     );
