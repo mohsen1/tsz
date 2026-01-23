@@ -18466,11 +18466,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Note: We do NOT skip TS2792 for declared_modules (ambient modules).
-        // Imports from ambient modules should emit TS2792 because ambient modules
-        // don't provide runtime values - they only provide type information.
-        // If you want to use an ambient module's types, you should use `import type`
-        // or reference the types directly in a type annotation.
+        // Skip TS2307 for ambient module declarations.
+        // Both shorthand ambient modules (`declare module "foo"`) and regular ambient modules
+        // with body (`declare module "foo" { ... }`) provide type information for imports.
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return; // Shorthand ambient module - imports typed as `any`
+        }
+
+        if self.ctx.binder.declared_modules.contains(module_name) {
+            return; // Regular ambient module declaration
+        }
 
         // In single-file mode, any external import is considered unresolved.
         // This is correct because WASM checker operates on individual files
@@ -18608,7 +18618,26 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Emit TS2792 for unresolved export module specifiers
+        // Check if the module exists in the module_exports map (cross-file module resolution)
+        if self.ctx.binder.module_exports.contains_key(module_name) {
+            return;
+        }
+
+        // Skip TS2307 for ambient module declarations
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return;
+        }
+
+        if self.ctx.binder.declared_modules.contains(module_name) {
+            return;
+        }
+
+        // Emit TS2307 for unresolved export module specifiers
         let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
         self.error_at_node(
             export_decl.module_specifier,
