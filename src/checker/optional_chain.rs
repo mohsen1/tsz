@@ -31,6 +31,10 @@
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, syntax_kind_ext};
 use crate::solver::{TypeDatabase, TypeId as SolverTypeId};
+use rustc_hash::FxHashSet;
+
+/// Maximum depth for optional chain traversal to prevent infinite loops
+const MAX_OPTIONAL_CHAIN_DEPTH: usize = 1000;
 
 /// Information about an optional chain expression
 #[derive(Debug, Clone)]
@@ -50,8 +54,23 @@ pub fn analyze_optional_chain(arena: &NodeArena, idx: NodeIndex) -> OptionalChai
     let mut root = idx;
     let mut is_immediate_optional = false;
 
+    // Track visited nodes to prevent infinite loops on malformed AST
+    let mut visited: FxHashSet<u32> = FxHashSet::default();
+    let mut iterations = 0;
+
     // Walk up the expression chain looking for optional chaining
     loop {
+        // Infinite loop protection
+        iterations += 1;
+        if iterations > MAX_OPTIONAL_CHAIN_DEPTH {
+            break;
+        }
+
+        // Cycle detection
+        if !visited.insert(current.0) {
+            break;
+        }
+
         let Some(node) = arena.get(current) else {
             break;
         };

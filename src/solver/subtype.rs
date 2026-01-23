@@ -20,6 +20,11 @@ use std::collections::HashSet;
 #[cfg(test)]
 use crate::solver::TypeInterner;
 
+/// Maximum recursion depth for subtype checking.
+/// This prevents OOM/stack overflow from infinitely expanding recursive types.
+/// Examples: `interface AA<T extends AA<T>>`, `interface List<T> { next: List<T> }`
+pub(crate) const MAX_SUBTYPE_DEPTH: u32 = 100;
+
 /// Result of a subtype check
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SubtypeResult {

@@ -18,6 +18,9 @@ use crate::scanner::SyntaxKind;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
+/// Maximum iterations for flow analysis worklist to prevent infinite loops
+const MAX_FLOW_ANALYSIS_ITERATIONS: usize = 100_000;
+
 /// Assignment state for a single variable at a point in the control flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssignmentState {
@@ -188,8 +191,16 @@ impl<'a> DefiniteAssignmentAnalyzer<'a> {
         let mut in_worklist: FxHashSet<FlowNodeId> = FxHashSet::default();
         in_worklist.insert(entry);
 
+        // Iteration counter for infinite loop prevention
+        let mut iterations = 0;
+
         // Iterative fixed-point computation
         while let Some(flow_id) = worklist.pop() {
+            // Prevent infinite loops on malformed control flow graphs
+            iterations += 1;
+            if iterations > MAX_FLOW_ANALYSIS_ITERATIONS {
+                break;
+            }
             in_worklist.remove(&flow_id);
 
             let Some(flow_node) = self.flow_arena.get(flow_id) else {
