@@ -17988,13 +17988,34 @@ impl<'a> CheckerState<'a> {
 
     /// Check an import equals declaration for ESM compatibility.
     /// Emits TS1202 when `import x = require()` is used in an ES module.
+    /// Does NOT emit TS1202 for namespace imports like `import x = Namespace.Member`.
     fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
         // TS1202: Import assignment cannot be used when targeting ECMAScript modules.
         // This error is emitted when using `import x = require("y")` in a file that
         // has other ES module syntax (import/export).
-        if self.ctx.binder.is_external_module() {
+        // IMPORTANT: This does NOT apply to internal namespace imports like `import x = A.B`
+        if !self.ctx.binder.is_external_module() {
+            return;
+        }
+
+        // Check if this is an external module reference (require)
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(import) = self.ctx.arena.get_import_decl(node) else {
+            return;
+        };
+
+        // Get the module reference node
+        let Some(ref_node) = self.ctx.arena.get(import.module_specifier) else {
+            return;
+        };
+
+        // Only emit TS1202 for external module references (string literals from require())
+        // Internal namespace imports (identifiers/qualified names) don't trigger this error
+        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
             self.error_at_node(
                 stmt_idx,
                 "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
