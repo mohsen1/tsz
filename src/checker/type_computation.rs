@@ -187,6 +187,69 @@ impl<'a> CheckerState<'a> {
         matches!(key, Some(crate::solver::TypeKey::Intersection(_)))
     }
 
+    /// Check if a type is a literal type.
+    ///
+    /// Returns true if the type is a specific literal value (string, number, boolean).
+    pub fn is_literal_type(&self, ty: TypeId) -> bool {
+        let key = self.ctx.types.lookup(ty);
+        matches!(key, Some(crate::solver::TypeKey::Literal(_)))
+    }
+
+    /// Check if a type is a generic type application.
+    ///
+    /// Returns true if the type is a parameterized generic like Map<K, V>.
+    pub fn is_generic_type(&self, ty: TypeId) -> bool {
+        let key = self.ctx.types.lookup(ty);
+        matches!(key, Some(crate::solver::TypeKey::Application(_)))
+    }
+
+    /// Check if a type is a reference to another type.
+    ///
+    /// Returns true if the type is a type reference (interface, class, type alias).
+    pub fn is_type_reference(&self, ty: TypeId) -> bool {
+        let key = self.ctx.types.lookup(ty);
+        matches!(key, Some(crate::solver::TypeKey::Ref(_)))
+    }
+
+    /// Check if a type is a conditional type.
+    ///
+    /// Returns true if the type is a conditional type like T extends U ? X : Y.
+    pub fn is_conditional_type(&self, ty: TypeId) -> bool {
+        let key = self.ctx.types.lookup(ty);
+        matches!(key, Some(crate::solver::TypeKey::Conditional(_)))
+    }
+
+    /// Check if a type is a mapped type.
+    ///
+    /// Returns true if the type is a mapped type like { [K in T]: U }.
+    pub fn is_mapped_type(&self, ty: TypeId) -> bool {
+        let key = self.ctx.types.lookup(ty);
+        matches!(key, Some(crate::solver::TypeKey::Mapped(_)))
+    }
+
+    /// Check if a type is a template literal type.
+    ///
+    /// Returns true if the type is a template literal type like `foo${string}bar`.
+    pub fn is_template_literal_type(&self, ty: TypeId) -> bool {
+        let key = self.ctx.types.lookup(ty);
+        matches!(key, Some(crate::solver::TypeKey::TemplateLiteral(_)))
+    }
+
+    /// Check if a type is a callable type.
+    ///
+    /// Returns true if the type represents a function or callable.
+    pub fn is_callable_type(&self, ty: TypeId) -> bool {
+        let key = self.ctx.types.lookup(ty);
+        matches!(
+            key,
+            Some(
+                crate::solver::TypeKey::Function(_)
+                    | crate::solver::TypeKey::Callable(_)
+                    | crate::solver::TypeKey::ObjectWithIndex(_)
+            )
+        )
+    }
+
     // =========================================================================
     // Special Type Utilities
     // =========================================================================
