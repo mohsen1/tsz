@@ -25058,6 +25058,186 @@ mixed(42, 99, 100);
 }
 
 #[test]
+fn test_ts2555_expected_at_least_arguments() {
+    use crate::parser::ParserState;
+
+    // Test TS2555: Expected at least N arguments, but got M.
+    // This error should be emitted when a function has optional parameters
+    // and fewer arguments are provided than the minimum required.
+    let code = r#"
+function foo(a: number, b: string, c?: boolean): void {}
+
+// Too few arguments - should emit TS2555 because there are optional params
+foo(1);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty());
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2555_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2555)
+        .collect();
+
+    // Should have TS2555 (expected at least)
+    assert!(
+        !ts2555_errors.is_empty(),
+        "Should emit TS2555 when too few arguments provided to function with optional params, got diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // Verify TS2555 message format
+    let first_error_msg = &ts2555_errors[0].message_text;
+    assert!(
+        first_error_msg.contains("Expected at least"),
+        "TS2555 message should say 'Expected at least', got: {}",
+        first_error_msg
+    );
+}
+
+#[test]
+fn test_ts2554_expected_exact_arguments() {
+    use crate::parser::ParserState;
+
+    // Test TS2554: Expected N arguments, but got M.
+    // This error should be emitted when a function has no optional parameters
+    // and the wrong number of arguments are provided.
+    let code = r#"
+function bar(a: number, b: string): void {}
+
+// Wrong number of arguments - should emit TS2554 (not TS2555)
+bar(1);
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty());
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2554_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2554)
+        .collect();
+
+    // Should have TS2554 (exact count expected)
+    assert!(
+        !ts2554_errors.is_empty(),
+        "Should emit TS2554 when wrong number of arguments for function without optional params, got diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // Verify TS2554 message format (should NOT say "at least")
+    let first_error_msg = &ts2554_errors[0].message_text;
+    assert!(
+        first_error_msg.contains("Expected") && first_error_msg.contains("arguments"),
+        "TS2554 message should mention expected arguments, got: {}",
+        first_error_msg
+    );
+    assert!(
+        !first_error_msg.contains("at least"),
+        "TS2554 message should NOT say 'at least', got: {}",
+        first_error_msg
+    );
+}
+
+#[test]
+fn test_ts2345_argument_type_mismatch() {
+    use crate::parser::ParserState;
+
+    // Test TS2345: Argument of type 'X' is not assignable to parameter of type 'Y'.
+    let code = r#"
+function baz(a: number): void {}
+
+// Type mismatch - should emit TS2345
+baz("hello");
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty());
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2345_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2345)
+        .collect();
+
+    // Should have TS2345 (argument type mismatch)
+    assert!(
+        !ts2345_errors.is_empty(),
+        "Should emit TS2345 when argument type doesn't match parameter type, got diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // Verify TS2345 message format
+    let first_error_msg = &ts2345_errors[0].message_text;
+    assert!(
+        first_error_msg.contains("not assignable") || first_error_msg.contains("Argument"),
+        "TS2345 message should mention 'not assignable' or 'Argument', got: {}",
+        first_error_msg
+    );
+}
+
+#[test]
 fn test_ts2366_arrow_function_missing_return() {
     use crate::parser::ParserState;
 

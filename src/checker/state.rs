@@ -3516,7 +3516,10 @@ impl<'a> CheckerState<'a> {
             return (Vec::new(), None);
         };
 
-        self.extract_params_from_parameter_list_impl(params_list, ParamTypeResolutionMode::InTypeLiteral)
+        self.extract_params_from_parameter_list_impl(
+            params_list,
+            ParamTypeResolutionMode::InTypeLiteral,
+        )
     }
 
     /// Get type from a type literal node ({ x: T }).
@@ -4555,7 +4558,10 @@ impl<'a> CheckerState<'a> {
         &mut self,
         params_list: &crate::parser::NodeList,
     ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
-        self.extract_params_from_parameter_list_impl(params_list, ParamTypeResolutionMode::FromTypeNode)
+        self.extract_params_from_parameter_list_impl(
+            params_list,
+            ParamTypeResolutionMode::FromTypeNode,
+        )
     }
 
     /// Unified implementation for extracting parameters from a parameter list.
@@ -4588,9 +4594,7 @@ impl<'a> CheckerState<'a> {
                     ParamTypeResolutionMode::FromTypeNode => {
                         self.get_type_from_type_node(param.type_annotation)
                     }
-                    ParamTypeResolutionMode::OfNode => {
-                        self.get_type_of_node(param.type_annotation)
-                    }
+                    ParamTypeResolutionMode::OfNode => self.get_type_of_node(param.type_annotation),
                 }
             } else {
                 TypeId::ANY
@@ -8374,8 +8378,17 @@ impl<'a> CheckerState<'a> {
                 expected_max,
                 actual,
             } => {
-                let expected = expected_max.unwrap_or(expected_min);
-                self.error_argument_count_mismatch_at(expected, actual, idx);
+                // Determine which error to emit:
+                // - TS2555: "Expected at least N arguments" when got < min and there's a range
+                // - TS2554: "Expected N arguments" otherwise
+                if actual < expected_min && expected_max.is_some_and(|max| max != expected_min) {
+                    // Too few arguments with optional parameters - use TS2555
+                    self.error_expected_at_least_arguments_at(expected_min, actual, idx);
+                } else {
+                    // Either too many, or exact count expected - use TS2554
+                    let expected = expected_max.unwrap_or(expected_min);
+                    self.error_argument_count_mismatch_at(expected, actual, idx);
+                }
                 TypeId::ERROR
             }
 
@@ -9293,8 +9306,17 @@ impl<'a> CheckerState<'a> {
                 expected_max,
                 actual,
             } => {
-                let expected = expected_max.unwrap_or(expected_min);
-                self.error_argument_count_mismatch_at(expected, actual, idx);
+                // Determine which error to emit:
+                // - TS2555: "Expected at least N arguments" when got < min and there's a range
+                // - TS2554: "Expected N arguments" otherwise
+                if actual < expected_min && expected_max.is_some_and(|max| max != expected_min) {
+                    // Too few arguments with optional parameters - use TS2555
+                    self.error_expected_at_least_arguments_at(expected_min, actual, idx);
+                } else {
+                    // Either too many, or exact count expected - use TS2554
+                    let expected = expected_max.unwrap_or(expected_min);
+                    self.error_argument_count_mismatch_at(expected, actual, idx);
+                }
                 TypeId::ERROR
             }
             CallResult::ArgumentTypeMismatch {
@@ -15821,6 +15843,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
+    /// TS2554: Expected {0} arguments, but got {1}.
     pub fn error_argument_count_mismatch_at(
         &mut self,
         expected: usize,
@@ -15836,6 +15859,33 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .diagnostics
                 .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Report an "expected at least N arguments" error (TS2555).
+    /// TS2555: Expected at least {0} arguments, but got {1}.
+    pub fn error_expected_at_least_arguments_at(
+        &mut self,
+        expected_min: usize,
+        got: usize,
+        idx: NodeIndex,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format!(
+                "Expected at least {} arguments, but got {}.",
+                expected_min, got
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
         }
     }
 
