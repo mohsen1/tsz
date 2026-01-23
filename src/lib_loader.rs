@@ -165,45 +165,67 @@ pub fn emit_error_lib_target_mismatch(
 /// these types but their target lib doesn't include them, we should emit
 /// TS2583 with a helpful message about changing their target library.
 const ES2015_PLUS_TYPES: &[&str] = &[
-    // ES2015
+    // ES2015 - Core types
     "Promise",
     "PromiseLike",
     "PromiseConstructor",
     "PromiseConstructorLike",
     "Map",
+    "MapConstructor",
     "Set",
+    "SetConstructor",
     "WeakMap",
+    "WeakMapConstructor",
     "WeakSet",
+    "WeakSetConstructor",
     "Proxy",
+    "ProxyHandler",
     "Reflect",
     "Symbol",
+    "SymbolConstructor",
+    // ES2015 - Iterator types
     "Iterator",
+    "Iterable",
     "IterableIterator",
+    "IteratorResult",
+    "IteratorYieldResult",
+    "IteratorReturnResult",
     "AsyncIterator",
     "AsyncIterable",
     "AsyncIterableIterator",
+    // ES2015 - Generator types
     "Generator",
     "GeneratorFunction",
+    "GeneratorFunctionConstructor",
+    // ES2015 - Array types
     "ArrayLike",
     "ReadonlyMap",
     "ReadonlySet",
     // ES2017
     "AsyncFunction",
+    "AsyncFunctionConstructor",
     "SharedArrayBuffer",
+    "SharedArrayBufferConstructor",
     "Atomics",
     // ES2018
     "AsyncGenerator",
     "AsyncGeneratorFunction",
+    "AsyncGeneratorFunctionConstructor",
     // ES2019
     "ObjectEntries",
     "ObjectValues",
     // ES2020
     "BigInt",
+    "BigIntConstructor",
     "BigInt64Array",
+    "BigInt64ArrayConstructor",
     "BigUint64Array",
+    "BigUint64ArrayConstructor",
     // ES2021
     "FinalizationRegistry",
+    "FinalizationRegistryConstructor",
     "WeakRef",
+    "WeakRefConstructor",
     // ES2022
     "Awaited",
 ];
@@ -331,21 +353,55 @@ mod tests {
 
     #[test]
     fn test_is_es2015_plus_type() {
-        // Test ES2015 types
+        // Test ES2015 core types
         assert!(is_es2015_plus_type("Promise"));
+        assert!(is_es2015_plus_type("PromiseLike"));
         assert!(is_es2015_plus_type("Map"));
+        assert!(is_es2015_plus_type("MapConstructor"));
         assert!(is_es2015_plus_type("Set"));
+        assert!(is_es2015_plus_type("SetConstructor"));
         assert!(is_es2015_plus_type("WeakMap"));
         assert!(is_es2015_plus_type("WeakSet"));
         assert!(is_es2015_plus_type("Proxy"));
+        assert!(is_es2015_plus_type("ProxyHandler"));
         assert!(is_es2015_plus_type("Reflect"));
         assert!(is_es2015_plus_type("Symbol"));
+        assert!(is_es2015_plus_type("SymbolConstructor"));
+
+        // Test ES2015 iterator types
+        assert!(is_es2015_plus_type("Iterator"));
+        assert!(is_es2015_plus_type("Iterable"));
+        assert!(is_es2015_plus_type("IterableIterator"));
+        assert!(is_es2015_plus_type("IteratorResult"));
+        assert!(is_es2015_plus_type("AsyncIterator"));
+        assert!(is_es2015_plus_type("AsyncIterable"));
+        assert!(is_es2015_plus_type("AsyncIterableIterator"));
+
+        // Test ES2015 generator types
+        assert!(is_es2015_plus_type("Generator"));
+        assert!(is_es2015_plus_type("GeneratorFunction"));
 
         // Test ES2017+ types
         assert!(is_es2015_plus_type("AsyncFunction"));
+        assert!(is_es2015_plus_type("SharedArrayBuffer"));
+        assert!(is_es2015_plus_type("Atomics"));
+
+        // Test ES2018 types
+        assert!(is_es2015_plus_type("AsyncGenerator"));
+        assert!(is_es2015_plus_type("AsyncGeneratorFunction"));
+
+        // Test ES2020 types
         assert!(is_es2015_plus_type("BigInt"));
+        assert!(is_es2015_plus_type("BigIntConstructor"));
+        assert!(is_es2015_plus_type("BigInt64Array"));
+        assert!(is_es2015_plus_type("BigUint64Array"));
+
+        // Test ES2021 types
         assert!(is_es2015_plus_type("FinalizationRegistry"));
         assert!(is_es2015_plus_type("WeakRef"));
+
+        // Test ES2022 types
+        assert!(is_es2015_plus_type("Awaited"));
 
         // Test pre-ES2015 types (should return false)
         assert!(!is_es2015_plus_type("Object"));
@@ -354,6 +410,9 @@ mod tests {
         assert!(!is_es2015_plus_type("String"));
         assert!(!is_es2015_plus_type("Number"));
         assert!(!is_es2015_plus_type("Boolean"));
+        assert!(!is_es2015_plus_type("Error"));
+        assert!(!is_es2015_plus_type("Date"));
+        assert!(!is_es2015_plus_type("RegExp"));
     }
 
     #[test]
