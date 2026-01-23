@@ -42,6 +42,7 @@
 //! ```
 
 use super::context::CheckerContext;
+use super::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message, Diagnostic};
 use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
@@ -178,6 +179,7 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     }
 
     /// Check a for-of loop and return the element type.
+    /// Emits TS2488 for non-iterable types or TS2504 for non-async-iterable types in for-await-of.
     pub fn check_for_of_loop(&mut self, for_of_idx: NodeIndex) -> ForOfCheckResult {
         let Some(node) = self.ctx.arena.get(for_of_idx) else {
             return ForOfCheckResult::error("Invalid for-of node");
@@ -194,9 +196,11 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             // Check if it's an async for-await-of
             let is_async = for_of.await_modifier;
 
-            // Validate iterability
+            // Validate iterability and emit diagnostics
             if is_async {
                 if !self.is_async_iterable(iterable_type) && !self.is_iterable(iterable_type) {
+                    // Emit TS2504 for non-async-iterable types in for-await-of
+                    self.emit_not_async_iterable_error(iterable_type, for_of.expression);
                     return ForOfCheckResult {
                         is_valid: false,
                         element_type: TypeId::ANY,
@@ -205,6 +209,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
                     };
                 }
             } else if !self.is_iterable(iterable_type) {
+                // Emit TS2488 for non-iterable types in for-of
+                self.emit_not_iterable_error(iterable_type, for_of.expression);
                 return ForOfCheckResult {
                     is_valid: false,
                     element_type: TypeId::ANY,
@@ -232,6 +238,7 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
     }
 
     /// Check spread of an iterable.
+    /// Emits TS2488 for non-iterable types.
     pub fn check_spread(&mut self, spread_idx: NodeIndex) -> SpreadCheckResult {
         let Some(node) = self.ctx.arena.get(spread_idx) else {
             return SpreadCheckResult::error("Invalid spread node");
@@ -246,6 +253,8 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
 
             // Check if the spread operand is iterable
             if !self.is_iterable(spread_type) {
+                // Emit TS2488 for non-iterable types in spread
+                self.emit_not_iterable_error(spread_type, spread.expression);
                 return SpreadCheckResult {
                     is_valid: false,
                     element_type: TypeId::ANY,
@@ -561,6 +570,63 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
         // Fallback: use the synthetic Promise base type
         // This allows the type to be recognized as promise-like even without lib types
         self.ctx.types.application(TypeId::PROMISE_BASE, vec![inner_type])
+    }
+
+    // =========================================================================
+    // Diagnostic Emission Methods
+    // =========================================================================
+
+    /// Emit TS2488 error when a type is not iterable.
+    /// Used for for-of loops and spread operations on non-iterable types.
+    fn emit_not_iterable_error(&mut self, type_id: TypeId, expr_idx: NodeIndex) {
+        // Skip error types and any/unknown to avoid cascading errors
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return;
+        }
+
+        if let Some((start, end)) = self.ctx.get_node_span(expr_idx) {
+            let type_str = self.format_type(type_id);
+            let message = format_message(
+                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                &[&type_str],
+            );
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                end.saturating_sub(start),
+                message,
+                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+            ));
+        }
+    }
+
+    /// Emit TS2504 error when a type is not async iterable.
+    /// Used for for-await-of loops on non-async-iterable types.
+    fn emit_not_async_iterable_error(&mut self, type_id: TypeId, expr_idx: NodeIndex) {
+        // Skip error types and any/unknown to avoid cascading errors
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return;
+        }
+
+        if let Some((start, end)) = self.ctx.get_node_span(expr_idx) {
+            let type_str = self.format_type(type_id);
+            let message = format_message(
+                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR,
+                &[&type_str],
+            );
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                end.saturating_sub(start),
+                message,
+                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR,
+            ));
+        }
+    }
+
+    /// Format a type for diagnostic messages.
+    fn format_type(&self, type_id: TypeId) -> String {
+        self.ctx.types.format_type(type_id)
     }
 
     // =========================================================================
