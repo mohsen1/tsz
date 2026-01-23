@@ -1,0 +1,22 @@
+# Build artifacts
+target/
+.target/
+**/target/
+
+# TypeScript submodule (large)
+TypeScript/
+
+# Git
+.git/
+
+# IDE/Editor
+.idea/
+.vscode/
+*.swp
+
+# Misc
+node_modules/
+.env*
+logs/
+coverage/
+*.log

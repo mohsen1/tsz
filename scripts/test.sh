@@ -139,9 +139,12 @@ fi
 # Build base image if needed or forced (only contains rustc + nextest, not source)
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
     echo "🔨 Building base Docker image..."
-    docker build -t "$IMAGE_NAME" -f - "$ROOT_DIR" << 'EOF'
+    DOCKER_BUILDKIT=1 docker build -t "$IMAGE_NAME" -f - "$ROOT_DIR" << 'EOF'
+# syntax=docker/dockerfile:1.4
 FROM rust:latest
-RUN cargo install cargo-nextest --locked
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo install cargo-nextest --locked
 WORKDIR /app
 EOF
 fi
