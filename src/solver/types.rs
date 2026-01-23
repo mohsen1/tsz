@@ -8,27 +8,133 @@ use serde::Serialize;
 
 /// A lightweight handle to an interned type.
 /// Equality check is O(1) - just compare the u32 values.
+///
+/// # Sentinel Value Semantics
+///
+/// The following sentinel values have specific semantics for error handling and type inference:
+///
+/// ## `TypeId::ERROR`
+/// Used when type resolution **fails** due to an actual error:
+/// - Missing AST nodes or invalid syntax
+/// - Type annotation that cannot be resolved
+/// - Failed type inference with no fallback
+///
+/// **Error propagation**: ERROR is "contagious" - operations on ERROR types return ERROR.
+/// This prevents cascading errors from a single root cause. Property access on ERROR
+/// returns ERROR silently (no additional diagnostics emitted).
+///
+/// **Example uses:**
+/// - Missing type annotation: `let x;` -> ERROR (prevents "any poisoning")
+/// - Failed generic inference with no constraint/default
+/// - Invalid type syntax or unresolved type references
+///
+/// ## `TypeId::UNKNOWN`
+/// The TypeScript `unknown` type - a type-safe alternative to `any`.
+/// Use when the type is genuinely unknown at compile time, but should be
+/// checked before use.
+///
+/// **Strict behavior**: Property access on UNKNOWN returns `IsUnknown` result,
+/// which the checker reports as TS2571 "Object is of type 'unknown'".
+///
+/// **Example uses:**
+/// - Explicit `unknown` type annotation
+/// - Return type of functions that could return anything
+/// - Missing `this` parameter type (stricter than `any`)
+///
+/// ## `TypeId::ANY`
+/// The TypeScript `any` type - opts out of type checking entirely.
+/// Use for intentional any-typed values or interop with untyped code.
+///
+/// **Permissive behavior**: Property access on ANY succeeds and returns ANY.
+/// No type errors are produced for any-typed expressions.
+///
+/// **Example uses:**
+/// - Explicit `any` type annotation
+/// - Arrays with no element type context: `[]` defaults to `any[]`
+/// - Interop with JavaScript libraries without type definitions
+///
+/// ## `TypeId::NEVER`
+/// The bottom type - represents values that can never exist.
+/// Used for exhaustive checking and functions that never return.
+///
+/// **Example uses:**
+/// - Function that always throws or loops forever
+/// - Exhaustive switch/if narrowing (remaining type after all cases)
+/// - Intersection of incompatible types
+///
+/// ## Summary: When to Use Each
+///
+/// | Scenario                          | Use           |
+/// |-----------------------------------|---------------|
+/// | Type resolution failed            | `ERROR`       |
+/// | Missing required type annotation  | `ERROR`       |
+/// | Failed inference (no fallback)    | `ERROR`       |
+/// | Explicit `unknown` annotation     | `UNKNOWN`     |
+/// | Missing `this` parameter type     | `UNKNOWN`     |
+/// | Explicit `any` annotation         | `ANY`         |
+/// | Empty array literal `[]`          | `any[]`       |
+/// | Function never returns            | `NEVER`       |
+/// | Exhaustive narrowing remainder    | `NEVER`       |
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Default)]
 pub struct TypeId(pub u32);
 
 impl TypeId {
+    /// Internal placeholder - no valid type.
     pub const NONE: TypeId = TypeId(0);
+
+    /// Error sentinel - type resolution failed.
+    /// Propagates through operations to prevent cascading errors.
+    /// See struct-level docs for detailed semantics.
     pub const ERROR: TypeId = TypeId(1);
+
+    /// The bottom type - represents values that can never exist.
+    /// Used for exhaustive checks and functions that never return.
     pub const NEVER: TypeId = TypeId(2);
+
+    /// TypeScript's `unknown` type - type-safe top type.
+    /// Requires type narrowing before use. See struct-level docs.
     pub const UNKNOWN: TypeId = TypeId(3);
+
+    /// TypeScript's `any` type - opts out of type checking.
+    /// All operations succeed, returning `any`. See struct-level docs.
     pub const ANY: TypeId = TypeId(4);
+
+    /// The `void` type - used for functions with no meaningful return.
     pub const VOID: TypeId = TypeId(5);
+
+    /// The `undefined` type - represents the undefined value.
     pub const UNDEFINED: TypeId = TypeId(6);
+
+    /// The `null` type - represents the null value.
     pub const NULL: TypeId = TypeId(7);
+
+    /// The `boolean` type - union of true | false.
     pub const BOOLEAN: TypeId = TypeId(8);
+
+    /// The `number` type - all numeric values.
     pub const NUMBER: TypeId = TypeId(9);
+
+    /// The `string` type - all string values.
     pub const STRING: TypeId = TypeId(10);
+
+    /// The `bigint` type - arbitrary precision integers.
     pub const BIGINT: TypeId = TypeId(11);
+
+    /// The `symbol` type - unique symbol values.
     pub const SYMBOL: TypeId = TypeId(12);
+
+    /// The `object` type - any non-primitive value.
     pub const OBJECT: TypeId = TypeId(13);
+
+    /// The literal type `true`.
     pub const BOOLEAN_TRUE: TypeId = TypeId(14);
+
+    /// The literal type `false`.
     pub const BOOLEAN_FALSE: TypeId = TypeId(15);
+
+    /// The `Function` type - any callable.
     pub const FUNCTION: TypeId = TypeId(16);
+
     /// Synthetic Promise base type for Promise<T> when Promise symbol is not resolved.
     /// Used to allow promise_like_return_type_argument to extract T from await expressions.
     pub const PROMISE_BASE: TypeId = TypeId(17);

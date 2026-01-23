@@ -13,6 +13,7 @@
 use crate::interner::Atom;
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
+use crate::solver::utils;
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::FxHashSet;
 
@@ -1462,7 +1463,7 @@ impl<'a> InferenceContext<'a> {
             let prop_type = self.optional_property_type(prop);
 
             if let Some(number_idx) = number_index
-                && self.is_numeric_property_name(prop.name)
+                && utils::is_numeric_property_name(self.interner, prop.name)
             {
                 if !number_idx.readonly && prop.readonly {
                     return false;
@@ -1517,68 +1518,6 @@ impl<'a> InferenceContext<'a> {
         let source = source.unwrap_or(TypeId::UNKNOWN);
         let target = target.unwrap_or(TypeId::UNKNOWN);
         self.are_parameters_compatible(source, target, bivariant)
-    }
-
-    fn is_numeric_property_name(&self, name: Atom) -> bool {
-        let prop_name = self.interner.resolve_atom_ref(name);
-        Self::is_numeric_literal_name(prop_name.as_ref())
-    }
-
-    pub(crate) fn is_numeric_literal_name(name: &str) -> bool {
-        if name == "NaN" || name == "Infinity" || name == "-Infinity" {
-            return true;
-        }
-
-        let value: f64 = match name.parse() {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
-        if !value.is_finite() {
-            return false;
-        }
-
-        Self::js_number_to_string(value) == name
-    }
-
-    fn js_number_to_string(value: f64) -> String {
-        if value.is_nan() {
-            return "NaN".to_string();
-        }
-        if value == 0.0 {
-            return "0".to_string();
-        }
-        if value.is_infinite() {
-            return if value.is_sign_negative() {
-                "-Infinity".to_string()
-            } else {
-                "Infinity".to_string()
-            };
-        }
-
-        let abs = value.abs();
-        if !(1e-6..1e21).contains(&abs) {
-            let mut formatted = format!("{:e}", value);
-            if let Some(split) = formatted.find('e') {
-                let (mantissa, exp) = formatted.split_at(split);
-                let exp_digits = &exp[1..];
-                let (sign, digits) = if exp_digits.starts_with('-') {
-                    ('-', &exp_digits[1..])
-                } else {
-                    ('+', exp_digits)
-                };
-                let trimmed = digits.trim_start_matches('0');
-                let digits = if trimmed.is_empty() { "0" } else { trimmed };
-                formatted = format!("{mantissa}e{sign}{digits}");
-            }
-            return formatted;
-        }
-
-        let formatted = value.to_string();
-        if formatted == "-0" {
-            "0".to_string()
-        } else {
-            formatted
-        }
     }
 
     fn function_like_subtype_of(
