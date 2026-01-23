@@ -4,7 +4,7 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 **Current Status:** False positives have been fixed (no extra errors in top list). Now focusing on adding missing error detection.
 
-**Conformance Baseline (2026-01-23):** 40.3% pass rate (4,919/12,197 tests) - up from 36.3%
+**Conformance Baseline (2026-01-23):** 41.5% pass rate (5,056/12,197 tests) - up from 36.3%
 
 ---
 
@@ -14,7 +14,7 @@ TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compat
 
 **Key Insight:** False positives have been fixed. Now focusing on adding missing error detection to improve coverage.
 
-### RESOLVED: False Positives (Extra Errors)
+### Completed: False Positives (Extra Errors)
 
 The following issues have been fixed:
 - TS2322 false positives - Removed duplicate weak type checking
@@ -25,181 +25,31 @@ The following issues have been fixed:
 
 | Error Code | Missing Count | Description | Priority |
 |------------|---------------|-------------|----------|
-| TS2304 | 4,581x | Cannot find name | HIGH |
-| TS2318 | 3,386x | Cannot find global type | HIGH |
-| TS2583 | 1,896x | Change target library? | MEDIUM |
-| TS2322 | 1,873x | Type not assignable (legitimate) | MEDIUM |
+| TS2304 | 4,636x | Cannot find name | HIGH |
+| TS2318 | 3,492x | Cannot find global type | HIGH |
+| TS2307 | 2,331x | Cannot find module | HIGH |
+| TS2583 | 1,913x | Change target library? | MEDIUM |
+| TS2322 | 1,875x | Type not assignable (legitimate) | MEDIUM |
 | TS2488 | 1,780x | Type must have Symbol.iterator | MEDIUM |
-| TS2307 | 1,411x | Cannot find module | MEDIUM |
-| TS2339 | 943x | Property does not exist | MEDIUM |
+| TS2339 | 950x | Property does not exist | MEDIUM |
 | TS2362 | 901x | Left-hand side arithmetic | LOW |
-
-### Strategy: Fix Root Causes
-
-**Phase 1: TS2322 False Positives (CRITICAL - 12,122 extra)**
-
-**Root Cause Identified: Double Weak Type Checking**
-
-The solver checks weak types **redundantly in two places**, compounding strictness:
-
-| Layer | File | Lines | What It Does |
-|-------|------|-------|--------------|
-| CompatChecker | `src/solver/compat.rs` | 167-169, 289-481 | Checks `violates_weak_type()` and `violates_weak_union()` |
-| SubtypeChecker | `src/solver/subtype.rs` | 375, 3704-3746 | Checks `violates_weak_type()` **again** |
-
-Both have `enforce_weak_types = true` by default. If either layer finds a violation, assignment fails.
-
-**What's a "Weak Type"?**
-An object where all properties are optional: `{ a?: number }`. TypeScript requires that when assigning to a weak type, the source must share at least one property name with the target.
-
-**The Problem:**
-- `has_common_property()` logic may be too strict with union types
-- `violates_weak_union()` has complex logic with likely false positives
-- Redundant checking means borderline cases fail twice
-
-**Fixes (in priority order):**
-
-1. **Remove duplicate check** - Disable weak type check at `subtype.rs:375`, let only `compat.rs` handle it:
-   ```rust
-   // subtype.rs:375 - REMOVE or set enforce_weak_types = false
-   if self.enforce_weak_types && self.violates_weak_type(source, target) {
-       return SubtypeResult::False;
-   }
-   ```
-
-2. **Review `violates_weak_union()`** (`compat.rs:315-357`) - Complex logic, likely source of false positives
-
-3. **Review `has_common_property()`** - May reject valid assignments in union type cases
-
-**Debug approach:**
-```bash
-# Find a test where TSZ emits TS2322 but TSC doesn't
-./conformance/run-conformance.sh --native --max=50 --verbose 2>&1 | \
-  grep -B5 "Extra: TS2322"
-
-# Compare specific test
-npx tsc --noEmit path/to/test.ts  # Should have NO errors
-cargo run -- --check path/to/test.ts  # Incorrectly emits TS2322
-```
-
-**Key files:**
-- `src/solver/compat.rs:289-481` - Weak type violation logic (PRIMARY)
-- `src/solver/subtype.rs:375,3704-3746` - Redundant weak check (REMOVE)
-- `src/checker/state.rs:12400-12430` - Where checker calls solver
-
-**Phase 2: TS2304/TS2694 False Positives (6,902 combined)**
-
-Symbol resolution is marking valid names as "not found":
-- Exports being missed during binding
-- Namespace members not properly resolved
-- Declaration merging incomplete
-
-**Focus files:**
-- `src/binder/` - Symbol table construction
-- `src/checker/state.rs` - Symbol lookup methods
-- `src/checker/modules.rs` - Module/namespace resolution
-
-**Phase 3: TS1005 Parser Errors (2,706 extra)**
-
-Parser error recovery is emitting errors where TSC doesn't. May indicate:
-- Overly strict parsing in optional syntax positions
-- Error recovery generating false positives
-- Missing syntax support
-
-**Focus files:**
-- `src/parser/` - Parser implementation
-- `src/thin_parser/` - Thin parser if used
-
-### Success Criteria
-
-- **Week 1:** TS2322 extra count < 5,000 (from 12,122)
-- **Week 2:** TS2304/TS2694 extra count < 3,000 (from 6,902)
-- **Target:** Pass rate 36.3% → 50%+
-
----
-
-## CRITICAL: Checker vs Solver Architectural Issues
-
-**Problem:** The checker contains assignability logic that should be in the solver, causing:
-1. Duplicate code paths for the same checks
-2. Inconsistent behavior between checker and solver
-3. Double-checking that compounds strictness (likely contributing to 12k TS2322 false positives)
-
-### Assignability Overrides in Wrong Layer
-
-Four assignability override functions exist in `src/checker/state.rs:11615-11890` that should be in the solver:
-
-| Function | Lines | Purpose |
-|----------|-------|---------|
-| `enum_assignability_override()` | 11615-11680 | Enum compatibility checks |
-| `abstract_constructor_assignability_override()` | 11682-11750 | Abstract constructor checks |
-| `constructor_accessibility_override()` | 11752-11820 | Constructor accessibility |
-| `private_brand_assignability_override()` | 11822-11890 | Private field brand checks |
-
-**These overrides are called TWICE:**
-- First call: `state.rs:12431-12442`
-- Second call: `state.rs:12464-12474`
-
-This double-calling compounds the strictness problem.
-
-### Type Evaluation Duplication
-
-Type evaluation logic is split between:
-- **Checker:** `src/checker/state.rs:12399-12832` - inline type evaluation
-- **Solver:** `src/solver/evaluate.rs` - `TypeEvaluator` struct
-
-This duplication means the same types may be evaluated differently depending on the code path.
-
-### Action Plan
-
-**Priority 1: Move Assignability Overrides to Solver**
-1. Move all 4 override functions from `state.rs` to `src/solver/compat.rs`
-2. Remove duplicate calls (keep single call site)
-3. Ensure solver has all context needed for these checks
-
-**Priority 2: Centralize Type Evaluation**
-1. All type evaluation should go through solver's `TypeEvaluator`
-2. Checker should only call solver, not duplicate evaluation logic
-3. This ensures consistent type semantics
-
-**Key Files:**
-| File | What to Change |
-|------|----------------|
-| `src/checker/state.rs:11615-11890` | MOVE overrides to solver |
-| `src/checker/state.rs:12431-12474` | REMOVE duplicate override calls |
-| `src/solver/compat.rs` | ADD override functions here |
-| `src/solver/evaluate.rs` | Ensure all evaluation routes through here |
-
-**Expected Impact:** Removing duplicate checking should significantly reduce TS2322 false positives.
-
----
-
-## High Priority: Missing Errors Coverage
-
-**Problem:** Some legitimate errors are not being emitted.
-
-### Top Missing Errors
-
-| Error Code | Missing Count | Description |
-|------------|---------------|-------------|
-| TS2318 | 3,372x | Cannot find global type '{0}' |
-| TS2307 | 2,304x | Cannot find module '{0}' |
-| TS2304 | 2,072x | Cannot find name '{0}' |
-| TS2488 | 1,770x | Type must have Symbol.iterator |
-| TS2583 | 1,184x | Cannot find name. Do you need to change target? |
-| TS2362 | 873x | Left-hand side of arithmetic must be number/bigint |
-| TS2322 | 847x | Type not assignable (legitimate) |
-| TS2363 | 753x | Right-hand side of arithmetic must be number/bigint |
 
 ### Strategy
 
-**Note:** Fix false positives FIRST. Many "missing" errors may appear once false positives stop masking them.
+1. **TS2304/TS2318:** Symbol resolution and global type lookup gaps
+2. **TS2307:** Module resolution improvements
+3. **TS2488:** Iterator protocol checking
+4. **TS2362/TS2363:** Arithmetic operand type checking
+5. **TS2583:** ES version feature detection
 
-**After Phase 1-3 above:**
-1. TS2318/TS2307: Module resolution gaps
-2. TS2488: Iterator protocol checking
-3. TS2362/TS2363: Arithmetic operand type checking
-4. TS2583: ES version feature detection
+**Key Files for Missing Errors:**
+| File | Purpose |
+|------|---------|
+| `src/module_resolver.rs` | TS2307 module not found |
+| `src/checker/state.rs` | TS2318 global type lookup, TS2304 symbol resolution |
+| `src/solver/lower.rs` | Type reference resolution |
+| `src/binder/` | Symbol table construction |
+| `src/checker/modules.rs` | Module/namespace resolution |
 
 ---
 
@@ -261,12 +111,12 @@ Workers are crashing during test execution. This is separate from the 15 crashed
 
 | Category | Files | Pass Rate |
 |----------|-------|-----------|
-| conformance | 5,626 | 35.5% (1,997) |
-| compiler | 6,369 | 36.9% (2,353) |
+| conformance | 5,655 | 39.0% (2,206) |
+| compiler | 6,398 | 43.4% (2,777) |
 | projects | 144 | 50.7% (73) |
-| **Total** | **12,197** | **36.3% (4,423)** |
+| **Total** | **12,197** | **41.5% (5,056)** |
 
-**Performance:** 92 tests/sec with 8 workers
+**Performance:** 103 tests/sec with 8 workers
 
 ---
 
@@ -294,89 +144,9 @@ cargo test --lib solver::subtype_tests   # Specific module
 
 | Don't | Do Instead |
 |-------|------------|
-| Add more error checks before fixing false positives | Fix false positives first |
 | Chase pass percentages | Fix root causes systematically |
 | Add test-specific workarounds | Fix underlying logic |
 | Suppress errors to pass tests | Understand why error is wrong |
-
----
-
-## Key Files
-
-### For TS2322 False Positives (Solver - TOP PRIORITY)
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/solver/compat.rs` | 131-181 | `is_assignable()` entry point |
-| `src/solver/compat.rs` | 289-481 | Weak type violation logic |
-| `src/solver/compat.rs` | 315-357 | `violates_weak_union()` - likely culprit |
-| `src/solver/subtype.rs` | 375 | **REMOVE** - redundant weak check |
-| `src/solver/subtype.rs` | 3704-3746 | `violates_weak_type()` implementation |
-| `src/checker/state.rs` | 12400-12430 | Where checker calls `is_assignable_to()` |
-
-### For TS2304/TS2694 False Positives (Symbol Resolution)
-| File | Purpose |
-|------|---------|
-| `src/binder/` | Symbol table construction |
-| `src/checker/state.rs` | Symbol lookup methods |
-| `src/checker/modules.rs` | Module/namespace resolution |
-
-### For Missing Error Fixes
-| File | Purpose |
-|------|---------|
-| `src/module_resolver.rs` | TS2307 module not found |
-| `src/checker/state.rs` | TS2318 global type lookup |
-| `src/solver/lower.rs` | Type reference resolution |
-
----
-
-## Immediate Action Plan
-
-### Day 1: Remove Redundant Weak Type Check
-
-**Quick win:** Remove duplicate weak type enforcement in `src/solver/subtype.rs:375`:
-
-```rust
-// BEFORE (too strict - checks twice)
-if self.enforce_weak_types && self.violates_weak_type(source, target) {
-    return SubtypeResult::False;
-}
-
-// AFTER (let compat.rs handle it)
-// Remove or disable this check
-```
-
-Run conformance to measure impact.
-
-### Day 2: Move Assignability Overrides to Solver
-
-Move the 4 override functions from checker to solver:
-1. Copy `enum_assignability_override()`, `abstract_constructor_assignability_override()`, `constructor_accessibility_override()`, `private_brand_assignability_override()` to `src/solver/compat.rs`
-2. Remove the duplicate calls at `state.rs:12431-12442` and `state.rs:12464-12474` (keep single call)
-3. Update solver's `is_assignable()` to use these overrides
-
-### Day 3: Debug Remaining TS2322 False Positives
-
-```bash
-# Find tests with extra TS2322
-./conformance/run-conformance.sh --max=50 --verbose 2>&1 | \
-  grep -A2 "Extra: TS2322" | head -30
-
-# Pick ONE test, compare TSC vs TSZ
-npx tsc --noEmit conformance/path/to/test.ts
-cargo run -- --check conformance/path/to/test.ts
-```
-
-Focus on `violates_weak_union()` in `compat.rs:315-357`.
-
-### Day 4-5: Fix `violates_weak_union()` Logic
-
-Review the complex union handling - likely generating false positives.
-
-### Day 6: Fix Symbol Resolution False Positives
-
-Debug TS2304/TS2694 extra errors.
-
-**Goal:** TS2322 extra count < 5,000 (from 12,122), pass rate 36.3% → 45%+
 
 ---
 
