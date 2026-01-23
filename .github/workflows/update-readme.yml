@@ -12,7 +12,7 @@ jobs:
   update-conformance:
     name: Update Conformance Progress
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
@@ -61,9 +61,8 @@ jobs:
       - name: Run conformance tests
         id: conformance
         run: |
-          cd conformance
           set +e
-          OUTPUT=$(timeout 1800 bash run-conformance.sh --all --workers=4 2>&1)
+          OUTPUT=$(timeout 5400 ./conformance/run-conformance.sh --all --workers=8 2>&1)
           EXIT_CODE=$?
           set -e
 
