@@ -2085,6 +2085,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check if a tuple type allows empty arrays.
+    ///
+    /// Determines whether `never[]` (empty array) can be assigned to a tuple type.
+    /// A tuple allows empty if ALL of its elements are optional or it has a rest element
+    /// with no required trailing elements.
+    ///
+    /// ## Examples:
+    /// - `[]` ✅ - Empty tuple allows empty array
+    /// - `[string?]` ✅ - Only optional element
+    /// - `[string]` ❌ - Required element
+    /// - `[...string[]]` ✅ - Rest element allows any number including zero
+    /// - `[...string[], number]` ❌ - Required trailing element after rest
+    ///
+    /// ## Nested Tuple Spreads:
+    /// When a rest element contains a nested tuple spread, we recursively check
+    /// both the fixed elements and tail elements of the expansion.
     fn tuple_allows_empty(&self, target: &[TupleElement]) -> bool {
         for (index, elem) in target.iter().enumerate() {
             if elem.rest {
