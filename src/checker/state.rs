@@ -10898,10 +10898,12 @@ impl<'a> CheckerState<'a> {
             // TS2697: Check if async function has access to Promise type
             // This error is emitted when Promise global type is not available
             if is_async && !is_generator && !self.is_promise_global_available() {
-                use crate::checker::types::diagnostics::{
-                    diagnostic_codes, diagnostic_messages,
+                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                let error_node = if async_node_idx.is_none() {
+                    idx
+                } else {
+                    async_node_idx
                 };
-                let error_node = if async_node_idx.is_none() { idx } else { async_node_idx };
                 self.error_at_node(
                     error_node,
                     diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
@@ -16802,7 +16804,10 @@ impl<'a> CheckerState<'a> {
 
                         // TS2697: Check if async function has access to Promise type
                         // This error is emitted when Promise global type is not available
-                        if func.is_async && !func.asterisk_token && !self.is_promise_global_available() {
+                        if func.is_async
+                            && !func.asterisk_token
+                            && !self.is_promise_global_available()
+                        {
                             use crate::checker::types::diagnostics::{
                                 diagnostic_codes, diagnostic_messages,
                             };
