@@ -1130,6 +1130,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check conditional type to conditional type subtyping.
+    ///
+    /// Validates that two conditional types are equivalent in their structure and
+    /// that their true/false branches are subtype-compatible.
+    ///
+    /// ## Conditional Type Structure:
+    /// ```typescript
+    /// T extends U ? X : Y
+    /// ```
+    ///
+    /// ## Subtyping Rules:
+    /// 1. **Distributive flags must match**: Both must be distributive or non-distributive
+    ///    - `T extends U ? X : Y` ≢ `T extends U ? A : B` ❌ (different distributivity)
+    ///
+    /// 2. **Check type must be equivalent**: `check_type` parameters must be the same
+    ///    - Extends clause must match structurally
+    ///
+    /// 3. **Branch compatibility**: Both true and false branches must be compatible
+    ///    - `X1 <: X2` AND `Y1 <: Y2`
+    ///
+    /// ## Examples:
+    /// - `T extends string ? number : boolean` ≡ `T extends string ? number : boolean` ✅
+    /// - `T extends U ? number` ≢ `T extends U ? string` ❌ (different branches)
     fn check_conditional_subtype(
         &mut self,
         source: &ConditionalType,
