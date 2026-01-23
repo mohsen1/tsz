@@ -15993,6 +15993,45 @@ impl<'a> CheckerState<'a> {
                         continue; // Interface merging is always allowed
                     }
 
+                    // Check for namespace merging - namespaces can merge with functions, classes, and each other
+                    let decl_is_namespace = (decl_flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0;
+                    let other_is_namespace = (other_flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0;
+
+                    // Namespace + Namespace merging is allowed
+                    if decl_is_namespace && other_is_namespace {
+                        continue;
+                    }
+
+                    // Namespace + Function merging is allowed
+                    let decl_is_function = (decl_flags & symbol_flags::FUNCTION) != 0;
+                    let other_is_function = (other_flags & symbol_flags::FUNCTION) != 0;
+                    if (decl_is_namespace && other_is_function)
+                        || (decl_is_function && other_is_namespace)
+                    {
+                        continue;
+                    }
+
+                    // Namespace + Class merging is allowed
+                    let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
+                    let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
+                    if (decl_is_namespace && other_is_class)
+                        || (decl_is_class && other_is_namespace)
+                    {
+                        continue;
+                    }
+
+                    // Namespace + Enum merging is allowed
+                    let decl_is_enum = (decl_flags & symbol_flags::ENUM) != 0;
+                    let other_is_enum = (other_flags & symbol_flags::ENUM) != 0;
+                    if (decl_is_namespace && other_is_enum) || (decl_is_enum && other_is_namespace)
+                    {
+                        continue;
+                    }
+
                     if Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);

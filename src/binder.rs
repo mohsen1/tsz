@@ -76,18 +76,26 @@ pub mod symbol_flags {
     pub const ACCESSOR: u32 = GET_ACCESSOR | SET_ACCESSOR;
 
     // Exclusion flags for redeclaration checks
+    // Note: Operator precedence in Rust has & binding tighter than |, so we need parentheses
+    // to match TypeScript's semantics for declaration merging rules.
     pub const FUNCTION_SCOPED_VARIABLE_EXCLUDES: u32 = VALUE & !FUNCTION_SCOPED_VARIABLE;
     pub const BLOCK_SCOPED_VARIABLE_EXCLUDES: u32 = VALUE;
     pub const PARAMETER_EXCLUDES: u32 = VALUE;
     pub const PROPERTY_EXCLUDES: u32 = NONE;
     pub const ENUM_MEMBER_EXCLUDES: u32 = VALUE | TYPE;
-    pub const FUNCTION_EXCLUDES: u32 = VALUE & !FUNCTION;
-    pub const CLASS_EXCLUDES: u32 = VALUE | TYPE & !VALUE_MODULE & !INTERFACE & !FUNCTION;
+    // Function can merge with: namespace/module (VALUE_MODULE)
+    pub const FUNCTION_EXCLUDES: u32 = VALUE & !FUNCTION & !VALUE_MODULE;
+    // Class can merge with: interface, function, and namespace/module
+    pub const CLASS_EXCLUDES: u32 = (VALUE | TYPE) & !VALUE_MODULE & !INTERFACE & !FUNCTION;
+    // Interface can merge with: interface, class
     pub const INTERFACE_EXCLUDES: u32 = TYPE & !INTERFACE & !CLASS;
-    pub const REGULAR_ENUM_EXCLUDES: u32 = VALUE | TYPE & !REGULAR_ENUM;
-    pub const CONST_ENUM_EXCLUDES: u32 = VALUE | TYPE & !CONST_ENUM;
+    // Enum can merge with: namespace/module and same-kind enum
+    pub const REGULAR_ENUM_EXCLUDES: u32 = (VALUE | TYPE) & !REGULAR_ENUM & !VALUE_MODULE;
+    pub const CONST_ENUM_EXCLUDES: u32 = (VALUE | TYPE) & !CONST_ENUM & !VALUE_MODULE;
+    // Value module (namespace with values) can merge with: function, class, enum, and other value modules
     pub const VALUE_MODULE_EXCLUDES: u32 =
         VALUE & !FUNCTION & !CLASS & !REGULAR_ENUM & !VALUE_MODULE;
+    // Pure namespace module can merge with anything
     pub const NAMESPACE_MODULE_EXCLUDES: u32 = NONE;
     pub const METHOD_EXCLUDES: u32 = VALUE & !METHOD;
     pub const GET_ACCESSOR_EXCLUDES: u32 = VALUE & !SET_ACCESSOR;
