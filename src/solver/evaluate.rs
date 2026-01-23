@@ -35,6 +35,18 @@ pub enum ConditionalResult {
     Deferred(TypeId),
 }
 
+/// Maximum recursion depth for type evaluation.
+/// Prevents stack overflow on deeply recursive mapped/conditional types.
+pub const MAX_EVALUATE_DEPTH: u32 = 50;
+
+/// Maximum number of unique types to track in the visiting set.
+/// Prevents unbounded memory growth in pathological cases.
+pub const MAX_VISITING_SET_SIZE: usize = 10_000;
+
+/// Maximum total evaluations allowed per TypeEvaluator instance.
+/// Prevents infinite loops in pathological type evaluation scenarios.
+pub const MAX_TOTAL_EVALUATIONS: u32 = 100_000;
+
 /// Type evaluator for meta-types.
 pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
@@ -43,6 +55,8 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     cache: RefCell<FxHashMap<TypeId, TypeId>>,
     visiting: RefCell<FxHashSet<TypeId>>,
     depth: RefCell<u32>,
+    /// Total number of evaluate calls (iteration limit)
+    total_evaluations: RefCell<u32>,
 }
 
 struct MappedKeys {
@@ -157,6 +171,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             cache: RefCell::new(FxHashMap::default()),
             visiting: RefCell::new(FxHashSet::default()),
             depth: RefCell::new(0),
+            total_evaluations: RefCell::new(0),
         }
     }
 }
@@ -171,6 +186,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             cache: RefCell::new(FxHashMap::default()),
             visiting: RefCell::new(FxHashSet::default()),
             depth: RefCell::new(0),
+            total_evaluations: RefCell::new(0),
         }
     }
 
@@ -225,12 +241,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return cached;
         }
 
+        // Total evaluations limit to prevent infinite loops
+        {
+            let mut total = self.total_evaluations.borrow_mut();
+            *total += 1;
+            if *total > MAX_TOTAL_EVALUATIONS {
+                // Too many evaluations - return unevaluated to break out
+                self.cache.borrow_mut().insert(type_id, type_id);
+                return type_id;
+            }
+        }
+
         // Depth guard to prevent stack overflow from deeply recursive mapped types
-        const MAX_DEPTH: u32 = 50;
         {
             let mut depth = self.depth.borrow_mut();
             *depth += 1;
-            if *depth > MAX_DEPTH {
+            if *depth > MAX_EVALUATE_DEPTH {
                 *depth -= 1;
                 drop(depth);
                 // Return the type unevaluated to prevent deep recursion
@@ -249,6 +275,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         {
             let mut visiting = self.visiting.borrow_mut();
+            // Memory safety: limit the visiting set size
+            if visiting.len() >= MAX_VISITING_SET_SIZE {
+                *self.depth.borrow_mut() -= 1;
+                self.cache.borrow_mut().insert(type_id, type_id);
+                return type_id;
+            }
             if !visiting.insert(type_id) {
                 // Recursion guard for self-referential mapped/application types.
                 // Per TypeScript behavior, recursive mapped types evaluate to empty objects.
