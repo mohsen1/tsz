@@ -27381,3 +27381,163 @@ module MyModule {
     println!("  - Top-level function: correctly not detected ✓");
     println!("  - Function inside module: correctly detected ✓");
 }
+
+/// Test that namespace imports from unresolved modules don't produce extra TS2304 errors.
+/// When we have `import * as ts from "typescript"` and the module is unresolved,
+/// we should emit TS2307 for the module, but NOT emit TS2304 for uses of `ts.SomeType`.
+#[test]
+fn test_unresolved_namespace_import_no_extra_ts2304() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    // Similar pattern to APISample tests
+    let source = r#"
+import * as ts from "typescript";
+
+// Type reference using the namespace import
+let diag: ts.Diagnostic;
+
+// Property access on the namespace import
+const version = ts.version;
+
+// Function parameter with type from namespace
+function process(node: ts.Node): void {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2304_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CANNOT_FIND_NAME)
+        .count();
+    let ts2307_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CANNOT_FIND_MODULE)
+        .count();
+
+    // Should have exactly 1 TS2307 for the unresolved module
+    assert!(
+        ts2307_count == 1,
+        "Expected exactly 1 TS2307 for unresolved module 'typescript', got {} (all codes: {:?})",
+        ts2307_count,
+        codes
+    );
+
+    // Should NOT have any TS2304 errors - uses of ts.X should be silently ANY
+    // because the module is unresolved (TS2307 was already emitted)
+    assert_eq!(
+        ts2304_count, 0,
+        "Should not emit TS2304 for types from unresolved namespace import, got {} TS2304 errors. All codes: {:?}",
+        ts2304_count, codes
+    );
+}
+
+/// Test APISample-like pattern with noImplicitAny - simulates compiler/APISample_Watch.ts
+/// Expected: 1 TS2307 (module), multiple TS7006 (implicit any params)
+/// Note: We don't include `console.log` as that would emit TS2304 since console
+/// isn't available without lib.d.ts
+#[test]
+fn test_apisample_pattern_errors() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    // Pattern similar to APISample_Watch.ts
+    let source = r#"
+// @noImplicitAny: true
+import * as ts from "typescript";
+
+// Callback with no type annotation should produce TS7006
+function watchFile(host: ts.WatchHost, callback): ts.Watch<ts.BuilderProgram> {
+    return {} as any;
+}
+
+// More callbacks without types - each should produce TS7006
+function createProgram(
+    configFileName: string,
+    reportDiagnostic,
+    reportWatchStatus
+): void {
+    // Empty body to avoid using console (which might produce TS2304)
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2304_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CANNOT_FIND_NAME)
+        .count();
+    let ts2307_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CANNOT_FIND_MODULE)
+        .count();
+    let ts7006_count = codes.iter().filter(|&&c| c == 7006).count();
+
+    println!("Error codes produced: {:?}", codes);
+    println!("  TS2304 (cannot find name): {}", ts2304_count);
+    println!("  TS2307 (cannot find module): {}", ts2307_count);
+    println!("  TS7006 (implicit any param): {}", ts7006_count);
+
+    // Should have exactly 1 TS2307 for the unresolved module
+    assert_eq!(
+        ts2307_count, 1,
+        "Expected 1 TS2307 for unresolved module, got {}. All codes: {:?}",
+        ts2307_count, codes
+    );
+
+    // Should NOT have any TS2304 errors from ts.X references
+    // (the module is unresolved, so ts.X should silently return ANY)
+    assert_eq!(
+        ts2304_count, 0,
+        "Should not emit extra TS2304 for types from unresolved namespace import. All codes: {:?}",
+        codes
+    );
+
+    // Should have TS7006 for parameters without type annotations
+    // 3 parameters: callback, reportDiagnostic, reportWatchStatus
+    assert_eq!(
+        ts7006_count, 3,
+        "Expected 3 TS7006 for implicit any parameters. All codes: {:?}",
+        codes
+    );
+}
