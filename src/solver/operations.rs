@@ -2519,17 +2519,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     /// Resolve properties on string type.
     fn resolve_string_property(&self, prop_name: &str, prop_atom: Atom) -> PropertyAccessResult {
-        self.resolve_apparent_property(IntrinsicKind::String, TypeId::STRING, prop_name, prop_atom)
+        self.resolve_primitive_property(IntrinsicKind::String, TypeId::STRING, prop_name, prop_atom)
     }
 
     /// Resolve properties on number type.
     fn resolve_number_property(&self, prop_name: &str, prop_atom: Atom) -> PropertyAccessResult {
-        self.resolve_apparent_property(IntrinsicKind::Number, TypeId::NUMBER, prop_name, prop_atom)
+        self.resolve_primitive_property(IntrinsicKind::Number, TypeId::NUMBER, prop_name, prop_atom)
     }
 
     /// Resolve properties on boolean type.
     fn resolve_boolean_property(&self, prop_name: &str, prop_atom: Atom) -> PropertyAccessResult {
-        self.resolve_apparent_property(
+        self.resolve_primitive_property(
             IntrinsicKind::Boolean,
             TypeId::BOOLEAN,
             prop_name,
@@ -2539,7 +2539,19 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     /// Resolve properties on bigint type.
     fn resolve_bigint_property(&self, prop_name: &str, prop_atom: Atom) -> PropertyAccessResult {
-        self.resolve_apparent_property(IntrinsicKind::Bigint, TypeId::BIGINT, prop_name, prop_atom)
+        self.resolve_primitive_property(IntrinsicKind::Bigint, TypeId::BIGINT, prop_name, prop_atom)
+    }
+
+    /// Helper to resolve properties on primitive types.
+    /// Extracted to reduce duplication across string/number/boolean/bigint property resolvers.
+    fn resolve_primitive_property(
+        &self,
+        kind: IntrinsicKind,
+        type_id: TypeId,
+        prop_name: &str,
+        prop_atom: Atom,
+    ) -> PropertyAccessResult {
+        self.resolve_apparent_property(kind, type_id, prop_name, prop_atom)
     }
 
     /// Resolve properties on symbol primitive type.
