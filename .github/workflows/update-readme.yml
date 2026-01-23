@@ -1,8 +1,10 @@
 name: Update README Conformance
 
 on:
-  push:
-    branches: [main]
+  # Run weekly on Sunday at midnight UTC
+  schedule:
+    - cron: '0 0 * * 0'
+  # Allow manual trigger
   workflow_dispatch:
 
 permissions:
@@ -12,7 +14,7 @@ jobs:
   update-conformance:
     name: Update Conformance Progress
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +64,7 @@ jobs:
         id: conformance
         run: |
           set +e
-          OUTPUT=$(timeout 5400 ./conformance/run-conformance.sh --all --workers=8 2>&1)
+          OUTPUT=$(timeout 2400 ./conformance/run-conformance.sh --all --workers=4 2>&1)
           EXIT_CODE=$?
           set -e
 
