@@ -28245,3 +28245,339 @@ let m: Map<string, number>;
         checker.ctx.diagnostics
     );
 }
+
+// =============================================================================
+// TS2420/TS2415 - Class Implements/Extends Checking Tests
+// =============================================================================
+
+/// Test TS2420: Class incorrectly implements interface - missing property
+#[test]
+fn test_class_incorrectly_implements_interface_missing_property() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    age: number;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    // missing: age
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert!(
+        ts2420_count >= 1,
+        "Expected TS2420 for class missing interface property 'age'. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2420: Class correctly implements interface - no error
+#[test]
+fn test_class_correctly_implements_interface_no_error() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    age: number;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    age: number = 5;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert_eq!(
+        ts2420_count, 0,
+        "Expected no TS2420 for class that correctly implements interface. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2420: Class incorrectly implements interface - incompatible property type
+#[test]
+fn test_class_incorrectly_implements_interface_incompatible_type() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    age: number;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    age: string = "5";  // Should be number, not string
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert!(
+        ts2420_count >= 1,
+        "Expected TS2420 for class with incompatible property type. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2420: Class incorrectly implements interface - missing method
+#[test]
+fn test_class_incorrectly_implements_interface_missing_method() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    speak(): void;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    // missing: speak()
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert!(
+        ts2420_count >= 1,
+        "Expected TS2420 for class missing interface method 'speak'. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2415/TS2416: Class incorrectly extends base class - incompatible property type
+#[test]
+fn test_class_incorrectly_extends_base_class_incompatible_property() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+class Animal {
+    name: string = "";
+}
+
+class Dog extends Animal {
+    name: number = 5;  // Should be string, not number
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    // TS2416: Property in derived class not assignable to same property in base
+    let ts2416_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::PROPERTY_NOT_ASSIGNABLE_TO_SAME_IN_BASE)
+        .count();
+
+    assert!(
+        ts2416_count >= 1,
+        "Expected TS2416 for class with incompatible property type in extends. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test: Class correctly extends base class - no error
+#[test]
+fn test_class_correctly_extends_base_class_no_error() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+class Animal {
+    name: string = "";
+}
+
+class Dog extends Animal {
+    name: string = "Buddy";  // Same type as base
+    breed: string = "Labrador";  // New property
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2415_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS)
+        .count();
+    let ts2416_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::PROPERTY_NOT_ASSIGNABLE_TO_SAME_IN_BASE)
+        .count();
+
+    assert_eq!(
+        ts2415_count + ts2416_count, 0,
+        "Expected no TS2415/TS2416 for class that correctly extends base. All codes: {:?}",
+        codes
+    );
+}
