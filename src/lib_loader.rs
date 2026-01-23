@@ -528,4 +528,109 @@ async function foo() {
         );
         assert_eq!(array_sym.unwrap().escaped_name, "Array");
     }
+
+    #[test]
+    fn test_get_global_type() {
+        use crate::parser::ParserState;
+
+        // Load lib.d.ts
+        let lib_file = load_default_lib_dts();
+        if lib_file.is_none() {
+            // Skip test if lib.d.ts is not available
+            return;
+        }
+        let lib_file = lib_file.unwrap();
+
+        // Parse a simple source file
+        let source = "const x = 1;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        // Bind with lib symbols
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        binder.merge_lib_symbols(&[lib_file]);
+
+        // Test get_global_type for built-in types
+        assert!(
+            binder.get_global_type("Array").is_some(),
+            "get_global_type should find Array"
+        );
+        assert!(
+            binder.get_global_type("Object").is_some(),
+            "get_global_type should find Object"
+        );
+        assert!(
+            binder.get_global_type("Function").is_some(),
+            "get_global_type should find Function"
+        );
+        assert!(
+            binder.get_global_type("Promise").is_some(),
+            "get_global_type should find Promise"
+        );
+        assert!(
+            binder.get_global_type("console").is_some(),
+            "get_global_type should find console"
+        );
+
+        // Test has_global_type convenience method
+        assert!(
+            binder.has_global_type("Array"),
+            "has_global_type should return true for Array"
+        );
+        assert!(
+            !binder.has_global_type("NonExistentType12345"),
+            "has_global_type should return false for non-existent type"
+        );
+
+        // Verify that get_global_type returns valid symbols
+        let array_sym_id = binder.get_global_type("Array").unwrap();
+        let array_sym = binder.get_symbol(array_sym_id);
+        assert!(array_sym.is_some(), "Symbol should be resolvable");
+        assert_eq!(array_sym.unwrap().escaped_name, "Array");
+    }
+
+    #[test]
+    fn test_get_global_type_es2015_plus() {
+        use crate::parser::ParserState;
+
+        // Load lib.d.ts
+        let lib_file = load_default_lib_dts();
+        if lib_file.is_none() {
+            // Skip test if lib.d.ts is not available
+            return;
+        }
+        let lib_file = lib_file.unwrap();
+
+        // Parse a simple source file
+        let source = "const x = 1;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        // Bind with lib symbols
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        binder.merge_lib_symbols(&[lib_file]);
+
+        // Test ES2015+ types - these should exist if lib.d.ts includes ES2015 support
+        // Note: the result depends on whether lib.d.ts has ES2015+ types
+        let has_promise = binder.get_global_type("Promise").is_some();
+        let has_map = binder.get_global_type("Map").is_some();
+        let has_set = binder.get_global_type("Set").is_some();
+
+        // Log the results for debugging
+        println!("ES2015+ type availability:");
+        println!("  Promise: {}", has_promise);
+        println!("  Map: {}", has_map);
+        println!("  Set: {}", has_set);
+
+        // Test is_es2015_plus_type function
+        assert!(is_es2015_plus_type("Promise"), "Promise is ES2015+");
+        assert!(is_es2015_plus_type("Map"), "Map is ES2015+");
+        assert!(is_es2015_plus_type("Set"), "Set is ES2015+");
+        assert!(is_es2015_plus_type("WeakMap"), "WeakMap is ES2015+");
+        assert!(is_es2015_plus_type("WeakSet"), "WeakSet is ES2015+");
+        assert!(!is_es2015_plus_type("Array"), "Array is not ES2015+");
+        assert!(!is_es2015_plus_type("Object"), "Object is not ES2015+");
+    }
 }
