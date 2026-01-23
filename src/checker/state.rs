@@ -25416,6 +25416,8 @@ impl<'a> CheckerState<'a> {
 
     /// Check if the global Promise type is available in lib contexts.
     /// Used for TS2697: async function must return Promise.
+    /// NOTE: Currently unused since TS2697 checks are disabled due to false positives.
+    #[allow(dead_code)]
     fn is_promise_global_available(&self) -> bool {
         // Use the centralized has_name_in_lib helper which checks:
         // - lib_contexts
