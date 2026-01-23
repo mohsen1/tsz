@@ -1785,7 +1785,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check tuple subtyping
+    /// Check tuple subtyping.
+    ///
+    /// Validates structural compatibility between tuple types, handling:
+    /// - Required element count matching (source must have ≥ required elements than target)
+    /// - Fixed element type compatibility (positional checking)
+    /// - Rest element handling (variadic tuples, e.g., [...string[]])
+    /// - Optional element compatibility
+    /// - Closed tuple constraints (source can't exceed target's length)
+    ///
+    /// ## Tuple Subtyping Rules:
+    /// 1. **Required elements**: Source must have at least as many required (non-optional) elements
+    /// 2. **Rest elements**: When target has a rest element, source must match the expanded pattern
+    /// 3. **Closed tuples**: If target has no rest, source can't have extra elements
+    /// 4. **Type compatibility**: Each element type must be a subtype of the corresponding target
+    ///
+    /// ## Examples:
+    /// - `[number, string]` ≤ `[number, string, boolean]` ✅
+    /// - `[number, ...string[]]` ≤ `[number, ...string[]]` ✅
+    /// - `[number, string]` ≤ `[number]` ❌ (extra element)
+    /// - `[number]` ≤ `[number, string]` ❌ (missing element)
     fn check_tuple_subtype(
         &mut self,
         source: &[TupleElement],
