@@ -16,7 +16,8 @@
     "test:native:all": "cd .. && ./conformance/run-conformance.sh --all",
     "test:wasm": "cd .. && ./conformance/run-conformance.sh --wasm --max=100",
     "test:wasm:500": "cd .. && ./conformance/run-conformance.sh --wasm --max=500",
-    "test:wasm:all": "cd .. && ./conformance/run-conformance.sh --wasm --all"
+    "test:wasm:all": "cd .. && ./conformance/run-conformance.sh --wasm --all",
+    "update-readme": "node dist/update-readme.js"
   },
   "dependencies": {
     "typescript": "^6.0.0-dev.20260116"
