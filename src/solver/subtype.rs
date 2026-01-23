@@ -2097,6 +2097,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if a source property is compatible with a target property.
     ///
+    /// This validates property compatibility for structural object subtyping:
+    ///
+    /// ## Rules:
+    /// 1. **Optional compatibility**: Optional in source can't satisfy required in target
+    ///    - `{ x?: number }` ≤ `{ x: number }` ❌
+    ///    - `{ x: number }` ≤ `{ x?: number }` ✅
+    ///
+    /// 2. **Readonly compatibility**: Readonly in source can't satisfy mutable in target
+    ///    - `{ readonly x: number }` ≤ `{ x: number }` ❌
+    ///    - `{ x: number }` ≤ `{ readonly x: number }` ✅
+    ///
+    /// 3. **Type compatibility**: Source type must be subtype of target type
+    ///    - Methods use bivariant checking (both directions)
+    ///    - Properties use contravariant checking
+    ///
+    /// 4. **Write type compatibility**: For mutable properties with different write types,
+    ///    target's write type must be subtype of source's (contravariance for writes)
+    ///
     /// This validates:
     /// - Optional compatibility (optional source can't satisfy required target)
     /// - Readonly compatibility (readonly source can't satisfy mutable target)
