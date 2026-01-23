@@ -164,6 +164,9 @@ else
     NEXT_TEST_ARGS="cargo nextest run$NEXT_TEST_ARGS"
 fi
 
+# Copy source files excluding target directory (which is a mounted volume)
+COPY_CMD="find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && find /source -mindepth 1 -maxdepth 1 ! -name target -exec cp -r {} /app/ \\;"
+
 if [ -n "$TEST_FILTER" ]; then
     echo "   Filter: $TEST_FILTER"
     docker run --rm --memory="$DOCKER_MEMORY" --cpus="$DOCKER_CPUS" \
@@ -171,14 +174,14 @@ if [ -n "$TEST_FILTER" ]; then
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
         -v "$TARGET_VOLUME":/app/target \
-        "$IMAGE_NAME" bash -c "find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && cp -r /source/* /app/ && $NEXT_TEST_ARGS $TEST_FILTER"
+        "$IMAGE_NAME" bash -c "$COPY_CMD && $NEXT_TEST_ARGS $TEST_FILTER"
 else
     docker run --rm --memory="$DOCKER_MEMORY" --cpus="$DOCKER_CPUS" \
         -v "$ROOT_DIR:/source:ro" \
         -v cargo-registry:/usr/local/cargo/registry \
         -v cargo-git:/usr/local/cargo/git \
         -v "$TARGET_VOLUME":/app/target \
-        "$IMAGE_NAME" bash -c "find /app -mindepth 1 -maxdepth 1 ! -name target -exec rm -rf {} + && cp -r /source/* /app/ && $NEXT_TEST_ARGS"
+        "$IMAGE_NAME" bash -c "$COPY_CMD && $NEXT_TEST_ARGS"
 fi
 
 echo "✅ Tests complete!"
