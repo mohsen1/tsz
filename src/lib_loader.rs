@@ -121,7 +121,7 @@ pub fn emit_error_global_type_missing(
         file_name,
         start,
         length,
-        format!("Cannot find global type '{}'", name),
+        format!("Cannot find global type '{}'.", name),
         CANNOT_FIND_GLOBAL_TYPE,
     )
 }
@@ -148,7 +148,7 @@ pub fn emit_error_lib_target_mismatch(
         start,
         length,
         format!(
-            "Cannot find name '{}'. Do you need to change your target library?",
+            "Cannot find name '{}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.",
             name
         ),
         MISSING_ES2015_LIB_SUPPORT,
@@ -167,6 +167,9 @@ pub fn emit_error_lib_target_mismatch(
 const ES2015_PLUS_TYPES: &[&str] = &[
     // ES2015
     "Promise",
+    "PromiseLike",
+    "PromiseConstructor",
+    "PromiseConstructorLike",
     "Map",
     "Set",
     "WeakMap",
@@ -174,16 +177,35 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "Proxy",
     "Reflect",
     "Symbol",
+    "Iterator",
+    "IterableIterator",
+    "AsyncIterator",
+    "AsyncIterable",
+    "AsyncIterableIterator",
+    "Generator",
+    "GeneratorFunction",
+    "ArrayLike",
+    "ReadonlyMap",
+    "ReadonlySet",
     // ES2017
     "AsyncFunction",
+    "SharedArrayBuffer",
+    "Atomics",
+    // ES2018
+    "AsyncGenerator",
+    "AsyncGeneratorFunction",
     // ES2019
     "ObjectEntries",
     "ObjectValues",
     // ES2020
     "BigInt",
+    "BigInt64Array",
+    "BigUint64Array",
     // ES2021
     "FinalizationRegistry",
     "WeakRef",
+    // ES2022
+    "Awaited",
 ];
 
 /// Check if a type name is an ES2015+ feature that requires specific lib support.
@@ -286,7 +308,10 @@ mod tests {
         assert_eq!(diagnostic.file, "test.ts");
         assert_eq!(diagnostic.start, 10);
         assert_eq!(diagnostic.length, 7);
-        assert_eq!(diagnostic.message_text, "Cannot find global type 'Promise'");
+        assert_eq!(
+            diagnostic.message_text,
+            "Cannot find global type 'Promise'."
+        );
     }
 
     #[test]
@@ -300,7 +325,7 @@ mod tests {
         assert_eq!(diagnostic.length, 3);
         assert_eq!(
             diagnostic.message_text,
-            "Cannot find name 'Map'. Do you need to change your target library?"
+            "Cannot find name 'Map'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."
         );
     }
 

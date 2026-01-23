@@ -2837,6 +2837,15 @@ impl BinderState {
             // Check if exported BEFORE allocating symbol
             let is_exported = self.has_export_modifier(arena, &alias.modifiers);
 
+            // If we're inside a global augmentation block, track this as an augmentation
+            // that should merge with lib.d.ts symbols at type resolution time
+            if self.in_global_augmentation {
+                self.global_augmentations
+                    .entry(name.to_string())
+                    .or_default()
+                    .push(idx);
+            }
+
             self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
         }
     }
