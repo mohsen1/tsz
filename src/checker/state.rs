@@ -1272,6 +1272,26 @@ impl<'a> CheckerState<'a> {
                 let sym_id = self.resolve_identifier_symbol(type_name_idx);
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     // Try resolving from lib binders before falling back to UNKNOWN
+                    // First check if the global type exists via binder's get_global_type
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(_global_sym) = self
+                        .ctx
+                        .binder
+                        .get_global_type_with_libs(name, &lib_binders)
+                    {
+                        // Global type exists in lib binders - resolve it properly
+                        if let Some(type_id) = self.resolve_lib_type_by_name(name) {
+                            // Still process type arguments for validation
+                            if let Some(args) = &type_ref.type_arguments {
+                                for &arg_idx in &args.nodes {
+                                    let _ = self.get_type_from_type_node(arg_idx);
+                                }
+                            }
+                            return type_id;
+                        }
+                    }
+                    // Fall back to resolve_lib_type_by_name for cases where type may exist
+                    // but get_global_type_with_libs doesn't find it
                     if let Some(type_id) = self.resolve_lib_type_by_name(name) {
                         // Still process type arguments for validation
                         if let Some(args) = &type_ref.type_arguments {
@@ -6054,7 +6074,14 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if the global is actually available in lib contexts
-                if self.ctx.has_name_in_lib(name) {
+                // First use get_global_type for accurate lookup
+                let lib_binders = self.get_lib_binders();
+                let has_global_type = self
+                    .ctx
+                    .binder
+                    .get_global_type_with_libs(name, &lib_binders)
+                    .is_some();
+                if has_global_type || self.ctx.has_name_in_lib(name) {
                     // Global is available - return ANY to allow property access
                     TypeId::ANY
                 } else {
@@ -13090,9 +13117,20 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_global_interface_type(&mut self, name: &str) -> Option<TypeId> {
+        // First try file_locals (includes user-defined globals and merged lib symbols)
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             return Some(self.type_reference_symbol_type(sym_id));
         }
+        // Then try using get_global_type to check lib binders
+        let lib_binders = self.get_lib_binders();
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)
+        {
+            return Some(self.type_reference_symbol_type(sym_id));
+        }
+        // Fall back to resolve_lib_type_by_name for lowering types from lib contexts
         self.resolve_lib_type_by_name(name)
     }
 
