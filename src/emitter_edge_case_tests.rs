@@ -280,7 +280,8 @@ const obj = {
     // ES5 transform should capture 'this' in the arrow function
     assert!(
         output.contains("_this"),
-        "Should capture this as _this for ES5. Got:\n{}", output
+        "Should capture this as _this for ES5. Got:\n{}",
+        output
     );
 }
 

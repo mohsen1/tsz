@@ -65,15 +65,15 @@
 //! This separation allows clean transform logic while delegating string emission
 //! to the centralized `IRPrinter`.
 
-use crate::parser::node::NodeArena;
 use crate::parser::NodeIndex;
+use crate::parser::node::NodeArena;
 use crate::source_map::Mapping;
 use crate::source_writer::source_position_from_offset;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir_printer::IRPrinter;
 
 // Re-export from async_es5_ir for backward compatibility
-pub use crate::transforms::async_es5_ir::{opcodes, AsyncTransformState};
+pub use crate::transforms::async_es5_ir::{AsyncTransformState, opcodes};
 
 /// Async ES5 emitter for transforming async functions.
 ///
@@ -87,7 +87,9 @@ pub struct AsyncES5Emitter<'a> {
     source_text: Option<&'a str>,
     source_index: u32,
     mappings: Vec<Mapping>,
+    #[allow(dead_code)]
     line: u32,
+    #[allow(dead_code)]
     column: u32,
     this_capture_depth: u32,
     class_name: Option<String>,
@@ -135,6 +137,7 @@ impl<'a> AsyncES5Emitter<'a> {
         std::mem::take(&mut self.mappings)
     }
 
+    #[allow(dead_code)]
     fn record_mapping_for_node(&mut self, node_idx: NodeIndex) {
         let Some(text) = self.source_text else {
             return;
