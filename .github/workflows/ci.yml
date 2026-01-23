@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, rust]
+    branches: [main, rust, 'claude/**']
   pull_request:
     branches: [main, rust]
 
