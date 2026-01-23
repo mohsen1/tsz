@@ -14871,8 +14871,18 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report a cannot find name error using solver diagnostics with source tracking.
-    /// Enhanced to provide suggestions for similar names and import suggestions.
+    /// Enhanced to provide suggestions for similar names, import suggestions, and
+    /// library change suggestions for ES2015+ types.
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
+        use crate::lib_loader;
+
+        // Check if this is an ES2015+ type that requires a specific lib
+        // If so, emit TS2583 with a suggestion to change the lib
+        if lib_loader::is_es2015_plus_type(name) {
+            self.error_cannot_find_name_change_lib(name, idx);
+            return;
+        }
+
         // Try to find similar identifiers in scope for better error messages
         if let Some(suggestions) = self.find_similar_identifiers(name, idx)
             && !suggestions.is_empty()
@@ -14921,6 +14931,30 @@ impl<'a> CheckerState<'a> {
 
             self.ctx.push_diagnostic(Diagnostic {
                 code,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS2583: Cannot find name 'X' - suggest changing target library.
+    ///
+    /// This error is emitted when an ES2015+ global (Promise, Map, Set, Symbol, etc.)
+    /// is used as a value but is not available in the current lib configuration.
+    /// It provides a helpful suggestion to change the lib compiler option.
+    pub fn error_cannot_find_name_change_lib(&mut self, name: &str, idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(diagnostic_messages::CANNOT_FIND_NAME_CHANGE_LIB, &[name]);
+            self.ctx.push_diagnostic(Diagnostic {
+                code: diagnostic_codes::CANNOT_FIND_NAME_CHANGE_LIB,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
@@ -16244,19 +16278,42 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Report TS2693: Symbol only refers to a type, but is used as a value.
+    /// Report TS2693/TS2585: Symbol only refers to a type, but is used as a value.
+    ///
+    /// For ES2015+ types (Promise, Map, Set, Symbol, etc.), emits TS2585 with a suggestion
+    /// to change the target library. For other types, emits TS2693 without the lib suggestion.
     pub fn error_type_only_value_at(&mut self, name: &str, idx: NodeIndex) {
         use crate::checker::types::diagnostics::{
             diagnostic_codes, diagnostic_messages, format_message,
         };
+        use crate::lib_loader;
 
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format_message(
-                diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
-                &[name],
-            );
+            // Check if this is an ES2015+ type that requires specific lib support
+            let is_es2015_type = lib_loader::is_es2015_plus_type(name);
+
+            let (code, message) = if is_es2015_type {
+                // TS2585: Type only refers to a type, suggest changing lib
+                (
+                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                    format_message(
+                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                        &[name],
+                    ),
+                )
+            } else {
+                // TS2693: Generic type-only error
+                (
+                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                    format_message(
+                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                        &[name],
+                    ),
+                )
+            };
+
             self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+                code,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,

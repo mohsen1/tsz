@@ -210,6 +210,8 @@ pub mod diagnostic_messages {
         "'{0}', which lacks return-type annotation, implicitly has an '{1}' return type.";
     pub const IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION: &str = "Function expression, which lacks return-type annotation, implicitly has an '{0}' return type.";
     pub const CANNOT_FIND_NAME_DID_YOU_MEAN: &str = "Cannot find name '{0}'. Did you mean '{1}'?";
+    /// TS2583: Cannot find name - suggest changing target library
+    pub const CANNOT_FIND_NAME_CHANGE_LIB: &str = "Cannot find name '{0}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.";
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: &str =
         "An 'await' expression is only allowed within an async function.";
     pub const AWAIT_IN_PARAMETER_DEFAULT: &str =
@@ -315,6 +317,9 @@ pub mod diagnostic_codes {
     pub const CANNOT_INVOKE_NON_FUNCTION: u32 = 2349;
     pub const CANNOT_INVOKE_POSSIBLY_UNDEFINED: u32 = 2722;
     pub const CANNOT_FIND_NAME_DID_YOU_MEAN: u32 = 2552; // Cannot find name '{0}'. Did you mean '{1}'?
+    /// TS2583: Cannot find name '{0}'. Do you need to change your target library?
+    /// Emitted when an ES2015+ global is referenced but the lib doesn't include it.
+    pub const CANNOT_FIND_NAME_CHANGE_LIB: u32 = 2583;
     pub const EXPECTED_ARGUMENTS: u32 = 2554; // Expected {0} arguments, but got {1}
     pub const EXPECTED_AT_LEAST_ARGUMENTS: u32 = 2555;
     pub const NO_OVERLOAD_MATCHES_CALL: u32 = 2769;
