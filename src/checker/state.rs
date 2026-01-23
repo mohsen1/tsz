@@ -7928,7 +7928,11 @@ impl<'a> CheckerState<'a> {
             let result = evaluator.evaluate(left_type, right_type, op_str);
             let result_type = match result {
                 BinaryOpResult::Success(result_type) => result_type,
-                BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
+                BinaryOpResult::TypeError { left, right, op } => {
+                    // Emit appropriate error for arithmetic type mismatch
+                    self.emit_binary_operator_error(node_idx, left_idx, right_idx, left, right, op);
+                    TypeId::UNKNOWN
+                }
             };
             type_stack.push(result_type);
         }
@@ -14631,6 +14635,84 @@ impl<'a> CheckerState<'a> {
                 length: loc.length(),
                 related_information: Vec::new(),
             });
+        }
+    }
+
+    /// Emit errors for binary operator type mismatches.
+    /// Emits TS2362 for left-hand side, TS2363 for right-hand side, or TS2365 for general operator errors.
+    fn emit_binary_operator_error(
+        &mut self,
+        node_idx: NodeIndex,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        left_type: TypeId,
+        right_type: TypeId,
+        op: &str,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::solver::TypeFormatter;
+
+        let mut formatter = TypeFormatter::new(self.ctx.types);
+        let left_str = formatter.format(left_type);
+        let right_str = formatter.format(right_type);
+
+        // Check if this is an arithmetic operator (-, *, /, % or the generic "arithmetic" tag)
+        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "arithmetic");
+
+        // Check if operands have valid arithmetic types
+        // Note: enum types are also valid but we simplify here by not checking them
+        let left_is_valid_arithmetic =
+            matches!(left_type, TypeId::NUMBER | TypeId::ANY | TypeId::BIGINT);
+        let right_is_valid_arithmetic =
+            matches!(right_type, TypeId::NUMBER | TypeId::ANY | TypeId::BIGINT);
+
+        if is_arithmetic {
+            // For arithmetic operators, emit specific left/right errors
+            if !left_is_valid_arithmetic {
+                if let Some(loc) = self.get_source_location(left_idx) {
+                    let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+            if !right_is_valid_arithmetic {
+                if let Some(loc) = self.get_source_location(right_idx) {
+                    let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                }
+            }
+        } else if op == "+" {
+            // For + operator, emit TS2365
+            if let Some(loc) = self.get_source_location(node_idx) {
+                let message = format!(
+                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                    op, left_str, right_str
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+            }
         }
     }
 
