@@ -1465,7 +1465,10 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if self.is_known_global_type_name(name) {
-                return TypeId::UNKNOWN;
+                // TS2318/TS2583: Emit error for missing global type
+                // The type is a known global type but was not found in lib contexts
+                self.error_cannot_find_global_type(name, type_name_idx);
+                return TypeId::ERROR;
             }
             // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
             if self.is_unresolved_import_symbol(type_name_idx) {
@@ -3282,12 +3285,16 @@ impl<'a> CheckerState<'a> {
 
                 if !is_builtin_array && type_param.is_none() && sym_id.is_none() {
                     if self.is_known_global_type_name(name) {
+                        // TS2318/TS2583: Emit error for missing global type
+                        // Process type arguments for validation first
                         if let Some(args) = &type_ref.type_arguments {
                             for &arg_idx in &args.nodes {
                                 let _ = self.get_type_from_type_node_in_type_literal(arg_idx);
                             }
                         }
-                        return TypeId::UNKNOWN;
+                        // Emit the appropriate error
+                        self.error_cannot_find_global_type(name, type_name_idx);
+                        return TypeId::ERROR;
                     }
                     if name == "await" {
                         self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
@@ -3387,7 +3394,9 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if self.is_known_global_type_name(name) {
-                return TypeId::UNKNOWN;
+                // TS2318/TS2583: Emit error for missing global type
+                self.error_cannot_find_global_type(name, type_name_idx);
+                return TypeId::ERROR;
             }
             // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
             if self.is_unresolved_import_symbol(type_name_idx) {
@@ -18739,6 +18748,11 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if self.is_known_global_type_name(&name) {
+                            // Check if the global type is actually available in lib contexts
+                            if !self.ctx.has_name_in_lib(&name) {
+                                // TS2318/TS2583: Emit error for missing global type
+                                self.error_cannot_find_global_type(&name, expr_idx);
+                            }
                             continue;
                         }
                         // Skip TS2304 for property accesses on imports from unresolved modules
