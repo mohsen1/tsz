@@ -3527,7 +3527,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         evaluator.evaluate(type_id)
     }
 
-    /// Check callable subtyping (overloaded signatures)
+    /// Check callable subtyping with overloaded signatures.
+    ///
+    /// Validates that a source callable with multiple overloads is compatible with
+    /// a target callable. This requires:
+    /// 1. For each target call signature, at least one source signature must match
+    /// 2. For each target construct signature, at least one source signature must match
+    /// 3. All target properties must have compatible source properties (excluding private fields)
+    ///
+    /// ## Overload Matching:
+    /// Overloaded callables use a "best match" algorithm where:
+    /// - Source must have a signature compatible with EACH target signature
+    /// - This is stricter than single function subtyping
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// type Source = {
+    ///   (x: number): void;
+    ///   (x: string): void;
+    /// };
+    /// type Target = {
+    ///   (x: number): void;
+    /// };
+    /// // Source ≤ Target because Source has a compatible signature for Target's signature
+    /// ```
     fn check_callable_subtype(
         &mut self,
         source: &CallableShape,
