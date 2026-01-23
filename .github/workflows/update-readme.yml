@@ -62,7 +62,7 @@ jobs:
         run: |
           cd conformance
           set +e
-          OUTPUT=$(timeout 1800 bash run-conformance.sh --max=5000 --workers=4 2>&1)
+          OUTPUT=$(timeout 1800 bash run-conformance.sh --all --workers=4 2>&1)
           EXIT_CODE=$?
           set -e
 

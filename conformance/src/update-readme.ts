@@ -33,31 +33,24 @@ function getTypeScriptVersion(): string {
   }
 }
 
-function generateProgressBar(percentage: number, width: number = 20): string {
+function generateProgressBar(percentage: number, passed: number, total: number, width: number = 20): string {
   const filled = Math.round((percentage / 100) * width);
   const empty = width - filled;
   const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(empty);
-  return `Progress: [${bar}] ${percentage.toFixed(1)}%`;
+  return `Progress: [${bar}] ${percentage.toFixed(1)}% (${passed.toLocaleString()} / ${total.toLocaleString()} tests)`;
 }
 
 function updateReadme(stats: ConformanceStats): void {
   let readme = fs.readFileSync(README_PATH, 'utf-8');
 
-  const progressBar = generateProgressBar(stats.passRate);
-  const now = new Date().toISOString().split('T')[0];
+  const progressBar = generateProgressBar(stats.passRate, stats.passed, stats.total);
 
   const newContent = `<!-- CONFORMANCE_START -->
-| Metric | Value |
-|--------|-------|
-| **TypeScript Version** | \`${stats.tsVersion}\` |
-| **Tests Passed** | ${stats.passed.toLocaleString()} / ${stats.total.toLocaleString()} |
-| **Pass Rate** | ${stats.passRate.toFixed(1)}% |
+Currently targeting TypeScript ${stats.tsVersion}
 
 \`\`\`
 ${progressBar}
 \`\`\`
-
-*Last updated: ${now}*
 <!-- CONFORMANCE_END -->`;
 
   const startMarker = '<!-- CONFORMANCE_START -->';
