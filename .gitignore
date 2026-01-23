@@ -30,6 +30,7 @@ coverage/
 # Rust/WASM
 pkg/
 target/
+.target/
 
 # Tests
 TypeScript/tests/baselines/local/*

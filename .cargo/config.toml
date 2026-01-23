@@ -1,13 +1,12 @@
 # Cargo configuration for tsz - optimized for orchestrator-driven development
 #
-# This configuration ensures all worktrees share build artifacts, preventing
-# the 6GB+ duplication that occurs when the orchestrator creates multiple
-# worker worktrees.
-#
-# The orchestrator will override CARGO_TARGET_DIR via environment variables
-# to point to this shared location.
+# Each worktree uses its own .target directory to avoid lock contention
+# when running parallel builds across multiple worktrees.
 
 [build]
+# Each worktree gets its own target directory (relative path)
+target-dir = ".target"
+
 # Enable incremental compilation for faster rebuilds
 incremental = true
 
@@ -41,8 +40,6 @@ lto = "thin"
 debug = false
 
 [env]
-# Default target dir (can be overridden by orchestrator)
-CARGO_TARGET_DIR = { value = "/Users/mohsenazimi/code/tsz/target-shared", relative = false }
 
 # Optimizations for build speed
 CARGO_BUILD_JOBS = { value = "14", relative = false }
