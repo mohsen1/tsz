@@ -16175,6 +16175,16 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // Ambient class + Function merging is allowed
+                    // (declare class provides the type, function provides the value)
+                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
+                    {
+                        let class_idx = if decl_is_class { decl_idx } else { other_idx };
+                        if self.is_ambient_class_declaration(class_idx) {
+                            continue;
+                        }
+                    }
+
                     if Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
@@ -16232,6 +16242,20 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         !func.body.is_none()
+    }
+
+    /// Check if a class declaration is ambient (has the `declare` modifier).
+    fn is_ambient_class_declaration(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+            return false;
+        }
+        let Some(class) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        self.has_declare_modifier(&class.modifiers)
     }
 
     /// Get the name node of a declaration for error reporting.
