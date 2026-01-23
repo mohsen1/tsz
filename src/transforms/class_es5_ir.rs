@@ -801,44 +801,8 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         };
 
-        // First pass: collect accessors by name to combine getter/setter pairs
-        let mut accessor_map: HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> =
-            HashMap::new();
-
-        for &member_idx in &class_data.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
-                if let Some(accessor_data) = self.arena.get_accessor(member_node) {
-                    // Skip static (handled in emit_static_members_ir)
-                    if has_static_modifier(self.arena, &accessor_data.modifiers) {
-                        continue;
-                    }
-                    // Skip abstract
-                    if has_abstract_modifier(self.arena, &accessor_data.modifiers) {
-                        continue;
-                    }
-                    // Skip private
-                    if is_private_identifier(self.arena, accessor_data.name) {
-                        continue;
-                    }
-
-                    let name =
-                        get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
-                    let entry = accessor_map.entry(name).or_insert((None, None));
-
-                    if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        entry.0 = Some(member_idx);
-                    } else {
-                        entry.1 = Some(member_idx);
-                    }
-                }
-            }
-        }
+        // First pass: collect instance accessors by name to combine getter/setter pairs
+        let accessor_map = collect_accessor_pairs(self.arena, &class_data.members, false);
 
         // Track which accessor names we've emitted
         let mut emitted_accessors: std::collections::HashSet<String> =
@@ -999,41 +963,7 @@ impl<'a> ES5ClassTransformer<'a> {
         };
 
         // First pass: collect static accessors by name to combine getter/setter pairs
-        let mut static_accessor_map: HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> =
-            HashMap::new();
-
-        for &member_idx in &class_data.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
-                if let Some(accessor_data) = self.arena.get_accessor(member_node)
-                    && has_static_modifier(self.arena, &accessor_data.modifiers)
-                {
-                    // Skip abstract
-                    if has_abstract_modifier(self.arena, &accessor_data.modifiers) {
-                        continue;
-                    }
-                    // Skip private
-                    if is_private_identifier(self.arena, accessor_data.name) {
-                        continue;
-                    }
-
-                    let name =
-                        get_identifier_text(self.arena, accessor_data.name).unwrap_or_default();
-                    let entry = static_accessor_map.entry(name).or_insert((None, None));
-
-                    if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        entry.0 = Some(member_idx);
-                    } else {
-                        entry.1 = Some(member_idx);
-                    }
-                }
-            }
-        }
+        let static_accessor_map = collect_accessor_pairs(self.arena, &class_data.members, true);
 
         // Track which static accessor names we've emitted
         let mut emitted_static_accessors: std::collections::HashSet<String> =
@@ -1287,6 +1217,53 @@ fn has_abstract_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> boo
 
 fn has_async_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::AsyncKeyword as u16)
+}
+
+/// Collect accessor pairs (getter/setter) from class members.
+/// When `collect_static` is true, collects static accessors; otherwise collects instance accessors.
+fn collect_accessor_pairs(
+    arena: &NodeArena,
+    members: &NodeList,
+    collect_static: bool,
+) -> HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> {
+    let mut accessor_map: HashMap<String, (Option<NodeIndex>, Option<NodeIndex>)> = HashMap::new();
+
+    for &member_idx in &members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+
+        if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+        {
+            if let Some(accessor_data) = arena.get_accessor(member_node) {
+                // Check static modifier matches what we're collecting
+                let is_static = has_static_modifier(arena, &accessor_data.modifiers);
+                if is_static != collect_static {
+                    continue;
+                }
+                // Skip abstract
+                if has_abstract_modifier(arena, &accessor_data.modifiers) {
+                    continue;
+                }
+                // Skip private
+                if is_private_identifier(arena, accessor_data.name) {
+                    continue;
+                }
+
+                let name = get_identifier_text(arena, accessor_data.name).unwrap_or_default();
+                let entry = accessor_map.entry(name).or_insert((None, None));
+
+                if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    entry.0 = Some(member_idx);
+                } else {
+                    entry.1 = Some(member_idx);
+                }
+            }
+        }
+    }
+
+    accessor_map
 }
 
 fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
