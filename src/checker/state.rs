@@ -16176,6 +16176,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(elem) = self.ctx.arena.get_binding_element(node) {
+            // Check computed property name expression for unresolved identifiers (TS2304)
+            // e.g., in `{[z]: x}` where `z` is undefined
+            if !elem.property_name.is_none() {
+                self.check_computed_property_name(elem.property_name);
+            }
             // Recurse on the name (which can be an identifier or another pattern)
             self.collect_and_check_parameter_names(elem.name, seen);
         }
@@ -16948,6 +16953,12 @@ impl<'a> CheckerState<'a> {
         let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
             return;
         };
+
+        // Check computed property name expression for unresolved identifiers (TS2304)
+        // e.g., in `{[z]: x}` where `z` is undefined
+        if !element_data.property_name.is_none() {
+            self.check_computed_property_name(element_data.property_name);
+        }
 
         // Get the expected type for this binding element from the parent type
         let element_type = if parent_type != TypeId::ANY {
