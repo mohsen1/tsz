@@ -2361,7 +2361,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check object with index signature subtyping
+    /// Check object with index signature subtyping.
+    ///
+    /// Validates subtype compatibility between two objects that both have index signatures.
+    /// This requires:
+    /// 1. Named property compatibility (all target properties must exist in source)
+    /// 2. String index signature compatibility (source index must satisfy target index)
+    /// 3. Number index signature compatibility (source index must satisfy target index)
+    /// 4. All source properties must be compatible with target index signatures
+    /// 5. If source has both string and number indexes, they must be compatible
+    ///
+    /// ## Index Signature Rules:
+    /// - Source index signature type must be subtype of target index signature type
+    /// - Readonly in source cannot satisfy mutable in target
+    /// - Number-indexed properties also checked against string index (number → string)
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Target {
+    ///   [key: string]: number;
+    ///   [index: number]: string;
+    /// }
+    /// interface Source {
+    ///   [key: string]: number;  // Must satisfy Target's string index
+    ///   [index: number]: string;  // Must satisfy Target's number index
+    /// }
+    /// ```
     fn check_object_with_index_subtype(
         &mut self,
         source: &ObjectShape,
