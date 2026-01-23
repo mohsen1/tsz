@@ -466,114 +466,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Union source: all members must be subtypes of target
             (TypeKey::Union(members), _) => {
-                // Distributivity: (A | B) & C distributes to (A & C) | (B & C)
-                // When checking union against intersection, distribute
-                if let TypeKey::Intersection(inter_members) = &target_key {
-                    let inter_members = self.interner.type_list(*inter_members);
-                    let union_members = self.interner.type_list(*members);
-
-                    // Check: (A | B) <: (C & D)
-                    // This is equivalent to: (A <: C & D) && (B <: C & D)
-                    // Which distributes to: ((A & C) | (A & D)) && ((B & C) | (B & D))
-                    for &union_member in union_members.iter() {
-                        let mut satisfies_all = true;
-                        for &inter_member in inter_members.iter() {
-                            // Check if union_member is a subtype of this intersection member
-                            if !self.check_subtype(union_member, inter_member).is_true() {
-                                satisfies_all = false;
-                                break;
-                            }
-                        }
-                        if !satisfies_all {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    return SubtypeResult::True;
-                }
-
-                let members = self.interner.type_list(*members);
-                for &member in members.iter() {
-                    // Don't accept `any` as universal subtype in union checks
-                    // `any` is only a subtype of `any` in this context
-                    if member == TypeId::ANY && target != TypeId::ANY {
-                        return SubtypeResult::False;
-                    }
-                    if !self.check_subtype(member, target).is_true() {
-                        return SubtypeResult::False;
-                    }
-                }
-                SubtypeResult::True
+                self.check_union_source_subtype(*members, target, &target_key)
             }
 
             // Union target: source must be subtype of at least one member
             (_, TypeKey::Union(members)) => {
-                if matches!(source_key, TypeKey::KeyOf(_))
-                    && self.union_includes_keyof_primitives(*members)
-                {
-                    return SubtypeResult::True;
-                }
-                let members = self.interner.type_list(*members);
-                for &member in members.iter() {
-                    // Don't accept `any` as universal subtype in union checks
-                    // `any` only accepts `any` as a subtype in this context
-                    if member == TypeId::ANY && source != TypeId::ANY {
-                        continue;
-                    }
-                    if self.check_subtype(source, member).is_true() {
-                        return SubtypeResult::True;
-                    }
-                }
-                SubtypeResult::False
+                self.check_union_target_subtype(source, &source_key, *members)
             }
 
             // Intersection source: source is subtype if any constituent is
             (TypeKey::Intersection(members), _) => {
-                let members = self.interner.type_list(*members);
-
-                // First, check if any member is directly a subtype
-                for &member in members.iter() {
-                    if self.check_subtype(member, target).is_true() {
-                        return SubtypeResult::True;
-                    }
-                }
-
-                // For type parameters in intersections, try narrowing the constraint
-                // by the other members. This handles cases like:
-                // `T & string` where T extends `string | undefined` should be a subtype of `string`
-                for &member in members.iter() {
-                    if let Some(TypeKey::TypeParameter(param_info))
-                    | Some(TypeKey::Infer(param_info)) = self.interner.lookup(member)
-                        && let Some(constraint) = param_info.constraint
-                    {
-                        // Create intersection of constraint with other members
-                        let other_members: Vec<TypeId> =
-                            members.iter().filter(|&&m| m != member).copied().collect();
-
-                        if !other_members.is_empty() {
-                            let mut all_members = vec![constraint];
-                            all_members.extend(other_members);
-                            let narrowed_constraint = self.interner.intersection(all_members);
-
-                            // Check if the narrowed constraint is a subtype of target
-                            if self.check_subtype(narrowed_constraint, target).is_true() {
-                                return SubtypeResult::True;
-                            }
-                        }
-                    }
-                }
-
-                SubtypeResult::False
+                self.check_intersection_source_subtype(*members, target)
             }
 
             // Intersection target: all members must be satisfied
             (_, TypeKey::Intersection(members)) => {
-                let members = self.interner.type_list(*members);
-                for &member in members.iter() {
-                    if !self.check_subtype(source, member).is_true() {
-                        return SubtypeResult::False;
-                    }
-                }
-                SubtypeResult::True
+                self.check_intersection_target_subtype(source, *members)
             }
 
             (TypeKey::TypeParameter(s_info), target_key) | (TypeKey::Infer(s_info), target_key) => {
@@ -2822,6 +2730,134 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
         self.check_subtype(source_return, target_return)
+    }
+
+    /// Check if a union type is a subtype of a target type.
+    ///
+    /// Union source: all members must be subtypes of target.
+    /// When target is an intersection, applies distributivity rules.
+    fn check_union_source_subtype(
+        &mut self,
+        members: TypeListId,
+        target: TypeId,
+        target_key: &TypeKey,
+    ) -> SubtypeResult {
+        // Distributivity: (A | B) & C distributes to (A & C) | (B & C)
+        if let TypeKey::Intersection(inter_members) = target_key {
+            let inter_members = self.interner.type_list(*inter_members);
+            let union_members = self.interner.type_list(members);
+
+            // Check: (A | B) <: (C & D)
+            for &union_member in union_members.iter() {
+                let mut satisfies_all = true;
+                for &inter_member in inter_members.iter() {
+                    if !self.check_subtype(union_member, inter_member).is_true() {
+                        satisfies_all = false;
+                        break;
+                    }
+                }
+                if !satisfies_all {
+                    return SubtypeResult::False;
+                }
+            }
+            return SubtypeResult::True;
+        }
+
+        let members = self.interner.type_list(members);
+        for &member in members.iter() {
+            // Don't accept `any` as universal subtype in union checks
+            if member == TypeId::ANY && target != TypeId::ANY {
+                return SubtypeResult::False;
+            }
+            if !self.check_subtype(member, target).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+        SubtypeResult::True
+    }
+
+    /// Check if a source type is a subtype of a union type.
+    ///
+    /// Union target: source must be subtype of at least one member.
+    fn check_union_target_subtype(
+        &mut self,
+        source: TypeId,
+        source_key: &TypeKey,
+        members: TypeListId,
+    ) -> SubtypeResult {
+        if matches!(source_key, TypeKey::KeyOf(_)) && self.union_includes_keyof_primitives(members)
+        {
+            return SubtypeResult::True;
+        }
+        let members = self.interner.type_list(members);
+        for &member in members.iter() {
+            if member == TypeId::ANY && source != TypeId::ANY {
+                continue;
+            }
+            if self.check_subtype(source, member).is_true() {
+                return SubtypeResult::True;
+            }
+        }
+        SubtypeResult::False
+    }
+
+    /// Check if an intersection type is a subtype of a target type.
+    ///
+    /// Intersection source: source is subtype if any constituent is.
+    /// Also handles type parameter constraint narrowing.
+    fn check_intersection_source_subtype(
+        &mut self,
+        members: TypeListId,
+        target: TypeId,
+    ) -> SubtypeResult {
+        let members = self.interner.type_list(members);
+
+        // First, check if any member is directly a subtype
+        for &member in members.iter() {
+            if self.check_subtype(member, target).is_true() {
+                return SubtypeResult::True;
+            }
+        }
+
+        // For type parameters in intersections, try narrowing the constraint
+        for &member in members.iter() {
+            if let Some(TypeKey::TypeParameter(param_info)) | Some(TypeKey::Infer(param_info)) =
+                self.interner.lookup(member)
+                && let Some(constraint) = param_info.constraint
+            {
+                let other_members: Vec<TypeId> =
+                    members.iter().filter(|&&m| m != member).copied().collect();
+
+                if !other_members.is_empty() {
+                    let mut all_members = vec![constraint];
+                    all_members.extend(other_members);
+                    let narrowed_constraint = self.interner.intersection(all_members);
+
+                    if self.check_subtype(narrowed_constraint, target).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+        }
+
+        SubtypeResult::False
+    }
+
+    /// Check if a source type is a subtype of an intersection type.
+    ///
+    /// Intersection target: all members must be satisfied.
+    fn check_intersection_target_subtype(
+        &mut self,
+        source: TypeId,
+        members: TypeListId,
+    ) -> SubtypeResult {
+        let members = self.interner.type_list(members);
+        for &member in members.iter() {
+            if !self.check_subtype(source, member).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+        SubtypeResult::True
     }
 
     fn check_subtype_with_method_variance(
