@@ -11,15 +11,19 @@
 //! - `flow_analyzer` - Definite assignment analysis
 //! - `reachability_analyzer` - Unreachable code detection
 //! - `control_flow` - Flow analyzer for type narrowing
+//! - `accessibility` - Accessibility checking (private/protected)
+//! - `error_reporter` - Error reporting utilities
 //!
 //! Note: The thin checker is the unified checker pipeline; `CheckerState`
 //! is an alias to the thin checker. The types module is shared with the solver.
 
+pub mod accessibility;
 pub mod arena;
 pub mod context;
 pub mod control_flow;
 pub mod declarations;
 pub mod decorators;
+pub mod error_reporter;
 pub mod expr;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
@@ -29,6 +33,8 @@ pub mod optional_chain;
 pub mod reachability_analyzer;
 pub mod state;
 pub mod statements;
+pub mod symbol_resolver;
+pub mod type_computation;
 pub mod types;
 
 #[cfg(test)]
