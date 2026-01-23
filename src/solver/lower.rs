@@ -173,6 +173,9 @@ impl InterfaceParts {
 }
 
 impl<'a> TypeLowering<'a> {
+    /// Maximum iterations for tree-walking loops to prevent infinite loops.
+    const MAX_TREE_WALK_ITERATIONS: usize = 10_000;
+
     pub fn new(arena: &'a NodeArena, interner: &'a dyn QueryDatabase) -> Self {
         TypeLowering {
             arena,
@@ -1367,7 +1370,13 @@ impl<'a> TypeLowering<'a> {
 
     fn is_naked_type_param(&self, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > Self::MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return false to prevent infinite loop
+                return false;
+            }
             let Some(node) = self.arena.get(current) else {
                 return false;
             };

@@ -31,6 +31,9 @@ use crate::solver::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 
+/// Maximum recursion depth for type constraint collection to prevent infinite loops.
+const MAX_CONSTRAINT_RECURSION_DEPTH: usize = 100;
+
 pub trait AssignabilityChecker {
     fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool;
 
@@ -88,6 +91,8 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     interner: &'a dyn QueryDatabase,
     checker: &'a mut C,
     defaulted_placeholders: FxHashSet<TypeId>,
+    /// Current recursion depth for constrain_types to prevent infinite loops
+    constraint_recursion_depth: RefCell<usize>,
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -96,6 +101,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             interner,
             checker,
             defaulted_placeholders: FxHashSet::default(),
+            constraint_recursion_depth: RefCell::new(0),
         }
     }
 
@@ -671,8 +677,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Maximum iterations for type unwrapping loops to prevent infinite loops.
+    const MAX_UNWRAP_ITERATIONS: usize = 1000;
+
     fn unwrap_readonly(&self, mut type_id: TypeId) -> TypeId {
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > Self::MAX_UNWRAP_ITERATIONS {
+                // Safety limit reached - return current type to prevent infinite loop
+                return type_id;
+            }
             match self.interner.lookup(type_id) {
                 Some(TypeKey::ReadonlyType(inner)) => {
                     type_id = inner;
@@ -975,6 +990,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Structural walker to collect constraints: source <: target
     fn constrain_types(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        // Check and increment recursion depth to prevent infinite loops
+        {
+            let mut depth = self.constraint_recursion_depth.borrow_mut();
+            if *depth >= MAX_CONSTRAINT_RECURSION_DEPTH {
+                // Safety limit reached - return to prevent infinite loop
+                return;
+            }
+            *depth += 1;
+        }
+
+        // Perform the actual constraint collection
+        self.constrain_types_impl(ctx, var_map, source, target);
+
+        // Decrement depth on return
+        *self.constraint_recursion_depth.borrow_mut() -= 1;
+    }
+
+    /// Inner implementation of constrain_types
+    fn constrain_types_impl(
         &mut self,
         ctx: &mut InferenceContext,
         var_map: &FxHashMap<TypeId, crate::solver::infer::InferenceVar>,
