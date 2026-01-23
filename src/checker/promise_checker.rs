@@ -1,0 +1,521 @@
+//! Promise and Async Type Checking Module
+//!
+//! This module contains Promise and async-related type checking methods
+//! extracted from CheckerState as part of Phase 2 architecture refactoring.
+//!
+//! The methods in this module handle:
+//! - Promise type detection and validation
+//! - Type argument extraction from Promise<T>
+//! - Async function return type checking
+//! - Promise-like type recognition (Promise, PromiseLike, custom promises)
+
+use crate::binder::{SymbolId, symbol_flags};
+use crate::checker::state::CheckerState;
+use crate::parser::NodeIndex;
+use crate::scanner::SyntaxKind;
+use crate::solver::{SymbolRef, TypeId, TypeKey};
+
+// =============================================================================
+// Promise and Async Type Checking Methods
+// =============================================================================
+
+impl<'a> CheckerState<'a> {
+    // =========================================================================
+    // Promise Type Detection
+    // =========================================================================
+
+    /// Check if a name refers to a Promise-like type.
+    ///
+    /// Returns true for "Promise", "PromiseLike", or any name containing "Promise".
+    /// This handles built-in Promise types as well as custom Promise implementations.
+    pub fn is_promise_like_name(&self, name: &str) -> bool {
+        matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
+    }
+
+    /// Check if a type reference is a Promise or Promise-like type.
+    ///
+    /// This handles:
+    /// - Direct Promise/PromiseLike references
+    /// - Promise<T> type applications
+    /// - Object types from lib files (conservatively assumed to be Promise-like)
+    pub fn type_ref_is_promise_like(&self, type_id: TypeId) -> bool {
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Ref(SymbolRef(sym_id))) => {
+                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+                    return self.is_promise_like_name(symbol.escaped_name.as_str());
+                }
+            }
+            Some(TypeKey::Application(app_id)) => {
+                // Check if the base type of the application is a Promise-like type
+                let app = self.ctx.types.type_application(app_id);
+                return self.type_ref_is_promise_like(app.base);
+            }
+            Some(TypeKey::Object(_)) => {
+                // For Object types (interfaces from lib files), we conservatively assume
+                // they might be Promise-like. This avoids false positives for Promise<void>
+                // return types from lib files where we can't easily determine the interface name.
+                // A more precise check would require tracking the original type reference.
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+
+    /// Check if a type is a Promise or Promise-like type.
+    ///
+    /// This is used to validate async function return types.
+    /// Handles both Promise<T> applications and direct Promise references.
+    pub fn is_promise_type(&self, type_id: TypeId) -> bool {
+        // Check for Promise<T> or PromiseLike<T> type application
+        if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(type_id) {
+            let app = self.ctx.types.type_application(app_id);
+            return self.type_ref_is_promise_like(app.base);
+        }
+
+        // Check for direct Promise or PromiseLike reference (this also handles type aliases)
+        if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
+        {
+            return self.is_promise_like_name(symbol.escaped_name.as_str());
+        }
+
+        false
+    }
+
+    /// Check if the global Promise type is available in lib contexts.
+    ///
+    /// Used for TS2697: async function must return Promise.
+    /// NOTE: Currently unused since TS2697 checks are disabled due to false positives.
+    #[allow(dead_code)]
+    pub fn is_promise_global_available(&self) -> bool {
+        // Use the centralized has_name_in_lib helper which checks:
+        // - lib_contexts
+        // - current_scope
+        // - file_locals
+        self.ctx.has_name_in_lib("Promise")
+    }
+
+    // =========================================================================
+    // Type Argument Extraction
+    // =========================================================================
+
+    /// Extract the type argument from a Promise<T> or Promise-like type.
+    ///
+    /// Returns Some(T) if the type is Promise<T>, None otherwise.
+    /// This handles:
+    /// - Synthetic PROMISE_BASE type (when Promise symbol wasn't resolved)
+    /// - Direct Promise<T> applications
+    /// - Type aliases that expand to Promise<T>
+    /// - Classes that extend Promise<T>
+    pub fn promise_like_return_type_argument(&mut self, return_type: TypeId) -> Option<TypeId> {
+        if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(return_type) {
+            let app = self.ctx.types.type_application(app_id);
+
+            // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
+            // This allows us to extract T from Promise<T> even without full lib files
+            if app.base == TypeId::PROMISE_BASE
+                && let Some(&first_arg) = app.args.first()
+            {
+                return Some(first_arg);
+            }
+
+            // Try to get the type argument from the base symbol
+            if let Some(result) =
+                self.promise_like_type_argument_from_base(app.base, &app.args, &mut Vec::new())
+            {
+                return Some(result);
+            }
+
+            // Fallback: if the base is a Promise-like reference (e.g., Promise from lib files)
+            // and we have type arguments, return the first one
+            // This handles cases where Promise doesn't have expected flags or where
+            // promise_like_type_argument_from_base fails for other reasons
+            if let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base)
+                && let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
+                && self.is_promise_like_name(symbol.escaped_name.as_str())
+                && let Some(&first_arg) = app.args.first()
+            {
+                return Some(first_arg);
+            }
+        }
+
+        // If we can't extract the type argument from a Promise-like type,
+        // return None instead of ANY/UNKNOWN (consistent with Task 4-6 changes)
+        // This allows the caller (await expressions) to use UNKNOWN as fallback
+        None
+    }
+
+    /// Extract type argument from a Promise-like base type.
+    ///
+    /// Handles:
+    /// - Direct Promise/PromiseLike types
+    /// - Type aliases to Promise types
+    /// - Classes that extend Promise
+    pub fn promise_like_type_argument_from_base(
+        &mut self,
+        base: TypeId,
+        args: &[TypeId],
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<TypeId> {
+        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(base) else {
+            return None;
+        };
+        let sym_id = SymbolId(sym_id);
+
+        // Try to get the symbol, but handle the case where it doesn't exist (e.g., import from missing module)
+        let symbol = self.ctx.binder.get_symbol(sym_id);
+
+        // If symbol doesn't exist, we can still check if we have type arguments to extract
+        // This handles cases like `MyPromise<void>` where MyPromise is imported from a missing module
+        if symbol.is_none() {
+            // For unresolved Promise-like types, assume the inner type is the first type argument
+            // This allows async functions with unresolved Promise return types to be handled gracefully
+            if let Some(&first_arg) = args.first() {
+                return Some(first_arg);
+            }
+            // Return UNKNOWN instead of ANY when there are no type arguments (consistent with Task 4-6)
+            return Some(TypeId::UNKNOWN);
+        }
+
+        let symbol = match symbol {
+            Some(sym) => sym,
+            None => {
+                // This should never happen due to the check above, but handle gracefully
+                return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
+            }
+        };
+        let name = symbol.escaped_name.as_str();
+
+        if self.is_promise_like_name(name) {
+            // Return UNKNOWN instead of ANY when there are no type arguments (consistent with Task 4-6)
+            return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
+        }
+
+        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+            return self.promise_like_type_argument_from_alias(sym_id, args, visited_aliases);
+        }
+
+        if symbol.flags & symbol_flags::CLASS != 0 {
+            return self.promise_like_type_argument_from_class(sym_id, args, visited_aliases);
+        }
+
+        None
+    }
+
+    /// Extract type argument from a type alias that expands to a Promise type.
+    ///
+    /// For example, given `type MyPromise<T> = Promise<T>`, this extracts
+    /// the type argument from MyPromise<U>.
+    pub fn promise_like_type_argument_from_alias(
+        &mut self,
+        sym_id: SymbolId,
+        args: &[TypeId],
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<TypeId> {
+        if visited_aliases.contains(&sym_id) {
+            return None;
+        }
+        visited_aliases.push(sym_id);
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
+        };
+        if decl_idx.is_none() {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(decl_idx)?;
+        let type_alias = self.ctx.arena.get_type_alias(node)?;
+
+        let mut bindings = Vec::new();
+        if let Some(params) = &type_alias.type_parameters {
+            if params.nodes.len() != args.len() {
+                return None;
+            }
+            for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                let name_node = self.ctx.arena.get(param.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
+            }
+        } else if !args.is_empty() {
+            return None;
+        }
+
+        // Check if the alias RHS is directly a Promise/PromiseLike type reference
+        // before lowering (e.g., Promise<T> where Promise is from lib and might not fully resolve)
+        if let Some(type_node) = self.ctx.arena.get(type_alias.type_node)
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && self.is_promise_like_name(ident.escaped_text.as_str())
+        {
+            // It's Promise<...> or PromiseLike<...>
+            // Get the first type argument and substitute bindings
+            if let Some(type_args) = &type_ref.type_arguments
+                && let Some(&first_arg_idx) = type_args.nodes.first()
+            {
+                // Try to substitute bindings in the type argument
+                let arg_type = self.lower_type_with_bindings(first_arg_idx, bindings.clone());
+                return Some(arg_type);
+            }
+            // No type args means Promise (equivalent to Promise<any>)
+            return Some(TypeId::ANY);
+        }
+
+        let lowered = self.lower_type_with_bindings(type_alias.type_node, bindings);
+        if let Some(TypeKey::Application(app_id)) = self.ctx.types.lookup(lowered) {
+            let app = self.ctx.types.type_application(app_id);
+            return self.promise_like_type_argument_from_base(app.base, &app.args, visited_aliases);
+        }
+
+        // Fallback: if the alias expands to a promise-like type reference (e.g., Promise from lib),
+        // treat it as Promise<unknown> if we can't get the type argument.
+        // This handles cases like: type PromiseAlias<T> = Promise<T> where Promise comes from lib.
+        if self.type_ref_is_promise_like(lowered) {
+            // If we have args, try to return the first one (the T in Promise<T>)
+            // Otherwise return UNKNOWN for stricter type checking
+            return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
+        }
+
+        None
+    }
+
+    /// Extract type argument from a class that extends Promise.
+    ///
+    /// For example, given `class MyPromise<T> extends Promise<T>`, this extracts
+    /// the type argument from MyPromise<U>.
+    pub fn promise_like_type_argument_from_class(
+        &mut self,
+        sym_id: SymbolId,
+        args: &[TypeId],
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<TypeId> {
+        if visited_aliases.contains(&sym_id) {
+            return None;
+        }
+        visited_aliases.push(sym_id);
+
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE)
+        };
+        if decl_idx.is_none() {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(decl_idx)?;
+        let class = self.ctx.arena.get_class(node)?;
+
+        // Build type parameter bindings for this class
+        let mut bindings = Vec::new();
+        if let Some(params) = &class.type_parameters {
+            if params.nodes.len() != args.len() {
+                return None;
+            }
+            for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                let name_node = self.ctx.arena.get(param.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
+            }
+        } else if !args.is_empty() {
+            return None;
+        }
+
+        // Check heritage clauses for extends Promise/PromiseLike
+        let Some(heritage_clauses) = &class.heritage_clauses else {
+            return None;
+        };
+
+        for &clause_idx in heritage_clauses.nodes.iter() {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+
+            // Only check extends clauses (token = ExtendsKeyword = 96)
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            // Get the first type in the extends clause (the base class)
+            let Some(&type_idx) = heritage.types.nodes.first() else {
+                continue;
+            };
+            let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                continue;
+            };
+
+            // Handle both cases:
+            // 1. ExpressionWithTypeArguments (e.g., Promise<T>)
+            // 2. Simple Identifier (e.g., Promise)
+            let (expr_idx, type_arguments) =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    (
+                        expr_type_args.expression,
+                        expr_type_args.type_arguments.as_ref(),
+                    )
+                } else {
+                    (type_idx, None)
+                };
+
+            // Get the base class name
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
+                continue;
+            };
+
+            // Check if it's Promise or PromiseLike
+            if !self.is_promise_like_name(&ident.escaped_text) {
+                continue;
+            }
+
+            // If it extends Promise<X>, extract X and substitute type parameters
+            if let Some(type_args) = type_arguments
+                && let Some(&first_arg_node) = type_args.nodes.first()
+            {
+                let lowered = self.lower_type_with_bindings(first_arg_node, bindings);
+                return Some(lowered);
+            }
+
+            // Promise with no type argument defaults to Promise<any>
+            return Some(TypeId::ANY);
+        }
+
+        None
+    }
+
+    // =========================================================================
+    // Return Type Checking for Async Functions
+    // =========================================================================
+
+    /// Check if a return type requires a return value.
+    ///
+    /// Returns false for void, undefined, any, never, unknown, error types,
+    /// and unions containing void/undefined.
+    /// Returns true for all other types.
+    pub fn requires_return_value(&self, return_type: TypeId) -> bool {
+        // void, undefined, any, never don't require a return value
+        if return_type == TypeId::VOID
+            || return_type == TypeId::UNDEFINED
+            || return_type == TypeId::ANY
+            || return_type == TypeId::NEVER
+            || return_type == TypeId::UNKNOWN
+            || return_type == TypeId::ERROR
+        {
+            return false;
+        }
+
+        // Check for union types that include void/undefined
+        if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(return_type) {
+            let members = self.ctx.types.type_list(members);
+            for &member in members.iter() {
+                if member == TypeId::VOID || member == TypeId::UNDEFINED {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Get the return type for implicit return checking.
+    ///
+    /// For async functions, this unwraps Promise<T> to get T.
+    /// For generator functions, returns UNKNOWN (not fully implemented).
+    /// Otherwise, returns the original return type.
+    pub fn return_type_for_implicit_return_check(
+        &mut self,
+        return_type: TypeId,
+        is_async: bool,
+        is_generator: bool,
+    ) -> TypeId {
+        if is_generator {
+            return TypeId::UNKNOWN; // Generator support not implemented - use UNKNOWN
+        }
+
+        if is_async {
+            if let Some(inner) = self.promise_like_return_type_argument(return_type) {
+                return inner;
+            }
+        }
+
+        return_type
+    }
+
+    /// Check if a return type annotation syntactically looks like Promise<T>.
+    ///
+    /// This is a fallback for when the type can't be resolved but the syntax is clearly Promise.
+    /// Used for better error messages when Promise types are not available.
+    pub fn return_type_annotation_looks_like_promise(&self, type_annotation: NodeIndex) -> bool {
+        // Get the type node from the annotation
+        let Some(node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+
+        // Check if it's a type reference with "Promise" name
+        if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+            // Get the type name - it could be an identifier or qualified name
+            if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
+                // Check for simple identifier like "Promise"
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    return self.is_promise_like_name(&ident.escaped_text);
+                }
+                // Also check for qualified names like SomeModule.Promise
+                if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node)
+                    && let Some(right_node) = self.ctx.arena.get(qualified.right)
+                    && let Some(ident) = self.ctx.arena.get_identifier(right_node)
+                {
+                    return self.is_promise_like_name(&ident.escaped_text);
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a type is null or undefined only.
+    ///
+    /// Returns true for the null type, undefined type, or unions that only
+    /// contain null and/or undefined.
+    pub fn is_null_or_undefined_only(&self, return_type: TypeId) -> bool {
+        if return_type == TypeId::NULL || return_type == TypeId::UNDEFINED {
+            return true;
+        }
+
+        if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(return_type) {
+            let members = self.ctx.types.type_list(members);
+            for &member in members.iter() {
+                if member != TypeId::NULL && member != TypeId::UNDEFINED {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        false
+    }
+
+    // Note: The `lower_type_with_bindings` helper method remains in state.rs
+    // as it requires access to private methods `resolve_type_symbol_for_lowering`
+    // and `resolve_value_symbol_for_lowering`. This is a deliberate choice to
+    // keep the implementation encapsulated while still organizing the promise
+    // type checking logic into a separate module.
+}
