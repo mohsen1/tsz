@@ -18067,21 +18067,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check an import equals declaration for ESM compatibility.
+    /// Check an import equals declaration for ESM compatibility and unresolved modules.
     /// Emits TS1202 when `import x = require()` is used in an ES module.
+    /// Emits TS2307 when the required module cannot be found.
     /// Does NOT emit TS1202 for namespace imports like `import x = Namespace.Member`.
     fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
 
-        // TS1202: Import assignment cannot be used when targeting ECMAScript modules.
-        // This error is emitted when using `import x = require("y")` in a file that
-        // has other ES module syntax (import/export).
-        // IMPORTANT: This does NOT apply to internal namespace imports like `import x = A.B`
-        if !self.ctx.binder.is_external_module() {
-            return;
-        }
-
-        // Check if this is an external module reference (require)
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
@@ -18094,15 +18088,67 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Only emit TS1202 for external module references (string literals from require())
-        // Internal namespace imports (identifiers/qualified names) don't trigger this error
-        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
+        // Check if this is an external module reference (require with string literal)
+        // Internal namespace imports (identifiers/qualified names) don't need module resolution
+        if ref_node.kind != SyntaxKind::StringLiteral as u16 {
+            return;
+        }
+
+        // TS1202: Import assignment cannot be used when targeting ECMAScript modules.
+        // This error is emitted when using `import x = require("y")` in a file that
+        // has other ES module syntax (import/export).
+        if self.ctx.binder.is_external_module() {
             self.error_at_node(
                 stmt_idx,
                 "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
                 diagnostic_codes::IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM,
             );
         }
+
+        // TS2307: Cannot find module - check if the module can be resolved
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        let Some(literal) = self.ctx.arena.get_literal(ref_node) else {
+            return;
+        };
+        let module_name = &literal.text;
+
+        // Check if the module was resolved by the CLI driver (multi-file mode)
+        if let Some(ref resolved) = self.ctx.resolved_modules
+            && resolved.contains(module_name)
+        {
+            return; // Module exists
+        }
+
+        // Check if the module exists in the module_exports map (cross-file module resolution)
+        if self.ctx.binder.module_exports.contains_key(module_name) {
+            return; // Module exists
+        }
+
+        // Check if this is a shorthand ambient module (declare module "foo")
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return; // Ambient module exists
+        }
+
+        // Check declared modules (regular ambient modules with body)
+        if self.ctx.binder.declared_modules.contains(module_name) {
+            return; // Declared module exists
+        }
+
+        // Module not found - emit TS2307
+        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
+        self.error_at_node(
+            import.module_specifier,
+            &message,
+            diagnostic_codes::CANNOT_FIND_MODULE,
+        );
     }
 
     /// Check an import declaration for unresolved modules and missing exports.
