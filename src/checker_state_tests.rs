@@ -3173,6 +3173,104 @@ import { foo } from "./specific-missing-module";
     );
 }
 
+/// Test that TS2307 is emitted for dynamic imports with unresolved module specifiers
+#[test]
+fn test_ts2307_dynamic_import_unresolved() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+async function loadModule() {
+    const mod = await import("./missing-dynamic-module");
+    return mod;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2307_diag = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::CANNOT_FIND_MODULE);
+
+    assert!(
+        ts2307_diag.is_some(),
+        "Expected TS2307 diagnostic for dynamic import, got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+    let diag = ts2307_diag.unwrap();
+    assert!(
+        diag.message_text.contains("./missing-dynamic-module"),
+        "TS2307 message should contain module specifier, got: {}",
+        diag.message_text
+    );
+}
+
+/// Test that TS2307 is NOT emitted for dynamic imports with non-string specifiers
+/// (e.g., variables or template literals cannot be statically checked)
+#[test]
+fn test_ts2307_dynamic_import_non_string_specifier_no_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+async function loadModule(modulePath: string) {
+    const mod = await import(modulePath);
+    return mod;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    // Dynamic specifiers cannot be statically checked, so no TS2307 should be emitted
+    let ts2307_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_MODULE)
+        .count();
+
+    assert_eq!(
+        ts2307_count, 0,
+        "Expected no TS2307 for dynamic import with variable specifier, got {} errors",
+        ts2307_count
+    );
+}
+
 #[test]
 fn test_missing_type_reference_in_function_type_emits_2304() {
     use crate::parser::ParserState;

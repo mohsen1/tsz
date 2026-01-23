@@ -8302,6 +8302,14 @@ impl<'a> CheckerState<'a> {
         // Get the type of the callee
         let mut callee_type = self.get_type_of_node(call.expression);
 
+        // Check for dynamic import module resolution (TS2307)
+        if self.is_dynamic_import(call) {
+            self.check_dynamic_import_module_specifier(call);
+            // Dynamic imports return Promise<typeof module>
+            // For unresolved modules, return any to allow type flow to continue
+            return TypeId::ANY;
+        }
+
         // Special handling for super() calls - treat as construct call
         let is_super_call = self.is_super_expression(call.expression);
 
@@ -15715,6 +15723,84 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         }
+    }
+
+    /// Check if a call expression is a dynamic import (`import('...')`).
+    fn is_dynamic_import(&self, call: &crate::parser::node::CallExprData) -> bool {
+        use crate::scanner::SyntaxKind;
+        if let Some(node) = self.ctx.arena.get(call.expression) {
+            node.kind == SyntaxKind::ImportKeyword as u16
+        } else {
+            false
+        }
+    }
+
+    /// Check a dynamic import call for unresolved module specifier (TS2307).
+    /// Dynamic imports: `import('./module')` or `import("./module")`
+    fn check_dynamic_import_module_specifier(&mut self, call: &crate::parser::node::CallExprData) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        // Get the first argument (module specifier)
+        let args = call
+            .arguments
+            .as_ref()
+            .map(|a| &a.nodes)
+            .map(|n| n.as_slice())
+            .unwrap_or(&[]);
+
+        if args.is_empty() {
+            return; // No argument - will be caught by argument count check
+        }
+
+        let arg_idx = args[0];
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return;
+        };
+
+        // Only check string literal module specifiers
+        // Dynamic specifiers (variables, template literals) cannot be statically checked
+        let Some(literal) = self.ctx.arena.get_literal(arg_node) else {
+            return;
+        };
+
+        let module_name = &literal.text;
+
+        // Check if the module was resolved by the CLI driver (multi-file mode)
+        if let Some(ref resolved) = self.ctx.resolved_modules
+            && resolved.contains(module_name)
+        {
+            return; // Module exists
+        }
+
+        // Check if the module exists in the module_exports map (cross-file module resolution)
+        if self.ctx.binder.module_exports.contains_key(module_name) {
+            return; // Module exists
+        }
+
+        // Check if this is a shorthand ambient module (declare module "foo")
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return; // Ambient module exists
+        }
+
+        // Check declared modules (regular ambient modules with body)
+        if self.ctx.binder.declared_modules.contains(module_name) {
+            return; // Declared module exists
+        }
+
+        // Module not found - emit TS2307
+        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
+        self.error_at_node(arg_idx, &message, diagnostic_codes::CANNOT_FIND_MODULE);
     }
 
     /// Get the type of a `super` keyword expression.
@@ -24085,11 +24171,9 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ANY;
             };
 
-            let (type_params, type_param_updates) =
-                self.push_type_parameters(&sig.type_parameters);
+            let (type_params, type_param_updates) = self.push_type_parameters(&sig.type_parameters);
             let (params, this_type) = self.extract_params_from_signature(sig);
-            let (return_type, type_predicate) =
-                self.return_type_and_predicate(sig.type_annotation);
+            let (return_type, type_predicate) = self.return_type_and_predicate(sig.type_annotation);
 
             let shape = FunctionShape {
                 type_params,
