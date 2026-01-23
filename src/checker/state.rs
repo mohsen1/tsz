@@ -15969,7 +15969,31 @@ impl<'a> CheckerState<'a> {
                     let both_in_same_file = self.ctx.arena.get(decl_idx).is_some()
                         && self.ctx.arena.get(other_idx).is_some();
 
-                    if both_in_same_file && Self::declarations_conflict(decl_flags, other_flags) {
+                    if !both_in_same_file {
+                        continue;
+                    }
+
+                    // Check for function overloads - multiple function declarations are allowed
+                    // if at most one of them has a body (is an implementation)
+                    let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
+                        && (other_flags & symbol_flags::FUNCTION) != 0;
+                    if both_functions {
+                        let decl_has_body = self.function_has_body(decl_idx);
+                        let other_has_body = self.function_has_body(other_idx);
+                        // Only conflict if BOTH have bodies (multiple implementations)
+                        if !(decl_has_body && other_has_body) {
+                            continue;
+                        }
+                    }
+
+                    // Check for interface merging - multiple interface declarations are allowed
+                    let both_interfaces = (decl_flags & symbol_flags::INTERFACE) != 0
+                        && (other_flags & symbol_flags::INTERFACE) != 0;
+                    if both_interfaces {
+                        continue; // Interface merging is always allowed
+                    }
+
+                    if Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
                     }
@@ -16012,6 +16036,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Check if a function declaration has a body (is an implementation, not just a signature).
+    fn function_has_body(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return false;
+        }
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        !func.body.is_none()
     }
 
     /// Get the name node of a declaration for error reporting.
