@@ -2791,7 +2791,7 @@ let x: MissingType;
 }
 
 #[test]
-fn test_ts2792_import_with_module_augmentation() {
+fn test_ts2307_import_with_module_augmentation() {
     use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
@@ -2829,7 +2829,7 @@ value;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&diagnostic_codes::CANNOT_FIND_MODULE),
-        "Expected TS2792 for module augmentation without resolution, got: {:?}",
+        "Expected TS2307 for module augmentation without resolution, got: {:?}",
         codes
     );
 }
