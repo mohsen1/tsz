@@ -580,43 +580,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Function to callable (single signature to overloaded)
             (TypeKey::Function(s_fn_id), TypeKey::Callable(t_callable_id)) => {
-                // A single function can match a callable if it satisfies all target call signatures
-                let s_fn = self.interner.function_shape(*s_fn_id);
-                let t_callable = self.interner.callable_shape(*t_callable_id);
-                for t_sig in &t_callable.call_signatures {
-                    if !self.check_call_signature_subtype_fn(&s_fn, t_sig).is_true() {
-                        return SubtypeResult::False;
-                    }
-                }
-                SubtypeResult::True
+                self.check_function_to_callable_subtype(*s_fn_id, *t_callable_id)
             }
 
             // Callable to function (overloaded to single)
             (TypeKey::Callable(s_callable_id), TypeKey::Function(t_fn_id)) => {
-                // At least one source signature must match the target function
-                let s_callable = self.interner.callable_shape(*s_callable_id);
-                let t_fn = self.interner.function_shape(*t_fn_id);
-                if t_fn.is_constructor {
-                    for s_sig in &s_callable.construct_signatures {
-                        if self
-                            .check_call_signature_subtype_to_fn(s_sig, &t_fn)
-                            .is_true()
-                        {
-                            return SubtypeResult::True;
-                        }
-                    }
-                    return SubtypeResult::False;
-                }
-
-                for s_sig in &s_callable.call_signatures {
-                    if self
-                        .check_call_signature_subtype_to_fn(s_sig, &t_fn)
-                        .is_true()
-                    {
-                        return SubtypeResult::True;
-                    }
-                }
-                SubtypeResult::False
+                self.check_callable_to_function_subtype(*s_callable_id, *t_fn_id)
             }
 
             // Generic application to application
@@ -2913,6 +2882,58 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
         SubtypeResult::True
+    }
+
+    /// Check if a function type is a subtype of a callable type.
+    ///
+    /// A single function can match a callable if it satisfies all target call signatures.
+    fn check_function_to_callable_subtype(
+        &mut self,
+        s_fn_id: FunctionShapeId,
+        t_callable_id: CallableShapeId,
+    ) -> SubtypeResult {
+        let s_fn = self.interner.function_shape(s_fn_id);
+        let t_callable = self.interner.callable_shape(t_callable_id);
+        for t_sig in &t_callable.call_signatures {
+            if !self.check_call_signature_subtype_fn(&s_fn, t_sig).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+        SubtypeResult::True
+    }
+
+    /// Check if a callable type is a subtype of a function type.
+    ///
+    /// At least one source signature must match the target function.
+    fn check_callable_to_function_subtype(
+        &mut self,
+        s_callable_id: CallableShapeId,
+        t_fn_id: FunctionShapeId,
+    ) -> SubtypeResult {
+        let s_callable = self.interner.callable_shape(s_callable_id);
+        let t_fn = self.interner.function_shape(t_fn_id);
+
+        if t_fn.is_constructor {
+            for s_sig in &s_callable.construct_signatures {
+                if self
+                    .check_call_signature_subtype_to_fn(s_sig, &t_fn)
+                    .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+            }
+            return SubtypeResult::False;
+        }
+
+        for s_sig in &s_callable.call_signatures {
+            if self
+                .check_call_signature_subtype_to_fn(s_sig, &t_fn)
+                .is_true()
+            {
+                return SubtypeResult::True;
+            }
+        }
+        SubtypeResult::False
     }
 
     fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
