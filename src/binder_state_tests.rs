@@ -2632,3 +2632,159 @@ function localFunction() { return localValue; }
         "localFunction should not be an ALIAS symbol"
     );
 }
+
+// =============================================================================
+// Wildcard Re-export Tests
+// =============================================================================
+
+/// Test that multiple export * from statements are properly tracked.
+/// This ensures we can resolve exports from files that re-export from multiple sources.
+#[test]
+fn test_multiple_wildcard_reexports() {
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
+
+    // This file re-exports from multiple modules
+    let source = r#"
+export * from './moduleA';
+export * from './moduleB';
+export * from './moduleC';
+"#;
+
+    let mut parser = ParserState::new("index.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.set_debug_file("index.ts");
+    binder.bind_source_file(arena, root);
+
+    // Verify that all wildcard re-exports are tracked
+    let reexports = binder.wildcard_reexports.get("index.ts");
+    assert!(
+        reexports.is_some(),
+        "index.ts should have wildcard_reexports"
+    );
+
+    let reexports = reexports.unwrap();
+    assert_eq!(
+        reexports.len(),
+        3,
+        "Should have 3 wildcard re-exports, got: {:?}",
+        reexports
+    );
+
+    assert!(
+        reexports.contains(&"./moduleA".to_string()),
+        "Should re-export from ./moduleA"
+    );
+    assert!(
+        reexports.contains(&"./moduleB".to_string()),
+        "Should re-export from ./moduleB"
+    );
+    assert!(
+        reexports.contains(&"./moduleC".to_string()),
+        "Should re-export from ./moduleC"
+    );
+}
+
+/// Test that named re-exports and wildcard re-exports can coexist.
+#[test]
+fn test_mixed_reexports() {
+    use crate::binder::BinderState;
+    use crate::parser::ParserState;
+
+    let source = r#"
+export { foo, bar } from './named';
+export * from './wildcard1';
+export { baz as qux } from './renamed';
+export * from './wildcard2';
+"#;
+
+    let mut parser = ParserState::new("mixed.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.set_debug_file("mixed.ts");
+    binder.bind_source_file(arena, root);
+
+    // Check wildcard re-exports
+    let wildcards = binder.wildcard_reexports.get("mixed.ts");
+    assert!(
+        wildcards.is_some(),
+        "mixed.ts should have wildcard_reexports"
+    );
+    let wildcards = wildcards.unwrap();
+    assert_eq!(wildcards.len(), 2, "Should have 2 wildcard re-exports");
+    assert!(wildcards.contains(&"./wildcard1".to_string()));
+    assert!(wildcards.contains(&"./wildcard2".to_string()));
+
+    // Check named re-exports
+    let named = binder.reexports.get("mixed.ts");
+    assert!(named.is_some(), "mixed.ts should have named reexports");
+    let named = named.unwrap();
+    assert!(named.contains_key("foo"), "Should re-export 'foo'");
+    assert!(named.contains_key("bar"), "Should re-export 'bar'");
+    assert!(
+        named.contains_key("qux"),
+        "Should re-export 'qux' (renamed from baz)"
+    );
+}
+
+/// Test that export resolution follows multiple wildcard re-export chains.
+#[test]
+fn test_export_resolution_multiple_wildcards() {
+    use crate::binder::{BinderState, SymbolTable, symbol_flags};
+    use crate::parser::ParserState;
+
+    // Setup: We'll create module_exports and wildcard_reexports manually
+    // to test the resolution logic without parsing multiple files
+    let source = "const x = 1;"; // Minimal source just to create a binder
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    // Setup module_exports for two modules
+    let mut module_a_exports = SymbolTable::new();
+    let sym_a = binder
+        .symbols
+        .alloc(symbol_flags::FUNCTION, "funcA".to_string());
+    module_a_exports.set("funcA".to_string(), sym_a);
+    binder
+        .module_exports
+        .insert("./moduleA".to_string(), module_a_exports);
+
+    let mut module_b_exports = SymbolTable::new();
+    let sym_b = binder
+        .symbols
+        .alloc(symbol_flags::FUNCTION, "funcB".to_string());
+    module_b_exports.set("funcB".to_string(), sym_b);
+    binder
+        .module_exports
+        .insert("./moduleB".to_string(), module_b_exports);
+
+    // Setup index.ts to re-export from both
+    binder.wildcard_reexports.insert(
+        "./index".to_string(),
+        vec!["./moduleA".to_string(), "./moduleB".to_string()],
+    );
+
+    // Test resolution: funcA should be found via index -> moduleA
+    let result = binder.resolve_import_if_needed_public("./index", "funcA");
+    assert!(result.is_some(), "Should resolve funcA from index");
+    assert_eq!(result.unwrap(), sym_a);
+
+    // Test resolution: funcB should be found via index -> moduleB
+    let result = binder.resolve_import_if_needed_public("./index", "funcB");
+    assert!(result.is_some(), "Should resolve funcB from index");
+    assert_eq!(result.unwrap(), sym_b);
+
+    // Test resolution: nonExistent should NOT be found
+    let result = binder.resolve_import_if_needed_public("./index", "nonExistent");
+    assert!(result.is_none(), "Should not resolve nonExistent");
+}
