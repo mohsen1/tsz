@@ -386,10 +386,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 !source_props.is_empty() && !self.has_common_property(source_props, target_props)
             }
             TypeKey::Union(members) => {
+                // For unions, only fail if ALL members violate weak type rules.
+                // If at least one member is compatible, the union should be assignable.
                 let members = self.interner.type_list(*members);
                 members
                     .iter()
-                    .any(|member| self.violates_weak_type_with_target_props(*member, target_props))
+                    .all(|member| self.violates_weak_type_with_target_props(*member, target_props))
             }
             _ => false,
         }
