@@ -10899,13 +10899,13 @@ impl<'a> CheckerState<'a> {
             // This error is emitted when Promise global type is not available
             if is_async && !is_generator && !self.is_promise_global_available() {
                 use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                let error_node = if async_node_idx.is_none() {
+                let diagnostic_node = if async_node_idx.is_none() {
                     idx
                 } else {
                     async_node_idx
                 };
                 self.error_at_node(
-                    error_node,
+                    diagnostic_node,
                     diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
                     diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
                 );
@@ -24651,7 +24651,7 @@ impl<'a> CheckerState<'a> {
             // TS2697: Check if async method has access to Promise type
             // This error is emitted when Promise global type is not available
             if is_async && !is_generator && !self.is_promise_global_available() {
-                use crate::checker::types::diagnostics::diagnostic_messages;
+                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     method.name,
                     diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
@@ -24869,8 +24869,9 @@ impl<'a> CheckerState<'a> {
         // Parameter properties are only allowed in constructors, not in accessors
         self.check_parameter_properties(&accessor.parameters.nodes);
 
-        // Check getter parameters for TS7006 here
-        // Setter parameters are checked separately in check_setter_parameter below
+        // Check getter parameters for TS7006 here.
+        // Setter parameters are checked in check_setter_parameter() below, which also
+        // validates other setter constraints (no initializer, no rest parameter).
         if is_getter {
             for &param_idx in &accessor.parameters.nodes {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
