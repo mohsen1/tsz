@@ -319,6 +319,60 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Assign contextual types to destructuring parameters (binding patterns).
+    ///
+    /// When a function has a contextual type (e.g., from a callback position),
+    /// destructuring parameters need to have their bindings inferred from
+    /// the contextual parameter type.
+    ///
+    /// Example:
+    /// ```typescript
+    /// declare function map<T, U>(arr: T[], fn: (item: T) => U): U[];
+    /// map(arr, ({ x, y }) => x + y);  // x and y types come from contextual type T
+    /// ```
+    fn assign_contextual_types_to_destructuring_params(
+        &mut self,
+        params: &[NodeIndex],
+        param_types: &[Option<TypeId>],
+    ) {
+        for (i, &param_idx) in params.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Skip if there's an explicit type annotation
+            if !param.type_annotation.is_none() {
+                continue;
+            }
+
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+
+            // Only process binding patterns (destructuring)
+            let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+
+            if !is_binding_pattern {
+                continue;
+            }
+
+            // Get the contextual type for this parameter position
+            let contextual_type = param_types
+                .get(i)
+                .and_then(|t| *t)
+                .filter(|&t| t != TypeId::UNKNOWN && t != TypeId::ERROR);
+
+            if let Some(ctx_type) = contextual_type {
+                // Assign the contextual type to the binding pattern elements
+                self.assign_binding_pattern_symbol_types(param.name, ctx_type);
+            }
+        }
+    }
+
     /// Infer and cache parameter types using contextual typing.
     ///
     /// This is needed for cases like:
@@ -10923,6 +10977,8 @@ impl<'a> CheckerState<'a> {
         // Function declarations are checked in check_statement
         if !is_function_declaration && !is_method_or_constructor {
             self.check_duplicate_parameters(parameters);
+            // Check for required parameters following optional parameters (TS1016)
+            self.check_parameter_ordering(parameters);
         }
 
         let (type_params, type_param_updates) = self.push_type_parameters(type_parameters);
@@ -11051,6 +11107,10 @@ impl<'a> CheckerState<'a> {
         // Check the function body (for type errors within the body)
         if !body.is_none() {
             self.cache_parameter_types(&parameters.nodes, Some(&param_types));
+
+            // Assign contextual types to destructuring parameters (binding patterns)
+            // This allows destructuring patterns in callbacks to infer element types from contextual types
+            self.assign_contextual_types_to_destructuring_params(&parameters.nodes, &param_types);
 
             // Check that parameter default values are assignable to declared types (TS2322)
             self.check_parameter_initializers(&parameters.nodes);
@@ -16938,6 +16998,43 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check for required parameters following optional parameters (TS1016).
+    /// A required parameter cannot follow an optional parameter.
+    fn check_parameter_ordering(&mut self, parameters: &NodeList) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let mut seen_optional = false;
+
+        for &param_idx in &parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Rest parameter ends the check - rest params don't count as optional/required in this context
+            if param.dot_dot_dot_token {
+                break;
+            }
+
+            // A parameter is optional if it has a question token or an initializer
+            let is_optional = param.question_token || !param.initializer.is_none();
+
+            if is_optional {
+                seen_optional = true;
+            } else if seen_optional {
+                // Required parameter after optional - emit TS1016
+                // Report on the parameter name for better error highlighting
+                self.error_at_node(
+                    param.name,
+                    diagnostic_messages::REQUIRED_PARAMETER_AFTER_OPTIONAL,
+                    diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL,
+                );
+            }
+        }
+    }
+
     /// Check for duplicate enum members (TS2300).
     fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex) {
         use crate::checker::types::diagnostics::{
@@ -17121,6 +17218,9 @@ impl<'a> CheckerState<'a> {
 
                     // Check for duplicate parameter names (TS2300)
                     self.check_duplicate_parameters(&func.parameters);
+
+                    // Check for required parameters following optional parameters (TS1016)
+                    self.check_parameter_ordering(&func.parameters);
 
                     // Check return type annotation for parameter properties in function types
                     if !func.type_annotation.is_none() {
@@ -25410,6 +25510,9 @@ impl<'a> CheckerState<'a> {
         // Check for duplicate parameter names (TS2300)
         self.check_duplicate_parameters(&method.parameters);
 
+        // Check for required parameters following optional parameters (TS1016)
+        self.check_parameter_ordering(&method.parameters);
+
         // Check that parameter default values are assignable to declared types (TS2322)
         self.check_parameter_initializers(&method.parameters.nodes);
 
@@ -25584,6 +25687,9 @@ impl<'a> CheckerState<'a> {
 
         // Check for duplicate parameter names (TS2300)
         self.check_duplicate_parameters(&ctor.parameters);
+
+        // Check for required parameters following optional parameters (TS1016)
+        self.check_parameter_ordering(&ctor.parameters);
 
         // Check that parameter default values are assignable to declared types (TS2322)
         self.check_parameter_initializers(&ctor.parameters.nodes);
