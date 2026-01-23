@@ -2,359 +2,208 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
-**Current Status:** Type system solver is complete. Focus is now on production readiness: transform pipeline migration, diagnostic coverage, module resolution, and conformance validation.
+**Current Status:** Solver needs tuning - weak type checking is too strict, causing 12,122 extra TS2322 errors. Focus is on reducing false positives in the solver's assignability logic.
 
-**Conformance Baseline (2025-01-22):** 34.7% pass rate (4,182/12,053 tests)
-
----
-
-## Top Priority: Transform Pipeline Migration
-
-**Problem:** `src/transforms/` has ~7,500 lines of architectural debt blocking reliable ES5 JavaScript emission.
-
-**Issue:** Legacy transforms (class_es5, async_es5, namespace_es5) mix AST manipulation with string emission, making them untestable and error-prone.
-
-**Solution:** Migrate to IR (Intermediate Representation) pattern already proven in enum_es5, destructuring_es5, spread_es5.
-
-### Transforms Requiring Migration
-
-| Transform | Lines | Blocker | Complexity |
-|-----------|-------|---------|------------|
-| `class_es5.rs` | 4,849 | Classes, inheritance, private fields, getters/setters | **CRITICAL** |
-| `async_es5.rs` | 1,491 | Async/await → __awaiter/__generator | **HIGH** |
-| `namespace_es5.rs` | 1,169 | Nested IIFEs | **MEDIUM** |
-
-### Reference Implementation (Already Working)
-
-Study these files for the migration pattern:
-- `src/transforms/enum_es5.rs` - Clean IR pattern
-- `src/transforms/destructuring_es5.rs` - IR-based transform
-- `src/transforms/ir.rs` - IR node definitions
-
-### Migration Pattern
-
-```rust
-// Step 1: Create transformer (no strings, just IR)
-pub struct ES5ClassTransformer<'a> {
-    arena: &'a NodeArena,
-    class_name: String,
-    temp_var_counter: u32,
-}
-
-impl<'a> ES5ClassTransformer<'a> {
-    pub fn transform_class(&mut self, idx: NodeIndex) -> Option<IRNode> {
-        // Analyze AST, build IR tree
-        IRNode::ES5ClassIIFE {
-            name: self.class_name.clone(),
-            base_class: /* ... */,
-            body: /* ... */,
-        }
-    }
-}
-
-// Step 2: Wrap old Emitter for compatibility
-pub struct ClassES5Emitter<'a> {
-    transformer: ES5ClassTransformer<'a>,
-}
-
-impl<'a> ClassES5Emitter<'a> {
-    pub fn emit_class(&mut self, idx: NodeIndex) -> String {
-        let ir = self.transformer.transform_class(idx)?;
-        IRPrinter::emit_to_string(&ir)
-    }
-}
-```
-
-### IR Nodes Already Defined
-
-The following IR nodes exist in `src/transforms/ir.rs` and are ready to use:
-- `ES5ClassIIFE` - Class IIFE pattern
-- `ExtendsHelper` - `__extends` helper call
-- `PrototypeMethod` - Method assignment to prototype
-- `StaticMethod` - Static method assignment
-- `AwaiterCall` - `__awaiter` helper
-- `GeneratorBody` - Generator state machine
-- `GeneratorOp` - `[opcode, value]` operations
-- `NamespaceIIFE` - Namespace IIFE pattern
-
-### Estimated Timeline
-
-- **Week 1:** Migrate `class_es5.rs`
-  - Build transformer struct
-  - Construct IR nodes for IIFE, extends, methods
-  - Test against existing class transform tests
-
-- **Week 2:** Migrate `async_es5.rs`
-  - Build generator state machine IR
-  - Reuse AwaiterCall, GeneratorBody nodes
-
-- **Week 3:** Migrate `namespace_es5.rs` + Integration
-  - Complete transform migration
-  - Update all callers
-  - Run full test suite validation
-
-### Success Criteria
-
-- All 3 transforms use IR pattern (no direct string emission)
-- All existing transform tests pass
-- ES5 emission matches TSC output
+**Conformance Baseline (2026-01-22):** 36.3% pass rate (4,423/12,197 tests)
 
 ---
 
-## High Priority: Diagnostic Coverage & Symbol Resolution
+## Top Priority: Reduce False Positives (Extra Errors)
 
-**Problem:** Conformance tests show significant missing diagnostic coverage (65% of tests fail).
+**Problem:** TSZ emits far too many incorrect errors, causing 63.7% test failure rate. The checker is **too strict**, not too lenient.
 
-**Key Insight:** This is **NOT** a type system problem. The solver is complete and battle-tested (91K lines of tests pass).
+**Key Insight:** Extra errors (false positives) outnumber missing errors significantly. Fixing false positives will have higher impact on pass rate than adding missing errors.
 
-**Root Cause:** Symbol resolution and diagnostic coverage gaps in the checker.
+### Top Extra Errors (False Positives)
 
-### Conformance Baseline
+| Error Code | Extra Count | Description | Root Cause |
+|------------|-------------|-------------|------------|
+| TS2322 | 12,122x | Type not assignable | **Subtype checking too strict** |
+| TS2304 | 3,798x | Cannot find name | **Symbol resolution false negatives** |
+| TS2694 | 3,104x | Namespace has no exported member | **Export resolution broken** |
+| TS1005 | 2,706x | Expected X | **Parser error recovery** |
+| TS2552 | 1,825x | Cannot find name, did you mean? | **Suggestion logic triggering incorrectly** |
+| TS2571 | 1,698x | Object is of type unknown | **Type inference defaulting to unknown** |
+| TS2300 | 1,515x | Duplicate identifier | **Scope merging broken** |
+| TS2339 | 1,498x | Property does not exist | **Member lookup incomplete** |
 
-Run on 2025-01-22 with 12,053 tests:
-- **Pass Rate:** 34.7% (4,182 passed)
-- **Failed:** 7,351 tests
-- **Crashed:** 519 tests (mostly ENOTDIR - infrastructure issues)
+### Strategy: Fix Root Causes
 
-### Top Missing Errors (Symbol Resolution Issues)
+**Phase 1: TS2322 False Positives (CRITICAL - 12,122 extra)**
 
-| Error Code | Count | Description |
-|------------|-------|-------------|
-| TS2318 | 8,082x | Cannot find type '{0}' |
-| TS2583 | 4,359x | Cannot find name '{0}'. Did you mean '{1}'? |
-| TS2304 | 1,640x | Cannot find name '{0}' |
-| TS2322 | 1,352x | Type '{0}' is not assignable to type '{1}' |
-| TS2554 | 1,051x | Expected {0} arguments, but got {1} |
+**Root Cause Identified: Double Weak Type Checking**
 
-**Pattern:** 4 of top 5 are symbol/type lookup failures, not type checking failures.
+The solver checks weak types **redundantly in two places**, compounding strictness:
 
-### Architecture Assessment (Don't Repeat checker.rs Mistakes)
+| Layer | File | Lines | What It Does |
+|-------|------|-------|--------------|
+| CompatChecker | `src/solver/compat.rs` | 167-169, 289-481 | Checks `violates_weak_type()` and `violates_weak_union()` |
+| SubtypeChecker | `src/solver/subtype.rs` | 375, 3704-3746 | Checks `violates_weak_type()` **again** |
 
-**TypeScript's checker.rs problems:**
-- 25,000+ lines of monolithic imperative code
-- Mixes symbol resolution, type checking, and emission
-- Hard to test, hard to reason about
+Both have `enforce_weak_types = true` by default. If either layer finds a violation, assignment fails.
 
-**Your architecture (better!):**
-```
-Binder (symbols) → Checker (AST walker) → Solver (type operations)
-     ↓                    ↓                      ↓
- SymbolTable         Diagnostics          TypeInterner
-```
+**What's a "Weak Type"?**
+An object where all properties are optional: `{ a?: number }`. TypeScript requires that when assigning to a weak type, the source must share at least one property name with the target.
 
-**What's complete:**
-- ✅ **Solver:** Query-based structural type solver with Ena unification
-- ✅ **Type operations:** Subtyping, instantiation, lowering all working
-- ✅ **Test coverage:** 91K lines of solver tests pass
-- ✅ **Diagnostic infrastructure:** Error codes and templates exist
+**The Problem:**
+- `has_common_property()` logic may be too strict with union types
+- `violates_weak_union()` has complex logic with likely false positives
+- Redundant checking means borderline cases fail twice
 
-**What needs work:**
-- ⚠️ **Binder→Checker integration:** Symbol lookup coverage
-- ⚠️ **Type lowering:** AST → Type conversion completeness
-- ⚠️ **Diagnostic emission:** When to emit errors (precision)
+**Fixes (in priority order):**
 
-### Strategy: Incremental Diagnostic Coverage
-
-**Goal:** Improve pass rate from 34.7% → 60%+ without architectural changes.
-
-**Approach:** Debug ONE error at a time, learn the pattern, fix similar cases.
-
-#### Phase 1: Symbol Resolution Coverage (1-2 weeks)
-
-Focus on the 8,082 missing TS2318 errors:
-
-1. **Pick a failing test** with missing TS2318/TS2304
-2. **Run with verbose output:**
-   ```bash
-   ./conformance/run-conformance.sh --native --max=1 --verbose \
-     --filter=conformance/path/to/test.ts
+1. **Remove duplicate check** - Disable weak type check at `subtype.rs:375`, let only `compat.rs` handle it:
+   ```rust
+   // subtype.rs:375 - REMOVE or set enforce_weak_types = false
+   if self.enforce_weak_types && self.violates_weak_type(source, target) {
+       return SubtypeResult::False;
+   }
    ```
-3. **Compare TSC output vs TSZ output**
-   - What error does TSC emit?
-   - Where in your checker should this be caught?
-4. **Fix the specific code path**
-5. **Find similar cases** and fix them
 
-**Focus areas:**
+2. **Review `violates_weak_union()`** (`compat.rs:315-357`) - Complex logic, likely source of false positives
+
+3. **Review `has_common_property()`** - May reject valid assignments in union type cases
+
+**Debug approach:**
+```bash
+# Find a test where TSZ emits TS2322 but TSC doesn't
+./conformance/run-conformance.sh --native --max=50 --verbose 2>&1 | \
+  grep -B5 "Extra: TS2322"
+
+# Compare specific test
+npx tsc --noEmit path/to/test.ts  # Should have NO errors
+cargo run -- --check path/to/test.ts  # Incorrectly emits TS2322
+```
+
+**Key files:**
+- `src/solver/compat.rs:289-481` - Weak type violation logic (PRIMARY)
+- `src/solver/subtype.rs:375,3704-3746` - Redundant weak check (REMOVE)
+- `src/checker/state.rs:12400-12430` - Where checker calls solver
+
+**Phase 2: TS2304/TS2694 False Positives (6,902 combined)**
+
+Symbol resolution is marking valid names as "not found":
+- Exports being missed during binding
+- Namespace members not properly resolved
+- Declaration merging incomplete
+
+**Focus files:**
+- `src/binder/` - Symbol table construction
 - `src/checker/state.rs` - Symbol lookup methods
-- `src/solver/lower.rs` - Type reference resolution
-- Import statement handling
-- Module augmentation
-- Ambient contexts
+- `src/checker/modules.rs` - Module/namespace resolution
 
-#### Phase 2: Type Checking Precision (2-3 weeks)
+**Phase 3: TS1005 Parser Errors (2,706 extra)**
 
-Focus on TS2322 (type not assignable) and TS2554 (argument count):
-- Overload resolution coverage
-- Generic type instantiation error paths
-- Callable type checking
+Parser error recovery is emitting errors where TSC doesn't. May indicate:
+- Overly strict parsing in optional syntax positions
+- Error recovery generating false positives
+- Missing syntax support
 
-### What NOT to Do
-
-| ❌ Don't | ✅ Do Instead |
-|---------|---------------|
-| Rewrite the solver | It's complete - 91K tests pass |
-| Chase pass percentages | Fix root causes incrementally |
-| Replicate checker.rs complexity | Your thin checker is better |
-| Add test-specific workarounds | Fix underlying checker logic |
-| Major architectural changes | Incremental coverage improvements |
+**Focus files:**
+- `src/parser/` - Parser implementation
+- `src/thin_parser/` - Thin parser if used
 
 ### Success Criteria
 
-- **Short term (2 weeks):** Pass rate 34.7% → 45%
-- **Medium term (4 weeks):** Pass rate → 60%+
-- **Solver remains:** Untouched (it's good)
-- **Architecture:** Clean separation maintained
+- **Week 1:** TS2322 extra count < 5,000 (from 12,122)
+- **Week 2:** TS2304/TS2694 extra count < 3,000 (from 6,902)
+- **Target:** Pass rate 36.3% → 50%+
 
 ---
 
-## Secondary Priority: Module Resolution
+## High Priority: Missing Errors Coverage
 
-**Goal:** Enable `projects/` conformance tests (175 files) for real-world project validation.
+**Problem:** Some legitimate errors are not being emitted.
 
-**What's Needed:**
-1. Implement Node16/NodeNext module resolution algorithms
-2. Add `projects/` category to conformance runner
-3. Handle tsconfig.json `paths`, `baseUrl`, composite projects
-4. Support circular import detection
+### Top Missing Errors
 
-**Estimated Effort:** 1 week
+| Error Code | Missing Count | Description |
+|------------|---------------|-------------|
+| TS2318 | 3,372x | Cannot find global type '{0}' |
+| TS2307 | 2,304x | Cannot find module '{0}' |
+| TS2304 | 2,072x | Cannot find name '{0}' |
+| TS2488 | 1,770x | Type must have Symbol.iterator |
+| TS2583 | 1,184x | Cannot find name. Do you need to change target? |
+| TS2362 | 873x | Left-hand side of arithmetic must be number/bigint |
+| TS2322 | 847x | Type not assignable (legitimate) |
+| TS2363 | 753x | Right-hand side of arithmetic must be number/bigint |
 
-**Reference:** `specs/COMPILER_OPTIONS.md`, `src/module_resolver.rs`
+### Strategy
 
----
+**Note:** Fix false positives FIRST. Many "missing" errors may appear once false positives stop masking them.
 
-## Secondary Priority: Conformance Test Infrastructure Fix
-
-**Problem:** Test runner has JSON parsing bug preventing reliable baseline measurements.
-
-**Action Plan:**
-1. Debug `conformance/run-conformance.sh --max=10 --verbose`
-2. Fix JSON parsing in `conformance/src/worker.ts`
-3. Get baseline conformance metrics
-4. Identify top 10 failing test categories
-
-**Important:** Do NOT chase pass percentages. Fix root causes in solver/checker, not test-specific workarounds.
-
----
-
-## Test Infrastructure
-
-**Current Coverage:**
-- `conformance/`: 5,691 files (language spec compliance)
-- `compiler/`: 6,402 files (compiler behavior)
-- **Not testing:** `projects/` (175 files) - module resolution
-- **Not testing:** `fourslash/` (6,563 files) - IDE features
-
-**Recommended Additions (After Transform Migration):**
-
-### 1. Add `projects/` Category (HIGH VALUE)
-
-**Purpose:** Module resolution, compiler options, multi-file projects
-
-**Why:** Validates real-world project scenarios, essential for TypeScript usage
-
-**Effort:** 2-4 hours
-
-**Requirements:**
-- JSON parser for project configuration
-- Module resolution implementation (Node16/NodeNext)
-- Multi-file project test harness
-
-### 2. Evaluate `fourslash/` Subset
-
-**Purpose:** Complex multi-file language features
-
-**Why:** Validates edge cases in multi-file scenarios
-
-**Effort:** 8-16 hours (selective integration)
-
-**Strategy:**
-- ✅ Extract language feature tests
-- ❌ Skip IDE-specific tests (completion, navigation)
-- ⚠️ Requires fourslash DSL parser
+**After Phase 1-3 above:**
+1. TS2318/TS2307: Module resolution gaps
+2. TS2488: Iterator protocol checking
+3. TS2362/TS2363: Arithmetic operand type checking
+4. TS2583: ES version feature detection
 
 ---
 
-## Future Directions (Post-MVP)
+## Secondary Priority: Stability Issues
 
-After transform migration and module resolution are complete, choose one:
+### OOM Tests (4 tests)
 
-### Option A: LSP/IDE Integration
+These tests cause out-of-memory:
+- `compiler/genericDefaultsErrors.ts`
+- `conformance/types/typeRelationships/recursiveTypes/infiniteExpansionThroughInstantiation2.ts`
+- `compiler/thislessFunctionsNotContextSensitive3.ts`
+- `compiler/recursiveTypes1.ts`
 
-**Value:** User-facing, visible impact
+**Root cause:** Infinite type expansion or unbounded recursion in solver.
 
-**Effort:** 4-6 weeks
+**Fix:** Add recursion depth limits in type instantiation.
 
-**Tasks:**
-- Parent mapping for O(1) parent lookup
-- LSP protocol handlers (hover, go-to-def)
-- Incremental type checking
-- WASM language service for browser tools
+### Timeout Tests (54 tests)
 
-### Option B: Performance Benchmarking
+Tests hanging without completion. Sample:
+- `conformance/salsa/moduleExportAssignment7.ts`
+- `compiler/typeNamedUndefined2.ts`
+- `compiler/constructorWithIncompleteTypeAnnotation.ts`
 
-**Value:** Credibility, marketing differentiation
+**Root cause:** Likely infinite loops in type resolution or checker.
 
-**Effort:** 2-3 weeks
+**Fix:** Add iteration limits and cycle detection.
 
-**Tasks:**
-- Benchmark suite (parser speed, emitter throughput)
-- Profile real codebases (React, Vue)
-- WASM vs native comparison
-- Memory profiling validation
+### Worker Crashes (112 crashed, 113 respawned)
 
-### Option C: WASM Language Service
+Workers are crashing during test execution. This is separate from the 15 crashed tests.
 
-**Value:** Browser-based TypeScript (StackBlitz, CodeSandbox)
-
-**Effort:** 3-4 weeks
-
-**Tasks:**
-- Browser-compatible WASM build
-- Language service API
-- Integration with web editors
+**Likely causes:**
+- Panic in Rust code propagating to WASM
+- Stack overflow on deep recursion
 
 ---
 
-## Immediate Action Plan (This Week)
+## Transform Pipeline Migration
 
-### Day 1: Debug One Missing Error
+**Status:** Lower priority now. Focus on diagnostic accuracy first.
 
-```bash
-# Find a test with missing TS2304/TS2318
-./conformance/run-conformance.sh --native --max=10 --verbose 2>&1 | \
-  grep -B3 "Missing: TS2304\|Missing: TS2318"
+**Problem:** `src/transforms/` has ~7,500 lines mixing AST manipulation with string emission.
 
-# Pick ONE failing test
-./conformance/run-conformance.sh --native --max=1 --verbose \
-  --filter=conformance/path/to/test.ts
+**Transforms needing migration:**
+| Transform | Lines | Complexity |
+|-----------|-------|------------|
+| `class_es5.rs` | 4,849 | CRITICAL |
+| `async_es5.rs` | 1,491 | HIGH |
+| `namespace_es5.rs` | 1,169 | MEDIUM |
 
-# Compare TSC vs TSZ output
-tsc --noEmit conformance/path/to/test.ts
-# vs your output
-```
+**Reference implementations:** `enum_es5.rs`, `destructuring_es5.rs`, `ir.rs`
 
-**Goal:** Understand ONE missing error pattern end-to-end.
+---
 
-### Day 2-3: Fix Symbol Resolution Pattern
+## Test Infrastructure Status
 
-```bash
-# Find where the error should be emitted
-grep -r "TS2304\|TS2318" src/checker/
+**Current state:** Stable and functional.
 
-# Add the missing check
-# Test against similar cases
-```
+| Category | Files | Pass Rate |
+|----------|-------|-----------|
+| conformance | 5,626 | 35.5% (1,997) |
+| compiler | 6,369 | 36.9% (2,353) |
+| projects | 144 | 50.7% (73) |
+| **Total** | **12,197** | **36.3% (4,423)** |
 
-### Day 4-5: Repeat for Top Error Patterns
-
-- Import resolution errors
-- Type reference lookup
-- Module augmentation
-- Ambient context handling
-
-**Goal:** 5-10% improvement in pass rate.
+**Performance:** 92 tests/sec with 8 workers
 
 ---
 
@@ -368,38 +217,12 @@ wasm-pack build --target nodejs          # WASM build
 # Test
 cargo test --lib                         # All unit tests
 cargo test --lib solver::subtype_tests   # Specific module
-./scripts/test.sh --lib                  # Docker-isolated tests
 
-# Conformance (Docker-isolated for safety)
-./conformance/run-conformance.sh --max=500       # Run 500 tests
-./conformance/run-conformance.sh --all           # Run all tests
-./conformance/run-conformance.sh --native        # Use native binary (faster)
-./conformance/run-conformance.sh --wasm          # Use WASM (slower)
-./conformance/run-conformance.sh --no-sandbox    # No Docker (unsafe - infinite loop risk)
-./conformance/run-conformance.sh --workers=N     # Set worker count
-```
-
----
-
-## Git Hooks
-
-Pre-commit hooks enforce code quality:
-
-```bash
-# Install (run once)
-./scripts/install-hooks.sh
-
-# Hooks run automatically:
-# 1. cargo fmt (formatting)
-# 2. cargo clippy --fix (linter)
-# 3. cargo build (build warnings)
-# 4. cargo test --lib (unit tests in Docker)
-```
-
-**Fix issues before committing:**
-```bash
-cargo fmt
-cargo clippy --all-targets --fix --allow-dirty --allow-staged
+# Conformance
+./conformance/run-conformance.sh --all --workers=8    # Full suite
+./conformance/run-conformance.sh --max=100            # Quick check
+./conformance/run-conformance.sh --native             # Use native (faster)
+./conformance/run-conformance.sh --filter=path/test   # Single test
 ```
 
 ---
@@ -408,51 +231,82 @@ cargo clippy --all-targets --fix --allow-dirty --allow-staged
 
 | Don't | Do Instead |
 |-------|------------|
-| Check file names in checker | Fix the underlying logic |
-| Suppress errors for specific tests | Implement correct behavior |
-| Chase conformance percentages | Fix root causes in solver/checker |
+| Add more error checks before fixing false positives | Fix false positives first |
+| Chase pass percentages | Fix root causes systematically |
+| Add test-specific workarounds | Fix underlying logic |
+| Suppress errors to pass tests | Understand why error is wrong |
 
 ---
 
-## Merge Criteria
+## Key Files
 
-1. `cargo build` passes
-2. `cargo test` passes
-3. Tests run in < 30 seconds
-4. No test-aware code in source
+### For TS2322 False Positives (Solver - TOP PRIORITY)
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/solver/compat.rs` | 131-181 | `is_assignable()` entry point |
+| `src/solver/compat.rs` | 289-481 | Weak type violation logic |
+| `src/solver/compat.rs` | 315-357 | `violates_weak_union()` - likely culprit |
+| `src/solver/subtype.rs` | 375 | **REMOVE** - redundant weak check |
+| `src/solver/subtype.rs` | 3704-3746 | `violates_weak_type()` implementation |
+| `src/checker/state.rs` | 12400-12430 | Where checker calls `is_assignable_to()` |
+
+### For TS2304/TS2694 False Positives (Symbol Resolution)
+| File | Purpose |
+|------|---------|
+| `src/binder/` | Symbol table construction |
+| `src/checker/state.rs` | Symbol lookup methods |
+| `src/checker/modules.rs` | Module/namespace resolution |
+
+### For Missing Error Fixes
+| File | Purpose |
+|------|---------|
+| `src/module_resolver.rs` | TS2307 module not found |
+| `src/checker/state.rs` | TS2318 global type lookup |
+| `src/solver/lower.rs` | Type reference resolution |
 
 ---
 
-## Key Files for Transform Migration
+## Immediate Action Plan
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/transforms/class_es5.rs` | 4,849 | **MIGRATE FIRST** - Classes, inheritance |
-| `src/transforms/async_es5.rs` | 1,491 | **MIGRATE SECOND** - Async/await |
-| `src/transforms/namespace_es5.rs` | 1,169 | **MIGRATE THIRD** - Namespaces |
-| `src/transforms/ir.rs` | 738 | IR node definitions (reference) |
-| `src/transforms/enum_es5.rs` | ~800 | Clean IR pattern example |
-| `src/transforms/mod.rs` | 105 | Migration status documentation |
-| `src/transforms/ir_printer.rs` | 206 | IR → JavaScript printer |
-| `src/transforms/destructuring_es5.rs` | ~900 | Another IR pattern example |
-| `src/checker/state.rs` | 25,849 | Main checker (may need transform updates) |
-| `src/emitter/mod.rs` | ~2,000 | Emitter entry points |
+### Day 1: Remove Redundant Weak Type Check
 
-## Key Files for Diagnostic Coverage
+**Quick win:** Remove duplicate weak type enforcement in `src/solver/subtype.rs:375`:
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `src/checker/state.rs` | 14,558 | **MAIN FOCUS** - Symbol lookup, diagnostic emission |
-| `src/checker/expr.rs` | ~5,000 | Expression checking |
-| `src/solver/lower.rs` | 2,408 | AST → Type conversion (type reference resolution) |
-| `src/checker/types/diagnostics.rs` | 455 | Error codes and templates |
-| `src/binder/` | ~3,000 | Symbol table (may need coverage improvements) |
-| `src/checker/declarations.rs` | ~3,000 | Declaration checking |
+```rust
+// BEFORE (too strict - checks twice)
+if self.enforce_weak_types && self.violates_weak_type(source, target) {
+    return SubtypeResult::False;
+}
 
-**Architecture Summary:**
-- Solver: ~30,000 lines (complete, tested)
-- Checker: ~50,000 lines (needs diagnostic coverage)
-- Binder: ~3,000 lines (symbol resolution)
+// AFTER (let compat.rs handle it)
+// Remove or disable this check
+```
+
+Run conformance to measure impact.
+
+### Day 2: Debug Remaining TS2322 False Positives
+
+```bash
+# Find tests with extra TS2322
+./conformance/run-conformance.sh --max=50 --verbose 2>&1 | \
+  grep -A2 "Extra: TS2322" | head -30
+
+# Pick ONE test, compare TSC vs TSZ
+npx tsc --noEmit conformance/path/to/test.ts
+cargo run -- --check conformance/path/to/test.ts
+```
+
+Focus on `violates_weak_union()` in `compat.rs:315-357`.
+
+### Day 3-4: Fix `violates_weak_union()` Logic
+
+Review the complex union handling - likely generating false positives.
+
+### Day 5: Fix Symbol Resolution False Positives
+
+Debug TS2304/TS2694 extra errors.
+
+**Goal:** TS2322 extra count < 5,000 (from 12,122), pass rate 36.3% → 45%+
 
 ---
 
