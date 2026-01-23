@@ -2010,15 +2010,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         props.iter().find(|p| p.name == name)
     }
 
-    /// Check object subtyping (structural)
-    fn check_object_subtype(
-        &mut self,
+    /// Check private brand compatibility for object subtyping.
+    ///
+    /// Private brands are used for nominal typing of classes with private fields.
+    /// If both source and target have private brands, they must be the same.
+    /// Returns false if brands don't match, true otherwise (including when neither has a brand).
+    fn check_private_brand_compatibility(
+        &self,
         source: &[PropertyInfo],
-        source_shape_id: Option<ObjectShapeId>,
         target: &[PropertyInfo],
-    ) -> SubtypeResult {
-        // Private brand checking for nominal typing of classes with private fields
-        // If both source and target have private brands, they must be the same
+    ) -> bool {
         let source_brand = source.iter().find(|p| {
             let name = self.interner.resolve_atom(p.name);
             name.starts_with("__private_brand_")
@@ -2029,13 +2030,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         });
 
         // If both have private brands (both are classes with private fields), check they match
-        if let (Some(s_brand), Some(t_brand)) = (source_brand, target_brand) {
-            let s_brand_name = self.interner.resolve_atom(s_brand.name);
-            let t_brand_name = self.interner.resolve_atom(t_brand.name);
-            if s_brand_name != t_brand_name {
-                // Different private brands means different class declarations
-                return SubtypeResult::False;
+        match (source_brand, target_brand) {
+            (Some(s_brand), Some(t_brand)) => {
+                let s_brand_name = self.interner.resolve_atom(s_brand.name);
+                let t_brand_name = self.interner.resolve_atom(t_brand.name);
+                s_brand_name == t_brand_name
             }
+            _ => true, // If at least one doesn't have a brand, no conflict
+        }
+    }
+
+    /// Check object subtyping (structural)
+    fn check_object_subtype(
+        &mut self,
+        source: &[PropertyInfo],
+        source_shape_id: Option<ObjectShapeId>,
+        target: &[PropertyInfo],
+    ) -> SubtypeResult {
+        // Private brand checking for nominal typing of classes with private fields
+        if !self.check_private_brand_compatibility(source, target) {
+            return SubtypeResult::False;
         }
 
         // For each property in target, source must have a compatible property
