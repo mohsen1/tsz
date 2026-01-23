@@ -24,6 +24,15 @@ Before merging changes:
 - [ ] No shortcuts taken - all fixes address root causes
 - [ ] No test-aware code in source
 
+## Pre-commit Hooks
+
+Git hooks are installed automatically on first `cargo build`. They enforce code quality by running:
+1. `cargo fmt` - Format all code
+2. `cargo clippy --fix` - Lint and auto-fix issues
+3. Unit tests
+
+To manually install: `./scripts/install-hooks.sh`
+
 ## References
 
 - **PROJECT_DIRECTION.md**: Project priorities and architecture rules

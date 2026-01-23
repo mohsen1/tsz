@@ -32,6 +32,7 @@ node scripts/help.mjs
 | `conformance/run-conformance.sh` | Run conformance tests (Docker) |
 | `scripts/test.sh` | Run Rust unit tests (Docker) |
 | `scripts/build-wasm.sh` | Build WASM module |
+| `scripts/install-hooks.sh` | Install git pre-commit hooks |
 | `scripts/run-single-test.mjs` | Debug single file (host) |
 | `scripts/validate-wasm.mjs` | Validate WASM loads |
 | `scripts/help.mjs` | Show all commands |
