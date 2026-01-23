@@ -9759,7 +9759,7 @@ impl<'a> CheckerState<'a> {
                         return self.ctx.types.union(vec![base_type, TypeId::UNDEFINED]);
                     }
 
-                    // Report error based on the cause
+                    // Report error based on the cause (TS2531/TS2532/TS2533)
                     use crate::checker::types::diagnostics::diagnostic_codes;
 
                     let (code, message) = if cause == TypeId::NULL {
@@ -10449,6 +10449,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Split a type into its non-nullable part and its nullable cause.
     fn split_nullish_type(&mut self, type_id: TypeId) -> (Option<TypeId>, Option<TypeId>) {
         use crate::solver::{IntrinsicKind, TypeKey};
 
@@ -15121,8 +15122,8 @@ impl<'a> CheckerState<'a> {
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
-        // Check if this is an arithmetic operator (-, *, /, % or the generic "arithmetic" tag)
-        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "arithmetic");
+        // Check if this is an arithmetic operator (-, *, /, %)
+        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%");
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
@@ -15132,6 +15133,7 @@ impl<'a> CheckerState<'a> {
 
         if is_arithmetic {
             // For arithmetic operators, emit specific left/right errors (TS2362, TS2363)
+            let mut emitted_specific_error = false;
             if !left_is_valid_arithmetic {
                 if let Some(loc) = self.get_source_location(left_idx) {
                     let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -15144,6 +15146,7 @@ impl<'a> CheckerState<'a> {
                         length: loc.length(),
                         related_information: Vec::new(),
                     });
+                    emitted_specific_error = true;
                 }
             }
             if !right_is_valid_arithmetic {
@@ -15151,6 +15154,26 @@ impl<'a> CheckerState<'a> {
                     let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                     self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                    emitted_specific_error = true;
+                }
+            }
+            // If both operands are valid arithmetic types but the operation still failed
+            // (e.g., mixing number and bigint), emit TS2365
+            if !emitted_specific_error {
+                if let Some(loc) = self.get_source_location(node_idx) {
+                    let message = format!(
+                        "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                        op, left_str, right_str
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
                         category: DiagnosticCategory::Error,
                         message_text: message,
                         file: self.ctx.file_name.clone(),
@@ -17585,9 +17608,14 @@ impl<'a> CheckerState<'a> {
             return iterable_type;
         }
 
-        // Unwrap readonly wrappers.
+        // Unwrap readonly wrappers with depth guard to prevent infinite loops
         let mut ty = iterable_type;
+        let mut readonly_depth = 0;
         while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(ty) {
+            readonly_depth += 1;
+            if readonly_depth > 100 {
+                break;
+            }
             ty = inner;
         }
 
@@ -18131,9 +18159,14 @@ impl<'a> CheckerState<'a> {
                 return parent_type;
             }
 
-            // Unwrap readonly wrappers for destructuring element access.
+            // Unwrap readonly wrappers for destructuring element access with depth guard
             let mut array_like = parent_type;
+            let mut readonly_depth = 0;
             while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(array_like) {
+                readonly_depth += 1;
+                if readonly_depth > 100 {
+                    break;
+                }
                 array_like = inner;
             }
 
@@ -23721,26 +23754,46 @@ impl<'a> CheckerState<'a> {
 
     /// Check that a class properly implements all interfaces from its implements clauses.
     /// Emits TS2420 when a class incorrectly implements an interface.
+    /// Checks for:
+    /// - Missing members (properties and methods)
+    /// - Incompatible member types (property type or method signature mismatch)
     fn check_implements_clauses(
         &mut self,
         _class_idx: NodeIndex,
         class_data: &crate::parser::node::ClassData,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
+        use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
         use crate::scanner::SyntaxKind;
 
         let Some(ref heritage_clauses) = class_data.heritage_clauses else {
             return;
         };
 
-        // Collect implemented members from the class
-        let mut class_members: std::collections::HashMap<String, NodeIndex> =
+        // Collect implemented members from the class (name -> (node_idx, type))
+        let mut class_members: std::collections::HashMap<String, (NodeIndex, TypeId)> =
             std::collections::HashMap::new();
         for &member_idx in &class_data.members.nodes {
             if let Some(name) = self.get_member_name(member_idx) {
-                class_members.insert(name, member_idx);
+                let member_type = self.get_type_of_class_member(member_idx);
+                class_members.insert(name, (member_idx, member_type));
             }
         }
+
+        // Get the class name for error messages
+        let class_name = if !class_data.name.is_none() {
+            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    ident.escaped_text.clone()
+                } else {
+                    String::from("<anonymous>")
+                }
+            } else {
+                String::from("<anonymous>")
+            }
+        } else {
+            String::from("<anonymous>")
+        };
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -23771,8 +23824,8 @@ impl<'a> CheckerState<'a> {
                     };
 
                 // Get the interface symbol
-                if let Some(name) = self.heritage_name_text(expr_idx)
-                    && let Some(sym_id) = self.ctx.binder.file_locals.get(&name)
+                if let Some(interface_name) = self.heritage_name_text(expr_idx)
+                    && let Some(sym_id) = self.ctx.binder.file_locals.get(&interface_name)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
                     let interface_idx = if !symbol.value_declaration.is_none() {
@@ -23796,52 +23849,173 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    // Check that all interface members are implemented
+                    // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
+                    let mut incompatible_members: Vec<(String, String, String)> = Vec::new(); // (name, expected_type, actual_type)
 
                     for &member_idx in &interface_decl.members.nodes {
-                        if let Some(member_name) = self.get_member_name(member_idx) {
-                            // Check if class has this member
-                            if !class_members.contains_key(&member_name) {
-                                missing_members.push(member_name);
+                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                            continue;
+                        };
+
+                        // Skip non-property/method signatures
+                        if member_node.kind != METHOD_SIGNATURE
+                            && member_node.kind != PROPERTY_SIGNATURE
+                        {
+                            continue;
+                        }
+
+                        let Some(member_name) = self.get_member_name(member_idx) else {
+                            continue;
+                        };
+
+                        // Check if class has this member
+                        if let Some(&(_class_member_idx, class_member_type)) =
+                            class_members.get(&member_name)
+                        {
+                            // Get the expected type from the interface
+                            let interface_member_type =
+                                self.get_type_of_interface_member_simple(member_idx);
+
+                            // Check type compatibility (class member type must be assignable to interface member type)
+                            if interface_member_type != TypeId::ANY
+                                && class_member_type != TypeId::ANY
+                                && !self.is_assignable_to(class_member_type, interface_member_type)
+                            {
+                                let expected_str = self.format_type(interface_member_type);
+                                let actual_str = self.format_type(class_member_type);
+                                incompatible_members.push((
+                                    member_name.clone(),
+                                    expected_str,
+                                    actual_str,
+                                ));
                             }
+                        } else {
+                            missing_members.push(member_name);
                         }
                     }
 
-                    // Report error if there are missing implementations
+                    // Report error for missing members
                     if !missing_members.is_empty() {
-                        let class_name = if !class_data.name.is_none() {
-                            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
-                                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                    ident.escaped_text.clone()
-                                } else {
-                                    String::from("<anonymous>")
-                                }
-                            } else {
-                                String::from("<anonymous>")
-                            }
-                        } else {
-                            String::from("<anonymous>")
-                        };
-
                         let missing_list = missing_members
                             .iter()
-                            .map(|s| format!("'{}", s))
+                            .map(|s| format!("'{}'", s))
                             .collect::<Vec<_>>()
                             .join(", ");
 
                         self.error_at_node(
-                                    clause_idx,
-                                    &format!(
-                                        "Class '{}' incorrectly implements interface '{}'. Missing members: {}.",
-                                        class_name, name, missing_list
-                                    ),
-                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
-                                );
+                            clause_idx,
+                            &format!(
+                                "Class '{}' incorrectly implements interface '{}'. Missing members: {}.",
+                                class_name, interface_name, missing_list
+                            ),
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                        );
+                    }
+
+                    // Report error for incompatible member types
+                    for (member_name, expected, actual) in incompatible_members {
+                        self.error_at_node(
+                            clause_idx,
+                            &format!(
+                                "Class '{}' incorrectly implements interface '{}'. Property '{}' has type '{}' which is not assignable to type '{}'.",
+                                class_name, interface_name, member_name, actual, expected
+                            ),
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                        );
                     }
                 }
             }
         }
+    }
+
+    /// Get the type of a class member (property or method).
+    fn get_type_of_class_member(&mut self, member_idx: NodeIndex) -> TypeId {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return TypeId::ANY;
+        };
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    return TypeId::ANY;
+                };
+
+                // Get the type: either from annotation or inferred from initializer
+                if !prop.type_annotation.is_none() {
+                    self.get_type_from_type_node(prop.type_annotation)
+                } else if !prop.initializer.is_none() {
+                    self.get_type_of_node(prop.initializer)
+                } else {
+                    TypeId::ANY
+                }
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                // Get the method type
+                self.get_type_of_node(member_idx)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                    return TypeId::ANY;
+                };
+
+                if !accessor.type_annotation.is_none() {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                } else {
+                    self.infer_getter_return_type(accessor.body)
+                }
+            }
+            _ => TypeId::ANY,
+        }
+    }
+
+    /// Get the simple type of an interface member (without wrapping in object type).
+    /// For property signatures: returns the property type
+    /// For method signatures: returns the function type
+    fn get_type_of_interface_member_simple(&mut self, member_idx: NodeIndex) -> TypeId {
+        use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+        use crate::solver::FunctionShape;
+
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return TypeId::ANY;
+        };
+
+        if member_node.kind == METHOD_SIGNATURE {
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                return TypeId::ANY;
+            };
+
+            let (type_params, type_param_updates) =
+                self.push_type_parameters(&sig.type_parameters);
+            let (params, this_type) = self.extract_params_from_signature(sig);
+            let (return_type, type_predicate) =
+                self.return_type_and_predicate(sig.type_annotation);
+
+            let shape = FunctionShape {
+                type_params,
+                params,
+                this_type,
+                return_type,
+                type_predicate,
+                is_constructor: false,
+                is_method: true,
+            };
+            self.pop_type_parameters(type_param_updates);
+            return self.ctx.types.function(shape);
+        }
+
+        if member_node.kind == PROPERTY_SIGNATURE {
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                return TypeId::ANY;
+            };
+
+            if !sig.type_annotation.is_none() {
+                return self.get_type_from_type_node(sig.type_annotation);
+            }
+            return TypeId::ANY;
+        }
+
+        TypeId::ANY
     }
 
     /// Check that all top-level function overload signatures have implementations.
