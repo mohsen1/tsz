@@ -2517,6 +2517,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
+    /// Check if a missing target property can be satisfied by source index signatures.
+    ///
+    /// When a target property doesn't exist in the source object, the source's index
+    /// signatures can potentially satisfy it:
+    /// - If property name is numeric, check against number index signature
+    /// - Always check against string index signature (since numbers convert to strings)
+    ///
+    /// ## Rules:
+    /// 1. Readonly index cannot satisfy mutable target property
+    /// 2. Index type must be subtype of (or bivariant with) target property type
+    /// 3. If no applicable index signature exists, property can only be satisfied if optional
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Source {
+    ///   [key: string]: number;  // String index signature
+    ///   [index: number]: string;  // Number index signature
+    /// }
+    /// interface Target {
+    ///   x: number;  // Satisfied by [key: string]: number
+    ///   [1]: string;  // Satisfied by [index: number]: string
+    ///   y: boolean;  // NOT satisfied (no compatible index)
+    /// }
+    /// ```
     fn check_missing_property_against_index_signatures(
         &mut self,
         source: &ObjectShape,
