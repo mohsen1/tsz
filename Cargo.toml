@@ -79,6 +79,9 @@ harness = false
 name = "parallel_bench"
 harness = false
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [lints.rust]
 unsafe_code = "warn"
 rust_2024_compatibility = { level = "warn", priority = -1 }
