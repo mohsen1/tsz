@@ -14561,8 +14561,9 @@ impl<'a> CheckerState<'a> {
                     for (symbol_name, _sym_id) in scope.table.iter() {
                         if symbol_name != name {
                             let similarity = self.calculate_string_similarity(name, symbol_name);
-                            if similarity > 0.6 {
-                                // Threshold for "similar enough"
+                            // Use a high threshold (0.85) to match TypeScript's conservative suggestions
+                            // TypeScript only suggests names that are very similar (case changes, typos)
+                            if similarity > 0.85 {
                                 suggestions.push((symbol_name.clone(), similarity));
                             }
                         }
@@ -14582,7 +14583,8 @@ impl<'a> CheckerState<'a> {
         for (symbol_name, _sym_id) in self.ctx.binder.file_locals.iter() {
             if symbol_name != name {
                 let similarity = self.calculate_string_similarity(name, symbol_name);
-                if similarity > 0.6 {
+                // Use a high threshold (0.85) to match TypeScript's conservative suggestions
+                if similarity > 0.85 {
                     // Avoid duplicates
                     if !suggestions.iter().any(|(n, _)| n == symbol_name) {
                         suggestions.push((symbol_name.clone(), similarity));
