@@ -2468,7 +2468,15 @@ fn collect_diagnostics(
             if specifier.is_empty() {
                 continue;
             }
+            // Skip ambient module declarations (declared_modules has body, shorthand has none)
+            // Both should not emit TS2307 as they provide type information
             if program.declared_modules.contains(specifier.as_str()) {
+                continue;
+            }
+            if program
+                .shorthand_ambient_modules
+                .contains(specifier.as_str())
+            {
                 continue;
             }
             let resolved = resolve_module_specifier(
