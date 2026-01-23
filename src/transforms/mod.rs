@@ -32,7 +32,7 @@
 //! | `decorators` | ✅ Migrated | Uses IR nodes |
 //! | `namespace_es5` | ✅ Migrated | Uses `NamespaceES5Transformer` + `IRPrinter` |
 //! | `class_es5` | ✅ Migrated | Uses `ES5ClassTransformer` + `IRPrinter` |
-//! | `async_es5` | ⚠️ Legacy | Directly emits strings (needs migration) |
+//! | `async_es5` | ✅ Migrated | Uses `AsyncES5Transformer` + `IRPrinter` |
 //! | `arrow_es5` | ℹ️ Helper | Analysis only, no emit |
 //! | `block_scoping_es5` | ℹ️ Helper | Analysis only, no emit |
 //! | `module_commonjs` | ℹ️ N/A | Module transform (different pattern) |
@@ -77,6 +77,7 @@
 
 pub mod arrow_es5;
 pub mod async_es5;
+pub mod async_es5_ir;
 pub mod block_scoping_es5;
 pub mod class_es5;
 pub mod class_es5_ir;
