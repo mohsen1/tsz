@@ -55,7 +55,7 @@ USE_WASM=true     # WASM by default
 VERBOSE=false
 CATEGORIES="conformance,compiler,projects"
 TIMEOUT=600
-WORKERS=8  # Optimal for WASM - more workers cause contention
+WORKERS=2  # Conservative default to avoid OOM kills
 
 # Parse arguments
 SawAll=false
