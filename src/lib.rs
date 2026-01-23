@@ -404,6 +404,7 @@ impl CompilerOptions {
             no_unchecked_indexed_access: false,
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
+            no_lib: false,
         }
     }
 }
