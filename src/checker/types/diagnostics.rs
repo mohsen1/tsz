@@ -302,6 +302,9 @@ pub mod diagnostic_codes {
     pub const FUNCTION_IMPLEMENTATION_MISSING: u32 = 2391; // Function implementation is missing
     pub const MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS: u32 = 2392; // Multiple constructor implementations are not allowed
     pub const NOT_ALL_CODE_PATHS_RETURN_VALUE: u32 = 2366;
+    pub const LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2362; // The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+    pub const RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: u32 = 2363; // The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.
+    pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPES: u32 = 2365; // Operator '{0}' cannot be applied to types '{1}' and '{2}'.
     pub const FUNCTION_LACKS_RETURN_TYPE: u32 = 2355;
     pub const FUNCTION_RETURN_TYPE_MISMATCH: u32 = 2322;
     pub const ASYNC_FUNCTION_RETURNS_PROMISE: u32 = 2705; // Async function must return Promise

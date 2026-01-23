@@ -3124,6 +3124,43 @@ impl<'a> BinaryOpEvaluator<'a> {
         BinaryOpEvaluator { interner }
     }
 
+    /// Check if a type is number-like (number, number literal, or any)
+    fn is_number_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
+            return true;
+        }
+        if let Some(TypeKey::Literal(LiteralValue::Number(_))) = self.interner.lookup(type_id) {
+            return true;
+        }
+        false
+    }
+
+    /// Check if a type is string-like (string, string literal, template literal, or any)
+    fn is_string_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::STRING || type_id == TypeId::ANY {
+            return true;
+        }
+        if let Some(key) = self.interner.lookup(type_id) {
+            match key {
+                TypeKey::Literal(LiteralValue::String(_)) => return true,
+                TypeKey::TemplateLiteral(_) => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Check if a type is bigint-like (bigint, bigint literal, or any)
+    fn is_bigint_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
+            return true;
+        }
+        if let Some(TypeKey::Literal(LiteralValue::BigInt(_))) = self.interner.lookup(type_id) {
+            return true;
+        }
+        false
+    }
+
     /// Evaluate a binary operation: left op right -> result
     pub fn evaluate(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
         match op {
@@ -3143,14 +3180,24 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     fn evaluate_plus(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
-        // string + any = string
-        if left == TypeId::STRING || right == TypeId::STRING {
+        // any + anything = any (and vice versa)
+        if left == TypeId::ANY || right == TypeId::ANY {
+            return BinaryOpResult::Success(TypeId::ANY);
+        }
+
+        // string-like + anything = string (and vice versa)
+        if self.is_string_like(left) || self.is_string_like(right) {
             return BinaryOpResult::Success(TypeId::STRING);
         }
 
-        // number + number = number
-        if left == TypeId::NUMBER && right == TypeId::NUMBER {
+        // number-like + number-like = number
+        if self.is_number_like(left) && self.is_number_like(right) {
             return BinaryOpResult::Success(TypeId::NUMBER);
+        }
+
+        // bigint-like + bigint-like = bigint
+        if self.is_bigint_like(left) && self.is_bigint_like(right) {
+            return BinaryOpResult::Success(TypeId::BIGINT);
         }
 
         BinaryOpResult::TypeError {
@@ -3161,14 +3208,25 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     fn evaluate_arithmetic(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
-        if left == TypeId::NUMBER && right == TypeId::NUMBER {
-            BinaryOpResult::Success(TypeId::NUMBER)
-        } else {
-            BinaryOpResult::TypeError {
-                left,
-                right,
-                op: "arithmetic",
-            }
+        // any allows all operations
+        if left == TypeId::ANY || right == TypeId::ANY {
+            return BinaryOpResult::Success(TypeId::NUMBER);
+        }
+
+        // number-like * number-like = number
+        if self.is_number_like(left) && self.is_number_like(right) {
+            return BinaryOpResult::Success(TypeId::NUMBER);
+        }
+
+        // bigint-like * bigint-like = bigint
+        if self.is_bigint_like(left) && self.is_bigint_like(right) {
+            return BinaryOpResult::Success(TypeId::BIGINT);
+        }
+
+        BinaryOpResult::TypeError {
+            left,
+            right,
+            op: "arithmetic",
         }
     }
 
