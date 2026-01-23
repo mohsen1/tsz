@@ -49,9 +49,9 @@
 //! The thin wrapper in `async_es5.rs` uses this transformer with `IRPrinter`
 //! to emit JavaScript strings.
 
+use crate::parser::NodeIndex;
 use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
-use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::transforms::helpers::HelpersNeeded;
 use crate::transforms::ir::{
@@ -245,10 +245,8 @@ impl<'a> AsyncES5Transformer<'a> {
         // Add final case if there are remaining statements
         if !current_statements.is_empty() {
             // Only add implicit return if the last statement isn't already a return
-            let needs_implicit_return = !matches!(
-                current_statements.last(),
-                Some(IRNode::ReturnStatement(_))
-            );
+            let needs_implicit_return =
+                !matches!(current_statements.last(), Some(IRNode::ReturnStatement(_)));
             if needs_implicit_return {
                 current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                     IRNode::GeneratorOp {
@@ -519,8 +517,7 @@ impl<'a> AsyncES5Transformer<'a> {
                         right: Box::new(IRNode::GeneratorSent),
                     },
                 )));
-            } else if !decl.initializer.is_none()
-                && self.contains_await_recursive(decl.initializer)
+            } else if !decl.initializer.is_none() && self.contains_await_recursive(decl.initializer)
             {
                 // Initializer contains await but is not a direct await expression
                 // (e.g., var x = (await foo()) + 1;)
@@ -1207,9 +1204,7 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
 
             // FUNCTION_EXPRESSION: `function foo() { ... }` or `async function() { ... }`
-            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                self.convert_function_expression(idx)
-            }
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
 
             // ARROW_FUNCTION: `() => { ... }` or `async () => expr`
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.convert_arrow_function(idx),
@@ -1616,9 +1611,15 @@ mod tests {
     #[test]
     fn test_simple_async_function() {
         let output = transform_and_print("async function foo() { }");
-        assert!(output.contains("function foo()"), "Should have function name");
+        assert!(
+            output.contains("function foo()"),
+            "Should have function name"
+        );
         assert!(output.contains("__awaiter"), "Should have awaiter call");
-        assert!(output.contains("__generator"), "Should have generator wrapper");
+        assert!(
+            output.contains("__generator"),
+            "Should have generator wrapper"
+        );
     }
 
     #[test]
@@ -1639,7 +1640,10 @@ mod tests {
     fn test_return_await() {
         let output = transform_and_print("async function foo() { return await bar(); }");
         assert!(output.contains("[4 /*yield*/"), "Should have yield");
-        assert!(output.contains("[2 /*return*/, _a.sent()]"), "Should return _a.sent()");
+        assert!(
+            output.contains("[2 /*return*/, _a.sent()]"),
+            "Should return _a.sent()"
+        );
     }
 
     #[test]

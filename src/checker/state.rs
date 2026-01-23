@@ -1204,6 +1204,16 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings);
                 return lowering.lower_type(idx);
             }
+            // No type arguments provided - check if this generic type requires them
+            if let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) {
+                let required_count = self.count_required_type_params(sym_id);
+                if required_count > 0 {
+                    let name = self
+                        .entity_name_text(type_name_idx)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    self.error_generic_type_requires_type_arguments_at(&name, required_count, idx);
+                }
+            }
             return self.resolve_qualified_name(type_name_idx);
         }
 
@@ -1365,10 +1375,19 @@ impl<'a> CheckerState<'a> {
             if name != "Array"
                 && name != "ReadonlyArray"
                 && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
-                && (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
             {
-                self.error_value_only_type_at(name, type_name_idx);
-                return TypeId::ERROR;
+                // Check for value-only types first
+                if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
+                    self.error_value_only_type_at(name, type_name_idx);
+                    return TypeId::ERROR;
+                }
+
+                // TS2314: Check if this generic type requires type arguments
+                let required_count = self.count_required_type_params(sym_id);
+                if required_count > 0 {
+                    self.error_generic_type_requires_type_arguments_at(name, required_count, idx);
+                    // Continue to resolve - we still want type inference to work
+                }
             }
 
             if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
@@ -13867,6 +13886,13 @@ impl<'a> CheckerState<'a> {
         Vec::new()
     }
 
+    /// Count the number of required type parameters for a symbol.
+    /// Required type parameters are those without default values.
+    fn count_required_type_params(&mut self, sym_id: SymbolId) -> usize {
+        let type_params = self.get_type_params_for_symbol(sym_id);
+        type_params.iter().filter(|p| p.default.is_none()).count()
+    }
+
     /// Create a union type from multiple types.
     ///
     /// Automatically normalizes: flattens nested unions, deduplicates, sorts.
@@ -15349,6 +15375,34 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::ONLY_REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Report TS2314: Generic type 'X' requires N type argument(s).
+    pub fn error_generic_type_requires_type_arguments_at(
+        &mut self,
+        name: &str,
+        required_count: usize,
+        idx: NodeIndex,
+    ) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        if let Some(loc) = self.get_source_location(idx) {
+            let message = format_message(
+                diagnostic_messages::GENERIC_TYPE_REQUIRES_ARGS,
+                &[name, &required_count.to_string()],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENTS,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
