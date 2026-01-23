@@ -2573,7 +2573,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
-    /// Check simple object to object with index signature
+    /// Check simple object to object with index signature.
+    ///
+    /// Validates that a source object with only named properties is a subtype of
+    /// a target object with an index signature. This requires:
+    /// 1. All target named properties must have compatible source properties
+    /// 2. All source properties must be compatible with the index signature type
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Target {
+    ///   [key: string]: number;
+    ///   x: string;  // Named property
+    /// }
+    /// interface Source {
+    ///   x: string;  // Must match Target.x
+    ///   y: number;  // Must satisfy string index signature
+    /// }
+    /// // Source ≤ Target because:
+    /// // - Source.x is compatible with Target.x
+    /// // - Source.y (number) is compatible with [key: string]: number
+    /// ```
     fn check_object_to_indexed(
         &mut self,
         source: &[PropertyInfo],
