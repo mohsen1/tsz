@@ -486,12 +486,27 @@ impl<'a, 'ctx> GeneratorChecker<'a, 'ctx> {
             match type_key {
                 crate::solver::TypeKey::Array(_) => return true,
                 crate::solver::TypeKey::Tuple(_) => return true,
+                crate::solver::TypeKey::Object(shape_id) => {
+                    // Check for Symbol.iterator property
+                    let shape = self.ctx.types.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+                        // Check for [Symbol.iterator] method (iterable protocol)
+                        if prop_name.as_ref() == "[Symbol.iterator]" && prop.is_method {
+                            return true;
+                        }
+                        // Check for 'next' method (direct iterator)
+                        if prop_name.as_ref() == "next" && prop.is_method {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
                 _ => {}
             }
         }
 
-        // TODO: Check for Symbol.iterator property
-        true
+        false
     }
 
     fn get_iterable_element_type(&self, type_id: TypeId) -> TypeId {
