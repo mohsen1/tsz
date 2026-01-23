@@ -1231,6 +1231,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_subtype(left, right).is_true() && self.check_subtype(right, left).is_true()
     }
 
+    /// Check if a union includes all primitive types (string, number, symbol).
+    ///
+    /// This is used to optimize `keyof` type checking. When a union contains
+    /// all three primitives, `keyof` returns the union of all their keys.
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// type T = string | number | symbol;
+    /// type Keys = keyof T; // Returns string | number | symbol
+    /// ```
+    ///
+    /// Returns true if all three primitives are present in the union.
     fn union_includes_keyof_primitives(&self, members: TypeListId) -> bool {
         let members = self.interner.type_list(members);
         let mut has_string = false;
