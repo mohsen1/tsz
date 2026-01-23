@@ -372,11 +372,11 @@ impl<'a> CheckerState<'a> {
     /// Collect lib binders from lib_contexts for cross-arena symbol lookup.
     /// This enables symbol resolution across lib.d.ts files when lib_binders
     /// is not populated in the binder (e.g., in the driver.rs path).
-    fn get_lib_binders(&self) -> Vec<std::sync::Arc<crate::binder::BinderState>> {
+    fn get_lib_binders(&self) -> Vec<Arc<crate::binder::BinderState>> {
         self.ctx
             .lib_contexts
             .iter()
-            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .map(|lc| Arc::clone(&lc.binder))
             .collect()
     }
 
@@ -2604,7 +2604,8 @@ impl<'a> CheckerState<'a> {
 
     fn resolve_type_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
         let sym_id = self.resolve_qualified_symbol(idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
         if (symbol.flags & symbol_flags::TYPE) != 0 {
             Some(sym_id.0)
         } else {
@@ -2614,7 +2615,8 @@ impl<'a> CheckerState<'a> {
 
     fn resolve_value_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
         let sym_id = self.resolve_qualified_symbol(idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
         if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
             Some(sym_id.0)
         } else {
