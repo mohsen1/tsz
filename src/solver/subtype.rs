@@ -2439,6 +2439,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
+    /// Check object with index signature to plain object subtyping.
+    ///
+    /// Validates that a source object with an index signature can be a subtype of
+    /// a target object with only named properties. For each target property:
+    /// 1. Look up the property by name in source (including via index signatures)
+    /// 2. Check property compatibility (optional, readonly, type, write_type)
+    /// 3. If property not found in source, check if index signature can satisfy it
+    ///
+    /// ## Key Difference:
+    /// This is the reverse of `check_object_to_indexed` - the SOURCE has the index
+    /// signature and the TARGET has only named properties.
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Source {
+    ///   [key: string]: number;  // Index signature in source
+    ///   x: string;
+    /// }
+    /// interface Target {
+    ///   x: string;  // Named property in target
+    ///   y: number;  // Must be satisfied by Source's index signature
+    /// }
+    /// // Source ≤ Target because Source's [key: string]: number can satisfy Target.y
+    /// ```
     fn check_object_with_index_to_object(
         &mut self,
         source: &ObjectShape,
