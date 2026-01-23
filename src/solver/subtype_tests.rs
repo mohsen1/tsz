@@ -810,7 +810,7 @@ fn test_weak_type_detection_empty_object_allowed() {
     // Only objects with non-overlapping properties should fail
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
-    checker.enforce_weak_types = true;
+    // Note: enforce_weak_types was removed - weak checking is done by CompatChecker
 
     let a = interner.intern_string("a");
 
@@ -888,9 +888,9 @@ fn test_weak_type_detection_multiple_optional_properties() {
 #[test]
 fn test_weak_type_detection_not_weak_if_has_required() {
     // Types with at least one required property are NOT weak
+    // Note: enforce_weak_types was removed - weak checking is done by CompatChecker
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
-    checker.enforce_weak_types = true;
 
     let a = interner.intern_string("a");
     let b = interner.intern_string("b");

@@ -178,10 +178,6 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Whether indexed access includes `undefined`.
     /// Default: false (legacy TS behavior).
     pub no_unchecked_indexed_access: bool,
-    /// DEPRECATED: Weak type checking is now handled by CompatChecker only.
-    /// This field is kept for API compatibility but is no longer used.
-    /// See compat.rs for the authoritative weak type checking logic.
-    pub enforce_weak_types: bool,
     // When true, disables method bivariance (methods use contravariance).
     // Default: false (methods are bivariant in TypeScript for compatibility).
     pub disable_method_bivariance: bool,
@@ -204,7 +200,6 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             exact_optional_property_types: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
-            enforce_weak_types: true, // Enable to catch weak type violations (TS2559)
             disable_method_bivariance: false,
         }
     }
@@ -226,7 +221,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             exact_optional_property_types: false,
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
-            enforce_weak_types: true, // Enable to catch weak type violations (TS2559)
             disable_method_bivariance: false,
         }
     }

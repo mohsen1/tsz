@@ -15497,7 +15497,7 @@ abstract class Animal {
 }
 
 class Dog extends Animal {
-    speak() { console.log("woof"); }
+    speak() {}
 }
 
 const dog = new Dog(); // OK: Dog is concrete
@@ -16927,7 +16927,7 @@ interface Element {
 // Should be able to pass a MouseEvent handler to addEventListener
 // This relies on method bivariance
 function handleMouse(e: MouseEvent): void {
-    console.log(e.x, e.y);
+    const _ = e.x + e.y; // Use e.x and e.y without console.log
 }
 
 declare const elem: Element;
