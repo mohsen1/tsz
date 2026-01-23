@@ -73,12 +73,14 @@ use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::*;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
     is_private_identifier,
 };
+use std::cell::Cell;
 use std::collections::HashMap;
 
 /// Context for ES5 class transformation
@@ -1307,11 +1309,16 @@ fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeLis
 /// Convert an AST node to IR, avoiding ASTRef when possible
 pub struct AstToIr<'a> {
     arena: &'a NodeArena,
+    /// Track if we're inside an arrow function that captures `this`
+    this_captured: Cell<bool>,
 }
 
 impl<'a> AstToIr<'a> {
     pub fn new(arena: &'a NodeArena) -> Self {
-        Self { arena }
+        Self {
+            arena,
+            this_captured: Cell::new(false),
+        }
     }
 
     /// Convert a statement to IR
@@ -1361,7 +1368,9 @@ impl<'a> AstToIr<'a> {
             k if k == SyntaxKind::FalseKeyword as u16 => IRNode::BooleanLiteral(false),
             k if k == SyntaxKind::NullKeyword as u16 => IRNode::NullLiteral,
             k if k == SyntaxKind::UndefinedKeyword as u16 => IRNode::Undefined,
-            k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This { captured: false },
+            k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This {
+                captured: self.this_captured.get(),
+            },
             k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.convert_call_expression(idx),
             k if k == syntax_kind_ext::NEW_EXPRESSION => self.convert_new_expression(idx),
@@ -1464,6 +1473,11 @@ impl<'a> AstToIr<'a> {
                 .iter()
                 .filter_map(|&d| self.convert_variable_declaration(d))
                 .collect();
+            if decls.is_empty() {
+                // If all declarations were filtered out (e.g., due to parsing issues),
+                // fallback to source text
+                return IRNode::ASTRef(idx);
+            }
             if decls.len() == 1 {
                 return decls.into_iter().next().unwrap();
             }
@@ -1475,7 +1489,28 @@ impl<'a> AstToIr<'a> {
     fn convert_variable_declaration(&self, idx: NodeIndex) -> Option<IRNode> {
         let node = self.arena.get(idx)?;
         let var_decl = self.arena.get_variable_declaration(node)?;
-        let name = get_identifier_text(self.arena, var_decl.name)?;
+
+        // Try to get identifier text, but handle binding patterns and other cases
+        let name = if let Some(name) = get_identifier_text(self.arena, var_decl.name) {
+            name
+        } else if let Some(name_node) = self.arena.get(var_decl.name) {
+            // Fallback: try to get text from source span if available
+            // For binding patterns, return None and let caller handle via ASTRef
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                return None; // Handled via ASTRef
+            }
+            // Try getting identifier via IdentifierData
+            if let Some(id_data) = self.arena.get_identifier(name_node) {
+                id_data.escaped_text.clone()
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        };
+
         let initializer = if var_decl.initializer.is_none() {
             None
         } else {
@@ -2063,6 +2098,15 @@ impl<'a> AstToIr<'a> {
         let node = self.arena.get(idx).unwrap();
         // ArrowFunction uses FunctionData (has equals_greater_than_token set)
         if let Some(arrow) = self.arena.get_function(node) {
+            // Check if this arrow function captures `this`
+            let captures_this = contains_this_reference(self.arena, idx);
+
+            // Save previous state and set captured flag if needed
+            let prev_captured = self.this_captured.get();
+            if captures_this {
+                self.this_captured.set(true);
+            }
+
             let params = self.convert_parameters(&arrow.parameters);
             let (body, is_expression_body) = if let Some(body_node) = self.arena.get(arrow.body) {
                 if let Some(block) = self.arena.get_block(body_node) {
@@ -2082,12 +2126,35 @@ impl<'a> AstToIr<'a> {
                 (vec![], false)
             };
 
+            // Restore previous state
+            self.this_captured.set(prev_captured);
+
             // Arrow functions become regular functions in ES5
-            IRNode::FunctionExpr {
+            let func_expr = IRNode::FunctionExpr {
                 name: None,
                 parameters: params,
                 body,
                 is_expression_body,
+            };
+
+            // If this arrow captures `this`, wrap in IIFE:
+            // (function (_this) { return <func>; })(this)
+            if captures_this {
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::FunctionExpr {
+                        name: None,
+                        parameters: vec![IRParam {
+                            name: "_this".to_string(),
+                            rest: false,
+                            default_value: None,
+                        }],
+                        body: vec![IRNode::ReturnStatement(Some(Box::new(func_expr)))],
+                        is_expression_body: false,
+                    }),
+                    arguments: vec![IRNode::This { captured: prev_captured }],
+                }
+            } else {
+                func_expr
             }
         } else {
             IRNode::ASTRef(idx)
