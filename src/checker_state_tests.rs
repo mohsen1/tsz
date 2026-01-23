@@ -29010,3 +29010,504 @@ const value = maybeNullOrUndefined.x;  // TS2533: Object is possibly 'null' or '
             .collect::<Vec<_>>()
     );
 }
+
+// =============================================================================
+// TS2318/TS2583 Global Type Lookup Tests
+// =============================================================================
+
+#[test]
+fn test_nolib_emits_ts2318_for_known_global_type() {
+    use crate::lib_loader;
+
+    // Test that TS2318 is emitted for known global types when no lib is loaded
+    // Note: We use Date/RegExp instead of Array because Array is special-cased
+    // in the checker to always synthesize a type.
+    let source = r#"
+let d: Date;
+function f(r: RegExp): void {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    // Don't merge any lib symbols to simulate @noLib
+
+    let types = TypeInterner::new();
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.no_lib = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    // Should emit TS2318 for Date/RegExp since they're known global types but not ES2015+
+    let ts2318_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == lib_loader::CANNOT_FIND_GLOBAL_TYPE)
+        .count();
+
+    assert!(
+        ts2318_count >= 1,
+        "Expected at least one TS2318 error for missing global type 'Date' or 'RegExp', got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_nolib_emits_ts2583_for_es2015_type() {
+    use crate::lib_loader;
+
+    // Test that TS2583 is emitted for ES2015+ types when no lib is loaded
+    let source = r#"
+let p: Promise<number>;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    // Don't merge any lib symbols to simulate low target lib
+
+    let types = TypeInterner::new();
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.no_lib = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    // Should emit TS2583 for Promise since it's an ES2015+ type
+    let ts2583_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == lib_loader::MISSING_ES2015_LIB_SUPPORT)
+        .count();
+
+    assert!(
+        ts2583_count >= 1,
+        "Expected at least one TS2583 error for ES2015+ type 'Promise', got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+
+    // Verify it's not TS2318 (the generic global type error)
+    let ts2318_for_promise = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == lib_loader::CANNOT_FIND_GLOBAL_TYPE && d.message_text.contains("Promise")
+        })
+        .count();
+
+    assert_eq!(
+        ts2318_for_promise, 0,
+        "ES2015+ types should get TS2583, not TS2318: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_nolib_distinguishes_es2015_and_pre_es2015_types() {
+    use crate::lib_loader;
+
+    // Test that TS2318 is emitted for pre-ES2015 types and TS2583 for ES2015+ types
+    // Note: We use Date instead of Array because Array is special-cased
+    let source = r#"
+let d: Date;
+let p: Promise<string>;
+let m: Map<string, number>;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.no_lib = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    // TS2318 should be emitted for Date (pre-ES2015)
+    let ts2318_for_date = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == lib_loader::CANNOT_FIND_GLOBAL_TYPE && d.message_text.contains("Date")
+        })
+        .count();
+
+    // TS2583 should be emitted for Promise and Map (ES2015+)
+    let ts2583_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == lib_loader::MISSING_ES2015_LIB_SUPPORT)
+        .count();
+
+    assert!(
+        ts2318_for_date >= 1,
+        "Expected TS2318 for pre-ES2015 type 'Date', got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+
+    assert!(
+        ts2583_count >= 2,
+        "Expected at least 2 TS2583 errors for ES2015+ types (Promise, Map), got {}: {:?}",
+        ts2583_count,
+        checker.ctx.diagnostics
+    );
+}
+
+// =============================================================================
+// TS2420/TS2415 - Class Implements/Extends Checking Tests
+// =============================================================================
+
+/// Test TS2420: Class incorrectly implements interface - missing property
+#[test]
+fn test_class_incorrectly_implements_interface_missing_property() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    age: number;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    // missing: age
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert!(
+        ts2420_count >= 1,
+        "Expected TS2420 for class missing interface property 'age'. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2420: Class correctly implements interface - no error
+#[test]
+fn test_class_correctly_implements_interface_no_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    age: number;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    age: number = 5;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert_eq!(
+        ts2420_count, 0,
+        "Expected no TS2420 for class that correctly implements interface. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2420: Class incorrectly implements interface - incompatible property type
+#[test]
+fn test_class_incorrectly_implements_interface_incompatible_type() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    age: number;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    age: string = "5";  // Should be number, not string
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert!(
+        ts2420_count >= 1,
+        "Expected TS2420 for class with incompatible property type. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2420: Class incorrectly implements interface - missing method
+#[test]
+fn test_class_incorrectly_implements_interface_missing_method() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+interface Animal {
+    name: string;
+    speak(): void;
+}
+
+class Dog implements Animal {
+    name: string = "Buddy";
+    // missing: speak()
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2420_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE)
+        .count();
+
+    assert!(
+        ts2420_count >= 1,
+        "Expected TS2420 for class missing interface method 'speak'. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2415/TS2416: Class incorrectly extends base class - incompatible property type
+#[test]
+fn test_class_incorrectly_extends_base_class_incompatible_property() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+class Animal {
+    name: string = "";
+}
+
+class Dog extends Animal {
+    name: number = 5;  // Should be string, not number
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    // TS2416: Property in derived class not assignable to same property in base
+    let ts2416_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::PROPERTY_NOT_ASSIGNABLE_TO_SAME_IN_BASE)
+        .count();
+
+    assert!(
+        ts2416_count >= 1,
+        "Expected TS2416 for class with incompatible property type in extends. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test: Class correctly extends base class - no error
+#[test]
+fn test_class_correctly_extends_base_class_no_error() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+class Animal {
+    name: string = "";
+}
+
+class Dog extends Animal {
+    name: string = "Buddy";  // Same type as base
+    breed: string = "Labrador";  // New property
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2415_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS)
+        .count();
+    let ts2416_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::PROPERTY_NOT_ASSIGNABLE_TO_SAME_IN_BASE)
+        .count();
+
+    assert_eq!(
+        ts2415_count + ts2416_count, 0,
+        "Expected no TS2415/TS2416 for class that correctly extends base. All codes: {:?}",
+        codes
+    );
+}
