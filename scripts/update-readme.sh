@@ -46,9 +46,9 @@ echo "║         Update README Conformance Progress               ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
-# Run conformance tests
-echo "🧪 Running conformance tests..."
-OUTPUT=$(./conformance/run-conformance.sh --no-sandbox --native $MAX_TESTS --workers=$WORKERS 2>&1) || true
+# Run conformance tests (Docker + WASM for safety)
+echo "🧪 Running conformance tests (Docker + WASM)..."
+OUTPUT=$(./conformance/run-conformance.sh $MAX_TESTS --workers=$WORKERS 2>&1) || true
 echo "$OUTPUT"
 
 # Parse results
