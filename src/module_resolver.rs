@@ -145,13 +145,19 @@ impl ModuleExtension {
     /// Check if this extension forces ESM mode
     /// .mts, .mjs, .d.mts files are always ESM
     pub fn forces_esm(&self) -> bool {
-        matches!(self, ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs)
+        matches!(
+            self,
+            ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs
+        )
     }
 
     /// Check if this extension forces CommonJS mode
     /// .cts, .cjs, .d.cts files are always CommonJS
     pub fn forces_cjs(&self) -> bool {
-        matches!(self, ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts)
+        matches!(
+            self,
+            ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts
+        )
     }
 }
 
@@ -556,7 +562,8 @@ impl ModuleResolver {
             PackageExports::Conditional(cond_map) => {
                 for condition in conditions {
                     if let Some(nested) = cond_map.get(*condition) {
-                        if let Some(result) = self.resolve_export_target_to_string(nested, conditions)
+                        if let Some(result) =
+                            self.resolve_export_target_to_string(nested, conditions)
                         {
                             return Some(result);
                         }
@@ -569,15 +576,23 @@ impl ModuleResolver {
     }
 
     /// Get export conditions based on resolution kind and module kind
-    fn get_export_conditions(&self, importing_module_kind: ImportingModuleKind) -> Vec<&'static str> {
+    ///
+    /// Returns conditions in priority order for conditional exports resolution.
+    /// The order follows TypeScript's algorithm:
+    /// 1. "types" - TypeScript always checks this first
+    /// 2. Platform condition ("node" for Node.js, "browser" for bundler)
+    /// 3. Primary module condition based on importing file ("import" for ESM, "require" for CJS)
+    /// 4. "default" - fallback for unmatched conditions
+    /// 5. Opposite module condition as fallback (allows ESM-first packages to work with CJS imports)
+    /// 6. Additional platform fallbacks
+    fn get_export_conditions(
+        &self,
+        importing_module_kind: ImportingModuleKind,
+    ) -> Vec<&'static str> {
         let mut conditions = Vec::new();
 
         // TypeScript always checks "types" first
         conditions.push("types");
-
-        // Add custom conditions (if any)
-        // Note: custom_conditions would need to be &'static str to include here directly
-        // For now, we handle standard conditions
 
         // Add platform condition based on resolution kind
         match self.resolution_kind {
@@ -591,44 +606,30 @@ impl ModuleResolver {
             }
         }
 
-        // Add module kind condition based on importing file
+        // Add module kind conditions - primary first, then opposite as fallback
+        // This allows packages that only export one format to still be resolved
         match importing_module_kind {
             ImportingModuleKind::Esm => {
                 conditions.push("import");
+                conditions.push("default");
+                conditions.push("require"); // Fallback: ESM file can use CJS-only package
             }
             ImportingModuleKind::CommonJs => {
                 conditions.push("require");
+                conditions.push("default");
+                conditions.push("import"); // Fallback: CJS file can use ESM-only package
             }
         }
 
-        // Always add "default" at the end
-        conditions.push("default");
-
-        // Add fallback conditions
+        // Add additional platform fallbacks
         match self.resolution_kind {
             ModuleResolutionKind::Bundler => {
-                if !conditions.contains(&"import") {
-                    conditions.push("import");
-                }
-                if !conditions.contains(&"require") {
-                    conditions.push("require");
-                }
-                if !conditions.contains(&"node") {
-                    conditions.push("node");
-                }
+                conditions.push("node"); // Bundler can also use node exports
             }
             ModuleResolutionKind::Node
             | ModuleResolutionKind::Node16
             | ModuleResolutionKind::NodeNext => {
-                if !conditions.contains(&"import") {
-                    conditions.push("import");
-                }
-                if !conditions.contains(&"require") {
-                    conditions.push("require");
-                }
-                if !conditions.contains(&"browser") {
-                    conditions.push("browser");
-                }
+                conditions.push("browser"); // Node can use browser exports as last resort
             }
         }
 
@@ -836,9 +837,12 @@ impl ModuleResolver {
                                 None => ".".to_string(),
                             };
 
-                            if let Some(resolved) =
-                                self.resolve_package_exports_with_conditions(&current, exports, &subpath_key, conditions)
-                            {
+                            if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                                &current,
+                                exports,
+                                &subpath_key,
+                                conditions,
+                            ) {
                                 return Some(ResolvedModule {
                                     resolved_path: resolved.clone(),
                                     is_external: false,
@@ -893,8 +897,12 @@ impl ModuleResolver {
                     | ModuleResolutionKind::NodeNext
                     | ModuleResolutionKind::Bundler
             ) && let Some(exports) = &package_json.exports
-                && let Some(resolved) =
-                    self.resolve_package_exports_with_conditions(package_dir, exports, &subpath_key, conditions)
+                && let Some(resolved) = self.resolve_package_exports_with_conditions(
+                    package_dir,
+                    exports,
+                    &subpath_key,
+                    conditions,
+                )
             {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
@@ -961,7 +969,8 @@ impl ModuleResolver {
 
         // Try typesVersions field for index
         if let Some(types_versions) = &package_json.types_versions
-            && let Some(resolved) = self.resolve_types_versions(package_dir, "index", types_versions)
+            && let Some(resolved) =
+                self.resolve_types_versions(package_dir, "index", types_versions)
         {
             return Ok(ResolvedModule {
                 resolved_path: resolved.clone(),
@@ -1039,7 +1048,11 @@ impl ModuleResolver {
             PackageExports::Map(map) => {
                 // First try exact match
                 if let Some(value) = map.get(subpath) {
-                    return self.resolve_export_value_with_conditions(package_dir, value, conditions);
+                    return self.resolve_export_value_with_conditions(
+                        package_dir,
+                        value,
+                        conditions,
+                    );
                 }
 
                 // Try pattern matching (e.g., "./*" or "./lib/*")
@@ -1077,8 +1090,12 @@ impl ModuleResolver {
                 // Try conditions in the provided order
                 for condition in conditions {
                     if let Some(value) = cond_map.get(*condition)
-                        && let Some(resolved) =
-                            self.resolve_package_exports_with_conditions(package_dir, value, subpath, conditions)
+                        && let Some(resolved) = self.resolve_package_exports_with_conditions(
+                            package_dir,
+                            value,
+                            subpath,
+                            conditions,
+                        )
                     {
                         return Some(resolved);
                     }
@@ -1103,8 +1120,11 @@ impl ModuleResolver {
             PackageExports::Conditional(cond_map) => {
                 for condition in conditions {
                     if let Some(nested) = cond_map.get(*condition)
-                        && let Some(resolved) =
-                            self.resolve_export_value_with_conditions(package_dir, nested, conditions)
+                        && let Some(resolved) = self.resolve_export_value_with_conditions(
+                            package_dir,
+                            nested,
+                            conditions,
+                        )
                     {
                         return Some(resolved);
                     }
@@ -1157,12 +1177,11 @@ impl ModuleResolver {
                     // Get target path(s)
                     let target = match value {
                         serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Array(arr) => {
-                            arr.first()
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string()
-                        }
+                        serde_json::Value::Array(arr) => arr
+                            .first()
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         _ => continue,
                     };
 
@@ -1559,7 +1578,10 @@ mod tests {
 
     #[test]
     fn test_match_imports_pattern_exact() {
-        assert_eq!(match_imports_pattern("#utils", "#utils"), Some(String::new()));
+        assert_eq!(
+            match_imports_pattern("#utils", "#utils"),
+            Some(String::new())
+        );
         assert_eq!(match_imports_pattern("#utils", "#other"), None);
     }
 
@@ -1613,7 +1635,10 @@ mod tests {
 
     #[test]
     fn test_importing_module_kind_enum() {
-        assert_eq!(ImportingModuleKind::default(), ImportingModuleKind::CommonJs);
+        assert_eq!(
+            ImportingModuleKind::default(),
+            ImportingModuleKind::CommonJs
+        );
         assert_ne!(ImportingModuleKind::Esm, ImportingModuleKind::CommonJs);
     }
 
