@@ -8,11 +8,14 @@ engine on top to match TypeScript behavior while preserving correctness where po
 
 ## Conformance Progress
 
+To ensure tsz is a drop-in replacement for `tsc`, we run the official TypeScript conformance
+test suite against it.
+
 <!-- CONFORMANCE_START -->
 Currently targeting TypeScript 6.0.0-dev.20260116
 
 ```
-Progress: [░░░░░░░░░░░░░░░░░░░░] 0.0% (0 / 0 tests)
+Progress: [███████░░░░░░░░░░░░░] 36.4% (4,436 / 12,197 tests)
 ```
 <!-- CONFORMANCE_END -->
 
