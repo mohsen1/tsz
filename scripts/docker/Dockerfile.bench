@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.4
 # Dockerfile for running Rust benchmarks safely
 # Based on the test Dockerfile but optimized for benchmarking
 
@@ -11,6 +12,14 @@ RUN apt-get update && apt-get install -y \
 
 # Set working directory
 WORKDIR /workspace/wasm
+
+# Copy source and build with cached dependencies
+COPY . .
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/workspace/wasm/target \
+    cargo build --release || true
 
 # Default command
 CMD ["cargo", "bench", "--color=always"]
