@@ -17133,9 +17133,14 @@ impl<'a> CheckerState<'a> {
             return iterable_type;
         }
 
-        // Unwrap readonly wrappers.
+        // Unwrap readonly wrappers with depth guard to prevent infinite loops
         let mut ty = iterable_type;
+        let mut readonly_depth = 0;
         while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(ty) {
+            readonly_depth += 1;
+            if readonly_depth > 100 {
+                break;
+            }
             ty = inner;
         }
 
@@ -17584,9 +17589,14 @@ impl<'a> CheckerState<'a> {
                 return parent_type;
             }
 
-            // Unwrap readonly wrappers for destructuring element access.
+            // Unwrap readonly wrappers for destructuring element access with depth guard
             let mut array_like = parent_type;
+            let mut readonly_depth = 0;
             while let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(array_like) {
+                readonly_depth += 1;
+                if readonly_depth > 100 {
+                    break;
+                }
                 array_like = inner;
             }
 
