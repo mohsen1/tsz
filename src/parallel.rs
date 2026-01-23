@@ -801,11 +801,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         });
     }
 
-    // Populate globals from merged_symbols (contains all symbols across all files)
-    // This ensures cross-file merged symbols are properly registered in globals.
-    for (name, sym_id) in merged_symbols.iter() {
-        globals.set(name.clone(), *sym_id);
-    }
+    // NOTE: We intentionally do NOT populate globals from merged_symbols here.
+    // merged_symbols contains ALL symbols (including namespace-local ones like `var Symbol`
+    // inside a namespace), but globals should only contain file-level symbols.
+    // File-level symbols are already correctly added to globals at line 769-770.
 
     MergedProgram {
         files,
