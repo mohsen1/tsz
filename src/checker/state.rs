@@ -1328,6 +1328,10 @@ impl<'a> CheckerState<'a> {
                         self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
                         return TypeId::ERROR;
                     }
+                    // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                    if self.is_unresolved_import_symbol(type_name_idx) {
+                        return TypeId::ANY;
+                    }
                     self.error_cannot_find_name_at(name, type_name_idx);
                     return TypeId::ERROR;
                 }
@@ -1442,6 +1446,10 @@ impl<'a> CheckerState<'a> {
             }
             if self.is_known_global_type_name(name) {
                 return TypeId::UNKNOWN;
+            }
+            // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+            if self.is_unresolved_import_symbol(type_name_idx) {
+                return TypeId::ANY;
             }
             self.error_cannot_find_name_at(name, type_name_idx);
             return TypeId::ERROR;
@@ -2901,7 +2909,11 @@ impl<'a> CheckerState<'a> {
                 return self.type_reference_symbol_type(sym_id);
             }
 
-            // Not found
+            // Not found - but suppress TS2304 if this is an unresolved import
+            // (TS2307 was already emitted for the import statement)
+            if self.is_unresolved_import_symbol(idx) {
+                return TypeId::ANY;
+            }
             self.error_cannot_find_name_at(name, idx);
             return TypeId::ERROR;
         }
@@ -3015,6 +3027,10 @@ impl<'a> CheckerState<'a> {
                     if self.is_known_global_value_name(&name) {
                         return TypeId::ANY; // Known global but not resolved - use ANY to allow property access
                     }
+                    // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                    if self.is_unresolved_import_symbol(type_query.expr_name) {
+                        return TypeId::ANY;
+                    }
                     self.error_cannot_find_name_at(&name, type_query.expr_name);
                     return TypeId::ERROR;
                 }
@@ -3026,6 +3042,10 @@ impl<'a> CheckerState<'a> {
                         .and_then(|node| self.ctx.arena.get_identifier(node))
                         .map(|ident| ident.escaped_text.clone())
                 {
+                    // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                    if self.is_unresolved_import_symbol(missing_idx) {
+                        return TypeId::ANY;
+                    }
                     self.error_cannot_find_name_at(&missing_name, missing_idx);
                     return TypeId::ERROR;
                 }
@@ -3253,6 +3273,10 @@ impl<'a> CheckerState<'a> {
                         self.error_cannot_find_name_did_you_mean_at(name, "Awaited", type_name_idx);
                         return TypeId::ERROR;
                     }
+                    // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                    if self.is_unresolved_import_symbol(type_name_idx) {
+                        return TypeId::ANY;
+                    }
                     self.error_cannot_find_name_at(name, type_name_idx);
                     return TypeId::ERROR;
                 }
@@ -3344,6 +3368,10 @@ impl<'a> CheckerState<'a> {
             }
             if self.is_known_global_type_name(name) {
                 return TypeId::UNKNOWN;
+            }
+            // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+            if self.is_unresolved_import_symbol(type_name_idx) {
+                return TypeId::ANY;
             }
             self.error_cannot_find_name_at(name, type_name_idx);
             return TypeId::ERROR;
@@ -6063,6 +6091,10 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
                     );
                     return TypeId::ERROR;
+                }
+                // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                if self.is_unresolved_import_symbol(idx) {
+                    return TypeId::ANY;
                 }
                 // Report "cannot find name" error
                 self.error_cannot_find_name_at(name, idx);

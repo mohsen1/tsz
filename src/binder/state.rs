@@ -3184,6 +3184,20 @@ impl BinderState {
                 // Check if exported (for export import x = ns.member)
                 let is_exported = self.has_export_modifier(arena, &import.modifiers);
 
+                // Get module specifier for external module require imports
+                // e.g., import ts = require("typescript") -> module_specifier = "typescript"
+                let module_specifier = if !import.module_specifier.is_none() {
+                    arena.get(import.module_specifier).and_then(|spec_node| {
+                        if spec_node.kind == SyntaxKind::StringLiteral as u16 {
+                            arena.get_literal(spec_node).map(|lit| lit.text.clone())
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                };
+
                 // Create symbol with ALIAS flag
                 let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
 
@@ -3191,6 +3205,10 @@ impl BinderState {
                     sym.declarations.push(idx);
                     sym.value_declaration = idx;
                     sym.is_exported = is_exported;
+                    // Track module for cross-file resolution and unresolved import detection
+                    if let Some(ref specifier) = module_specifier {
+                        sym.import_module = Some(specifier.clone());
+                    }
                 }
 
                 self.current_scope.set(name.to_string(), sym_id);
