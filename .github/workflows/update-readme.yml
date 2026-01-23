@@ -1,11 +1,15 @@
 name: Update README Conformance
 
 on:
-  # Run weekly on Sunday at midnight UTC
-  schedule:
-    - cron: '0 0 * * 0'
-  # Allow manual trigger
+  push:
+    branches: [main]
   workflow_dispatch:
+
+# Only one run at a time - newer commits queue (max 1 queued)
+# This means we may skip some commits but always run on latest
+concurrency:
+  group: update-readme
+  cancel-in-progress: false
 
 permissions:
   contents: write
