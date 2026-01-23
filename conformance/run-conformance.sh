@@ -53,7 +53,7 @@ MAX_TESTS=500
 USE_SANDBOX=true  # Docker by default
 USE_WASM=true     # WASM by default
 VERBOSE=false
-CATEGORIES="conformance,compiler"
+CATEGORIES="conformance,compiler,projects"
 TIMEOUT=600
 WORKERS=8  # Optimal for WASM - more workers cause contention
 
