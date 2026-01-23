@@ -35,10 +35,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # For standalone runs, we still use the shared volume for efficiency
 TARGET_VOLUME="tsz-target-shared"
 
-# Resource limits optimized for 14-core machine with 9 orchestrator workers
-# Each worker gets ~1.5 cores and ~4GB RAM
-DOCKER_MEMORY="4g"
-DOCKER_CPUS="2"
+# Resource limits - use most available cores for parallel test execution
+DOCKER_MEMORY="8g"
+DOCKER_CPUS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 8)"
 
 # Parse arguments
 REBUILD=false
