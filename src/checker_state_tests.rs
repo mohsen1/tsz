@@ -28925,3 +28925,517 @@ async function test() {
         codes
     );
 }
+
+// =============================================================================
+// Parameter Ordering Tests (TS1016)
+// =============================================================================
+
+/// Test that TS1016 is emitted when a required parameter follows an optional parameter
+#[test]
+fn test_required_param_after_optional_ts1016() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+function foo(a?: number, b: string) {
+    return a;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 1,
+        "Expected TS1016 for required parameter after optional. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that TS1016 is emitted for arrow functions
+#[test]
+fn test_required_param_after_optional_arrow_ts1016() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const fn = (a?: number, b: string) => a;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 1,
+        "Expected TS1016 for required parameter after optional in arrow function. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that TS1016 is emitted for methods
+#[test]
+fn test_required_param_after_optional_method_ts1016() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+class Foo {
+    bar(a?: number, b: string) {
+        return a;
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 1,
+        "Expected TS1016 for required parameter after optional in method. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that TS1016 is emitted for constructors
+#[test]
+fn test_required_param_after_optional_constructor_ts1016() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+class Foo {
+    constructor(a?: number, b: string) {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 1,
+        "Expected TS1016 for required parameter after optional in constructor. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that no TS1016 is emitted when all parameters are properly ordered
+#[test]
+fn test_no_ts1016_for_proper_parameter_order() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+function foo(a: number, b?: string, c?: boolean) {
+    return a;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 0,
+        "Expected no TS1016 for proper parameter order. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that TS1016 is NOT emitted when required parameter has default value (it becomes optional)
+#[test]
+fn test_no_ts1016_for_param_with_default_after_optional() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+function foo(a?: number, b: string = "default") {
+    return a;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 0,
+        "Expected no TS1016 when parameter has default value. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that rest parameter can follow optional parameter (no TS1016)
+#[test]
+fn test_no_ts1016_for_rest_param_after_optional() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+function foo(a?: number, ...rest: string[]) {
+    return a;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 0,
+        "Expected no TS1016 for rest parameter after optional. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that multiple required parameters after optional are all flagged
+#[test]
+fn test_multiple_required_params_after_optional_ts1016() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+function foo(a?: number, b: string, c: boolean) {
+    return a;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts1016_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::REQUIRED_PARAMETER_AFTER_OPTIONAL)
+        .count();
+
+    assert_eq!(
+        ts1016_count, 2,
+        "Expected 2 TS1016 errors for two required params after optional. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+// =============================================================================
+// Contextual Typing Tests for Destructuring Parameters
+// =============================================================================
+
+/// Test that destructuring parameters get contextual types from callback signatures
+#[test]
+fn test_contextual_typing_destructuring_param_object() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+type Handler = (item: { x: number, y: string }) => void;
+const handler: Handler = ({ x, y }) => {
+    // x should be number, y should be string
+    let numVal: number = x;
+    let strVal: string = y;
+};
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    // Should have no type errors - x and y should be inferred from contextual type
+    let type_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322) // TS2322: Type is not assignable
+        .collect();
+
+    assert!(
+        type_errors.is_empty(),
+        "Expected no TS2322 errors when destructuring params get contextual types. Got: {:?}",
+        type_errors
+    );
+}
+
+/// Test that array destructuring parameters get contextual types from callback signatures
+#[test]
+fn test_contextual_typing_destructuring_param_array() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+type Handler = (item: [number, string]) => void;
+const handler: Handler = ([first, second]) => {
+    // first should be number, second should be string
+    let numVal: number = first;
+    let strVal: string = second;
+};
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    // Should have no type errors - first and second should be inferred from contextual type
+    let type_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322) // TS2322: Type is not assignable
+        .collect();
+
+    assert!(
+        type_errors.is_empty(),
+        "Expected no TS2322 errors when array destructuring params get contextual types. Got: {:?}",
+        type_errors
+    );
+}
