@@ -3164,8 +3164,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if an intersection type is a subtype of a target type.
     ///
-    /// Intersection source: source is subtype if any constituent is.
-    /// Also handles type parameter constraint narrowing.
+    /// When the source is an intersection, it's a subtype if ANY constituent is a subtype
+    /// of the target. This is the "exists" quantifier for intersections.
+    ///
+    /// ## Intersection Source Rule:
+    /// `(A & B & C) <: T` if `A <: T` OR `B <: T` OR `C <: T`
+    ///
+    /// ## Type Parameter Constraint Narrowing:
+    /// For intersections containing type parameters, we attempt to narrow the parameter's
+    /// constraint by intersecting it with the other members. This handles cases like:
+    /// ```typescript
+    /// function foo<T extends string | number>(x: T & { foo: string }): void
+    /// // Here T & { foo: string } is assignable to T because we can narrow T's constraint
+    /// ```
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // (string & number) <: string ✅ (impossible, but if it were possible)
+    /// // (string & { foo: number }) <: string ❌ (neither constituent alone satisfies)
+    /// // never <: (string | number) ✅ (never is subtype of everything)
+    /// ```
     fn check_intersection_source_subtype(
         &mut self,
         members: TypeListId,
