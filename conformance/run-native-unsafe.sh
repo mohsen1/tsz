@@ -16,7 +16,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 MAX_TESTS=500
 USE_WASM=false
 VERBOSE=false
-CATEGORIES="conformance,compiler"
+CATEGORIES="conformance,compiler,projects"
 TIMEOUT=10
 WORKERS=
 

@@ -16,7 +16,7 @@ IMAGE_NAME="tsz-conformance"
 MAX_TESTS=500
 USE_WASM=true
 VERBOSE=false
-CATEGORIES="conformance,compiler"
+CATEGORIES="conformance,compiler,projects"
 TIMEOUT=600
 WORKERS=
 
