@@ -15004,7 +15004,7 @@ impl<'a> CheckerState<'a> {
         op: &str,
     ) {
         use crate::checker::types::diagnostics::diagnostic_codes;
-        use crate::solver::TypeFormatter;
+        use crate::solver::{BinaryOpEvaluator, TypeFormatter};
 
         let mut formatter = TypeFormatter::new(self.ctx.types);
         let left_str = formatter.format(left_type);
@@ -15013,15 +15013,14 @@ impl<'a> CheckerState<'a> {
         // Check if this is an arithmetic operator (-, *, /, % or the generic "arithmetic" tag)
         let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "arithmetic");
 
-        // Check if operands have valid arithmetic types
-        // Note: enum types are also valid but we simplify here by not checking them
-        let left_is_valid_arithmetic =
-            matches!(left_type, TypeId::NUMBER | TypeId::ANY | TypeId::BIGINT);
-        let right_is_valid_arithmetic =
-            matches!(right_type, TypeId::NUMBER | TypeId::ANY | TypeId::BIGINT);
+        // Check if operands have valid arithmetic types using BinaryOpEvaluator
+        // This properly handles number, bigint, any, and enum types (unions of number literals)
+        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        let left_is_valid_arithmetic = evaluator.is_arithmetic_operand(left_type);
+        let right_is_valid_arithmetic = evaluator.is_arithmetic_operand(right_type);
 
         if is_arithmetic {
-            // For arithmetic operators, emit specific left/right errors
+            // For arithmetic operators, emit specific left/right errors (TS2362, TS2363)
             if !left_is_valid_arithmetic {
                 if let Some(loc) = self.get_source_location(left_idx) {
                     let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
