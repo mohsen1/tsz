@@ -16009,6 +16009,9 @@ impl<'a> CheckerState<'a> {
         if (flags & symbol_flags::SET_ACCESSOR) != 0 {
             return symbol_flags::SET_ACCESSOR_EXCLUDES;
         }
+        if (flags & symbol_flags::METHOD) != 0 {
+            return symbol_flags::METHOD_EXCLUDES;
+        }
         symbol_flags::NONE
     }
 
@@ -16123,6 +16126,19 @@ impl<'a> CheckerState<'a> {
                     if both_functions {
                         let decl_has_body = self.function_has_body(decl_idx);
                         let other_has_body = self.function_has_body(other_idx);
+                        // Only conflict if BOTH have bodies (multiple implementations)
+                        if !(decl_has_body && other_has_body) {
+                            continue;
+                        }
+                    }
+
+                    // Check for method overloads - multiple method declarations are allowed
+                    // if at most one of them has a body (is an implementation)
+                    let both_methods = (decl_flags & symbol_flags::METHOD) != 0
+                        && (other_flags & symbol_flags::METHOD) != 0;
+                    if both_methods {
+                        let decl_has_body = self.method_has_body(decl_idx);
+                        let other_has_body = self.method_has_body(other_idx);
                         // Only conflict if BOTH have bodies (multiple implementations)
                         if !(decl_has_body && other_has_body) {
                             continue;
@@ -16256,6 +16272,20 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         self.has_declare_modifier(&class.modifiers)
+    }
+
+    /// Check if a method declaration has a body (is an implementation, not just a signature).
+    fn method_has_body(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return false;
+        }
+        let Some(method) = self.ctx.arena.get_method_decl(node) else {
+            return false;
+        };
+        !method.body.is_none()
     }
 
     /// Get the name node of a declaration for error reporting.
