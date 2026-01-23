@@ -16,6 +16,7 @@ use crate::cli::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOpti
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
 use crate::span::Span;
 use rustc_hash::FxHashMap;
+use serde_json;
 use std::path::{Path, PathBuf};
 
 /// TS2307: Cannot find module
@@ -70,6 +71,28 @@ pub enum ModuleExtension {
     Unknown,
 }
 
+/// Package type from package.json "type" field
+/// Used for ESM vs CommonJS distinction in Node16/NodeNext
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PackageType {
+    /// ESM package ("type": "module")
+    Module,
+    /// CommonJS package ("type": "commonjs" or default)
+    #[default]
+    CommonJs,
+}
+
+/// Module kind for the importing file
+/// Determines whether to use "import" or "require" conditions
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImportingModuleKind {
+    /// ESM module (uses "import" condition)
+    Esm,
+    /// CommonJS module (uses "require" condition)
+    #[default]
+    CommonJs,
+}
+
 impl ModuleExtension {
     /// Parse extension from file path
     pub fn from_path(path: &Path) -> Self {
@@ -117,6 +140,24 @@ impl ModuleExtension {
             ModuleExtension::Json => ".json",
             ModuleExtension::Unknown => "",
         }
+    }
+
+    /// Check if this extension forces ESM mode
+    /// .mts, .mjs, .d.mts files are always ESM
+    pub fn forces_esm(&self) -> bool {
+        matches!(
+            self,
+            ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs
+        )
+    }
+
+    /// Check if this extension forces CommonJS mode
+    /// .cts, .cjs, .d.cts files are always CommonJS
+    pub fn forces_cjs(&self) -> bool {
+        matches!(
+            self,
+            ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts
+        )
     }
 }
 
@@ -209,6 +250,11 @@ pub struct ModuleResolver {
     /// Declaration extensions to try
     #[allow(dead_code)] // Infrastructure for .d.ts resolution
     dts_extensions: Vec<&'static str>,
+    /// Custom conditions from tsconfig (for customConditions option)
+    #[allow(dead_code)] // Infrastructure for customConditions support
+    custom_conditions: Vec<String>,
+    /// Cache for package.json package type lookups
+    package_type_cache: FxHashMap<PathBuf, Option<PackageType>>,
 }
 
 impl ModuleResolver {
@@ -225,6 +271,8 @@ impl ModuleResolver {
             ts_extensions: vec![".ts", ".tsx", ".d.ts"],
             js_extensions: vec![".js", ".jsx"],
             dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
+            custom_conditions: Vec::new(), // TODO: Add customConditions to ResolvedCompilerOptions
+            package_type_cache: FxHashMap::default(),
         }
     }
 
@@ -239,6 +287,8 @@ impl ModuleResolver {
             ts_extensions: vec![".ts", ".tsx", ".d.ts"],
             js_extensions: vec![".js", ".jsx"],
             dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
+            custom_conditions: Vec::new(),
+            package_type_cache: FxHashMap::default(),
         }
     }
 
@@ -261,17 +311,100 @@ impl ModuleResolver {
             return cached.clone();
         }
 
+        // Determine the module kind of the importing file
+        let importing_module_kind = self.get_importing_module_kind(containing_file);
+
         let result = self.resolve_uncached(
             specifier,
             &containing_dir,
             &containing_file_str,
             specifier_span,
+            importing_module_kind,
         );
 
         // Cache the result
         self.resolution_cache.insert(cache_key, result.clone());
 
         result
+    }
+
+    /// Determine the module kind of the importing file based on extension and package.json type
+    fn get_importing_module_kind(&mut self, file_path: &Path) -> ImportingModuleKind {
+        let extension = ModuleExtension::from_path(file_path);
+
+        // .mts, .mjs force ESM mode
+        if extension.forces_esm() {
+            return ImportingModuleKind::Esm;
+        }
+
+        // .cts, .cjs force CommonJS mode
+        if extension.forces_cjs() {
+            return ImportingModuleKind::CommonJs;
+        }
+
+        // Check package.json "type" field
+        if let Some(dir) = file_path.parent() {
+            match self.get_package_type_for_dir(dir) {
+                Some(PackageType::Module) => ImportingModuleKind::Esm,
+                Some(PackageType::CommonJs) | None => ImportingModuleKind::CommonJs,
+            }
+        } else {
+            ImportingModuleKind::CommonJs
+        }
+    }
+
+    /// Get the package type for a directory by walking up to find package.json
+    fn get_package_type_for_dir(&mut self, dir: &Path) -> Option<PackageType> {
+        // Check cache first
+        if let Some(cached) = self.package_type_cache.get(dir) {
+            return *cached;
+        }
+
+        let mut current = dir.to_path_buf();
+        let mut visited = Vec::new();
+
+        loop {
+            // Check cache for this path - copy the value to avoid borrow conflict
+            if let Some(&cached) = self.package_type_cache.get(&current) {
+                let result = cached;
+                // Cache all visited paths with this result
+                for path in visited {
+                    self.package_type_cache.insert(path, result);
+                }
+                return result;
+            }
+
+            visited.push(current.clone());
+
+            // Check for package.json
+            let package_json_path = current.join("package.json");
+            if package_json_path.is_file() {
+                if let Ok(pj) = self.read_package_json(&package_json_path) {
+                    let package_type = pj.package_type.as_deref().and_then(|t| match t {
+                        "module" => Some(PackageType::Module),
+                        "commonjs" => Some(PackageType::CommonJs),
+                        _ => None,
+                    });
+                    // Cache all visited paths
+                    for path in visited {
+                        self.package_type_cache.insert(path, package_type);
+                    }
+                    return package_type;
+                }
+            }
+
+            // Move to parent
+            match current.parent() {
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
+            }
+        }
+
+        // No package.json found, cache as None
+        for path in visited {
+            self.package_type_cache.insert(path, None);
+        }
+        None
     }
 
     /// Resolve without checking cache
@@ -281,15 +414,28 @@ impl ModuleResolver {
         containing_dir: &Path,
         containing_file: &str,
         specifier_span: Span,
+        importing_module_kind: ImportingModuleKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
-        // Step 1: Try path mappings first (if configured)
+        // Step 1: Handle #-prefixed imports (package.json imports field)
+        // This is a Node16/NodeNext feature for subpath imports
+        if specifier.starts_with('#') {
+            return self.resolve_package_imports(
+                specifier,
+                containing_dir,
+                containing_file,
+                specifier_span,
+                importing_module_kind,
+            );
+        }
+
+        // Step 2: Try path mappings first (if configured)
         if !self.path_mappings.is_empty()
             && let Some(resolved) = self.try_path_mappings(specifier, containing_dir)
         {
             return Ok(resolved);
         }
 
-        // Step 2: Handle relative imports
+        // Step 3: Handle relative imports
         if specifier.starts_with("./") || specifier.starts_with("../") {
             return self.resolve_relative(
                 specifier,
@@ -299,13 +445,195 @@ impl ModuleResolver {
             );
         }
 
-        // Step 3: Handle absolute imports (rare but valid)
+        // Step 4: Handle absolute imports (rare but valid)
         if specifier.starts_with('/') {
             return self.resolve_absolute(specifier, containing_file, specifier_span);
         }
 
-        // Step 4: Handle bare specifiers (npm packages)
-        self.resolve_bare_specifier(specifier, containing_dir, containing_file, specifier_span)
+        // Step 5: Handle bare specifiers (npm packages)
+        self.resolve_bare_specifier(
+            specifier,
+            containing_dir,
+            containing_file,
+            specifier_span,
+            importing_module_kind,
+        )
+    }
+
+    /// Resolve package.json imports field (#-prefixed specifiers)
+    fn resolve_package_imports(
+        &self,
+        specifier: &str,
+        containing_dir: &Path,
+        containing_file: &str,
+        specifier_span: Span,
+        importing_module_kind: ImportingModuleKind,
+    ) -> Result<ResolvedModule, ResolutionFailure> {
+        // Walk up directory tree looking for package.json with imports field
+        let mut current = containing_dir.to_path_buf();
+
+        loop {
+            let package_json_path = current.join("package.json");
+
+            if package_json_path.is_file() {
+                if let Ok(package_json) = self.read_package_json(&package_json_path)
+                    && let Some(imports) = &package_json.imports
+                {
+                    let conditions = self.get_export_conditions(importing_module_kind);
+
+                    if let Some(target) =
+                        self.resolve_imports_subpath(imports, specifier, &conditions)
+                    {
+                        // Resolve the target path
+                        let resolved_path = current.join(target.trim_start_matches("./"));
+
+                        if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
+                            return Ok(ResolvedModule {
+                                resolved_path: resolved.clone(),
+                                is_external: false,
+                                package_name: package_json.name.clone(),
+                                original_specifier: specifier.to_string(),
+                                extension: ModuleExtension::from_path(&resolved),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Move to parent directory
+            match current.parent() {
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
+            }
+        }
+
+        Err(ResolutionFailure::NotFound {
+            specifier: specifier.to_string(),
+            containing_file: containing_file.to_string(),
+            span: specifier_span,
+        })
+    }
+
+    /// Resolve imports field subpath (similar to exports but with # prefix)
+    fn resolve_imports_subpath(
+        &self,
+        imports: &FxHashMap<String, PackageExports>,
+        specifier: &str,
+        conditions: &[&str],
+    ) -> Option<String> {
+        // Try exact match first
+        if let Some(value) = imports.get(specifier) {
+            return self.resolve_export_target_to_string(value, conditions);
+        }
+
+        // Try pattern matching (e.g., "#utils/*")
+        let mut best_match: Option<(usize, String, &PackageExports)> = None;
+
+        for (pattern, value) in imports {
+            if let Some(wildcard) = match_imports_pattern(pattern, specifier) {
+                let specificity = pattern.len();
+                let is_better = match &best_match {
+                    None => true,
+                    Some((best_len, _, _)) => specificity > *best_len,
+                };
+                if is_better {
+                    best_match = Some((specificity, wildcard, value));
+                }
+            }
+        }
+
+        if let Some((_, wildcard, value)) = best_match
+            && let Some(target) = self.resolve_export_target_to_string(value, conditions)
+        {
+            return Some(apply_wildcard_substitution(&target, &wildcard));
+        }
+
+        None
+    }
+
+    /// Resolve an export/import value to a string path
+    fn resolve_export_target_to_string(
+        &self,
+        value: &PackageExports,
+        conditions: &[&str],
+    ) -> Option<String> {
+        match value {
+            PackageExports::String(s) => Some(s.clone()),
+            PackageExports::Conditional(cond_map) => {
+                for condition in conditions {
+                    if let Some(nested) = cond_map.get(*condition) {
+                        if let Some(result) =
+                            self.resolve_export_target_to_string(nested, conditions)
+                        {
+                            return Some(result);
+                        }
+                    }
+                }
+                None
+            }
+            PackageExports::Map(_) => None, // Subpath maps not valid here
+        }
+    }
+
+    /// Get export conditions based on resolution kind and module kind
+    ///
+    /// Returns conditions in priority order for conditional exports resolution.
+    /// The order follows TypeScript's algorithm:
+    /// 1. "types" - TypeScript always checks this first
+    /// 2. Platform condition ("node" for Node.js, "browser" for bundler)
+    /// 3. Primary module condition based on importing file ("import" for ESM, "require" for CJS)
+    /// 4. "default" - fallback for unmatched conditions
+    /// 5. Opposite module condition as fallback (allows ESM-first packages to work with CJS imports)
+    /// 6. Additional platform fallbacks
+    fn get_export_conditions(
+        &self,
+        importing_module_kind: ImportingModuleKind,
+    ) -> Vec<&'static str> {
+        let mut conditions = Vec::new();
+
+        // TypeScript always checks "types" first
+        conditions.push("types");
+
+        // Add platform condition based on resolution kind
+        match self.resolution_kind {
+            ModuleResolutionKind::Bundler => {
+                conditions.push("browser");
+            }
+            ModuleResolutionKind::Node
+            | ModuleResolutionKind::Node16
+            | ModuleResolutionKind::NodeNext => {
+                conditions.push("node");
+            }
+        }
+
+        // Add module kind conditions - primary first, then opposite as fallback
+        // This allows packages that only export one format to still be resolved
+        match importing_module_kind {
+            ImportingModuleKind::Esm => {
+                conditions.push("import");
+                conditions.push("default");
+                conditions.push("require"); // Fallback: ESM file can use CJS-only package
+            }
+            ImportingModuleKind::CommonJs => {
+                conditions.push("require");
+                conditions.push("default");
+                conditions.push("import"); // Fallback: CJS file can use ESM-only package
+            }
+        }
+
+        // Add additional platform fallbacks
+        match self.resolution_kind {
+            ModuleResolutionKind::Bundler => {
+                conditions.push("node"); // Bundler can also use node exports
+            }
+            ModuleResolutionKind::Node
+            | ModuleResolutionKind::Node16
+            | ModuleResolutionKind::NodeNext => {
+                conditions.push("browser"); // Node can use browser exports as last resort
+            }
+        }
+
+        conditions
     }
 
     /// Try resolving through path mappings
@@ -404,9 +732,22 @@ impl ModuleResolver {
         containing_dir: &Path,
         containing_file: &str,
         specifier_span: Span,
+        importing_module_kind: ImportingModuleKind,
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Parse package name and subpath
         let (package_name, subpath) = parse_package_specifier(specifier);
+        let conditions = self.get_export_conditions(importing_module_kind);
+
+        // First, try self-reference: check if we're inside a package that matches the specifier
+        if let Some(resolved) = self.try_self_reference(
+            &package_name,
+            subpath.as_deref(),
+            specifier,
+            containing_dir,
+            &conditions,
+        ) {
+            return Ok(resolved);
+        }
 
         // Walk up directory tree looking for node_modules
         let mut current = containing_dir.to_path_buf();
@@ -423,14 +764,15 @@ impl ModuleResolver {
                         specifier,
                         containing_file,
                         specifier_span,
+                        &conditions,
                     );
                 }
             }
 
             // Move to parent directory
             match current.parent() {
-                Some(parent) => current = parent.to_path_buf(),
-                None => break,
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
             }
         }
 
@@ -445,6 +787,7 @@ impl ModuleResolver {
                     specifier,
                     containing_file,
                     specifier_span,
+                    &conditions,
                 )
             {
                 return Ok(resolved);
@@ -458,6 +801,73 @@ impl ModuleResolver {
         })
     }
 
+    /// Try to resolve a self-reference (package importing itself by name)
+    fn try_self_reference(
+        &self,
+        package_name: &str,
+        subpath: Option<&str>,
+        original_specifier: &str,
+        containing_dir: &Path,
+        conditions: &[&str],
+    ) -> Option<ResolvedModule> {
+        // Only available in Node16/NodeNext/Bundler
+        if !matches!(
+            self.resolution_kind,
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        ) {
+            return None;
+        }
+
+        // Walk up to find the closest package.json
+        let mut current = containing_dir.to_path_buf();
+
+        loop {
+            let package_json_path = current.join("package.json");
+
+            if package_json_path.is_file() {
+                if let Ok(package_json) = self.read_package_json(&package_json_path) {
+                    // Check if the package name matches
+                    if package_json.name.as_deref() == Some(package_name) {
+                        // This is a self-reference!
+                        if let Some(exports) = &package_json.exports {
+                            let subpath_key = match subpath {
+                                Some(sp) => format!("./{}", sp),
+                                None => ".".to_string(),
+                            };
+
+                            if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                                &current,
+                                exports,
+                                &subpath_key,
+                                conditions,
+                            ) {
+                                return Some(ResolvedModule {
+                                    resolved_path: resolved.clone(),
+                                    is_external: false,
+                                    package_name: Some(package_name.to_string()),
+                                    original_specifier: original_specifier.to_string(),
+                                    extension: ModuleExtension::from_path(&resolved),
+                                });
+                            }
+                        }
+                    }
+                    // Found a package.json but it's not a match - stop searching
+                    return None;
+                }
+            }
+
+            // Move to parent directory
+            match current.parent() {
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
+            }
+        }
+
+        None
+    }
+
     /// Resolve within a package directory
     fn resolve_package(
         &self,
@@ -466,6 +876,7 @@ impl ModuleResolver {
         original_specifier: &str,
         containing_file: &str,
         specifier_span: Span,
+        conditions: &[&str],
     ) -> Result<ResolvedModule, ResolutionFailure> {
         // Read package.json
         let package_json_path = package_dir.join("package.json");
@@ -477,6 +888,8 @@ impl ModuleResolver {
 
         // If there's a subpath, resolve it directly
         if let Some(subpath) = subpath {
+            let subpath_key = format!("./{}", subpath);
+
             // Try exports field first (Node16+)
             if matches!(
                 self.resolution_kind,
@@ -484,7 +897,26 @@ impl ModuleResolver {
                     | ModuleResolutionKind::NodeNext
                     | ModuleResolutionKind::Bundler
             ) && let Some(exports) = &package_json.exports
-                && let Some(resolved) = self.resolve_package_exports(package_dir, exports, subpath)
+                && let Some(resolved) = self.resolve_package_exports_with_conditions(
+                    package_dir,
+                    exports,
+                    &subpath_key,
+                    conditions,
+                )
+            {
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    is_external: true,
+                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    original_specifier: original_specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
+
+            // Try typesVersions field
+            if let Some(types_versions) = &package_json.types_versions
+                && let Some(resolved) =
+                    self.resolve_types_versions(package_dir, subpath, types_versions)
             {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
@@ -523,7 +955,22 @@ impl ModuleResolver {
                 | ModuleResolutionKind::NodeNext
                 | ModuleResolutionKind::Bundler
         ) && let Some(exports) = &package_json.exports
-            && let Some(resolved) = self.resolve_package_exports(package_dir, exports, ".")
+            && let Some(resolved) =
+                self.resolve_package_exports_with_conditions(package_dir, exports, ".", conditions)
+        {
+            return Ok(ResolvedModule {
+                resolved_path: resolved.clone(),
+                is_external: true,
+                package_name: Some(package_json.name.clone().unwrap_or_default()),
+                original_specifier: original_specifier.to_string(),
+                extension: ModuleExtension::from_path(&resolved),
+            });
+        }
+
+        // Try typesVersions field for index
+        if let Some(types_versions) = &package_json.types_versions
+            && let Some(resolved) =
+                self.resolve_types_versions(package_dir, "index", types_versions)
         {
             return Ok(ResolvedModule {
                 resolved_path: resolved.clone(),
@@ -535,15 +982,15 @@ impl ModuleResolver {
         }
 
         // Try types/typings field
-        if let Some(types) = package_json.types.or(package_json.typings) {
+        if let Some(types) = package_json.types.clone().or(package_json.typings.clone()) {
             let types_path = package_dir.join(&types);
-            if types_path.exists() {
+            if let Some(resolved) = self.try_file_or_directory(&types_path) {
                 return Ok(ResolvedModule {
-                    resolved_path: types_path.clone(),
+                    resolved_path: resolved.clone(),
                     is_external: true,
                     package_name: Some(package_json.name.clone().unwrap_or_default()),
                     original_specifier: original_specifier.to_string(),
-                    extension: ModuleExtension::from_path(&types_path),
+                    extension: ModuleExtension::from_path(&resolved),
                 });
             }
         }
@@ -580,19 +1027,20 @@ impl ModuleResolver {
         )))
     }
 
-    /// Resolve package exports field
-    fn resolve_package_exports(
+    /// Resolve package exports with explicit conditions
+    fn resolve_package_exports_with_conditions(
         &self,
         package_dir: &Path,
         exports: &PackageExports,
         subpath: &str,
+        conditions: &[&str],
     ) -> Option<PathBuf> {
         match exports {
             PackageExports::String(s) => {
                 if subpath == "." {
-                    let resolved = package_dir.join(s);
-                    if resolved.exists() {
-                        return Some(resolved);
+                    let resolved = package_dir.join(s.trim_start_matches("./"));
+                    if let Some(r) = self.try_file_or_directory(&resolved) {
+                        return Some(r);
                     }
                 }
                 None
@@ -600,70 +1048,154 @@ impl ModuleResolver {
             PackageExports::Map(map) => {
                 // First try exact match
                 if let Some(value) = map.get(subpath) {
-                    return self.resolve_export_value(package_dir, value);
+                    return self.resolve_export_value_with_conditions(
+                        package_dir,
+                        value,
+                        conditions,
+                    );
                 }
 
                 // Try pattern matching (e.g., "./*" or "./lib/*")
+                let mut best_match: Option<(usize, String, &PackageExports)> = None;
+
                 for (pattern, value) in map {
-                    if let Some(matched) = match_export_pattern(pattern, subpath)
-                        && let Some(resolved) = self.resolve_export_value(package_dir, value)
-                    {
-                        // Substitute wildcard
-                        let resolved_str = resolved.to_string_lossy();
-                        if resolved_str.contains('*') {
-                            let substituted = resolved_str.replace('*', &matched);
-                            return Some(PathBuf::from(substituted));
+                    if let Some(matched) = match_export_pattern(pattern, subpath) {
+                        let specificity = pattern.len();
+                        let is_better = match &best_match {
+                            None => true,
+                            Some((best_len, _, _)) => specificity > *best_len,
+                        };
+                        if is_better {
+                            best_match = Some((specificity, matched, value));
                         }
-                        return Some(resolved);
                     }
+                }
+
+                if let Some((_, wildcard, value)) = best_match
+                    && let Some(resolved) =
+                        self.resolve_export_value_with_conditions(package_dir, value, conditions)
+                {
+                    // Substitute wildcard in path
+                    let resolved_str = resolved.to_string_lossy();
+                    if resolved_str.contains('*') {
+                        let substituted = resolved_str.replace('*', &wildcard);
+                        return Some(PathBuf::from(substituted));
+                    }
+                    return Some(resolved);
                 }
 
                 None
             }
-            PackageExports::Conditional(conditions) => {
-                // Try conditions in order of preference
-                let condition_order = match self.resolution_kind {
-                    ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
-                        vec!["types", "import", "require", "node", "default"]
-                    }
-                    ModuleResolutionKind::Bundler => {
-                        vec!["types", "import", "browser", "default"]
-                    }
-                    _ => vec!["types", "require", "default"],
-                };
-
-                for condition in condition_order {
-                    if let Some(value) = conditions.get(condition)
-                        && let Some(resolved) =
-                            self.resolve_package_exports(package_dir, value, subpath)
+            PackageExports::Conditional(cond_map) => {
+                // Try conditions in the provided order
+                for condition in conditions {
+                    if let Some(value) = cond_map.get(*condition)
+                        && let Some(resolved) = self.resolve_package_exports_with_conditions(
+                            package_dir,
+                            value,
+                            subpath,
+                            conditions,
+                        )
                     {
                         return Some(resolved);
                     }
                 }
-
                 None
             }
         }
     }
 
-    /// Resolve a single export value
-    fn resolve_export_value(&self, package_dir: &Path, value: &PackageExports) -> Option<PathBuf> {
+    /// Resolve a single export value with conditions
+    fn resolve_export_value_with_conditions(
+        &self,
+        package_dir: &Path,
+        value: &PackageExports,
+        conditions: &[&str],
+    ) -> Option<PathBuf> {
         match value {
             PackageExports::String(s) => {
-                let resolved = package_dir.join(s);
-                if resolved.exists() {
-                    Some(resolved)
-                } else {
-                    None
-                }
+                let resolved = package_dir.join(s.trim_start_matches("./"));
+                self.try_file_or_directory(&resolved)
             }
-            PackageExports::Conditional(conditions) => self.resolve_package_exports(
-                package_dir,
-                &PackageExports::Conditional(conditions.clone()),
-                ".",
-            ),
+            PackageExports::Conditional(cond_map) => {
+                for condition in conditions {
+                    if let Some(nested) = cond_map.get(*condition)
+                        && let Some(resolved) = self.resolve_export_value_with_conditions(
+                            package_dir,
+                            nested,
+                            conditions,
+                        )
+                    {
+                        return Some(resolved);
+                    }
+                }
+                None
+            }
             PackageExports::Map(_) => None,
         }
+    }
+
+    /// Resolve typesVersions field
+    fn resolve_types_versions(
+        &self,
+        package_dir: &Path,
+        subpath: &str,
+        types_versions: &serde_json::Value,
+    ) -> Option<PathBuf> {
+        // For now, use a simple approach: select the first matching version range
+        // A more complete implementation would consider TypeScript version compatibility
+        let map = types_versions.as_object()?;
+
+        // Find a matching version (using "*" as fallback)
+        let mut best_paths: Option<&serde_json::Map<String, serde_json::Value>> = None;
+
+        for (version_range, value) in map {
+            let paths = value.as_object()?;
+            // Use "*" as a wildcard match, or ">=" ranges
+            // For simplicity, we'll match "*" or any range that would match TS 5.x
+            if version_range == "*"
+                || version_range.starts_with(">=")
+                || version_range.starts_with(">")
+            {
+                best_paths = Some(paths);
+                break;
+            }
+        }
+
+        let paths = best_paths?;
+
+        // Find matching pattern
+        let mut best_target: Option<String> = None;
+        let mut best_specificity = 0usize;
+
+        for (pattern, value) in paths {
+            if let Some(wildcard) = match_types_versions_pattern(pattern, subpath) {
+                let specificity = pattern.len();
+                if specificity > best_specificity {
+                    best_specificity = specificity;
+
+                    // Get target path(s)
+                    let target = match value {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Array(arr) => arr
+                            .first()
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        _ => continue,
+                    };
+
+                    best_target = Some(apply_wildcard_substitution(&target, &wildcard));
+                }
+            }
+        }
+
+        if let Some(target) = best_target {
+            let resolved = package_dir.join(target.trim_start_matches("./"));
+            return self.try_file_or_directory(&resolved);
+        }
+
+        None
     }
 
     /// Try to resolve a file with various extensions
@@ -813,6 +1345,79 @@ fn match_export_pattern(pattern: &str, subpath: &str) -> Option<String> {
     Some(subpath[start..end].to_string())
 }
 
+/// Match an imports pattern against a specifier (#-prefixed)
+fn match_imports_pattern(pattern: &str, specifier: &str) -> Option<String> {
+    if !pattern.contains('*') {
+        return if pattern == specifier {
+            Some(String::new())
+        } else {
+            None
+        };
+    }
+
+    // Strip # prefix for matching
+    let pattern = pattern.strip_prefix('#').unwrap_or(pattern);
+    let specifier = specifier.strip_prefix('#').unwrap_or(specifier);
+
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let prefix = parts[0];
+    let suffix = parts[1];
+
+    if !specifier.starts_with(prefix) || !specifier.ends_with(suffix) {
+        return None;
+    }
+
+    let start = prefix.len();
+    let end = specifier.len().saturating_sub(suffix.len());
+
+    if end < start {
+        return None;
+    }
+
+    Some(specifier[start..end].to_string())
+}
+
+/// Match a typesVersions pattern against a subpath
+fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> {
+    if !pattern.contains('*') {
+        return if pattern == subpath {
+            Some(String::new())
+        } else {
+            None
+        };
+    }
+
+    let star_pos = pattern.find('*')?;
+    let (prefix, suffix) = pattern.split_at(star_pos);
+    let suffix = &suffix[1..]; // Skip the '*'
+
+    if !subpath.starts_with(prefix) || !subpath.ends_with(suffix) {
+        return None;
+    }
+
+    let start = prefix.len();
+    let end = subpath.len().saturating_sub(suffix.len());
+
+    if end < start {
+        return None;
+    }
+
+    Some(subpath[start..end].to_string())
+}
+
+/// Apply wildcard substitution to a target path
+fn apply_wildcard_substitution(target: &str, wildcard: &str) -> String {
+    if target.contains('*') {
+        target.replace('*', wildcard)
+    } else {
+        target.to_string()
+    }
+}
+
 /// Simplified package.json structure for resolution
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -827,6 +1432,9 @@ pub struct PackageJson {
     pub package_type: Option<String>,
     pub exports: Option<PackageExports>,
     pub imports: Option<FxHashMap<String, PackageExports>>,
+    /// TypeScript typesVersions field for version-specific type definitions
+    #[serde(rename = "typesVersions")]
+    pub types_versions: Option<serde_json::Value>,
 }
 
 /// Package exports field can be a string, map, or conditional
@@ -948,5 +1556,124 @@ mod tests {
 
         let other = ResolutionFailure::InvalidSpecifier("test".to_string());
         assert!(!other.is_not_found());
+    }
+
+    #[test]
+    fn test_module_extension_forces_esm() {
+        assert!(ModuleExtension::Mts.forces_esm());
+        assert!(ModuleExtension::Mjs.forces_esm());
+        assert!(ModuleExtension::DmTs.forces_esm());
+        assert!(!ModuleExtension::Ts.forces_esm());
+        assert!(!ModuleExtension::Cts.forces_esm());
+    }
+
+    #[test]
+    fn test_module_extension_forces_cjs() {
+        assert!(ModuleExtension::Cts.forces_cjs());
+        assert!(ModuleExtension::Cjs.forces_cjs());
+        assert!(ModuleExtension::DCts.forces_cjs());
+        assert!(!ModuleExtension::Ts.forces_cjs());
+        assert!(!ModuleExtension::Mts.forces_cjs());
+    }
+
+    #[test]
+    fn test_match_imports_pattern_exact() {
+        assert_eq!(
+            match_imports_pattern("#utils", "#utils"),
+            Some(String::new())
+        );
+        assert_eq!(match_imports_pattern("#utils", "#other"), None);
+    }
+
+    #[test]
+    fn test_match_imports_pattern_wildcard() {
+        assert_eq!(
+            match_imports_pattern("#utils/*", "#utils/foo"),
+            Some("foo".to_string())
+        );
+        assert_eq!(
+            match_imports_pattern("#internal/*", "#internal/helpers/bar"),
+            Some("helpers/bar".to_string())
+        );
+        assert_eq!(match_imports_pattern("#utils/*", "#other/foo"), None);
+    }
+
+    #[test]
+    fn test_match_types_versions_pattern() {
+        assert_eq!(
+            match_types_versions_pattern("*", "index"),
+            Some("index".to_string())
+        );
+        assert_eq!(
+            match_types_versions_pattern("lib/*", "lib/utils"),
+            Some("utils".to_string())
+        );
+        assert_eq!(
+            match_types_versions_pattern("exact", "exact"),
+            Some(String::new())
+        );
+        assert_eq!(match_types_versions_pattern("lib/*", "src/utils"), None);
+    }
+
+    #[test]
+    fn test_apply_wildcard_substitution() {
+        assert_eq!(
+            apply_wildcard_substitution("./lib/*.js", "utils"),
+            "./lib/utils.js"
+        );
+        assert_eq!(
+            apply_wildcard_substitution("./dist/index.js", "ignored"),
+            "./dist/index.js"
+        );
+    }
+
+    #[test]
+    fn test_package_type_enum() {
+        assert_eq!(PackageType::default(), PackageType::CommonJs);
+        assert_ne!(PackageType::Module, PackageType::CommonJs);
+    }
+
+    #[test]
+    fn test_importing_module_kind_enum() {
+        assert_eq!(
+            ImportingModuleKind::default(),
+            ImportingModuleKind::CommonJs
+        );
+        assert_ne!(ImportingModuleKind::Esm, ImportingModuleKind::CommonJs);
+    }
+
+    #[test]
+    fn test_package_json_deserialize_basic() {
+        let json = r#"{"name": "test-package", "type": "module", "main": "./index.js"}"#;
+
+        let package_json: PackageJson = serde_json::from_str(json).unwrap();
+        assert_eq!(package_json.name, Some("test-package".to_string()));
+        assert_eq!(package_json.package_type, Some("module".to_string()));
+        assert_eq!(package_json.main, Some("./index.js".to_string()));
+    }
+
+    #[test]
+    fn test_package_json_deserialize_exports() {
+        let json = r#"{"name": "pkg", "exports": {"." : "./dist/index.js"}}"#;
+
+        let package_json: PackageJson = serde_json::from_str(json).unwrap();
+        assert!(package_json.exports.is_some());
+    }
+
+    #[test]
+    fn test_package_json_deserialize_types_versions() {
+        // Build JSON programmatically to avoid raw string issues
+        let json = serde_json::json!({
+            "name": "typed-package",
+            "typesVersions": {
+                "*": {
+                    "*": ["./types/index.d.ts"]
+                }
+            }
+        });
+
+        let package_json: PackageJson = serde_json::from_value(json).unwrap();
+        assert_eq!(package_json.name, Some("typed-package".to_string()));
+        assert!(package_json.types_versions.is_some());
     }
 }
