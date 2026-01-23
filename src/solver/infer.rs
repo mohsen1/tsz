@@ -139,6 +139,12 @@ struct TupleRestExpansion {
     tail: Vec<TupleElement>,
 }
 
+/// Maximum iterations for constraint strengthening loops to prevent infinite loops.
+pub const MAX_CONSTRAINT_ITERATIONS: usize = 100;
+
+/// Maximum recursion depth for type containment checks.
+pub const MAX_TYPE_RECURSION_DEPTH: usize = 100;
+
 /// Type inference context for a single function call or expression.
 pub struct InferenceContext<'a> {
     interner: &'a dyn TypeDatabase,
@@ -2081,6 +2087,26 @@ impl<'a> InferenceContext<'a> {
 
     /// Check if a type contains an inference variable.
     pub(crate) fn contains_inference_var(&mut self, ty: TypeId, var: InferenceVar) -> bool {
+        let mut visited = FxHashSet::default();
+        self.contains_inference_var_inner(ty, var, &mut visited, 0)
+    }
+
+    fn contains_inference_var_inner(
+        &mut self,
+        ty: TypeId,
+        var: InferenceVar,
+        visited: &mut FxHashSet<TypeId>,
+        depth: usize,
+    ) -> bool {
+        // Safety limit to prevent infinite recursion on deeply nested or cyclic types
+        if depth > MAX_TYPE_RECURSION_DEPTH {
+            return false;
+        }
+        // Prevent infinite loops on cyclic types
+        if !visited.insert(ty) {
+            return false;
+        }
+
         let root = self.table.find(var);
 
         match self.interner.lookup(ty) {
@@ -2091,70 +2117,86 @@ impl<'a> InferenceContext<'a> {
                     false
                 }
             }
-            Some(TypeKey::Array(elem)) => self.contains_inference_var(elem, var),
+            Some(TypeKey::Array(elem)) => {
+                self.contains_inference_var_inner(elem, var, visited, depth + 1)
+            }
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 elements
                     .iter()
-                    .any(|e| self.contains_inference_var(e.type_id, var))
+                    .any(|e| self.contains_inference_var_inner(e.type_id, var, visited, depth + 1))
             }
             Some(TypeKey::Union(members)) | Some(TypeKey::Intersection(members)) => {
                 let members = self.interner.type_list(members);
-                members.iter().any(|&m| self.contains_inference_var(m, var))
+                members
+                    .iter()
+                    .any(|&m| self.contains_inference_var_inner(m, var, visited, depth + 1))
             }
             Some(TypeKey::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
                     .properties
                     .iter()
-                    .any(|p| self.contains_inference_var(p.type_id, var))
+                    .any(|p| self.contains_inference_var_inner(p.type_id, var, visited, depth + 1))
             }
             Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
                     .properties
                     .iter()
-                    .any(|p| self.contains_inference_var(p.type_id, var))
+                    .any(|p| self.contains_inference_var_inner(p.type_id, var, visited, depth + 1))
                     || shape.string_index.as_ref().is_some_and(|idx| {
-                        self.contains_inference_var(idx.key_type, var)
-                            || self.contains_inference_var(idx.value_type, var)
+                        self.contains_inference_var_inner(idx.key_type, var, visited, depth + 1)
+                            || self.contains_inference_var_inner(
+                                idx.value_type,
+                                var,
+                                visited,
+                                depth + 1,
+                            )
                     })
                     || shape.number_index.as_ref().is_some_and(|idx| {
-                        self.contains_inference_var(idx.key_type, var)
-                            || self.contains_inference_var(idx.value_type, var)
+                        self.contains_inference_var_inner(idx.key_type, var, visited, depth + 1)
+                            || self.contains_inference_var_inner(
+                                idx.value_type,
+                                var,
+                                visited,
+                                depth + 1,
+                            )
                     })
             }
             Some(TypeKey::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
-                self.contains_inference_var(app.base, var)
+                self.contains_inference_var_inner(app.base, var, visited, depth + 1)
                     || app
                         .args
                         .iter()
-                        .any(|&arg| self.contains_inference_var(arg, var))
+                        .any(|&arg| self.contains_inference_var_inner(arg, var, visited, depth + 1))
             }
             Some(TypeKey::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 shape
                     .params
                     .iter()
-                    .any(|p| self.contains_inference_var(p.type_id, var))
-                    || shape
-                        .this_type
-                        .is_some_and(|t| self.contains_inference_var(t, var))
-                    || self.contains_inference_var(shape.return_type, var)
+                    .any(|p| self.contains_inference_var_inner(p.type_id, var, visited, depth + 1))
+                    || shape.this_type.is_some_and(|t| {
+                        self.contains_inference_var_inner(t, var, visited, depth + 1)
+                    })
+                    || self.contains_inference_var_inner(shape.return_type, var, visited, depth + 1)
             }
             Some(TypeKey::Conditional(cond_id)) => {
                 let cond = self.interner.conditional_type(cond_id);
-                self.contains_inference_var(cond.check_type, var)
-                    || self.contains_inference_var(cond.extends_type, var)
-                    || self.contains_inference_var(cond.true_type, var)
-                    || self.contains_inference_var(cond.false_type, var)
+                self.contains_inference_var_inner(cond.check_type, var, visited, depth + 1)
+                    || self.contains_inference_var_inner(cond.extends_type, var, visited, depth + 1)
+                    || self.contains_inference_var_inner(cond.true_type, var, visited, depth + 1)
+                    || self.contains_inference_var_inner(cond.false_type, var, visited, depth + 1)
             }
             Some(TypeKey::TemplateLiteral(spans)) => {
                 let spans = self.interner.template_list(spans);
                 spans.iter().any(|span| match span {
                     TemplateSpan::Text(_) => false,
-                    TemplateSpan::Type(inner) => self.contains_inference_var(*inner, var),
+                    TemplateSpan::Type(inner) => {
+                        self.contains_inference_var_inner(*inner, var, visited, depth + 1)
+                    }
                 })
             }
             _ => false,
@@ -2470,8 +2512,10 @@ impl<'a> InferenceContext<'a> {
     pub fn strengthen_constraints(&mut self) -> Result<(), InferenceError> {
         let type_params: Vec<_> = self.type_params.clone();
 
-        // Iterate multiple times to propagate constraints
-        for _ in 0..type_params.len() {
+        // Iterate multiple times to propagate constraints, but with a safety limit
+        // to prevent infinite loops in pathological type structures
+        let max_iterations = type_params.len().min(MAX_CONSTRAINT_ITERATIONS);
+        for _ in 0..max_iterations {
             for (name, var) in type_params.iter() {
                 let root = self.table.find(*var);
                 let constraints = self.constraints[root.0 as usize].clone();
