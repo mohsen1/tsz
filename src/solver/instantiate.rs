@@ -437,15 +437,36 @@ impl<'a> TypeInstantiator<'a> {
                     // so it can distribute to both branches
                     if let Some(TypeKey::Union(members)) = self.interner.lookup(substituted) {
                         let members = self.interner.type_list(members);
+                        // Limit distribution to prevent OOM with large unions
+                        // (e.g., string literal unions with thousands of members)
+                        const MAX_DISTRIBUTION_SIZE: usize = 100;
+                        if members.len() > MAX_DISTRIBUTION_SIZE {
+                            self.depth_exceeded = true;
+                            return TypeId::ERROR;
+                        }
                         let cond_type = self.interner.conditional(cond.as_ref().clone());
                         let mut results = Vec::with_capacity(members.len());
                         for &member in members.iter() {
+                            // Check depth before each distribution step
+                            if self.depth_exceeded {
+                                return TypeId::ERROR;
+                            }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
                             let instantiated =
                                 instantiate_type(self.interner, cond_type, &member_subst);
+                            // Check if instantiation hit depth limit
+                            if instantiated == TypeId::ERROR {
+                                self.depth_exceeded = true;
+                                return TypeId::ERROR;
+                            }
                             let evaluated =
                                 crate::solver::evaluate::evaluate_type(self.interner, instantiated);
+                            // Check if evaluation hit depth limit
+                            if evaluated == TypeId::ERROR {
+                                self.depth_exceeded = true;
+                                return TypeId::ERROR;
+                            }
                             results.push(evaluated);
                         }
                         return self.interner.union(results);
