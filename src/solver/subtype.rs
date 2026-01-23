@@ -590,60 +590,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Generic application to application
             (TypeKey::Application(s_app_id), TypeKey::Application(t_app_id)) => {
-                let s_app = self.interner.type_application(*s_app_id);
-                let t_app = self.interner.type_application(*t_app_id);
-                if s_app.args.len() != t_app.args.len() {
-                    SubtypeResult::False
-                } else if !self.check_subtype(s_app.base, t_app.base).is_true() {
-                    SubtypeResult::False
-                } else {
-                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
-                        if !self.check_subtype(*s_arg, *t_arg).is_true() {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    SubtypeResult::True
-                }
+                self.check_application_to_application_subtype(*s_app_id, *t_app_id)
             }
 
             // Source is Application, target is structural - try to expand and compare
             (TypeKey::Application(app_id), _) => {
-                if let Some(expanded) = self.try_expand_application(*app_id) {
-                    self.check_subtype(expanded, target)
-                } else {
-                    // Can't expand - assume not a subtype
-                    SubtypeResult::False
-                }
+                self.check_application_expansion_target(source, target, *app_id)
             }
 
             // Target is Application, source is structural - try to expand and compare
             (_, TypeKey::Application(app_id)) => {
-                if let Some(expanded) = self.try_expand_application(*app_id) {
-                    self.check_subtype(source, expanded)
-                } else {
-                    // Can't expand - assume not a subtype
-                    SubtypeResult::False
-                }
+                self.check_source_to_application_expansion(source, target, *app_id)
             }
 
             // Source is Mapped, target is structural - try to expand and compare
             (TypeKey::Mapped(mapped_id), _) => {
-                if let Some(expanded) = self.try_expand_mapped(*mapped_id) {
-                    self.check_subtype(expanded, target)
-                } else {
-                    // Can't expand - assume not a subtype
-                    SubtypeResult::False
-                }
+                self.check_mapped_expansion_target(source, target, *mapped_id)
             }
 
             // Target is Mapped, source is structural - try to expand and compare
             (_, TypeKey::Mapped(mapped_id)) => {
-                if let Some(expanded) = self.try_expand_mapped(*mapped_id) {
-                    self.check_subtype(source, expanded)
-                } else {
-                    // Can't expand - assume not a subtype
-                    SubtypeResult::False
-                }
+                self.check_source_to_mapped_expansion(source, target, *mapped_id)
             }
 
             // Reference types - try to resolve and compare structurally
@@ -1070,6 +1037,80 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         match self.resolver.resolve_ref(*sym, self.interner) {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
+            None => SubtypeResult::False,
+        }
+    }
+
+    /// Check Application to Application subtype.
+    fn check_application_to_application_subtype(
+        &mut self,
+        s_app_id: TypeApplicationId,
+        t_app_id: TypeApplicationId,
+    ) -> SubtypeResult {
+        let s_app = self.interner.type_application(s_app_id);
+        let t_app = self.interner.type_application(t_app_id);
+        if s_app.args.len() != t_app.args.len() {
+            return SubtypeResult::False;
+        }
+        if !self.check_subtype(s_app.base, t_app.base).is_true() {
+            return SubtypeResult::False;
+        }
+        for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+            if !self.check_subtype(*s_arg, *t_arg).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+        SubtypeResult::True
+    }
+
+    /// Check Application expansion to target (one-sided Application case).
+    fn check_application_expansion_target(
+        &mut self,
+        _source: TypeId,
+        target: TypeId,
+        app_id: TypeApplicationId,
+    ) -> SubtypeResult {
+        match self.try_expand_application(app_id) {
+            Some(expanded) => self.check_subtype(expanded, target),
+            None => SubtypeResult::False,
+        }
+    }
+
+    /// Check source to Application expansion (one-sided Application case).
+    fn check_source_to_application_expansion(
+        &mut self,
+        source: TypeId,
+        _target: TypeId,
+        app_id: TypeApplicationId,
+    ) -> SubtypeResult {
+        match self.try_expand_application(app_id) {
+            Some(expanded) => self.check_subtype(source, expanded),
+            None => SubtypeResult::False,
+        }
+    }
+
+    /// Check Mapped expansion to target (one-sided Mapped case).
+    fn check_mapped_expansion_target(
+        &mut self,
+        _source: TypeId,
+        target: TypeId,
+        mapped_id: MappedTypeId,
+    ) -> SubtypeResult {
+        match self.try_expand_mapped(mapped_id) {
+            Some(expanded) => self.check_subtype(expanded, target),
+            None => SubtypeResult::False,
+        }
+    }
+
+    /// Check source to Mapped expansion (one-sided Mapped case).
+    fn check_source_to_mapped_expansion(
+        &mut self,
+        source: TypeId,
+        _target: TypeId,
+        mapped_id: MappedTypeId,
+    ) -> SubtypeResult {
+        match self.try_expand_mapped(mapped_id) {
+            Some(expanded) => self.check_subtype(source, expanded),
             None => SubtypeResult::False,
         }
     }
