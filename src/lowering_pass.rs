@@ -48,6 +48,15 @@ use crate::transforms::arrow_es5::contains_this_reference;
 use crate::transforms::private_fields_es5::is_private_identifier;
 use std::sync::Arc;
 
+/// Maximum recursion depth for AST traversal to prevent stack overflow
+const MAX_AST_DEPTH: u32 = 500;
+
+/// Maximum depth for qualified name recursion (A.B.C.D...)
+const MAX_QUALIFIED_NAME_DEPTH: u32 = 100;
+
+/// Maximum depth for binding pattern recursion ({a: {b: {c: ...}}})
+const MAX_BINDING_PATTERN_DEPTH: u32 = 100;
+
 /// Lowering pass - Phase 1 of emission
 ///
 /// Walks the AST and produces transform directives based on compiler options.
@@ -57,6 +66,8 @@ pub struct LoweringPass<'a> {
     transforms: TransformContext,
     commonjs_mode: bool,
     has_export_assignment: bool,
+    /// Current recursion depth for stack overflow protection
+    visit_depth: u32,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -68,6 +79,7 @@ impl<'a> LoweringPass<'a> {
             transforms: TransformContext::new(),
             commonjs_mode: false,
             has_export_assignment: false,
+            visit_depth: 0,
         }
     }
 
@@ -82,7 +94,14 @@ impl<'a> LoweringPass<'a> {
 
     /// Visit a node and its children
     fn visit(&mut self, idx: NodeIndex) {
+        // Stack overflow protection: limit recursion depth
+        if self.visit_depth >= MAX_AST_DEPTH {
+            return;
+        }
+        self.visit_depth += 1;
+
         let Some(node) = self.arena.get(idx) else {
+            self.visit_depth -= 1;
             return;
         };
 
@@ -109,6 +128,8 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::FOR_OF_STATEMENT => self.visit_for_of_statement(node, idx),
             _ => self.visit_children(idx),
         }
+
+        self.visit_depth -= 1;
     }
 
     /// Visit all children of a node
@@ -1400,6 +1421,15 @@ impl<'a> LoweringPass<'a> {
     }
 
     fn get_module_root_name(&self, name_idx: NodeIndex) -> Option<IdentifierId> {
+        self.get_module_root_name_inner(name_idx, 0)
+    }
+
+    fn get_module_root_name_inner(&self, name_idx: NodeIndex, depth: u32) -> Option<IdentifierId> {
+        // Stack overflow protection for qualified names
+        if depth >= MAX_QUALIFIED_NAME_DEPTH {
+            return None;
+        }
+
         if name_idx.is_none() {
             return None;
         }
@@ -1412,7 +1442,7 @@ impl<'a> LoweringPass<'a> {
         if node.kind == syntax_kind_ext::QUALIFIED_NAME
             && let Some(qn) = self.arena.qualified_names.get(node.data_index as usize)
         {
-            return self.get_module_root_name(qn.left);
+            return self.get_module_root_name_inner(qn.left, depth + 1);
         }
 
         None
@@ -1450,6 +1480,20 @@ impl<'a> LoweringPass<'a> {
     }
 
     fn collect_binding_names(&self, name_idx: NodeIndex, names: &mut Vec<IdentifierId>) {
+        self.collect_binding_names_inner(name_idx, names, 0);
+    }
+
+    fn collect_binding_names_inner(
+        &self,
+        name_idx: NodeIndex,
+        names: &mut Vec<IdentifierId>,
+        depth: u32,
+    ) {
+        // Stack overflow protection for deeply nested binding patterns
+        if depth >= MAX_BINDING_PATTERN_DEPTH {
+            return;
+        }
+
         if name_idx.is_none() {
             return;
         }
@@ -1469,24 +1513,39 @@ impl<'a> LoweringPass<'a> {
             {
                 if let Some(pattern) = self.arena.get_binding_pattern(node) {
                     for &elem_idx in &pattern.elements.nodes {
-                        self.collect_binding_names_from_element(elem_idx, names);
+                        self.collect_binding_names_from_element_inner(elem_idx, names, depth + 1);
                     }
                 }
             }
             k if k == syntax_kind_ext::BINDING_ELEMENT => {
                 if let Some(elem) = self.arena.get_binding_element(node) {
-                    self.collect_binding_names(elem.name, names);
+                    self.collect_binding_names_inner(elem.name, names, depth + 1);
                 }
             }
             _ => {}
         }
     }
 
+    #[allow(dead_code)]
     fn collect_binding_names_from_element(
         &self,
         elem_idx: NodeIndex,
         names: &mut Vec<IdentifierId>,
     ) {
+        self.collect_binding_names_from_element_inner(elem_idx, names, 0);
+    }
+
+    fn collect_binding_names_from_element_inner(
+        &self,
+        elem_idx: NodeIndex,
+        names: &mut Vec<IdentifierId>,
+        depth: u32,
+    ) {
+        // Stack overflow protection
+        if depth >= MAX_BINDING_PATTERN_DEPTH {
+            return;
+        }
+
         if elem_idx.is_none() {
             return;
         }
@@ -1496,7 +1555,7 @@ impl<'a> LoweringPass<'a> {
         };
 
         if let Some(elem) = self.arena.get_binding_element(elem_node) {
-            self.collect_binding_names(elem.name, names);
+            self.collect_binding_names_inner(elem.name, names, depth + 1);
         }
     }
 

@@ -7,6 +7,10 @@
 use super::context::CheckerContext;
 use crate::parser::NodeIndex;
 use crate::solver::TypeId;
+use std::cell::Cell;
+
+/// Maximum recursion depth for expression checking to prevent stack overflow
+const MAX_EXPR_CHECK_DEPTH: u32 = 500;
 
 /// Expression type checker that operates on the shared context.
 ///
@@ -14,12 +18,17 @@ use crate::solver::TypeId;
 /// All type inference for expressions goes through this checker.
 pub struct ExpressionChecker<'a, 'ctx> {
     ctx: &'a mut CheckerContext<'ctx>,
+    /// Recursion depth counter for stack overflow protection
+    depth: Cell<u32>,
 }
 
 impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// Create a new expression checker with a mutable context reference.
     pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
-        Self { ctx }
+        Self {
+            ctx,
+            depth: Cell::new(0),
+        }
     }
 
     /// Check an expression and return its type.
@@ -27,14 +36,24 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// This is the main entry point for expression type checking.
     /// It handles caching and dispatches to specific expression handlers.
     pub fn check(&mut self, idx: NodeIndex) -> TypeId {
+        // Stack overflow protection
+        let current_depth = self.depth.get();
+        if current_depth >= MAX_EXPR_CHECK_DEPTH {
+            return TypeId::ERROR;
+        }
+        self.depth.set(current_depth + 1);
+
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            self.depth.set(current_depth);
             return cached;
         }
 
         // Compute and cache
         let result = self.compute_type(idx);
         self.ctx.node_types.insert(idx.0, result);
+
+        self.depth.set(current_depth);
         result
     }
 
