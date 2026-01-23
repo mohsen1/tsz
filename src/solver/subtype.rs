@@ -522,35 +522,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Tuple to array
             (TypeKey::Tuple(elems), TypeKey::Array(t_elem)) => {
-                // Tuple is subtype of array if all elements are subtypes
-                let elems = self.interner.tuple_list(*elems);
-                for elem in elems.iter() {
-                    if elem.rest {
-                        let expansion = self.expand_tuple_rest(elem.type_id);
-                        for fixed in expansion.fixed {
-                            if !self.check_subtype(fixed.type_id, *t_elem).is_true() {
-                                return SubtypeResult::False;
-                            }
-                        }
-                        if let Some(variadic) = expansion.variadic
-                            && !self.check_subtype(variadic, *t_elem).is_true()
-                        {
-                            return SubtypeResult::False;
-                        }
-                        // Check tail elements from nested tuple spreads
-                        for tail_elem in expansion.tail {
-                            if !self.check_subtype(tail_elem.type_id, *t_elem).is_true() {
-                                return SubtypeResult::False;
-                            }
-                        }
-                    } else {
-                        // Regular element: T <: U
-                        if !self.check_subtype(elem.type_id, *t_elem).is_true() {
-                            return SubtypeResult::False;
-                        }
-                    }
-                }
-                SubtypeResult::True
+                self.check_tuple_to_array_subtype(*elems, *t_elem)
             }
 
             // Array to tuple (variadic tuples with no required fixed elements only)
@@ -2902,6 +2874,45 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.allow_bivariant_param_count = prev_param_count;
         self.strict_function_types = prev;
         result
+    }
+
+    /// Check if a tuple type is a subtype of an array type.
+    ///
+    /// Tuple is subtype of array if all tuple elements are subtypes of the array element type.
+    /// Handles both regular elements and rest elements (with expansion).
+    fn check_tuple_to_array_subtype(
+        &mut self,
+        elems: TupleListId,
+        t_elem: TypeId,
+    ) -> SubtypeResult {
+        let elems = self.interner.tuple_list(elems);
+        for elem in elems.iter() {
+            if elem.rest {
+                let expansion = self.expand_tuple_rest(elem.type_id);
+                for fixed in expansion.fixed {
+                    if !self.check_subtype(fixed.type_id, t_elem).is_true() {
+                        return SubtypeResult::False;
+                    }
+                }
+                if let Some(variadic) = expansion.variadic
+                    && !self.check_subtype(variadic, t_elem).is_true()
+                {
+                    return SubtypeResult::False;
+                }
+                // Check tail elements from nested tuple spreads
+                for tail_elem in expansion.tail {
+                    if !self.check_subtype(tail_elem.type_id, t_elem).is_true() {
+                        return SubtypeResult::False;
+                    }
+                }
+            } else {
+                // Regular element: T <: U
+                if !self.check_subtype(elem.type_id, t_elem).is_true() {
+                    return SubtypeResult::False;
+                }
+            }
+        }
+        SubtypeResult::True
     }
 
     fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {
