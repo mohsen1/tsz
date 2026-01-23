@@ -2,30 +2,37 @@
 
 TypeScript compiler rewritten in Rust, compiled to WebAssembly. Goal: TSC compatibility with better performance.
 
-**Current Status:** Solver needs tuning - weak type checking is too strict, causing 12,122 extra TS2322 errors. Focus is on reducing false positives in the solver's assignability logic.
+**Current Status:** False positives have been fixed (no extra errors in top list). Now focusing on adding missing error detection.
 
-**Conformance Baseline (2026-01-22):** 36.3% pass rate (4,423/12,197 tests)
+**Conformance Baseline (2026-01-23):** 40.3% pass rate (4,919/12,197 tests) - up from 36.3%
 
 ---
 
-## Top Priority: Reduce False Positives (Extra Errors)
+## Top Priority: Add Missing Error Detection
 
-**Problem:** TSZ emits far too many incorrect errors, causing 63.7% test failure rate. The checker is **too strict**, not too lenient.
+**Problem:** TSZ is missing error detection for many cases. The checker is no longer too strict (no extra errors in top list).
 
-**Key Insight:** Extra errors (false positives) outnumber missing errors significantly. Fixing false positives will have higher impact on pass rate than adding missing errors.
+**Key Insight:** False positives have been fixed. Now focusing on adding missing error detection to improve coverage.
 
-### Top Extra Errors (False Positives)
+### RESOLVED: False Positives (Extra Errors)
 
-| Error Code | Extra Count | Description | Root Cause |
-|------------|-------------|-------------|------------|
-| TS2322 | 12,122x | Type not assignable | **Subtype checking too strict** |
-| TS2304 | 3,798x | Cannot find name | **Symbol resolution false negatives** |
-| TS2694 | 3,104x | Namespace has no exported member | **Export resolution broken** |
-| TS1005 | 2,706x | Expected X | **Parser error recovery** |
-| TS2552 | 1,825x | Cannot find name, did you mean? | **Suggestion logic triggering incorrectly** |
-| TS2571 | 1,698x | Object is of type unknown | **Type inference defaulting to unknown** |
-| TS2300 | 1,515x | Duplicate identifier | **Scope merging broken** |
-| TS2339 | 1,498x | Property does not exist | **Member lookup incomplete** |
+The following issues have been fixed:
+- TS2322 false positives - Removed duplicate weak type checking
+- TS2304 false positives - Fixed symbol resolution
+- Extra errors no longer appear in conformance top list
+
+### Top Missing Errors (Current Focus)
+
+| Error Code | Missing Count | Description | Priority |
+|------------|---------------|-------------|----------|
+| TS2304 | 4,581x | Cannot find name | HIGH |
+| TS2318 | 3,386x | Cannot find global type | HIGH |
+| TS2583 | 1,896x | Change target library? | MEDIUM |
+| TS2322 | 1,873x | Type not assignable (legitimate) | MEDIUM |
+| TS2488 | 1,780x | Type must have Symbol.iterator | MEDIUM |
+| TS2307 | 1,411x | Cannot find module | MEDIUM |
+| TS2339 | 943x | Property does not exist | MEDIUM |
+| TS2362 | 901x | Left-hand side arithmetic | LOW |
 
 ### Strategy: Fix Root Causes
 
