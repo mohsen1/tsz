@@ -3377,7 +3377,7 @@ fn env_flag(name: &str) -> bool {
     matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
 }
 
-pub(crate) fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) {
+pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) {
     if let Some(target) = args.target {
         options.printer.target = target.to_script_target();
     }

@@ -2,6 +2,7 @@ use super::args::CliArgs;
 use super::driver::{
     CompilationCache, compile, compile_with_cache, compile_with_cache_and_changes,
 };
+use clap::Parser;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -97,24 +98,8 @@ fn write_file(path: &Path, contents: &str) {
 }
 
 fn default_args() -> CliArgs {
-    CliArgs {
-        target: None,
-        module: None,
-        out_dir: None,
-        project: None,
-        strict: false,
-        no_emit: false,
-        types_versions_compiler_version: None,
-        watch: false,
-        files: Vec::new(),
-        root_dir: None,
-        declaration: false,
-        declaration_map: false,
-        source_map: false,
-        incremental: false,
-        out_file: None,
-        ts_build_info_file: None,
-    }
+    // Use clap's parser to create default args - this handles all the many fields automatically
+    CliArgs::try_parse_from(["tsz"]).expect("default args should parse")
 }
 
 #[test]
