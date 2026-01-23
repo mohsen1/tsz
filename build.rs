@@ -19,11 +19,6 @@ fn main() {
         println!("cargo:rustc-cfg=in_docker");
     }
 
-    // For development purposes, also allow running outside Docker
-    // by checking an environment variable
-    if std::env::var("ZANG_ALLOW_LOCAL_TESTS").is_ok() {
-        println!("cargo:rustc-cfg=in_docker");
-    }
 
     // Mark when running in CI (tests allowed outside Docker in CI)
     if std::env::var("CI").is_ok() {
