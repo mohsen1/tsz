@@ -497,7 +497,13 @@ impl<'a> AsyncES5Transformer<'a> {
 
             // Check if initializer contains await
             if !decl.initializer.is_none() && self.is_await_expression(decl.initializer) {
-                // var x = await foo(); -> yield foo(), then x = _a.sent()
+                // var x = await foo(); -> first declare var x, then yield foo(), then x = _a.sent()
+                // We need to declare the variable first to avoid ReferenceError in strict mode
+                current_statements.push(IRNode::VarDecl {
+                    name: name.clone(),
+                    initializer: None,
+                });
+
                 self.process_await_expression(
                     decl.initializer,
                     cases,
@@ -511,6 +517,26 @@ impl<'a> AsyncES5Transformer<'a> {
                         left: Box::new(IRNode::Identifier(name)),
                         operator: "=".to_string(),
                         right: Box::new(IRNode::GeneratorSent),
+                    },
+                )));
+            } else if !decl.initializer.is_none()
+                && self.contains_await_recursive(decl.initializer)
+            {
+                // Initializer contains await but is not a direct await expression
+                // (e.g., var x = (await foo()) + 1;)
+                // Declare variable first, then process
+                current_statements.push(IRNode::VarDecl {
+                    name: name.clone(),
+                    initializer: None,
+                });
+
+                // Process the expression which may have nested awaits
+                let init = self.expression_to_ir(decl.initializer);
+                current_statements.push(IRNode::ExpressionStatement(Box::new(
+                    IRNode::BinaryExpr {
+                        left: Box::new(IRNode::Identifier(name)),
+                        operator: "=".to_string(),
+                        right: Box::new(init),
                     },
                 )));
             } else {
@@ -1620,6 +1646,24 @@ mod tests {
     fn test_variable_with_await() {
         let output = transform_and_print("async function foo() { let x = await bar(); return x; }");
         assert!(output.contains("[4 /*yield*/"), "Should have yield");
+        assert!(
+            output.contains("var x;") || output.contains("var x\n"),
+            "Should declare var x before assignment to avoid ReferenceError: {}",
+            output
+        );
         assert!(output.contains("x = _a.sent()"), "Should assign _a.sent()");
+    }
+
+    #[test]
+    fn test_variable_declaration_order() {
+        // Verify that variable declaration comes before the yield
+        let output = transform_and_print("async function foo() { const result = await fetch(); }");
+        let var_pos = output.find("var result");
+        let yield_pos = output.find("[4 /*yield*/");
+        assert!(
+            var_pos.is_some() && yield_pos.is_some() && var_pos.unwrap() < yield_pos.unwrap(),
+            "Variable declaration must come before yield: {}",
+            output
+        );
     }
 }

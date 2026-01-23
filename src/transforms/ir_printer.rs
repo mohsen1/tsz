@@ -999,6 +999,18 @@ impl<'a> IRPrinter<'a> {
     }
 
     fn emit_property(&mut self, prop: &IRProperty) {
+        // Special case: spread property (key is "..." and value is SpreadElement)
+        // Should emit as `...expr` not `"...": ...expr`
+        if let IRPropertyKey::Identifier(name) = &prop.key {
+            if name == "..." {
+                if let IRNode::SpreadElement(inner) = &prop.value {
+                    self.write("...");
+                    self.emit_node(inner);
+                    return;
+                }
+            }
+        }
+
         match &prop.key {
             IRPropertyKey::Identifier(name) => self.write(name),
             IRPropertyKey::StringLiteral(s) => {
