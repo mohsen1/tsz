@@ -969,6 +969,7 @@ dependencies = [
  "indexmap",
  "memchr",
  "notify",
+ "once_cell",
  "rayon",
  "rustc-hash",
  "serde",

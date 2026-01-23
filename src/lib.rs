@@ -1,5 +1,9 @@
 use wasm_bindgen::prelude::*;
 
+// Shared test fixtures for reduced allocation overhead
+#[cfg(test)]
+pub mod test_fixtures;
+
 // String interning for identifier deduplication (Performance optimization)
 pub mod interner;
 pub use interner::{Atom, Interner, ShardedInterner};
@@ -53,7 +57,15 @@ pub mod emitter;
 #[cfg(test)]
 mod emitter_edge_case_tests;
 #[cfg(test)]
-mod emitter_parity_tests;
+mod emitter_parity_test_utils;
+#[cfg(test)]
+mod emitter_parity_tests_1;
+#[cfg(test)]
+mod emitter_parity_tests_2;
+#[cfg(test)]
+mod emitter_parity_tests_3;
+#[cfg(test)]
+mod emitter_parity_tests_4;
 #[cfg(test)]
 mod emitter_tests;
 #[cfg(test)]
@@ -89,7 +101,15 @@ mod comments_tests;
 // Source Map generation (Phase 6.2)
 pub mod source_map;
 #[cfg(test)]
-mod source_map_tests;
+mod source_map_test_utils;
+#[cfg(test)]
+mod source_map_tests_1;
+#[cfg(test)]
+mod source_map_tests_2;
+#[cfg(test)]
+mod source_map_tests_3;
+#[cfg(test)]
+mod source_map_tests_4;
 
 // SourceWriter - Abstraction for emitter output with source map tracking
 pub mod source_writer;

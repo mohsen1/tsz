@@ -42,6 +42,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # Trining s
 
 [dev-dependencies]
 criterion = "0.5"
+once_cell = "1.19"
+
+[profile.test]
+# Thin LTO for faster test binaries (trade-off: slightly slower test compilation)
+lto = "thin"
+
+[profile.bench]
+lto = "thin"
 
 [[bench]]
 name = "scanner_bench"
