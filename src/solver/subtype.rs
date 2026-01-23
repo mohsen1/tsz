@@ -1188,6 +1188,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check if two types are equivalent (bidirectional subtyping).
+    ///
+    /// Types are equivalent if each is a subtype of the other:
+    /// - `left <: right` AND `right <: left`
+    ///
+    /// This is stronger than simple equality - it handles structural equivalence
+    /// for complex types like objects, arrays, etc.
+    ///
+    /// ## Examples:
+    /// - `number` ≡ `number` ✅ (same type)
+    /// - `{ x: number }` ≡ `{ x: number }` ✅ (structural equivalence)
+    /// - `{ x: number }` ≢ `{ x: number; y: number }` ❌ (different properties)
+    /// - `T & U` ≡ `U & T` ✅ (intersection commutes)
+    ///
+    /// Note: For most type checking, unidirectional subtyping (`<:`) is used.
+    /// Equivalence (`≡`) is primarily for type parameter constraints and exact matching.
     fn types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
         self.check_subtype(left, right).is_true() && self.check_subtype(right, left).is_true()
     }
