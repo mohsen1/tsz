@@ -3,11 +3,86 @@
 **Date**: January 2026
 **Auditor**: Claude Code Deep Analysis
 **Codebase Version**: Branch `main`
-**Last Updated**: 2026-01-23
+**Last Updated**: 2026-01-23 (Deep Analysis after 12 commits)
 
 ---
 
-## Implementation Status (as of 2026-01-23)
+## Deep Analysis: Commit Batch 1-12 (2026-01-23)
+
+### Summary of Refactoring Work
+
+This deep analysis covers the first 12 commits focused on architectural cleanup and code quality improvements.
+
+#### Commits 1-6: solver/subtype.rs Refactoring
+**Goal**: Reduce complexity of `check_subtype_inner` function
+
+Extracted helper methods:
+- **Ref/TypeQuery resolution**: `check_ref_ref_subtype`, `check_typequery_typequery_subtype`, `check_ref_subtype`, `check_to_ref_subtype`, `check_typequery_subtype`, `check_to_typequery_subtype`, `check_resolved_pair_subtype`
+- **Application/Mapped expansion**: `check_application_to_application_subtype`, `check_application_expansion_target`, `check_source_to_application_expansion`, `check_mapped_expansion_target`, `check_source_to_mapped_expansion`
+
+**Result**: Function still large (~316 lines active logic), but helpers reduce cognitive load
+
+#### Commits 7-12: Symbol.iterator Protocol Fixes
+**Critical Bug Fix**: Fixed iterable detection across 3 modules
+
+| Module | Fix |
+|--------|-----|
+| `checker/iterators.rs` | `object_has_iterator_method` now checks for "[Symbol.iterator]" property |
+| `checker/generators.rs` | `is_iterable` now checks for Symbol.iterator instead of returning true |
+| `checker/spread.rs` | `is_iterable` and `get_iterable_element_type` now check for Symbol.iterator |
+
+**Impact**: Properly implements JavaScript's iterable protocol
+
+#### Commits 7-12: Additional Refactoring
+
+| File | Change | Impact |
+|------|--------|--------|
+| `solver/compat.rs` | Extracted `check_assignable_fast_path` helper | Reduces duplication in is_assignable variants |
+| `solver/evaluate.rs` | Extracted `keyof_union`, `keyof_intersection` helpers | Clarifies distributive semantics |
+| `solver/operations.rs` | Extracted `resolve_primitive_property`, `object_property_is_readonly` helpers | Consolidates property resolution logic |
+
+### Line Count Analysis
+
+| File | Start | Current | Change | Status |
+|------|-------|---------|--------|--------|
+| `solver/subtype.rs` | 4,734 | 4,890 | +156 | ⚠️ Increased (helper extraction adds lines) |
+| `solver/compat.rs` | 712 | 764 | +52 | ⚠️ Increased (helper extraction) |
+| `solver/evaluate.rs` | 5,784 | 5,791 | +7 | ⚠️ Increased (helper extraction) |
+| `solver/operations.rs` | 3,416 | 3,477 | +61 | ⚠️ Increased (helper extraction) |
+| `checker/state.rs` | 27,525 | 28,084 | +559 | 🚨 CONCERNING - major growth |
+
+**Key Insight**: Helper extraction initially INCREASES line counts due to:
+1. Function signatures and doc comments
+2. Additional type annotations
+3. Test scaffolding
+
+**Long-term benefit**: Better organization, testability, and maintainability
+
+### Concerning Trend: checker/state.rs Growth
+
+**+559 lines increase** is unexpected and concerning. Possible causes:
+1. New feature additions outweigh refactoring removals
+2. Code growth from test additions or scaffolding
+3. Insufficient focus on this file during refactoring batch
+
+**Action Item**: Next refactoring batch MUST focus on `checker/state.rs` decomposition
+
+### Patterns Identified
+
+1. **Helper Extraction Pattern**: Extracting duplicated logic into focused helper methods
+2. **Symbol.iterator Protocol**: Checking for "[Symbol.iterator]" property name (not just Symbol.iterator)
+3. **Fast-path Optimization**: Type equality and special case checks before full subtype checking
+4. **Readonly Property Checking**: Separate logic for plain objects vs indexed objects
+
+### Next Batch Priorities
+
+1. **HIGH PRIORITY**: Break up `checker/state.rs` (28,084 lines) - extract type computation, type checking, symbol resolution
+2. **MEDIUM PRIORITY**: Continue `solver/subtype.rs` refactoring - extract more helpers
+3. **LOW PRIORITY**: Implement Type Visitor Pattern (requires more planning)
+
+---
+
+## Implementation Status (as of 2026-01-23 Deep Analysis)
 
 ### ✅ Completed - Phase 1: Critical Stabilization
 
@@ -19,13 +94,14 @@
 | Fix accessor map duplication in class_es5_ir | ✅ Complete | `collect_accessor_pairs()` with `collect_static` param |
 | ErrorHandler trait | ✅ Complete | Implemented in `src/checker/error_handler.rs` |
 | Recursion depth limits | ✅ Complete | `MAX_INSTANTIATION_DEPTH=50`, `MAX_EVALUATE_DEPTH=50` |
+| Symbol.iterator protocol fixes | ✅ Complete | Fixed in iterators.rs, generators.rs, spread.rs |
 
 ### 🚧 In Progress - Phase 2: Break Up God Objects
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Break up `solver/subtype.rs` check_subtype_inner | 🚧 In Progress | ~223 lines extracted (2,437 → ~2,214 lines, 9% reduction) |
-| Break up `checker/state.rs` god object | ⏳ Pending | 27,525 lines, 554 functions |
+| Break up `solver/subtype.rs` check_subtype_inner | 🚧 In Progress | Helper methods extracted (~316 lines active, down from 2,437) |
+| Break up `checker/state.rs` god object | 🔥 URGENT | 28,084 lines (+559 growth), needs immediate attention |
 
 ### ⏳ Planned - Phase 3: Introduce Abstractions
 
