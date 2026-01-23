@@ -3225,7 +3225,22 @@ impl<'a> BinaryOpEvaluator<'a> {
         BinaryOpEvaluator { interner }
     }
 
-    /// Check if a type is number-like (number, number literal, numeric enum, or any)
+    /// Check if a type is number-like (number, number literal, numeric enum, or any).
+    ///
+    /// This is used for type inference in arithmetic expressions and overloaded operators.
+    /// A type is considered number-like if it is:
+    /// - The `number` intrinsic type
+    /// - A number literal (e.g., `42`, `3.14`)
+    /// - A union of number literals (numeric enum type)
+    /// - The `any` type (accepts all)
+    ///
+    /// ## Examples:
+    /// - `number` ✅
+    /// - `42` ✅ (number literal)
+    /// - `1 | 2 | 3` ✅ (numeric enum)
+    /// - `any` ✅
+    /// - `string` ❌
+    /// - `boolean` ❌
     fn is_number_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
             return true;
