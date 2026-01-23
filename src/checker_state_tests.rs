@@ -27541,3 +27541,281 @@ function createProgram(
         codes
     );
 }
+
+// =============================================================================
+// TS2531/TS2532 Strict Null Checks Property Access Tests
+// =============================================================================
+
+/// Test that TS2531 (Object is possibly 'null') is emitted for property access on null types
+#[test]
+fn test_ts2531_null_property_access() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+declare const maybeNull: { x: number } | null;
+const value = maybeNull.x;  // TS2531: Object is possibly 'null'
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    // Use default options which has strictNullChecks ON
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2531_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL)
+        .count();
+
+    assert!(
+        ts2531_count > 0,
+        "Expected TS2531 for property access on possibly null. Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Test that TS2532 (Object is possibly 'undefined') is emitted for property access on undefined types
+#[test]
+fn test_ts2532_undefined_property_access() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+declare const maybeUndefined: { x: number } | undefined;
+const value = maybeUndefined.x;  // TS2532: Object is possibly 'undefined'
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2532_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED)
+        .count();
+
+    assert!(
+        ts2532_count > 0,
+        "Expected TS2532 for property access on possibly undefined. Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Test that optional chaining (?.) suppresses TS2531/TS2532 errors
+#[test]
+fn test_optional_chaining_suppresses_null_errors() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+declare const maybeNull: { x: number } | null;
+const value = maybeNull?.x;  // No error - optional chaining
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let null_error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                || d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                || d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+        })
+        .count();
+
+    assert_eq!(
+        null_error_count, 0,
+        "Optional chaining should suppress null errors. Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Test that strictNullChecks OFF disables TS2531/TS2532 errors
+#[test]
+fn test_strict_null_checks_off_no_errors() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+declare const maybeNull: { x: number } | null;
+const value = maybeNull.x;  // No error when strictNullChecks is off
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+
+    // Create options with strictNullChecks OFF
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.strict_null_checks = false;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    let null_error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                || d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                || d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+        })
+        .count();
+
+    assert_eq!(
+        null_error_count, 0,
+        "strictNullChecks OFF should suppress null errors. Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Test TS2533 (Object is possibly 'null' or 'undefined') for union of null and undefined
+#[test]
+fn test_ts2533_null_or_undefined_property_access() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+declare const maybeNullOrUndefined: { x: number } | null | undefined;
+const value = maybeNullOrUndefined.x;  // TS2533: Object is possibly 'null' or 'undefined'
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    // Should have either TS2531, TS2532, or TS2533
+    let null_error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                || d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                || d.code == diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+        })
+        .count();
+
+    assert!(
+        null_error_count > 0,
+        "Expected TS2531/TS2532/TS2533 for property access on possibly null or undefined. Got: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
