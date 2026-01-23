@@ -1,6 +1,9 @@
 #!/bin/bash
 #
-# Install git hooks from .githooks directory
+# Install git hooks for Project Zang
+#
+# This script configures git to use the .githooks directory for hooks.
+# The hooks run formatting, clippy, and unit tests before commits.
 #
 
 set -e
@@ -8,30 +11,33 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GITHOOKS_DIR="$ROOT_DIR/.githooks"
-GIT_HOOKS_DIR="$ROOT_DIR/.git/hooks"
 
-echo "📦 Installing git hooks..."
+echo "Installing git hooks..."
 
 # Check if .githooks directory exists
 if [ ! -d "$GITHOOKS_DIR" ]; then
-    echo "❌ .githooks directory not found"
+    echo "Error: .githooks directory not found"
     exit 1
 fi
 
-# Create symlink for each hook
-for hook in "$GITHOOKS_DIR"/*; do
-    hook_name=$(basename "$hook")
-    target="$GIT_HOOKS_DIR/$hook_name"
+# Check if we're in a git repository
+if ! git -C "$ROOT_DIR" rev-parse --git-dir > /dev/null 2>&1; then
+    echo "Error: Not a git repository"
+    exit 1
+fi
 
-    # Remove existing hook
-    if [ -e "$target" ]; then
-        rm "$target"
-    fi
+# Configure git to use .githooks directory
+# This is the modern approach - no symlinks needed
+git -C "$ROOT_DIR" config core.hooksPath .githooks
 
-    # Create symlink
-    ln -s "$GITHOOKS_DIR/$hook_name" "$target"
-    echo "✅ Installed $hook_name"
-done
-
+echo "Git hooks installed successfully!"
 echo ""
-echo "✅ Git hooks installed successfully!"
+echo "The following hooks are now active:"
+for hook in "$GITHOOKS_DIR"/*; do
+    if [ -f "$hook" ] && [ -x "$hook" ]; then
+        hook_name=$(basename "$hook")
+        echo "  - $hook_name"
+    fi
+done
+echo ""
+echo "To disable hooks temporarily, use: git commit --no-verify"
