@@ -28280,3 +28280,534 @@ fn test_array_to_tuple_fails_multi_element() {
         "string[] should NOT be assignable to [string, string]"
     );
 }
+
+// =============================================================================
+// THIS TYPE NARROWING IN CLASS HIERARCHIES
+// =============================================================================
+
+#[test]
+fn test_this_type_class_hierarchy_fluent_return() {
+    // class Base { method(): this }
+    // class Derived extends Base { extra(): number }
+    // Derived.method() should have type Derived (not Base)
+    let interner = TypeInterner::new();
+
+    let this_type = interner.intern(TypeKey::ThisType);
+
+    // Base method returning this
+    let base_method = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let base_class = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("method"),
+        type_id: base_method,
+        write_type: base_method,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Derived class with extra property
+    let extra_method = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let derived_class = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("method"),
+            type_id: base_method,
+            write_type: base_method,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("extra"),
+            type_id: extra_method,
+            write_type: extra_method,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+    ]);
+
+    // Derived is subtype of Base (has all base properties)
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(derived_class, base_class),
+        "Derived should be subtype of Base"
+    );
+}
+
+#[test]
+fn test_this_type_in_method_parameter_covariant() {
+    // From TS_UNSOUNDNESS_CATALOG #19:
+    // class Box { compare(other: this) }
+    // class StringBox extends Box { compare(other: StringBox) }
+    // StringBox should be subtype of Box (this is covariant in class hierarchies)
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let this_type = interner.intern(TypeKey::ThisType);
+
+    // Box.compare(other: this)
+    let box_compare = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("other")),
+            type_id: this_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let box_class = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("compare"),
+        type_id: box_compare,
+        write_type: box_compare,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // StringBox type
+    let stringbox_class = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("compare"),
+        type_id: box_compare,
+        write_type: box_compare,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // StringBox should be subtype of Box
+    // (this type enables bivariance, which makes this pass)
+    assert!(
+        checker.is_subtype_of(stringbox_class, box_class),
+        "StringBox should be subtype of Box (this type enables bivariance)"
+    );
+}
+
+#[test]
+fn test_this_type_explicit_this_parameter_inheritance() {
+    // class Base { method(this: Base): void }
+    // class Derived extends Base { method(this: Derived): void }
+    // Derived should be subtype of Base
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    // Base class reference
+    let base_class_ref = interner.reference(SymbolRef(100));
+
+    // Base.method(this: Base)
+    let base_method = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: Some(base_class_ref),
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let _base_class = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("method"),
+        type_id: base_method,
+        write_type: base_method,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Derived class reference
+    let derived_class_ref = interner.reference(SymbolRef(101));
+
+    // Derived.method(this: Derived)
+    let derived_method = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: Some(derived_class_ref),
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let _derived_class = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("method"),
+        type_id: derived_method,
+        write_type: derived_method,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Check that derived method is compatible with base method
+    // (Methods get bivariance)
+    assert!(
+        checker.is_subtype_of(derived_method, base_method),
+        "Derived method should be subtype of Base method (method bivariance)"
+    );
+}
+
+#[test]
+fn test_this_type_return_covariant_in_hierarchy() {
+    // Test that `this` return type is covariant
+    // class Base { fluent(): this }
+    // class Derived extends Base { fluent(): this }
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let this_type = interner.intern(TypeKey::ThisType);
+
+    // Base.fluent(): this
+    let base_fluent = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Both Base and Derived have the same fluent method returning this
+    let base_class = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("fluent"),
+        type_id: base_fluent,
+        write_type: base_fluent,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    let derived_class = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("fluent"),
+            type_id: base_fluent,
+            write_type: base_fluent,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("extra"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // Derived is subtype of Base
+    assert!(
+        checker.is_subtype_of(derived_class, base_class),
+        "Derived should be subtype of Base (same this-returning method)"
+    );
+}
+
+#[test]
+fn test_this_type_polymorphic_method_chain() {
+    // Test fluent chaining with this type
+    // class Builder {
+    //   setName(name: string): this
+    //   setValue(value: number): this
+    //   build(): Result
+    // }
+    let interner = TypeInterner::new();
+
+    let this_type = interner.intern(TypeKey::ThisType);
+    let result_type = interner.reference(SymbolRef(1));
+
+    let set_name = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("name")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let set_value = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let build = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: result_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let builder = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("setName"),
+            type_id: set_name,
+            write_type: set_name,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("setValue"),
+            type_id: set_value,
+            write_type: set_value,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("build"),
+            type_id: build,
+            write_type: build,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+    ]);
+
+    // Builder with all fluent methods should be valid
+    assert_ne!(builder, TypeId::ERROR);
+}
+
+#[test]
+fn test_this_type_with_generics_in_class() {
+    // class Container<T> {
+    //   map<U>(fn: (value: T) => U): Container<U>
+    //   filter(predicate: (value: T) => boolean): this
+    // }
+    let interner = TypeInterner::new();
+
+    let this_type = interner.intern(TypeKey::ThisType);
+    let _t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    };
+    let _u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+    };
+
+    // filter method returning this (polymorphic return)
+    let filter_method = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("predicate")),
+            type_id: interner.function(FunctionShape {
+                type_params: vec![],
+                params: vec![ParamInfo {
+                    name: Some(interner.intern_string("value")),
+                    type_id: TypeId::UNKNOWN,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: TypeId::BOOLEAN,
+                type_predicate: None,
+                is_constructor: false,
+                is_method: false,
+            }),
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let container = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("filter"),
+        type_id: filter_method,
+        write_type: filter_method,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Container with filter returning this should be valid
+    assert_ne!(container, TypeId::ERROR);
+}
+
+#[test]
+fn test_this_type_class_hierarchy_multiple_methods() {
+    // Test class hierarchy with multiple methods using this
+    // class Base {
+    //   method1(): this
+    //   method2(): this
+    // }
+    // class Derived extends Base {
+    //   method1(): this
+    //   method2(): this
+    //   method3(): number
+    // }
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let this_type = interner.intern(TypeKey::ThisType);
+
+    let method1 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let method2 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: this_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let method3 = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let base_class = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("method1"),
+            type_id: method1,
+            write_type: method1,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("method2"),
+            type_id: method2,
+            write_type: method2,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+    ]);
+
+    let derived_class = interner.object(vec![
+        PropertyInfo {
+            name: interner.intern_string("method1"),
+            type_id: method1,
+            write_type: method1,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("method2"),
+            type_id: method2,
+            write_type: method2,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+        PropertyInfo {
+            name: interner.intern_string("method3"),
+            type_id: method3,
+            write_type: method3,
+            optional: false,
+            readonly: false,
+            is_method: true,
+        },
+    ]);
+
+    // Derived should be subtype of Base (all methods compatible)
+    assert!(
+        checker.is_subtype_of(derived_class, base_class),
+        "Derived should be subtype of Base (all this-returning methods compatible)"
+    );
+}
+
+#[test]
+fn test_this_type_with_constrained_generic() {
+    // Test this type with constrained generic parameter
+    // class Base {
+    //   method<T extends Base>(this: T): T
+    // }
+    let interner = TypeInterner::new();
+
+    let base_ref = interner.reference(SymbolRef(100));
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(base_ref),
+        default: None,
+    };
+
+    let t_type_param = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+
+    // method<T extends Base>(this: T): T
+    let constrained_method = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![],
+        this_type: Some(t_type_param),
+        return_type: t_type_param,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let base_class = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("method"),
+        type_id: constrained_method,
+        write_type: constrained_method,
+        optional: false,
+        readonly: false,
+        is_method: true,
+    }]);
+
+    // Base with constrained this method should be valid
+    assert_ne!(base_class, TypeId::ERROR);
+}

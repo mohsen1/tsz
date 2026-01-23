@@ -23,6 +23,7 @@ pub mod context;
 pub mod control_flow;
 pub mod declarations;
 pub mod decorators;
+pub mod error_handler;
 pub mod error_reporter;
 pub mod expr;
 pub mod flow_analyzer;

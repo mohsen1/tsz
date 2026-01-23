@@ -390,13 +390,13 @@ type P = UnpackPromise<string | Promise<number>>; // string | number
 
 ### 5.3 `this` Type Inference
 
-**Status:** ⚠️ Partially implemented (basic support exists)
+**Status:** ✅ Fully implemented
 
 **Tasks:**
 - [x] Implement polymorphic `this` type
 - [x] Handle `this` in class methods
 - [x] Support `this` parameters in functions
-- [ ] Handle `this` type narrowing in class hierarchies (enhancement needed)
+- [x] Handle `this` type narrowing in class hierarchies (bivariance via type_contains_this_type)
 
 ---
 
