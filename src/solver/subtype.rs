@@ -1264,6 +1264,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         false
     }
 
+    /// Check if a type is the "object" keyword type or compatible.
+    ///
+    /// The "object" keyword type represents any non-primitive type and is
+    /// compatible with most types in structural type checking.
+    ///
+    /// ## Compatible with object keyword:
+    /// - `object` (the intrinsic type itself)
+    /// - `any` (top type)
+    /// - `never` (bottom type)
+    /// - `error` (error type)
+    /// - Most structural types (objects, arrays, functions, etc.)
+    ///
+    /// ## NOT compatible with object keyword:
+    /// - Primitives (string, number, boolean, bigint, symbol, null, undefined, void)
+    ///
+    /// This is used in subtype checking to determine when structural typing rules apply.
     fn is_object_keyword_type(&mut self, source: TypeId) -> bool {
         match source {
             TypeId::ANY | TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
