@@ -15,6 +15,7 @@ use crate::lib_loader;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::solver::{TypeId, TypeInterner};
+use crate::test_fixtures::TestContext;
 
 // =============================================================================
 // Basic Type Checker Tests
@@ -22,16 +23,8 @@ use crate::solver::{TypeId, TypeInterner};
 
 #[test]
 fn test_checker_creation() {
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let types = TypeInterner::new();
-    let checker = CheckerState::new(
-        &arena,
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
-    );
+    let ctx = TestContext::new();
+    let checker = ctx.checker();
 
     // Basic sanity check
     assert!(checker.ctx.diagnostics.is_empty());
@@ -39,16 +32,8 @@ fn test_checker_creation() {
 
 #[test]
 fn test_checker_basic_types() {
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let types = TypeInterner::new();
-    let _checker = CheckerState::new(
-        &arena,
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
-    );
+    let ctx = TestContext::new();
+    let _checker = ctx.checker();
 
     // Verify intrinsic TypeIds are constants (compile-time values)
     assert_eq!(TypeId::NUMBER.0, 9);
@@ -60,16 +45,8 @@ fn test_checker_basic_types() {
 
 #[test]
 fn test_checker_type_interner() {
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let types = TypeInterner::new();
-    let checker = CheckerState::new(
-        &arena,
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
-    );
+    let ctx = TestContext::new();
+    let checker = ctx.checker();
 
     // Test that TypeInterner is properly initialized
     // Intrinsics should be pre-registered
@@ -80,16 +57,8 @@ fn test_checker_type_interner() {
 
 #[test]
 fn test_checker_structural_equality() {
-    let arena = NodeArena::new();
-    let binder = BinderState::new();
-    let types = TypeInterner::new();
-    let checker = CheckerState::new(
-        &arena,
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
-    );
+    let ctx = TestContext::new();
+    let checker = ctx.checker();
 
     // Test structural equality via TypeInterner
     // Same string literal should get same TypeId
