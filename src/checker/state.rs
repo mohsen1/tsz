@@ -14849,17 +14849,12 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a name is a Node.js runtime global that is always available.
     /// These globals are injected by the Node.js runtime and don't require lib.d.ts.
+    /// Note: console, globalThis, and process are NOT included here because they
+    /// require proper lib definitions (lib.dom.d.ts, lib.es2020.d.ts, @types/node).
     fn is_nodejs_runtime_global(&self, name: &str) -> bool {
         matches!(
             name,
-            "exports"
-                | "module"
-                | "require"
-                | "__dirname"
-                | "__filename"
-                | "globalThis"
-                | "console" // Available in both Node.js and browsers
-                | "process" // Node.js process object
+            "exports" | "module" | "require" | "__dirname" | "__filename"
         )
     }
 
