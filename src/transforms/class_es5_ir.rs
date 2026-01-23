@@ -73,6 +73,7 @@ use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::*;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
@@ -865,12 +866,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     && !method_data.asterisk_token;
 
                 let method_body = if is_async {
-                    // Async method: wrap body in __awaiter call
+                    // Async method: use async transformer to build proper generator body
+                    let mut async_transformer = AsyncES5Transformer::new(self.arena);
+                    let has_await = async_transformer.body_contains_await(method_data.body);
+                    let generator_body = async_transformer.transform_generator_body(method_data.body, has_await);
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
-                        generator_body: Box::new(IRNode::Block(
-                            self.convert_block_body(method_data.body),
-                        )),
+                        generator_body: Box::new(generator_body),
                     }]
                 } else {
                     self.convert_block_body(method_data.body)
@@ -1058,12 +1060,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     && !method_data.asterisk_token;
 
                 let method_body = if is_async {
-                    // Async method: wrap body in __awaiter call
+                    // Async method: use async transformer to build proper generator body
+                    let mut async_transformer = AsyncES5Transformer::new(self.arena);
+                    let has_await = async_transformer.body_contains_await(method_data.body);
+                    let generator_body = async_transformer.transform_generator_body(method_data.body, has_await);
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
-                        generator_body: Box::new(IRNode::Block(
-                            self.convert_block_body(method_data.body),
-                        )),
+                        generator_body: Box::new(generator_body),
                     }]
                 } else {
                     self.convert_block_body(method_data.body)
