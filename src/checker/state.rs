@@ -8303,6 +8303,13 @@ impl<'a> CheckerState<'a> {
 
         // args is already defined above before the ANY/ERROR check
 
+        // Validate explicit type arguments against constraints (TS2344)
+        if let Some(ref type_args_list) = call.type_arguments
+            && !type_args_list.nodes.is_empty()
+        {
+            self.validate_call_type_arguments(callee_type, type_args_list, idx);
+        }
+
         let overload_signatures = match self.ctx.types.lookup(callee_type) {
             Some(TypeKey::Callable(shape_id)) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
@@ -8397,12 +8404,22 @@ impl<'a> CheckerState<'a> {
                 actual,
             } => {
                 // Report error at the specific argument
-                if index < args.len() {
-                    let arg_idx = args[index];
+                // Map the expanded index back to the original argument node
+                // When spread arguments are expanded, the index may exceed args.len()
+                let arg_idx = self.map_expanded_arg_index_to_original(args, index);
+                if let Some(arg_idx) = arg_idx {
                     if !(check_excess_properties
                         && self.should_skip_weak_union_error(actual, expected, arg_idx))
                     {
                         self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                    }
+                } else if !args.is_empty() {
+                    // Fall back to the last argument (typically the spread) if mapping fails
+                    let last_arg = args[args.len() - 1];
+                    if !(check_excess_properties
+                        && self.should_skip_weak_union_error(actual, expected, last_arg))
+                    {
+                        self.error_argument_not_assignable_at(actual, expected, last_arg);
                     }
                 }
                 TypeId::ERROR
@@ -8981,6 +8998,70 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Map an expanded argument index back to the original argument node index.
+    /// This handles spread arguments that expand to multiple elements.
+    /// Returns None if the index doesn't map to a valid argument.
+    fn map_expanded_arg_index_to_original(
+        &self,
+        args: &[NodeIndex],
+        expanded_index: usize,
+    ) -> Option<NodeIndex> {
+        use crate::solver::TypeKey;
+
+        let mut current_expanded_index = 0;
+
+        for &arg_idx in args.iter() {
+            if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
+                // Check if this is a spread element
+                if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+                {
+                    // Try to get the cached type, fall back to looking up directly
+                    let spread_type = self
+                        .ctx
+                        .node_types
+                        .get(&spread_data.expression.0)
+                        .copied()
+                        .unwrap_or(TypeId::ANY);
+                    let spread_type = self.resolve_type_for_property_access_simple(spread_type);
+
+                    // If it's a tuple type, it expands to multiple elements
+                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
+                        let elems = self.ctx.types.tuple_list(elems_id);
+                        let end_index = current_expanded_index + elems.len();
+                        if expanded_index >= current_expanded_index && expanded_index < end_index {
+                            // The error is within this spread - report at the spread node
+                            return Some(arg_idx);
+                        }
+                        current_expanded_index = end_index;
+                        continue;
+                    }
+                }
+            }
+
+            // Non-spread or non-tuple spread: takes one slot
+            if expanded_index == current_expanded_index {
+                return Some(arg_idx);
+            }
+            current_expanded_index += 1;
+        }
+
+        None
+    }
+
+    /// Simple type resolution for property access - doesn't trigger new type computation.
+    fn resolve_type_for_property_access_simple(&self, type_id: TypeId) -> TypeId {
+        use crate::solver::TypeKey;
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Application(app_id)) => {
+                let app = self.ctx.types.type_application(app_id);
+                app.base
+            }
+            _ => type_id,
+        }
+    }
+
     fn resolve_overloaded_call_with_signatures(
         &mut self,
         args: &[NodeIndex],
@@ -9092,6 +9173,14 @@ impl<'a> CheckerState<'a> {
 
         // Get the type of the constructor expression
         let constructor_type = self.get_type_of_node(new_expr.expression);
+
+        // Validate explicit type arguments against constraints (TS2344)
+        if let Some(ref type_args_list) = new_expr.type_arguments
+            && !type_args_list.nodes.is_empty()
+        {
+            self.validate_new_expression_type_arguments(constructor_type, type_args_list, idx);
+        }
+
         // If the `new` expression provides explicit type arguments (`new Foo<T>()`),
         // instantiate the constructor signatures with those args so we don't fall back to
         // inference (and so we match tsc behavior).
@@ -15798,6 +15887,184 @@ impl<'a> CheckerState<'a> {
             );
             self.ctx.diagnostics.push(Diagnostic {
                 code: 2694,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
+    /// Validate explicit type arguments against their constraints for call expressions.
+    /// Reports TS2344 when a type argument doesn't satisfy its constraint.
+    fn validate_call_type_arguments(
+        &mut self,
+        callee_type: TypeId,
+        type_args_list: &crate::parser::NodeList,
+        _call_idx: NodeIndex,
+    ) {
+        use crate::solver::{AssignabilityChecker, TypeKey};
+
+        // Get the type parameters from the callee type
+        let type_params = match self.ctx.types.lookup(callee_type) {
+            Some(TypeKey::Function(shape_id)) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                shape.type_params.clone()
+            }
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                // For callable types, use the first signature's type params
+                shape
+                    .call_signatures
+                    .first()
+                    .map(|sig| sig.type_params.clone())
+                    .unwrap_or_default()
+            }
+            _ => return,
+        };
+
+        if type_params.is_empty() {
+            return;
+        }
+
+        // Collect the provided type arguments
+        let type_args: Vec<TypeId> = type_args_list
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect();
+
+        for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
+            if let Some(constraint) = param.constraint {
+                // Instantiate the constraint with already-validated type arguments
+                let instantiated_constraint = if i > 0 {
+                    let mut subst = crate::solver::TypeSubstitution::new();
+                    for (j, p) in type_params.iter().take(i).enumerate() {
+                        if let Some(&arg) = type_args.get(j) {
+                            subst.insert(p.name, arg);
+                        }
+                    }
+                    crate::solver::instantiate_type(self.ctx.types, constraint, &subst)
+                } else {
+                    constraint
+                };
+
+                let is_satisfied = {
+                    let env = self.ctx.type_env.borrow();
+                    let mut checker =
+                        crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
+                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
+                    checker.is_assignable_to(type_arg, instantiated_constraint)
+                };
+
+                if !is_satisfied {
+                    // Report TS2344 at the specific type argument node
+                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Validate explicit type arguments against their constraints for new expressions.
+    /// Reports TS2344 when a type argument doesn't satisfy its constraint.
+    fn validate_new_expression_type_arguments(
+        &mut self,
+        constructor_type: TypeId,
+        type_args_list: &crate::parser::NodeList,
+        _call_idx: NodeIndex,
+    ) {
+        use crate::solver::{AssignabilityChecker, TypeKey};
+
+        // Get the type parameters from the constructor type
+        let type_params = match self.ctx.types.lookup(constructor_type) {
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                // For callable types, use the first construct signature's type params
+                shape
+                    .construct_signatures
+                    .first()
+                    .map(|sig| sig.type_params.clone())
+                    .unwrap_or_default()
+            }
+            _ => return,
+        };
+
+        if type_params.is_empty() {
+            return;
+        }
+
+        // Collect the provided type arguments
+        let type_args: Vec<TypeId> = type_args_list
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect();
+
+        for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
+            if let Some(constraint) = param.constraint {
+                // Instantiate the constraint with already-validated type arguments
+                let instantiated_constraint = if i > 0 {
+                    let mut subst = crate::solver::TypeSubstitution::new();
+                    for (j, p) in type_params.iter().take(i).enumerate() {
+                        if let Some(&arg) = type_args.get(j) {
+                            subst.insert(p.name, arg);
+                        }
+                    }
+                    crate::solver::instantiate_type(self.ctx.types, constraint, &subst)
+                } else {
+                    constraint
+                };
+
+                let is_satisfied = {
+                    let env = self.ctx.type_env.borrow();
+                    let mut checker =
+                        crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
+                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
+                    checker.is_assignable_to(type_arg, instantiated_constraint)
+                };
+
+                if !is_satisfied {
+                    // Report TS2344 at the specific type argument node
+                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Report TS2344: Type does not satisfy constraint.
+    fn error_type_constraint_not_satisfied(
+        &mut self,
+        type_arg: TypeId,
+        constraint: TypeId,
+        idx: NodeIndex,
+    ) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        if let Some(loc) = self.get_source_location(idx) {
+            let type_str = self.format_type(type_arg);
+            let constraint_str = self.format_type(constraint);
+            let message = format_message(
+                diagnostic_messages::TYPE_NOT_SATISFY_CONSTRAINT,
+                &[&type_str, &constraint_str],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::TYPE_PARAMETER_CONSTRAINT_NOT_SATISFIED,
                 category: DiagnosticCategory::Error,
                 message_text: message,
                 start: loc.start,
