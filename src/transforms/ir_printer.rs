@@ -220,7 +220,10 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                if *is_expression_body
+                // Check if we have default params (don't use short-form for expression body with defaults)
+                let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
+                if !has_defaults
+                    && *is_expression_body
                     && body.len() == 1
                     && let IRNode::ReturnStatement(Some(expr)) = &body[0]
                 {
@@ -229,7 +232,7 @@ impl<'a> IRPrinter<'a> {
                     self.write("; }");
                     return;
                 }
-                self.emit_block(body);
+                self.emit_function_body_with_defaults(parameters, body);
             }
             IRNode::LogicalOr { left, right } => {
                 self.emit_node(left);
@@ -409,7 +412,7 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                self.emit_block(body);
+                self.emit_function_body_with_defaults(parameters, body);
             }
 
             // ES5 Class Transform Specific
@@ -967,6 +970,47 @@ impl<'a> IRPrinter<'a> {
         self.increase_indent();
 
         for stmt in stmts {
+            self.write_indent();
+            self.emit_node(stmt);
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+    }
+
+    /// Emit function body with default parameter checks prepended (ES5 style)
+    fn emit_function_body_with_defaults(&mut self, params: &[IRParam], body: &[IRNode]) {
+        // Check if any params have defaults
+        let has_defaults = params.iter().any(|p| p.default_value.is_some());
+
+        if !has_defaults && body.is_empty() {
+            self.write("{ }");
+            return;
+        }
+
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit default parameter checks: if (param === void 0) { param = default; }
+        for param in params {
+            if let Some(default) = &param.default_value {
+                self.write_indent();
+                self.write("if (");
+                self.write(&param.name);
+                self.write(" === void 0) { ");
+                self.write(&param.name);
+                self.write(" = ");
+                self.emit_node(default);
+                self.write("; }");
+                self.write_line();
+            }
+        }
+
+        // Emit the rest of the body
+        for stmt in body {
             self.write_indent();
             self.emit_node(stmt);
             self.write_line();

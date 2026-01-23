@@ -62,7 +62,14 @@ fn install_git_hooks() {
 
     // Check if any hooks path is already configured (don't overwrite user's setup)
     let output = Command::new("git")
-        .args(["-C", manifest_dir.to_str().unwrap_or("."), "config", "--local", "--get", "core.hooksPath"])
+        .args([
+            "-C",
+            manifest_dir.to_str().unwrap_or("."),
+            "config",
+            "--local",
+            "--get",
+            "core.hooksPath",
+        ])
         .output();
 
     match output {
@@ -82,7 +89,14 @@ fn install_git_hooks() {
 
     // Configure git to use .githooks directory (scoped to local repo only)
     let result = Command::new("git")
-        .args(["-C", manifest_dir.to_str().unwrap_or("."), "config", "--local", "core.hooksPath", ".githooks"])
+        .args([
+            "-C",
+            manifest_dir.to_str().unwrap_or("."),
+            "config",
+            "--local",
+            "core.hooksPath",
+            ".githooks",
+        ])
         .status();
 
     if let Ok(status) = result {
