@@ -10,8 +10,8 @@
 //! - TypeResolver trait for lazy symbol resolution
 
 use crate::interner::Atom;
-use crate::solver::infer::InferenceContext;
 use crate::solver::types::*;
+use crate::solver::utils;
 use crate::solver::{
     ApparentMemberKind, AssignabilityChecker, TypeDatabase, apparent_primitive_members,
 };
@@ -2354,7 +2354,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut checked = false;
         let target_type = self.optional_property_type(target_prop);
 
-        if self.is_numeric_property_name(target_prop.name)
+        if utils::is_numeric_property_name(self.interner, target_prop.name)
             && let Some(number_idx) = &source.number_index
         {
             checked = true;
@@ -2414,7 +2414,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let allow_bivariant = prop.is_method;
 
             if let Some(number_idx) = number_index {
-                let is_numeric = self.is_numeric_property_name(prop.name);
+                let is_numeric = utils::is_numeric_property_name(self.interner, prop.name);
                 if is_numeric
                     && !self
                         .check_subtype_with_method_variance(
@@ -2876,11 +2876,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             prop.write_type
         }
-    }
-
-    fn is_numeric_property_name(&self, name: Atom) -> bool {
-        let prop_name = self.interner.resolve_atom_ref(name);
-        InferenceContext::is_numeric_literal_name(prop_name.as_ref())
     }
 
     /// Check function subtyping
@@ -4120,7 +4115,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let mut checked = false;
             let target_type = self.optional_property_type(t_prop);
 
-            if self.is_numeric_property_name(t_prop.name)
+            if utils::is_numeric_property_name(self.interner, t_prop.name)
                 && let Some(number_idx) = &source_shape.number_index
             {
                 checked = true;
@@ -4197,7 +4192,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let allow_bivariant = prop.is_method;
 
             if let Some(number_idx) = number_index {
-                let is_numeric = self.is_numeric_property_name(prop.name);
+                let is_numeric = utils::is_numeric_property_name(self.interner, prop.name);
                 if is_numeric {
                     if !number_idx.readonly && prop.readonly {
                         return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {

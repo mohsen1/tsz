@@ -111,6 +111,18 @@ struct FlowResult {
     exits: Option<FxHashSet<PropertyKey>>,
 }
 
+/// Mode for resolving parameter types during extraction.
+/// Used to consolidate duplicate parameter extraction functions.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ParamTypeResolutionMode {
+    /// Use `get_type_from_type_node_in_type_literal` - for type literal contexts
+    InTypeLiteral,
+    /// Use `get_type_from_type_node` - for declaration contexts
+    FromTypeNode,
+    /// Use `get_type_of_node` - for expression/general contexts
+    OfNode,
+}
+
 // =============================================================================
 // AssignabilityOverrideProvider Implementation
 // =============================================================================
@@ -3504,74 +3516,7 @@ impl<'a> CheckerState<'a> {
             return (Vec::new(), None);
         };
 
-        self.extract_params_from_parameter_list_in_type_literal(params_list)
-    }
-
-    fn extract_params_from_parameter_list_in_type_literal(
-        &mut self,
-        params_list: &crate::parser::NodeList,
-    ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
-        use crate::solver::ParamInfo;
-
-        let mut params = Vec::new();
-        let mut this_type = None;
-        let this_atom = self.ctx.types.intern_string("this");
-
-        for &param_idx in &params_list.nodes {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            let type_id = if !param.type_annotation.is_none() {
-                self.get_type_from_type_node_in_type_literal(param.type_annotation)
-            } else {
-                TypeId::ANY
-            };
-
-            let name_node = self.ctx.arena.get(param.name);
-            if let Some(name_node) = name_node
-                && name_node.kind == SyntaxKind::ThisKeyword as u16
-            {
-                if this_type.is_none() {
-                    this_type = Some(type_id);
-                }
-                continue;
-            }
-
-            let name: Option<Atom> = if let Some(name_node) = name_node {
-                if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
-                    Some(self.ctx.types.intern_string(&name_data.escaped_text))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            let optional = param.question_token || !param.initializer.is_none();
-            let rest = param.dot_dot_dot_token;
-
-            if let Some(name_atom) = name
-                && name_atom == this_atom
-            {
-                if this_type.is_none() {
-                    this_type = Some(type_id);
-                }
-                continue;
-            }
-
-            params.push(ParamInfo {
-                name,
-                type_id,
-                optional,
-                rest,
-            });
-        }
-
-        (params, this_type)
+        self.extract_params_from_parameter_list_impl(params_list, ParamTypeResolutionMode::InTypeLiteral)
     }
 
     /// Get type from a type literal node ({ x: T }).
@@ -4598,67 +4543,27 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sig: &crate::parser::node::SignatureData,
     ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
-        use crate::solver::ParamInfo;
-
         let Some(ref params_list) = sig.parameters else {
             return (Vec::new(), None);
         };
 
-        let mut params = Vec::new();
-        let mut this_type = None;
-        let this_atom = self.ctx.types.intern_string("this");
-
-        for &param_idx in &params_list.nodes {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            let name: Option<Atom> = if let Some(name_node) = self.ctx.arena.get(param.name) {
-                if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
-                    Some(self.ctx.types.intern_string(&name_data.escaped_text))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            let type_id = if !param.type_annotation.is_none() {
-                self.get_type_of_node(param.type_annotation)
-            } else {
-                TypeId::ANY
-            };
-
-            let optional = param.question_token || !param.initializer.is_none();
-            let rest = param.dot_dot_dot_token;
-
-            if let Some(name_atom) = name
-                && name_atom == this_atom
-            {
-                if this_type.is_none() {
-                    this_type = Some(type_id);
-                }
-                continue;
-            }
-
-            params.push(ParamInfo {
-                name,
-                type_id,
-                optional,
-                rest,
-            });
-        }
-
-        (params, this_type)
+        self.extract_params_from_parameter_list_impl(params_list, ParamTypeResolutionMode::OfNode)
     }
 
     /// Helper to extract parameters from a parameter list.
     fn extract_params_from_parameter_list(
         &mut self,
         params_list: &crate::parser::NodeList,
+    ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
+        self.extract_params_from_parameter_list_impl(params_list, ParamTypeResolutionMode::FromTypeNode)
+    }
+
+    /// Unified implementation for extracting parameters from a parameter list.
+    /// The `mode` parameter controls which type resolution method is used.
+    fn extract_params_from_parameter_list_impl(
+        &mut self,
+        params_list: &crate::parser::NodeList,
+        mode: ParamTypeResolutionMode,
     ) -> (Vec<crate::solver::ParamInfo>, Option<TypeId>) {
         use crate::solver::ParamInfo;
 
@@ -4674,12 +4579,24 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Resolve parameter type based on mode
             let type_id = if !param.type_annotation.is_none() {
-                self.get_type_from_type_node(param.type_annotation)
+                match mode {
+                    ParamTypeResolutionMode::InTypeLiteral => {
+                        self.get_type_from_type_node_in_type_literal(param.type_annotation)
+                    }
+                    ParamTypeResolutionMode::FromTypeNode => {
+                        self.get_type_from_type_node(param.type_annotation)
+                    }
+                    ParamTypeResolutionMode::OfNode => {
+                        self.get_type_of_node(param.type_annotation)
+                    }
+                }
             } else {
                 TypeId::ANY
             };
 
+            // Check for ThisKeyword parameter
             let name_node = self.ctx.arena.get(param.name);
             if let Some(name_node) = name_node
                 && name_node.kind == SyntaxKind::ThisKeyword as u16
@@ -4690,6 +4607,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Extract parameter name
             let name: Option<Atom> = if let Some(name_node) = name_node {
                 if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
                     Some(self.ctx.types.intern_string(&name_data.escaped_text))
@@ -4703,6 +4621,7 @@ impl<'a> CheckerState<'a> {
             let optional = param.question_token || !param.initializer.is_none();
             let rest = param.dot_dot_dot_token;
 
+            // Check for "this" parameter by name
             if let Some(name_atom) = name
                 && name_atom == this_atom
             {
