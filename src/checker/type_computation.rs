@@ -324,4 +324,41 @@ impl<'a> CheckerState<'a> {
     pub fn type_to_string(&self, ty: TypeId) -> String {
         self.format_type(ty)
     }
+
+    // =========================================================================
+    // Type Narrowing Utilities
+    // =========================================================================
+
+    /// Narrow a type by a typeof guard.
+    ///
+    /// This is a convenience wrapper around `narrow_by_typeof` that provides
+    /// cleaner access to type narrowing functionality.
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// // typeof x === "string" narrows string | number to string
+    /// ```
+    pub fn narrow_by_typeof(&self, source: TypeId, typeof_result: &str) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_by_typeof(source, typeof_result)
+    }
+
+    /// Narrow a type to include only members assignable to target.
+    ///
+    /// This is a convenience wrapper around `narrow_to_type` for type narrowing.
+    pub fn narrow_to_type(&self, source: TypeId, target: TypeId) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_to_type(source, target)
+    }
+
+    /// Narrow a type to exclude members assignable to a specific type.
+    ///
+    /// This is a convenience wrapper around `narrow_excluding_type`.
+    pub fn narrow_excluding_type(&self, source: TypeId, excluded: TypeId) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_excluding_type(source, excluded)
+    }
 }
