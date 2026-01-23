@@ -14609,8 +14609,7 @@ impl<'a> CheckerState<'a> {
             );
             let diag = builder.cannot_find_name(name, loc.start, loc.length());
             self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
         }
     }
 
@@ -14639,7 +14638,7 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            self.ctx.diagnostics.push(Diagnostic {
+            self.ctx.push_diagnostic(Diagnostic {
                 code,
                 category: DiagnosticCategory::Error,
                 message_text: message,
@@ -14683,7 +14682,7 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            self.ctx.diagnostics.push(Diagnostic {
+            self.ctx.push_diagnostic(Diagnostic {
                 code: if suggestions.len() == 1 {
                     diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN
                 } else {
@@ -14854,7 +14853,7 @@ impl<'a> CheckerState<'a> {
                 "Cannot find name '{}'. Did you mean '{}'?",
                 name, suggestion
             );
-            self.ctx.diagnostics.push(Diagnostic {
+            self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
                 category: DiagnosticCategory::Error,
                 message_text: message,
@@ -14880,7 +14879,7 @@ impl<'a> CheckerState<'a> {
                 "Cannot find name '{}'. Did you mean the static member '{}.{}'?",
                 name, class_name, name
             );
-            self.ctx.diagnostics.push(Diagnostic {
+            self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_STATIC,
                 category: DiagnosticCategory::Error,
                 message_text: message,
