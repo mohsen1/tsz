@@ -3270,7 +3270,22 @@ impl<'a> BinaryOpEvaluator<'a> {
         false
     }
 
-    /// Check if a type is string-like (string, string literal, template literal, or any)
+    /// Check if a type is string-like (string, string literal, template literal, or any).
+    ///
+    /// This is used for type inference in string operations and overload resolution.
+    /// A type is considered string-like if it is:
+    /// - The `string` intrinsic type
+    /// - A string literal (e.g., `"hello"`)
+    /// - A template literal type (e.g., `` `hello${world}` ``)
+    /// - The `any` type (accepts all)
+    ///
+    /// ## Examples:
+    /// - `string` ✅
+    /// - `"hello"` ✅ (string literal)
+    /// - `` `foo${bar}` `` ✅ (template literal)
+    /// - `any` ✅
+    /// - `number` ❌
+    /// - `42` ❌
     fn is_string_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::STRING || type_id == TypeId::ANY {
             return true;
