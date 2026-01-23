@@ -10882,7 +10882,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check async function requirements
-            let (is_async, is_generator, async_node_idx): (bool, bool, NodeIndex) =
+            let (is_async, is_generator, _async_node_idx): (bool, bool, NodeIndex) =
                 if let Some(func) = self.ctx.arena.get_function(node) {
                     (func.is_async, func.asterisk_token, func.name)
                 } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
@@ -10896,20 +10896,22 @@ impl<'a> CheckerState<'a> {
                 };
 
             // TS2697: Check if async function has access to Promise type
-            // This error is emitted when Promise global type is not available
-            if is_async && !is_generator && !self.is_promise_global_available() {
-                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                let diagnostic_node = if async_node_idx.is_none() {
-                    idx
-                } else {
-                    async_node_idx
-                };
-                self.error_at_node(
-                    diagnostic_node,
-                    diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                    diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                );
-            }
+            // DISABLED: Causes too many false positives (313x extra errors)
+            // The is_promise_global_available check doesn't correctly detect Promise in lib files
+            // TODO: Investigate lib loading for Promise detection
+            // if is_async && !is_generator && !self.is_promise_global_available() {
+            //     use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            //     let diagnostic_node = if async_node_idx.is_none() {
+            //         idx
+            //     } else {
+            //         async_node_idx
+            //     };
+            //     self.error_at_node(
+            //         diagnostic_node,
+            //         diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+            //         diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+            //     );
+            // }
 
             // TS2705: Async function must return Promise
             // Check ALL async functions (not just arrow functions and function expressions)
@@ -16803,20 +16805,21 @@ impl<'a> CheckerState<'a> {
                         // - async functions when Promise is not in lib (this was causing false positives)
 
                         // TS2697: Check if async function has access to Promise type
-                        // This error is emitted when Promise global type is not available
-                        if func.is_async
-                            && !func.asterisk_token
-                            && !self.is_promise_global_available()
-                        {
-                            use crate::checker::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
-                            self.error_at_node(
-                                func.name,
-                                diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                                diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                            );
-                        }
+                        // DISABLED: Causes too many false positives
+                        // TODO: Investigate lib loading for Promise detection
+                        // if func.is_async
+                        //     && !func.asterisk_token
+                        //     && !self.is_promise_global_available()
+                        // {
+                        //     use crate::checker::types::diagnostics::{
+                        //         diagnostic_codes, diagnostic_messages,
+                        //     };
+                        //     self.error_at_node(
+                        //         func.name,
+                        //         diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                        //         diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                        //     );
+                        // }
 
                         // Enter async context for await expression checking
                         if func.is_async {
@@ -24649,15 +24652,16 @@ impl<'a> CheckerState<'a> {
             let is_generator = method.asterisk_token;
 
             // TS2697: Check if async method has access to Promise type
-            // This error is emitted when Promise global type is not available
-            if is_async && !is_generator && !self.is_promise_global_available() {
-                use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    method.name,
-                    diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                    diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-                );
-            }
+            // DISABLED: Causes too many false positives
+            // TODO: Investigate lib loading for Promise detection
+            // if is_async && !is_generator && !self.is_promise_global_available() {
+            //     use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            //     self.error_at_node(
+            //         method.name,
+            //         diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+            //         diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+            //     );
+            // }
 
             // TS7011 (implicit any return) is only emitted for ambient methods,
             // matching TypeScript's behavior
@@ -25413,16 +25417,11 @@ impl<'a> CheckerState<'a> {
     /// Check if the global Promise type is available in lib contexts.
     /// Used for TS2697: async function must return Promise.
     fn is_promise_global_available(&self) -> bool {
-        for lib_ctx in &self.ctx.lib_contexts {
-            if lib_ctx.binder.file_locals.get("Promise").is_some() {
-                return true;
-            }
-        }
-        // Also check if Promise is defined in the current file's scope
-        if self.ctx.binder.file_locals.get("Promise").is_some() {
-            return true;
-        }
-        false
+        // Use the centralized has_name_in_lib helper which checks:
+        // - lib_contexts
+        // - current_scope
+        // - file_locals
+        self.ctx.has_name_in_lib("Promise")
     }
 
     /// Check if a type is a Promise or Promise-like type.
