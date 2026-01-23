@@ -485,46 +485,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             (TypeKey::TypeParameter(s_info), target_key) | (TypeKey::Infer(s_info), target_key) => {
-                if let TypeKey::TypeParameter(t_info) | TypeKey::Infer(t_info) = target_key {
-                    // Same type parameter by name - reflexive
-                    if s_info.name == t_info.name {
-                        return SubtypeResult::True;
-                    }
-
-                    // Different type parameters - check if source's constraint implies compatibility
-                    // TypeScript soundness: T <: U only if:
-                    // 1. Constraint(T) is exactly U (e.g., U extends T, checking U <: T)
-                    // 2. Constraint(T) extends U's constraint transitively
-                    //
-                    // NOT allowed: T <: U where both have same constraint but are different params
-                    // (e.g., T extends string, U extends string - they could be different subtypes)
-                    if let Some(s_constraint) = s_info.constraint {
-                        // Check if source's constraint IS the target type parameter itself
-                        // This handles: U extends T, checking U <: T
-                        if s_constraint == target {
-                            return SubtypeResult::True;
-                        }
-                        // Check if source's constraint is a subtype of the target type parameter
-                        // This handles transitive constraints
-                        if self.check_subtype(s_constraint, target).is_true() {
-                            return SubtypeResult::True;
-                        }
-                    }
-                    // Two different type parameters with independent constraints are not interchangeable
-                    return SubtypeResult::False;
-                }
-
-                // Type parameter vs concrete type
-                if let Some(constraint) = s_info.constraint {
-                    // Check if the constraint is a subtype of the target
-                    return self.check_subtype(constraint, target);
-                }
-
-                // Unconstrained type parameter acts like `unknown` (top type)
-                // Since unknown is a TOP type: T <: unknown is TRUE, but unknown <: T is FALSE
-                // An unconstrained type param as source cannot be assigned to a concrete target
-                // because the param could be instantiated to an incompatible type
-                SubtypeResult::False
+                self.check_type_parameter_subtype(s_info, target, target_key)
             }
 
             // object keyword accepts any non-primitive type
@@ -2858,6 +2819,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
         SubtypeResult::True
+    }
+
+    /// Check if a type parameter is a subtype of a target type.
+    ///
+    /// Handles both type parameter vs type parameter and type parameter vs concrete type.
+    /// Implements TypeScript's soundness rules for type parameter compatibility.
+    fn check_type_parameter_subtype(
+        &mut self,
+        s_info: &TypeParamInfo,
+        target: TypeId,
+        target_key: &TypeKey,
+    ) -> SubtypeResult {
+        // Type parameter vs type parameter
+        if let TypeKey::TypeParameter(t_info) | TypeKey::Infer(t_info) = target_key {
+            // Same type parameter by name - reflexive
+            if s_info.name == t_info.name {
+                return SubtypeResult::True;
+            }
+
+            // Different type parameters - check if source's constraint implies compatibility
+            // TypeScript soundness: T <: U only if:
+            // 1. Constraint(T) is exactly U (e.g., U extends T, checking U <: T)
+            // 2. Constraint(T) extends U's constraint transitively
+            if let Some(s_constraint) = s_info.constraint {
+                // Check if source's constraint IS the target type parameter itself
+                if s_constraint == target {
+                    return SubtypeResult::True;
+                }
+                // Check if source's constraint is a subtype of the target type parameter
+                if self.check_subtype(s_constraint, target).is_true() {
+                    return SubtypeResult::True;
+                }
+            }
+            // Two different type parameters with independent constraints are not interchangeable
+            return SubtypeResult::False;
+        }
+
+        // Type parameter vs concrete type
+        if let Some(constraint) = s_info.constraint {
+            return self.check_subtype(constraint, target);
+        }
+
+        // Unconstrained type parameter acts like `unknown` (top type)
+        // An unconstrained type param as source cannot be assigned to a concrete target
+        SubtypeResult::False
     }
 
     fn check_subtype_with_method_variance(
