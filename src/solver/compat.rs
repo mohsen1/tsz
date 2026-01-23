@@ -178,53 +178,95 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return cached;
         }
 
-        let result = if source == target {
-            true
-        } else if let Some(any_result) =
-            self.lawyer
-                .check_any_propagation(source, target, self.interner)
-        {
-            // The Lawyer layer decided the outcome based on `any` propagation rules.
-            // In default mode, `any` is the JS escape hatch (top + bottom).
-            // In strict mode, `any` may delegate to structural checking.
-            // See https://github.com/microsoft/TypeScript/issues/10715.
-            any_result
-        } else if !self.strict_null_checks
-            && (source == TypeId::NULL || source == TypeId::UNDEFINED)
-        {
-            true
-        } else if target == TypeId::UNKNOWN {
-            // `unknown` is top but not assignable to non-top types. See https://github.com/microsoft/TypeScript/issues/10715.
-            true
-        } else if source == TypeId::NEVER {
-            // `never` is bottom - assignable to everything
-            true
-        } else if source == TypeId::ERROR || target == TypeId::ERROR {
-            // Error types should NOT silently pass assignability checks.
-            // This prevents "error poisoning" where a TS2304 (cannot find name) masks
-            // downstream TS2322 (type not assignable) errors.
-            // Delegate to subtype checker which returns false for ERROR.
-            self.configure_subtype(self.strict_function_types);
-            self.subtype.is_subtype_of(source, target)
-        } else if source == TypeId::UNKNOWN {
-            false
-        } else if self.violates_weak_union(source, target) {
-            false
-        } else if self.violates_weak_type(source, target) {
-            false
-        } else if self.is_empty_object_target(target) {
-            // `{}` accepts any non-nullish value (including primitives). See https://github.com/microsoft/TypeScript/issues/60582.
-            self.is_assignable_to_empty_object(source)
-        } else {
-            self.configure_subtype(self.strict_function_types);
-            self.subtype.is_subtype_of(source, target)
-        };
+        let result = self.is_assignable_impl(source, target, self.strict_function_types);
 
         self.cache.insert(key, result);
         result
     }
 
+    /// Internal implementation of assignability check.
+    /// Extracted to share logic between is_assignable and is_assignable_strict.
+    fn is_assignable_impl(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        strict_function_types: bool,
+    ) -> bool {
+        // Fast path checks
+        if let Some(result) = self.check_assignable_fast_path(source, target, false) {
+            return result;
+        }
+
+        // Weak type checks
+        if self.violates_weak_union(source, target) {
+            return false;
+        }
+        if self.violates_weak_type(source, target) {
+            return false;
+        }
+
+        // Empty object target
+        if self.is_empty_object_target(target) {
+            return self.is_assignable_to_empty_object(source);
+        }
+
+        // Default to structural subtype checking
+        self.configure_subtype(strict_function_types);
+        self.subtype.is_subtype_of(source, target)
+    }
+
+    /// Check fast-path assignability conditions.
+    /// Returns Some(result) if fast path applies, None if need to do full check.
+    fn check_assignable_fast_path(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        skip_error_check: bool,
+    ) -> Option<bool> {
+        // Same type
+        if source == target {
+            return Some(true);
+        }
+
+        // Any propagation rules
+        if let Some(any_result) = self
+            .lawyer
+            .check_any_propagation(source, target, self.interner)
+        {
+            return Some(any_result);
+        }
+
+        // Null/undefined in non-strict null check mode
+        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+            return Some(true);
+        }
+
+        // unknown is top
+        if target == TypeId::UNKNOWN {
+            return Some(true);
+        }
+
+        // never is bottom
+        if source == TypeId::NEVER {
+            return Some(true);
+        }
+
+        // Error types - if not skipping, check if both are error types
+        if !skip_error_check && (source == TypeId::ERROR || target == TypeId::ERROR) {
+            // Error types should NOT silently pass assignability checks
+            return None; // Delegate to subtype checker
+        }
+
+        // unknown is not assignable to non-top types
+        if source == TypeId::UNKNOWN {
+            return Some(false);
+        }
+
+        None // Need full check
+    }
+
     pub fn is_assignable_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Always use strict function types
         if source == target {
             return true;
         }
@@ -273,10 +315,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
+        // Fast path: if assignable, no failure to explain
         if source == target {
             return None;
         }
-        // Use the lawyer layer for `any` propagation rules
         if self
             .lawyer
             .check_any_propagation(source, target, self.interner)
@@ -293,12 +335,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == TypeId::NEVER {
             return None;
         }
+        if source == TypeId::UNKNOWN {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
         // Error types should NOT return None - let subtype checker explain the failure
-        // This prevents "error poisoning" where errors mask downstream type mismatches
         if source == TypeId::ERROR || target == TypeId::ERROR {
             self.configure_subtype(self.strict_function_types);
             return self.subtype.explain_failure(source, target);
         }
+
+        // Weak type violations
         if self.violates_weak_union(source, target) {
             return Some(SubtypeFailureReason::TypeMismatch {
                 source_type: source,
@@ -311,6 +361,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 target_type: target,
             });
         }
+
+        // Empty object target
         if self.is_empty_object_target(target) && self.is_assignable_to_empty_object(source) {
             return None;
         }
