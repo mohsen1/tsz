@@ -399,6 +399,7 @@ pub mod diagnostic_codes {
     pub const PROPERTY_IS_PROTECTED: u32 = 2445;
     pub const TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE: u32 = 2507; // Type 'X' is not a constructor function type.
     pub const CANNOT_EXTEND_SEALED_CLASS: u32 = 2509;
+    pub const GET_ACCESSOR_MUST_RETURN_VALUE: u32 = 2378; // A 'get' accessor must return a value.
     pub const CONSTRUCTOR_CANNOT_HAVE_RETURN_TYPE: u32 = 2380;
     pub const STATIC_MEMBERS_CANNOT_REFERENCE_TYPE_PARAMETERS: u32 = 2302;
     pub const OVERRIDE_MEMBER_NOT_IN_BASE: u32 = 4114; // This member cannot have an 'override' modifier because it is not declared in the base class

@@ -18594,6 +18594,184 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if the target type is valid for array destructuring.
+    /// Emits TS2461 if the type is not array-like, iterable, or a string.
+    fn check_array_destructuring_target_type(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_type: TypeId,
+    ) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        // Skip check for any, unknown, error, or never types
+        if source_type == TypeId::ANY
+            || source_type == TypeId::UNKNOWN
+            || source_type == TypeId::ERROR
+            || source_type == TypeId::NEVER
+        {
+            return;
+        }
+
+        // Check if the type is array-like (array, tuple, string, or has iterator)
+        let is_array_like = self.is_array_destructurable_type(source_type);
+
+        if !is_array_like {
+            let type_str = self.format_type(source_type);
+            let message =
+                format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
+            self.error_at_node(
+                pattern_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+            );
+        }
+    }
+
+    /// Check if a type can be array-destructured.
+    /// Returns true for arrays, tuples, strings, and types with [Symbol.iterator].
+    fn is_array_destructurable_type(&self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        // Handle primitive types
+        if type_id == TypeId::STRING {
+            return true;
+        }
+
+        let Some(type_key) = self.ctx.types.lookup(type_id) else {
+            return false;
+        };
+
+        match type_key {
+            // Array types are destructurable
+            TypeKey::Array(_) => true,
+            // Tuple types are destructurable
+            TypeKey::Tuple(_) => true,
+            // Readonly arrays are destructurable
+            TypeKey::ReadonlyType(inner) => self.is_array_destructurable_type(inner),
+            // Union types: all members must be destructurable
+            TypeKey::Union(list_id) => {
+                let types = self.ctx.types.type_list(list_id);
+                types.iter().all(|&t| self.is_array_destructurable_type(t))
+            }
+            // Intersection types: at least one member must be array-like
+            TypeKey::Intersection(list_id) => {
+                let types = self.ctx.types.type_list(list_id);
+                types.iter().any(|&t| self.is_array_destructurable_type(t))
+            }
+            // Object types might have an iterator - for now conservatively return false
+            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => false,
+            // Literal types: check the base type
+            TypeKey::Literal(lit_value) => {
+                // String literals are destructurable
+                matches!(lit_value, crate::solver::LiteralValue::String(_))
+            }
+            // Other types are not array-destructurable
+            _ => false,
+        }
+    }
+
+    /// Look up a property type in a type for destructuring purposes.
+    /// Returns (type_id, property_exists) where property_exists indicates if the property was found.
+    fn lookup_destructuring_property_type(
+        &self,
+        parent_type: TypeId,
+        property_name: &str,
+    ) -> (TypeId, bool) {
+        use crate::solver::TypeKey;
+
+        if parent_type == TypeId::ANY || parent_type == TypeId::UNKNOWN {
+            return (parent_type, true);
+        }
+
+        let Some(type_key) = self.ctx.types.lookup(parent_type) else {
+            return (TypeId::ANY, false);
+        };
+
+        match type_key {
+            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                // Find the property by comparing names
+                for prop in shape.properties.as_slice() {
+                    if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == property_name {
+                        return (prop.type_id, true);
+                    }
+                }
+                // Check for string index signature (for dynamic property access)
+                if let Some(ref string_index) = shape.string_index {
+                    return (string_index.value_type, true);
+                }
+                (TypeId::ANY, false)
+            }
+            TypeKey::Union(list_id) => {
+                // For unions, property must exist on all members
+                let types = self.ctx.types.type_list(list_id);
+                let mut all_exist = true;
+                let mut result_types = Vec::new();
+                for &member_type in types.iter() {
+                    let (member_prop_type, exists) =
+                        self.lookup_destructuring_property_type(member_type, property_name);
+                    if !exists {
+                        all_exist = false;
+                    }
+                    result_types.push(member_prop_type);
+                }
+                if all_exist && !result_types.is_empty() {
+                    (self.ctx.types.union(result_types), true)
+                } else {
+                    (TypeId::ANY, all_exist)
+                }
+            }
+            TypeKey::Intersection(list_id) => {
+                // For intersections, property can come from any member
+                let types = self.ctx.types.type_list(list_id);
+                for &member_type in types.iter() {
+                    let (member_prop_type, exists) =
+                        self.lookup_destructuring_property_type(member_type, property_name);
+                    if exists {
+                        return (member_prop_type, true);
+                    }
+                }
+                (TypeId::ANY, false)
+            }
+            _ => (TypeId::ANY, false),
+        }
+    }
+
+    /// Check if we should emit a "property does not exist" error for the given type in destructuring.
+    /// Returns false for any, unknown, or types that don't have concrete shapes.
+    fn should_emit_property_not_exist_for_destructuring(&self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return false;
+        }
+
+        let Some(type_key) = self.ctx.types.lookup(type_id) else {
+            return false;
+        };
+
+        match type_key {
+            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => true,
+            TypeKey::Union(list_id) => {
+                // For unions, emit error if any member is a concrete object
+                let types = self.ctx.types.type_list(list_id);
+                types
+                    .iter()
+                    .any(|&t| self.should_emit_property_not_exist_for_destructuring(t))
+            }
+            TypeKey::Intersection(list_id) => {
+                // For intersections, all members should be concrete objects
+                let types = self.ctx.types.type_list(list_id);
+                types
+                    .iter()
+                    .all(|&t| self.should_emit_property_not_exist_for_destructuring(t))
+            }
+            _ => false,
+        }
+    }
+
     /// Get the expected type for a binding element from its parent type.
     fn get_binding_element_type(
         &mut self,
@@ -26196,25 +26374,34 @@ impl<'a> CheckerState<'a> {
             if is_getter {
                 // Check if this is an async getter
                 let is_async = self.has_async_modifier(&accessor.modifiers);
-                let requires_return = self.requires_return_value(return_type);
+                // For async getters, extract the inner type from Promise<T>
+                let check_return_type = self.return_type_for_implicit_return_check(
+                    return_type,
+                    is_async,
+                    false, // getters cannot be generators
+                );
+                let requires_return = self.requires_return_value(check_return_type);
                 let has_return = self.body_has_return_with_value(accessor.body);
                 let falls_through = self.function_body_falls_through(accessor.body);
-                // TS2355: Skip for async getters - they implicitly return Promise<void>
-                if has_type_annotation && requires_return && falls_through && !is_async {
-                    if !has_return {
-                        self.error_at_node(
-                            accessor.type_annotation,
-                            "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                            diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
-                        );
-                    } else {
-                        use crate::checker::types::diagnostics::diagnostic_messages;
-                        self.error_at_node(
-                            accessor.type_annotation,
-                            diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
-                            diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
-                        );
-                    }
+
+                // TS2378: A 'get' accessor must return a value (regardless of type annotation)
+                // Get accessors ALWAYS require a return value, even without type annotation
+                if !has_return && falls_through {
+                    // Use TS2378 for getters without return statements
+                    self.error_at_node(
+                        accessor.name,
+                        "A 'get' accessor must return a value.",
+                        diagnostic_codes::GET_ACCESSOR_MUST_RETURN_VALUE,
+                    );
+                } else if has_type_annotation && requires_return && falls_through {
+                    // TS2355: For getters with type annotation that requires return, but have
+                    // some return statements but also fall through
+                    use crate::checker::types::diagnostics::diagnostic_messages;
+                    self.error_at_node(
+                        accessor.type_annotation,
+                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
+                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
+                    );
                 } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     use crate::checker::types::diagnostics::diagnostic_messages;
