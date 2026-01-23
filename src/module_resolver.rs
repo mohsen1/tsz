@@ -174,18 +174,49 @@ pub enum ResolutionFailure {
         span: Span,
     },
     /// Invalid module specifier
-    InvalidSpecifier(String),
+    InvalidSpecifier {
+        /// Error message describing why the specifier is invalid
+        message: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
     /// Package.json not found or invalid
-    PackageJsonError(String),
+    PackageJsonError {
+        /// Error message describing the package.json issue
+        message: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
     /// Circular resolution detected
-    CircularResolution(String),
+    CircularResolution {
+        /// Error message describing the circular dependency
+        message: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
     /// Path mapping did not resolve to a file
-    PathMappingFailed(String),
+    PathMappingFailed {
+        /// Error message describing the path mapping failure
+        message: String,
+        /// File containing the import
+        containing_file: String,
+        /// Span of the module specifier in source
+        span: Span,
+    },
 }
 
 impl ResolutionFailure {
     /// Convert a resolution failure to a diagnostic
-    pub fn span_to_diagnostic(&self) -> Diagnostic {
+    ///
+    /// All resolution failure variants produce TS2307 diagnostics with proper
+    /// source location information for IDE integration and error reporting.
+    pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
             ResolutionFailure::NotFound {
                 specifier,
@@ -197,34 +228,82 @@ impl ResolutionFailure {
                 format!("Cannot find module '{}'", specifier),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::InvalidSpecifier(msg) => Diagnostic::error(
-                "",
-                Span::dummy(),
-                format!("Invalid module specifier: {}", msg),
+            ResolutionFailure::InvalidSpecifier {
+                message,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!("Cannot find module: {}", message),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::PackageJsonError(msg) => Diagnostic::error(
-                "",
-                Span::dummy(),
-                format!("Package.json error: {}", msg),
+            ResolutionFailure::PackageJsonError {
+                message,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!("Cannot find module: {}", message),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::CircularResolution(msg) => Diagnostic::error(
-                "",
-                Span::dummy(),
-                format!("Circular resolution: {}", msg),
+            ResolutionFailure::CircularResolution {
+                message,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!("Cannot find module: {}", message),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::PathMappingFailed(msg) => Diagnostic::error(
-                "",
-                Span::dummy(),
-                format!("Path mapping failed: {}", msg),
+            ResolutionFailure::PathMappingFailed {
+                message,
+                containing_file,
+                span,
+            } => Diagnostic::error(
+                containing_file,
+                *span,
+                format!("Cannot find module: {}", message),
                 CANNOT_FIND_MODULE,
             ),
         }
     }
 
-    /// Check if this is a NotFound error (for TS2307 emission)
+    /// Get the containing file for this resolution failure
+    pub fn containing_file(&self) -> &str {
+        match self {
+            ResolutionFailure::NotFound {
+                containing_file, ..
+            }
+            | ResolutionFailure::InvalidSpecifier {
+                containing_file, ..
+            }
+            | ResolutionFailure::PackageJsonError {
+                containing_file, ..
+            }
+            | ResolutionFailure::CircularResolution {
+                containing_file, ..
+            }
+            | ResolutionFailure::PathMappingFailed {
+                containing_file, ..
+            } => containing_file,
+        }
+    }
+
+    /// Get the span for this resolution failure
+    pub fn span(&self) -> Span {
+        match self {
+            ResolutionFailure::NotFound { span, .. }
+            | ResolutionFailure::InvalidSpecifier { span, .. }
+            | ResolutionFailure::PackageJsonError { span, .. }
+            | ResolutionFailure::CircularResolution { span, .. }
+            | ResolutionFailure::PathMappingFailed { span, .. } => *span,
+        }
+    }
+
+    /// Check if this is a NotFound error
     pub fn is_not_found(&self) -> bool {
         matches!(self, ResolutionFailure::NotFound { .. })
     }
@@ -881,7 +960,13 @@ impl ModuleResolver {
         // Read package.json
         let package_json_path = package_dir.join("package.json");
         let package_json = if package_json_path.exists() {
-            self.read_package_json(&package_json_path)?
+            self.read_package_json(&package_json_path).map_err(|msg| {
+                ResolutionFailure::PackageJsonError {
+                    message: msg,
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                }
+            })?
         } else {
             PackageJson::default()
         };
@@ -1021,10 +1106,14 @@ impl ModuleResolver {
             });
         }
 
-        Err(ResolutionFailure::PackageJsonError(format!(
-            "Could not find entry point for package at {}",
-            package_dir.display()
-        )))
+        Err(ResolutionFailure::PackageJsonError {
+            message: format!(
+                "Could not find entry point for package at {}",
+                package_dir.display()
+            ),
+            containing_file: containing_file.to_string(),
+            span: specifier_span,
+        })
     }
 
     /// Resolve package exports with explicit conditions
@@ -1247,18 +1336,15 @@ impl ModuleResolver {
     }
 
     /// Read and parse package.json
-    fn read_package_json(&self, path: &Path) -> Result<PackageJson, ResolutionFailure> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            ResolutionFailure::PackageJsonError(format!("Failed to read {}: {}", path.display(), e))
-        })?;
+    ///
+    /// Returns a String error for flexibility - callers can convert to ResolutionFailure
+    /// with appropriate span/file information at the call site.
+    fn read_package_json(&self, path: &Path) -> Result<PackageJson, String> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
-        serde_json::from_str(&content).map_err(|e| {
-            ResolutionFailure::PackageJsonError(format!(
-                "Failed to parse {}: {}",
-                path.display(),
-                e
-            ))
-        })
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
     }
 
     /// Clear the resolution cache
@@ -1272,15 +1358,21 @@ impl ModuleResolver {
     }
 
     /// Emit TS2307 error for a resolution failure into a diagnostic bag
+    ///
+    /// All module resolution failures emit TS2307 "Cannot find module" error.
+    /// This includes:
+    /// - NotFound: Module specifier could not be resolved
+    /// - InvalidSpecifier: Module specifier is malformed
+    /// - PackageJsonError: Package.json is missing or invalid
+    /// - CircularResolution: Circular dependency detected during resolution
+    /// - PathMappingFailed: Path mapping from tsconfig did not resolve
     pub fn emit_resolution_error(
         &self,
         diagnostics: &mut DiagnosticBag,
         failure: &ResolutionFailure,
     ) {
-        if failure.is_not_found() {
-            let diagnostic = failure.span_to_diagnostic();
-            diagnostics.add(diagnostic);
-        }
+        let diagnostic = failure.to_diagnostic();
+        diagnostics.add(diagnostic);
     }
 }
 
@@ -1536,7 +1628,7 @@ mod tests {
             span: Span::new(10, 30),
         };
 
-        let diagnostic = failure.span_to_diagnostic();
+        let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
         assert!(diagnostic.message.contains("Cannot find module"));
         assert!(diagnostic.message.contains("./missing-module"));
@@ -1554,7 +1646,11 @@ mod tests {
         };
         assert!(not_found.is_not_found());
 
-        let other = ResolutionFailure::InvalidSpecifier("test".to_string());
+        let other = ResolutionFailure::InvalidSpecifier {
+            message: "test".to_string(),
+            containing_file: "test.ts".to_string(),
+            span: Span::dummy(),
+        };
         assert!(!other.is_not_found());
     }
 
@@ -1703,48 +1799,88 @@ mod tests {
     }
 
     #[test]
-    fn test_emit_resolution_error_non_not_found_ignored() {
+    fn test_emit_resolution_error_all_variants_emit_ts2307() {
         let mut diagnostics = DiagnosticBag::new();
         let resolver = ModuleResolver::node_resolver();
 
-        // Non-NotFound failures should not be emitted by emit_resolution_error
-        // since it only emits TS2307 for NotFound errors
-        let failure = ResolutionFailure::InvalidSpecifier("bad specifier".to_string());
+        // All resolution failure variants should emit TS2307 diagnostics
+        let failure = ResolutionFailure::InvalidSpecifier {
+            message: "bad specifier".to_string(),
+            containing_file: "/src/a.ts".to_string(),
+            span: Span::new(0, 10),
+        };
         resolver.emit_resolution_error(&mut diagnostics, &failure);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 1);
 
-        let failure = ResolutionFailure::PackageJsonError("parse error".to_string());
+        let failure = ResolutionFailure::PackageJsonError {
+            message: "parse error".to_string(),
+            containing_file: "/src/b.ts".to_string(),
+            span: Span::new(5, 15),
+        };
         resolver.emit_resolution_error(&mut diagnostics, &failure);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 2);
 
-        let failure = ResolutionFailure::CircularResolution("a -> b -> a".to_string());
+        let failure = ResolutionFailure::CircularResolution {
+            message: "a -> b -> a".to_string(),
+            containing_file: "/src/c.ts".to_string(),
+            span: Span::new(10, 20),
+        };
         resolver.emit_resolution_error(&mut diagnostics, &failure);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 3);
 
-        let failure = ResolutionFailure::PathMappingFailed("@/ pattern".to_string());
+        let failure = ResolutionFailure::PathMappingFailed {
+            message: "@/ pattern".to_string(),
+            containing_file: "/src/d.ts".to_string(),
+            span: Span::new(15, 25),
+        };
         resolver.emit_resolution_error(&mut diagnostics, &failure);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 4);
+
+        // Verify all have TS2307 code
+        for diag in diagnostics.errors() {
+            assert_eq!(diag.code, CANNOT_FIND_MODULE);
+        }
     }
 
     #[test]
     fn test_resolution_failure_all_variants_to_diagnostic() {
-        // Test that all ResolutionFailure variants can produce diagnostics
+        // Test that all ResolutionFailure variants can produce diagnostics with proper location info
         let failures = vec![
             ResolutionFailure::NotFound {
                 specifier: "./test".to_string(),
                 containing_file: "file.ts".to_string(),
                 span: Span::new(0, 10),
             },
-            ResolutionFailure::InvalidSpecifier("bad".to_string()),
-            ResolutionFailure::PackageJsonError("error".to_string()),
-            ResolutionFailure::CircularResolution("loop".to_string()),
-            ResolutionFailure::PathMappingFailed("@/path".to_string()),
+            ResolutionFailure::InvalidSpecifier {
+                message: "bad".to_string(),
+                containing_file: "file2.ts".to_string(),
+                span: Span::new(5, 15),
+            },
+            ResolutionFailure::PackageJsonError {
+                message: "error".to_string(),
+                containing_file: "file3.ts".to_string(),
+                span: Span::new(10, 20),
+            },
+            ResolutionFailure::CircularResolution {
+                message: "loop".to_string(),
+                containing_file: "file4.ts".to_string(),
+                span: Span::new(15, 25),
+            },
+            ResolutionFailure::PathMappingFailed {
+                message: "@/path".to_string(),
+                containing_file: "file5.ts".to_string(),
+                span: Span::new(20, 30),
+            },
         ];
 
         for failure in failures {
-            let diagnostic = failure.span_to_diagnostic();
+            let diagnostic = failure.to_diagnostic();
             // All failures should produce TS2307 diagnostic code
             assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+            // All failures should have non-empty file names
+            assert!(!diagnostic.file_name.is_empty());
+            // All failures should have valid spans
+            assert!(diagnostic.span.start < diagnostic.span.end);
         }
     }
 
@@ -1756,7 +1892,7 @@ mod tests {
             span: Span::new(20, 45),
         };
 
-        let diagnostic = failure.span_to_diagnostic();
+        let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
         assert_eq!(diagnostic.file_name, "/src/App.tsx");
         assert!(diagnostic.message.contains("./components/Button"));
@@ -1772,7 +1908,7 @@ mod tests {
             span: Span::new(7, 28),
         };
 
-        let diagnostic = failure.span_to_diagnostic();
+        let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
         assert!(diagnostic.message.contains("nonexistent-package"));
     }
@@ -1785,7 +1921,7 @@ mod tests {
             span: Span::new(15, 35),
         };
 
-        let diagnostic = failure.span_to_diagnostic();
+        let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
         assert!(diagnostic.message.contains("@org/missing-lib"));
     }
@@ -1799,7 +1935,7 @@ mod tests {
             span: Span::new(8, 25),
         };
 
-        let diagnostic = failure.span_to_diagnostic();
+        let diagnostic = failure.to_diagnostic();
         assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
         assert!(diagnostic.message.contains("#utils/helpers"));
     }
@@ -1816,10 +1952,68 @@ mod tests {
                 span: Span::new(start, end),
             };
 
-            let diagnostic = failure.span_to_diagnostic();
+            let diagnostic = failure.to_diagnostic();
             assert_eq!(diagnostic.span.start, start);
             assert_eq!(diagnostic.span.end, end);
         }
+    }
+
+    #[test]
+    fn test_resolution_failure_accessors() {
+        // Test that accessor methods work correctly
+        let failure = ResolutionFailure::InvalidSpecifier {
+            message: "test error".to_string(),
+            containing_file: "/src/test.ts".to_string(),
+            span: Span::new(10, 20),
+        };
+
+        assert_eq!(failure.containing_file(), "/src/test.ts");
+        assert_eq!(failure.span().start, 10);
+        assert_eq!(failure.span().end, 20);
+    }
+
+    #[test]
+    fn test_path_mapping_failure_produces_ts2307() {
+        let failure = ResolutionFailure::PathMappingFailed {
+            message: "path mapping '@/utils/*' did not resolve to any file".to_string(),
+            containing_file: "/project/src/index.ts".to_string(),
+            span: Span::new(8, 30),
+        };
+
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert_eq!(diagnostic.file_name, "/project/src/index.ts");
+        assert!(diagnostic.message.contains("Cannot find module"));
+        assert!(diagnostic.message.contains("path mapping"));
+    }
+
+    #[test]
+    fn test_package_json_error_produces_ts2307() {
+        let failure = ResolutionFailure::PackageJsonError {
+            message: "invalid exports field in package.json".to_string(),
+            containing_file: "/project/src/app.ts".to_string(),
+            span: Span::new(15, 45),
+        };
+
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert_eq!(diagnostic.file_name, "/project/src/app.ts");
+        assert!(diagnostic.message.contains("Cannot find module"));
+    }
+
+    #[test]
+    fn test_circular_resolution_produces_ts2307() {
+        let failure = ResolutionFailure::CircularResolution {
+            message: "circular dependency: a.ts -> b.ts -> a.ts".to_string(),
+            containing_file: "/project/src/a.ts".to_string(),
+            span: Span::new(20, 50),
+        };
+
+        let diagnostic = failure.to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert_eq!(diagnostic.file_name, "/project/src/a.ts");
+        assert!(diagnostic.message.contains("Cannot find module"));
+        assert!(diagnostic.message.contains("circular"));
     }
 
     #[test]
