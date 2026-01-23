@@ -13,6 +13,37 @@ Work in progress.
 
 This project is not ready for general use yet.
 
+
+## Development
+
+### Getting Started
+
+```bash
+# Clone the repository
+git clone https://github.com/mohsen1/tsz.git
+cd tsz
+
+# Build the project (also installs git hooks automatically)
+cargo build
+```
+
+### Git Hooks
+
+Pre-commit hooks are automatically installed on first build. They run:
+- `cargo fmt` - Format code
+- `cargo clippy --fix` - Lint and auto-fix issues
+- Unit tests via `scripts/test.sh`
+
+To manually install hooks:
+```bash
+./scripts/install-hooks.sh
+```
+
+To skip hooks for a single commit (not recommended):
+```bash
+git commit --no-verify
+```
+
 ---
 
 <a id="footnote-1">1</a>: "Zang" is the Persian word for "rust".
