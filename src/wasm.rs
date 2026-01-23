@@ -41,6 +41,7 @@
 use crate::parallel::{BindStats, CheckStats, ParallelStats, compile_files};
 use crate::solver::TypeInterner;
 use serde::{Deserialize, Serialize};
+use std::panic;
 use wasm_bindgen::prelude::*;
 
 /// WASM-compatible type interner for parallel type checking.
@@ -181,13 +182,31 @@ impl WasmParallelParser {
     }
 
     /// Parse all files in parallel and return statistics.
+    ///
+    /// This function catches panics to prevent WASM crashes.
     #[wasm_bindgen(js_name = parseAll)]
     pub fn parse_all(&mut self) -> JsValue {
         let files = std::mem::take(&mut self.files);
-        let (_results, stats) = crate::parallel::parse_files_with_stats(files);
 
-        let wasm_stats = WasmParseStats::from(stats);
-        serde_wasm_bindgen::to_value(&wasm_stats).unwrap_or(JsValue::NULL)
+        // Wrap parsing in panic recovery
+        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            let (_results, stats) = crate::parallel::parse_files_with_stats(files);
+            WasmParseStats::from(stats)
+        }));
+
+        match result {
+            Ok(wasm_stats) => serde_wasm_bindgen::to_value(&wasm_stats).unwrap_or(JsValue::NULL),
+            Err(_) => {
+                // Return empty stats on panic
+                let error_stats = WasmParseStats {
+                    file_count: 0,
+                    total_bytes: 0,
+                    total_nodes: 0,
+                    error_count: 1,
+                };
+                serde_wasm_bindgen::to_value(&error_stats).unwrap_or(JsValue::NULL)
+            }
+        }
     }
 
     /// Clear all files.
@@ -257,37 +276,70 @@ impl WasmParallelChecker {
     /// 2. Parallel binding to create symbols
     /// 3. Sequential merging of symbol tables
     /// 4. Parallel type checking of function bodies
+    ///
+    /// This function catches panics to prevent WASM crashes.
     #[wasm_bindgen(js_name = checkAll)]
     pub fn check_all(&mut self) -> JsValue {
         let files = std::mem::take(&mut self.files);
 
-        // Compile files (parse, bind, merge)
-        let program = compile_files(files);
+        // Wrap the entire compilation in panic recovery
+        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            // Compile files (parse, bind, merge)
+            let program = compile_files(files);
 
-        // Check in parallel
-        let (result, stats) = crate::parallel::check_functions_with_stats(&program);
+            // Check in parallel
+            let (result, stats) = crate::parallel::check_functions_with_stats(&program);
 
-        // Convert diagnostics
-        let mut diagnostics = Vec::new();
-        for file_result in result.file_results {
-            for diag in file_result.diagnostics {
-                diagnostics.push(WasmDiagnostic {
-                    file: file_result.file_name.clone(),
-                    start: diag.start,
-                    length: diag.length,
-                    code: diag.code,
-                    message: diag.message_text.clone(),
-                    category: format!("{:?}", diag.category),
-                });
+            // Convert diagnostics
+            let mut diagnostics = Vec::new();
+            for file_result in result.file_results {
+                for diag in file_result.diagnostics {
+                    diagnostics.push(WasmDiagnostic {
+                        file: file_result.file_name.clone(),
+                        start: diag.start,
+                        length: diag.length,
+                        code: diag.code,
+                        message: diag.message_text.clone(),
+                        category: format!("{:?}", diag.category),
+                    });
+                }
+            }
+
+            WasmCheckResult {
+                stats: WasmCheckStats::from(stats),
+                diagnostics,
+            }
+        }));
+
+        match result {
+            Ok(wasm_result) => serde_wasm_bindgen::to_value(&wasm_result).unwrap_or(JsValue::NULL),
+            Err(e) => {
+                // Return an error result instead of crashing
+                let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = e.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown internal error".to_string()
+                };
+                let error_result = WasmCheckResult {
+                    stats: WasmCheckStats {
+                        file_count: 0,
+                        function_count: 0,
+                        diagnostic_count: 1,
+                    },
+                    diagnostics: vec![WasmDiagnostic {
+                        file: "internal".to_string(),
+                        start: 0,
+                        length: 0,
+                        code: 9999,
+                        message: format!("Internal compiler error: {}", msg),
+                        category: "Error".to_string(),
+                    }],
+                };
+                serde_wasm_bindgen::to_value(&error_result).unwrap_or(JsValue::NULL)
             }
         }
-
-        let wasm_result = WasmCheckResult {
-            stats: WasmCheckStats::from(stats),
-            diagnostics,
-        };
-
-        serde_wasm_bindgen::to_value(&wasm_result).unwrap_or(JsValue::NULL)
     }
 
     /// Clear all files.
