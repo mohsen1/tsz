@@ -3118,6 +3118,18 @@ fn indexed_object_property_is_readonly(
     false
 }
 
+/// Check if an index signature is readonly for the given type.
+///
+/// # Parameters
+/// - `wants_string`: Check if string index signature should be readonly
+/// - `wants_number`: Check if numeric index signature should be readonly
+///
+/// # Returns
+/// `true` if the requested index signature is readonly, `false` otherwise.
+///
+/// # Examples
+/// - `{ readonly [x: string]: string }` → `is_readonly_index_signature(t, true, false)` = `true`
+/// - `{ [x: string]: string }` → `is_readonly_index_signature(t, true, false)` = `false`
 pub fn is_readonly_index_signature(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
