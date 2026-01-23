@@ -27156,6 +27156,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             no_unchecked_indexed_access: false,
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
+            no_lib: false,
         },
     );
     assert!(
@@ -28059,5 +28060,188 @@ const r4 = str % num;  // TS2362
         ts2362_count, 4,
         "Expected 4 TS2362 errors for all arithmetic operators. All codes: {:?}",
         codes
+    );
+}
+
+// =============================================================================
+// TS2318/TS2583 Global Type Lookup Tests
+// =============================================================================
+
+#[test]
+fn test_nolib_emits_ts2318_for_known_global_type() {
+    // Test that TS2318 is emitted for known global types when no lib is loaded
+    // Note: We use Date/RegExp instead of Array because Array is special-cased
+    // in the checker to always synthesize a type.
+    let source = r#"
+let d: Date;
+function f(r: RegExp): void {}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    // Don't merge any lib symbols to simulate @noLib
+
+    let types = TypeInterner::new();
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.no_lib = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    // Should emit TS2318 for Date/RegExp since they're known global types but not ES2015+
+    let ts2318_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == lib_loader::CANNOT_FIND_GLOBAL_TYPE)
+        .count();
+
+    assert!(
+        ts2318_count >= 1,
+        "Expected at least one TS2318 error for missing global type 'Date' or 'RegExp', got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_nolib_emits_ts2583_for_es2015_type() {
+    // Test that TS2583 is emitted for ES2015+ types when no lib is loaded
+    let source = r#"
+let p: Promise<number>;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    // Don't merge any lib symbols to simulate low target lib
+
+    let types = TypeInterner::new();
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.no_lib = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    // Should emit TS2583 for Promise since it's an ES2015+ type
+    let ts2583_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == lib_loader::MISSING_ES2015_LIB_SUPPORT)
+        .count();
+
+    assert!(
+        ts2583_count >= 1,
+        "Expected at least one TS2583 error for ES2015+ type 'Promise', got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+
+    // Verify it's not TS2318 (the generic global type error)
+    let ts2318_for_promise = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == lib_loader::CANNOT_FIND_GLOBAL_TYPE && d.message_text.contains("Promise")
+        })
+        .count();
+
+    assert_eq!(
+        ts2318_for_promise, 0,
+        "ES2015+ types should get TS2583, not TS2318: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+#[test]
+fn test_nolib_distinguishes_es2015_and_pre_es2015_types() {
+    // Test that TS2318 is emitted for pre-ES2015 types and TS2583 for ES2015+ types
+    // Note: We use Date instead of Array because Array is special-cased
+    let source = r#"
+let d: Date;
+let p: Promise<string>;
+let m: Map<string, number>;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = crate::checker::context::CheckerOptions::default();
+    options.no_lib = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    // TS2318 should be emitted for Date (pre-ES2015)
+    let ts2318_for_date = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == lib_loader::CANNOT_FIND_GLOBAL_TYPE && d.message_text.contains("Date")
+        })
+        .count();
+
+    // TS2583 should be emitted for Promise and Map (ES2015+)
+    let ts2583_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == lib_loader::MISSING_ES2015_LIB_SUPPORT)
+        .count();
+
+    assert!(
+        ts2318_for_date >= 1,
+        "Expected TS2318 for pre-ES2015 type 'Date', got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+
+    assert!(
+        ts2583_count >= 2,
+        "Expected at least 2 TS2583 errors for ES2015+ types (Promise, Map), got {}: {:?}",
+        ts2583_count,
+        checker.ctx.diagnostics
     );
 }
