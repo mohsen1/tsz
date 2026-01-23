@@ -35,6 +35,12 @@ pub enum ConditionalResult {
     Deferred(TypeId),
 }
 
+/// Maximum depth for recursive type evaluation.
+/// This prevents OOM from infinitely expanding types like:
+/// - `interface AA<T extends AA<T>>`
+/// - `interface SelfReference<T = SelfReference>`
+pub(crate) const MAX_EVALUATION_DEPTH: u32 = 50;
+
 /// Type evaluator for meta-types.
 pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
@@ -43,6 +49,8 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     cache: RefCell<FxHashMap<TypeId, TypeId>>,
     visiting: RefCell<FxHashSet<TypeId>>,
     depth: RefCell<u32>,
+    /// Whether the recursion depth limit was exceeded
+    depth_exceeded: RefCell<bool>,
 }
 
 struct MappedKeys {
@@ -157,6 +165,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             cache: RefCell::new(FxHashMap::default()),
             visiting: RefCell::new(FxHashSet::default()),
             depth: RefCell::new(0),
+            depth_exceeded: RefCell::new(false),
         }
     }
 }
@@ -171,6 +180,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             cache: RefCell::new(FxHashMap::default()),
             visiting: RefCell::new(FxHashSet::default()),
             depth: RefCell::new(0),
+            depth_exceeded: RefCell::new(false),
         }
     }
 
@@ -221,21 +231,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return type_id;
         }
 
+        // Check if depth was already exceeded in a previous call
+        if *self.depth_exceeded.borrow() {
+            return TypeId::ERROR;
+        }
+
         if let Some(&cached) = self.cache.borrow().get(&type_id) {
             return cached;
         }
 
-        // Depth guard to prevent stack overflow from deeply recursive mapped types
-        const MAX_DEPTH: u32 = 50;
+        // Depth guard to prevent OOM from infinitely expanding types
+        // Examples: interface AA<T extends AA<T>>, type SelfReference<T = SelfReference>
         {
             let mut depth = self.depth.borrow_mut();
             *depth += 1;
-            if *depth > MAX_DEPTH {
+            if *depth > MAX_EVALUATION_DEPTH {
                 *depth -= 1;
                 drop(depth);
-                // Return the type unevaluated to prevent deep recursion
-                self.cache.borrow_mut().insert(type_id, type_id);
-                return type_id;
+                // Mark depth as exceeded and return ERROR to stop expansion
+                *self.depth_exceeded.borrow_mut() = true;
+                self.cache.borrow_mut().insert(type_id, TypeId::ERROR);
+                return TypeId::ERROR;
             }
         }
 
@@ -1185,9 +1201,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         true_type: TypeId,
         false_type: TypeId,
     ) -> TypeId {
+        // Limit distribution to prevent OOM with large unions
+        const MAX_DISTRIBUTION_SIZE: usize = 100;
+        if members.len() > MAX_DISTRIBUTION_SIZE {
+            *self.depth_exceeded.borrow_mut() = true;
+            return TypeId::ERROR;
+        }
+
         let mut results: Vec<TypeId> = Vec::with_capacity(members.len());
 
         for &member in members {
+            // Check if depth was exceeded during previous iterations
+            if *self.depth_exceeded.borrow() {
+                return TypeId::ERROR;
+            }
+
             // Substitute the specific member if true_type or false_type references the original check_type
             // This handles cases like: NonNullable<T> = T extends null ? never : T
             // When T = A | B, we need (A extends null ? never : A) | (B extends null ? never : B)
@@ -1213,6 +1241,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Recursively evaluate (handles nested unions, type parameters)
             let result = self.evaluate_conditional(&member_cond);
+            // Check if evaluation hit depth limit
+            if result == TypeId::ERROR && *self.depth_exceeded.borrow() {
+                return TypeId::ERROR;
+            }
             results.push(result);
         }
 
@@ -1283,9 +1315,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeKey::Union(members) => {
                 let members = self.interner.type_list(members);
+                // Limit to prevent OOM with large unions
+                const MAX_UNION_INDEX_SIZE: usize = 100;
+                if members.len() > MAX_UNION_INDEX_SIZE {
+                    *self.depth_exceeded.borrow_mut() = true;
+                    return TypeId::ERROR;
+                }
                 let mut results = Vec::new();
                 for &member in members.iter() {
+                    // Check if depth was exceeded during evaluation
+                    if *self.depth_exceeded.borrow() {
+                        return TypeId::ERROR;
+                    }
                     let result = self.evaluate_index_access(member, index_type);
+                    if result == TypeId::ERROR && *self.depth_exceeded.borrow() {
+                        return TypeId::ERROR;
+                    }
                     if result != TypeId::UNDEFINED || self.no_unchecked_indexed_access {
                         results.push(result);
                     }
@@ -1809,6 +1854,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///    - Apply readonly/optional modifiers
     /// 3. Construct a new object type with the resulting properties
     pub fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+        // Check if depth was already exceeded
+        if *self.depth_exceeded.borrow() {
+            return TypeId::ERROR;
+        }
+
         // Get the constraint - this tells us what keys to iterate over
         let constraint = mapped.constraint;
 
@@ -1820,6 +1870,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(keys) => keys,
             None => return self.interner.mapped(mapped.clone()),
         };
+
+        // Limit number of keys to prevent OOM with large mapped types
+        const MAX_MAPPED_KEYS: usize = 500;
+        if key_set.string_literals.len() > MAX_MAPPED_KEYS {
+            *self.depth_exceeded.borrow_mut() = true;
+            return TypeId::ERROR;
+        }
 
         // Check if this is a homomorphic mapped type (template is T[K] indexed access)
         // In this case, we should preserve the original property modifiers
@@ -1907,6 +1964,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut properties = Vec::new();
 
         for key_name in key_set.string_literals {
+            // Check if depth was exceeded during previous iterations
+            if *self.depth_exceeded.borrow() {
+                return TypeId::ERROR;
+            }
+
             // Create substitution: type_param.name -> literal key type
             // First intern the Atom as a literal string type
             let key_literal = self
@@ -1928,6 +1990,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Substitute into the template
             let property_type =
                 self.evaluate(instantiate_type(self.interner, mapped.template, &subst));
+
+            // Check if evaluation hit depth limit
+            if property_type == TypeId::ERROR && *self.depth_exceeded.borrow() {
+                return TypeId::ERROR;
+            }
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
             let (optional, readonly) = get_modifiers_for_key(key_literal, key_name);
