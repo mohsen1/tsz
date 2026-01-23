@@ -28732,3 +28732,195 @@ for (const x of tuple) {
         codes
     );
 }
+
+// =============================================================================
+// Async Iterator Protocol Tests (TS2504)
+// =============================================================================
+
+/// Test that for-await-of with a non-async-iterable number type emits TS2504
+#[test]
+fn test_async_iterator_for_await_of_number_emits_ts2504() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+async function test() {
+    const num: number = 42;
+    for await (const x of num) {
+        console.log(x);
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2504_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2504_count, 1,
+        "Expected 1 TS2504 error for for-await-of on number. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that for-await-of with a valid array type does not emit TS2504 (sync iterable is accepted)
+#[test]
+fn test_async_iterator_for_await_of_array_no_error() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+async function test() {
+    const arr: number[] = [1, 2, 3];
+    for await (const x of arr) {
+        console.log(x);
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2504_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2504_count, 0,
+        "Expected 0 TS2504 errors for for-await-of on array (sync iterable is accepted). All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that for-await-of with a boolean type emits TS2504
+#[test]
+fn test_async_iterator_for_await_of_boolean_emits_ts2504() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+async function test() {
+    const b: boolean = true;
+    for await (const x of b) {
+        console.log(x);
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2504_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2504_count, 1,
+        "Expected 1 TS2504 error for for-await-of on boolean. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that for-await-of with an object type (non-iterable) emits TS2504
+#[test]
+fn test_async_iterator_for_await_of_object_emits_ts2504() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+async function test() {
+    const obj: { x: number } = { x: 1 };
+    for await (const x of obj) {
+        console.log(x);
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2504_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2504_count, 1,
+        "Expected 1 TS2504 error for for-await-of on object. All codes: {:?}",
+        codes
+    );
+}
