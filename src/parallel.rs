@@ -138,6 +138,10 @@ pub struct BindResult {
     pub shorthand_ambient_modules: FxHashSet<String>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<NodeIndex>>,
+    /// Re-exports: tracks `export { x } from 'module'` declarations
+    pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+    /// Wildcard re-exports: tracks `export * from 'module'` declarations
+    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
 }
 
 /// Parse and bind multiple files in parallel
@@ -177,6 +181,8 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 parse_diagnostics,
                 shorthand_ambient_modules: binder.shorthand_ambient_modules,
                 global_augmentations: binder.global_augmentations,
+                reexports: binder.reexports,
+                wildcard_reexports: binder.wildcard_reexports,
             }
         })
         .collect()
@@ -205,6 +211,8 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         parse_diagnostics,
         shorthand_ambient_modules: binder.shorthand_ambient_modules,
         global_augmentations: binder.global_augmentations,
+        reexports: binder.reexports,
+        wildcard_reexports: binder.wildcard_reexports,
     }
 }
 
@@ -373,6 +381,8 @@ pub fn parse_and_bind_parallel_with_libs(
                 parse_diagnostics,
                 shorthand_ambient_modules: binder.shorthand_ambient_modules,
                 global_augmentations: binder.global_augmentations,
+                reexports: binder.reexports,
+                wildcard_reexports: binder.wildcard_reexports,
             }
         })
         .collect()
@@ -423,9 +433,12 @@ pub struct MergedProgram {
     /// Module exports: maps file name (or module specifier) to its exported symbols
     /// This enables cross-file module resolution: import { X } from './file' can find X's symbol
     pub module_exports: FxHashMap<String, SymbolTable>,
-    /// Re-exports: tracks `export * from 'module'` and `export { x } from 'module'` declarations
+    /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (current_file, exported_name) -> (source_module, original_name)
     pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+    /// Wildcard re-exports: tracks `export * from 'module'` declarations
+    /// Maps current_file -> Vec of source_modules
+    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     /// Global type interner - shared across all threads for type deduplication
     pub type_interner: TypeInterner,
 }
@@ -510,6 +523,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_exports: FxHashMap<String, SymbolTable> = FxHashMap::default();
+    let mut reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>> =
+        FxHashMap::default();
+    let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
 
     // Track which symbols have been merged to avoid duplicate processing
     let mut merged_symbols: FxHashMap<String, SymbolId> = FxHashMap::default();
@@ -517,6 +533,24 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     for result in results {
         declared_modules.extend(result.declared_modules.iter().cloned());
         shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
+
+        // Merge reexports from this file
+        for (file_name, file_reexports) in &result.reexports {
+            let entry = reexports.entry(file_name.clone()).or_default();
+            for (export_name, mapping) in file_reexports {
+                entry.insert(export_name.clone(), mapping.clone());
+            }
+        }
+
+        // Merge wildcard reexports from this file
+        for (file_name, source_modules) in &result.wildcard_reexports {
+            let entry = wildcard_reexports.entry(file_name.clone()).or_default();
+            for source_module in source_modules {
+                if !entry.contains(source_module) {
+                    entry.push(source_module.clone());
+                }
+            }
+        }
         // Copy symbols from this file to global arena, getting new IDs
         let mut id_remap: FxHashMap<SymbolId, SymbolId> = FxHashMap::default();
         for i in 0..result.symbols.len() {
@@ -782,7 +816,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         declared_modules,
         shorthand_ambient_modules,
         module_exports,
-        reexports: FxHashMap::default(),
+        reexports,
+        wildcard_reexports,
         type_interner: TypeInterner::new(),
     }
 }
@@ -1057,6 +1092,7 @@ fn create_binder_from_bound_file(
         file.global_augmentations.clone(),
         program.module_exports.clone(),
         program.reexports.clone(),
+        program.wildcard_reexports.clone(),
         program.symbol_arenas.clone(),
         program.shorthand_ambient_modules.clone(),
     );
