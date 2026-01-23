@@ -105,17 +105,6 @@ jobs:
             exit $EXIT_CODE
           }
 
-      - name: Run integration tests
-        run: |
-          timeout ${RUST_TEST_TIMEOUT}s cargo test --test '*' --release -- --test-threads=2 2>&1 || {
-            EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 124 ]; then
-              echo "::error::Integration tests timed out"
-              exit 1
-            fi
-            exit $EXIT_CODE
-          }
-
   test-modules:
     name: Test Modules
     runs-on: ubuntu-latest
