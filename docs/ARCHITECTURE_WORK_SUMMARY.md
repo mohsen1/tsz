@@ -3,19 +3,20 @@
 **Date**: 2026-01-23
 **Branch**: main
 **Focus**: Address ARCHITECTURE_AUDIT_REPORT.md issues
-**Latest Update**: Commits 13-18 (Promise extraction, object subtype helpers)
+**Latest Update**: Commits 13-41 (Promise/Iterable extraction, documentation, deep analysis)
 
 ---
 
 ## Executive Summary
 
-Completed **Phase 1** (Critical Stabilization) entirely and made significant progress on **Phase 2** (Break Up God Objects). Successfully reduced `check_subtype_inner` function from 2,437 to ~2,214 lines (9% reduction) by extracting 7 helper methods.
+Completed **Phase 1** (Critical Stabilization) entirely and made steady progress on **Phase 2** (Break Up God Objects). Achieved **660 lines total reduction** from `checker/state.rs` through two major extractions (promise: -437 lines, iterable: -223 lines).
 
-**Commits 13-18 Achievements**:
-- Extracted 462 lines of promise/async type checking into separate `promise_checker.rs` module
-- First significant reduction in `checker/state.rs` god object (28,084 → 27,647 lines, -437 lines)
-- Added 4 helper methods for object subtype checking (private brands, property compatibility, index signatures)
-- Improved documentation with comprehensive tuple and property compatibility semantics
+**Latest Achievements (Commits 13-41)**:
+- Extracted promise/async type checking to `promise_checker.rs` (521 lines, -437 from state.rs)
+- Extracted iterable/iterator type checking to `iterable_checker.rs` (266 lines, -223 from state.rs)
+- Enhanced documentation for 20+ core type checking functions with examples
+- Total reduction: 27,525 → 27,424 lines in checker/state.rs (2.4% from peak)
+- 4 deep analyses performed tracking progress and lessons learned
 
 ---
 
