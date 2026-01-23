@@ -101,6 +101,12 @@ pub mod diagnostic_messages {
     pub const LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS: &str =
         "Left side of comma operator is unused and has no side effects.";
 
+    // Arithmetic operator errors
+    pub const LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: &str = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
+    pub const RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER: &str = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.";
+    pub const OPERATOR_CANNOT_BE_APPLIED_TO_TYPES: &str =
+        "Operator '{0}' cannot be applied to types '{1}' and '{2}'.";
+
     // Function/call errors
     pub const EXPECTED_ARGUMENTS: &str = "Expected {0} arguments, but got {1}.";
     pub const EXPECTED_AT_LEAST_ARGUMENTS: &str = "Expected at least {0} arguments, but got {1}.";
