@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+     "rust-skills@rust-skills": true
+  }
+}
