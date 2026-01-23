@@ -97,12 +97,15 @@ pub struct BinderState {
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
     pub module_exports: FxHashMap<String, SymbolTable>,
 
-    /// Re-exports: tracks `export * from 'module'` and `export { x } from 'module'` declarations
+    /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (current_file, exported_name) -> (source_module, original_name)
-    /// For wildcard re-exports, exported_name is "*" to indicate all exports
-    /// Example: ("./a.ts", "*", "./b.ts") means a.ts re-exports everything from b.ts
     /// Example: ("./a.ts", "foo", "./b.ts") means a.ts re-exports "foo" from b.ts
     pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+
+    /// Wildcard re-exports: tracks `export * from 'module'` declarations
+    /// Maps current_file -> Vec of source_modules
+    /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`)
+    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
@@ -168,6 +171,7 @@ impl BinderState {
             lib_binders: Vec::new(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
+            wildcard_reexports: FxHashMap::default(),
             shorthand_ambient_modules: FxHashSet::default(),
         }
     }
@@ -200,6 +204,7 @@ impl BinderState {
         self.lib_binders.clear();
         self.module_exports.clear();
         self.reexports.clear();
+        self.wildcard_reexports.clear();
         self.shorthand_ambient_modules.clear();
     }
 
@@ -255,6 +260,7 @@ impl BinderState {
             lib_binders: Vec::new(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
+            wildcard_reexports: FxHashMap::default(),
             shorthand_ambient_modules: FxHashSet::default(),
         }
     }
@@ -277,6 +283,7 @@ impl BinderState {
             FxHashMap::default(),
             FxHashMap::default(),
             FxHashMap::default(),
+            FxHashMap::default(),
             FxHashSet::default(),
         )
     }
@@ -295,6 +302,7 @@ impl BinderState {
         global_augmentations: FxHashMap<String, Vec<crate::parser::NodeIndex>>,
         module_exports: FxHashMap<String, SymbolTable>,
         reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+        wildcard_reexports: FxHashMap<String, Vec<String>>,
         symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
         shorthand_ambient_modules: FxHashSet<String>,
     ) -> Self {
@@ -329,6 +337,7 @@ impl BinderState {
             lib_binders: Vec::new(),
             module_exports,
             reexports,
+            wildcard_reexports,
             shorthand_ambient_modules,
         }
     }
@@ -508,7 +517,7 @@ impl BinderState {
             return Some(sym_id);
         }
 
-        // Not found in direct exports, check for re-exports
+        // Not found in direct exports, check for named re-exports
         if let Some(file_reexports) = self.reexports.get(module_specifier) {
             // Check for named re-export: `export { foo } from 'bar'`
             if let Some((source_module, original_name)) = file_reexports.get(export_name) {
@@ -519,14 +528,20 @@ impl BinderState {
                 );
                 return self.resolve_import_with_reexports(source_module, name_to_lookup);
             }
+        }
 
-            // Check for wildcard re-export: `export * from 'bar'`
-            if let Some((source_module, _)) = file_reexports.get("*") {
+        // Check for wildcard re-exports: `export * from 'bar'`
+        // A module can have multiple wildcard re-exports, check all of them
+        if let Some(source_modules) = self.wildcard_reexports.get(module_specifier) {
+            for source_module in source_modules {
                 debug!(
-                    "[RESOLVE_IMPORT] '{}' from module '{}' -> following wildcard re-export from '{}'",
+                    "[RESOLVE_IMPORT] '{}' from module '{}' -> trying wildcard re-export from '{}'",
                     export_name, module_specifier, source_module
                 );
-                return self.resolve_import_with_reexports(source_module, export_name);
+                if let Some(result) = self.resolve_import_with_reexports(source_module, export_name)
+                {
+                    return Some(result);
+                }
             }
         }
 
@@ -536,6 +551,17 @@ impl BinderState {
             export_name, module_specifier
         );
         None
+    }
+
+    /// Public method for testing import resolution with reexports.
+    /// This allows tests to verify that wildcard and named re-exports are properly resolved.
+    #[cfg(test)]
+    pub fn resolve_import_if_needed_public(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<SymbolId> {
+        self.resolve_import_with_reexports(module_specifier, export_name)
     }
 
     /// Find the enclosing scope for a given node by walking up the AST.
@@ -3402,10 +3428,11 @@ impl BinderState {
 
                 if let Some(source_module) = module_name {
                     let current_file = self.debugger.current_file.clone();
-                    let file_reexports = self.reexports.entry(current_file).or_default();
-
-                    // Use "*" to indicate wildcard re-export
-                    file_reexports.insert("*".to_string(), (source_module, None));
+                    // Add to wildcard_reexports list - a file can have multiple export * from
+                    self.wildcard_reexports
+                        .entry(current_file)
+                        .or_default()
+                        .push(source_module);
                 }
             }
         }
