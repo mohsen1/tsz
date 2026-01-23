@@ -4929,7 +4929,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             let values: Vec<TypeId> = source_shape
                                 .properties
                                 .iter()
-                                .filter(|prop| utils::is_numeric_property_name(self.interner, prop.name))
+                                .filter(|prop| {
+                                    utils::is_numeric_property_name(self.interner, prop.name)
+                                })
                                 .map(|prop| self.optional_property_type(prop))
                                 .collect();
                             let value_type = if values.is_empty() {
