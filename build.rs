@@ -37,17 +37,40 @@ fn main() {
 }
 
 /// Install git hooks by configuring core.hooksPath
+///
+/// This function is careful to:
+/// - Only run in the project root (not when used as a dependency)
+/// - Never overwrite existing hook configurations (husky, lefthook, etc.)
+/// - Scope all git commands to the local repository
 fn install_git_hooks() {
-    // Check if hooks are already configured
+    // Get the manifest directory (where Cargo.toml lives)
+    let manifest_dir = match std::env::var("CARGO_MANIFEST_DIR") {
+        Ok(dir) => std::path::PathBuf::from(dir),
+        Err(_) => return,
+    };
+
+    // Only install hooks if we're building the root project, not as a dependency
+    // Check if .git directory exists in this directory
+    if !manifest_dir.join(".git").exists() {
+        return;
+    }
+
+    // Check if .githooks directory exists
+    if !manifest_dir.join(".githooks").exists() {
+        return;
+    }
+
+    // Check if any hooks path is already configured (don't overwrite user's setup)
     let output = Command::new("git")
-        .args(["config", "--get", "core.hooksPath"])
+        .args(["-C", manifest_dir.to_str().unwrap_or("."), "config", "--local", "--get", "core.hooksPath"])
         .output();
 
     match output {
         Ok(result) => {
             let current_path = String::from_utf8_lossy(&result.stdout);
-            if current_path.trim() == ".githooks" {
-                // Already configured
+            let trimmed = current_path.trim();
+            // If any hooks path is configured, don't overwrite it
+            if !trimmed.is_empty() {
                 return;
             }
         }
@@ -57,14 +80,9 @@ fn install_git_hooks() {
         }
     }
 
-    // Check if .githooks directory exists
-    if !std::path::Path::new(".githooks").exists() {
-        return;
-    }
-
-    // Configure git to use .githooks directory
+    // Configure git to use .githooks directory (scoped to local repo only)
     let result = Command::new("git")
-        .args(["config", "core.hooksPath", ".githooks"])
+        .args(["-C", manifest_dir.to_str().unwrap_or("."), "config", "--local", "core.hooksPath", ".githooks"])
         .status();
 
     if let Ok(status) = result {
