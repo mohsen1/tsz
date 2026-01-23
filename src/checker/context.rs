@@ -32,6 +32,10 @@ pub struct CheckerOptions {
     pub strict_bind_call_apply: bool,
     /// When true, optional properties are treated as exactly `T | undefined` not `T | undefined | missing`
     pub exact_optional_property_types: bool,
+    /// When true, no library files (including lib.d.ts) are included.
+    /// This corresponds to the --noLib compiler flag.
+    /// TS2318 errors are emitted when referencing global types with this option enabled.
+    pub no_lib: bool,
 }
 
 impl CheckerOptions {
@@ -810,5 +814,12 @@ impl<'a> CheckerContext<'a> {
     /// When enabled, optional properties are `T | undefined` not `T | undefined | missing`.
     pub fn exact_optional_property_types(&self) -> bool {
         self.compiler_options.exact_optional_property_types
+    }
+
+    /// Check if noLib is enabled.
+    /// When enabled, no library files (including lib.d.ts) are included.
+    /// TS2318 errors are emitted when referencing global types with this option enabled.
+    pub fn no_lib(&self) -> bool {
+        self.compiler_options.no_lib
     }
 }

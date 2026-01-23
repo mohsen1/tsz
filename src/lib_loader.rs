@@ -170,6 +170,9 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "PromiseLike",
     "PromiseConstructor",
     "PromiseConstructorLike",
+    "PromiseSettledResult",
+    "PromiseFulfilledResult",
+    "PromiseRejectedResult",
     "Map",
     "MapConstructor",
     "Set",
@@ -180,6 +183,7 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "WeakSetConstructor",
     "Proxy",
     "ProxyHandler",
+    "ProxyConstructor",
     "Reflect",
     "Symbol",
     "SymbolConstructor",
@@ -197,10 +201,12 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "Generator",
     "GeneratorFunction",
     "GeneratorFunctionConstructor",
-    // ES2015 - Array types
+    // ES2015 - Array/TypedArray types
     "ArrayLike",
     "ReadonlyMap",
     "ReadonlySet",
+    "TemplateStringsArray",
+    "TypedPropertyDescriptor",
     // ES2017
     "AsyncFunction",
     "AsyncFunctionConstructor",
@@ -226,8 +232,11 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "FinalizationRegistryConstructor",
     "WeakRef",
     "WeakRefConstructor",
+    "AggregateError",
+    "AggregateErrorConstructor",
     // ES2022
     "Awaited",
+    "ErrorOptions", // ES2022 error options (for Error cause)
 ];
 
 /// Check if a type name is an ES2015+ feature that requires specific lib support.
@@ -691,5 +700,280 @@ async function foo() {
         assert!(is_es2015_plus_type("WeakSet"), "WeakSet is ES2015+");
         assert!(!is_es2015_plus_type("Array"), "Array is not ES2015+");
         assert!(!is_es2015_plus_type("Object"), "Object is not ES2015+");
+    }
+
+    #[test]
+    fn test_nolib_emits_ts2318_for_global_type() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that references a global type that should exist in lib
+        // Note: We use RegExp<T> (with type arg) instead of Array<T> because
+        // Array is special-cased in the checker to always synthesize a type.
+        // RegExp is a pre-ES2015 global type that requires lib.d.ts to be resolved.
+        let source = r#"
+let d: Date;
+function f(r: RegExp): void {}
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        // Don't merge any lib symbols to simulate @noLib
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2318 for Date/RegExp since they're known global types but no lib is loaded
+        let ts2318_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == CANNOT_FIND_GLOBAL_TYPE)
+            .count();
+
+        // Date and RegExp are known globals, should trigger TS2318
+        assert!(
+            ts2318_count >= 1,
+            "Expected at least one TS2318 error for missing global type 'Date' or 'RegExp', got: {:?}",
+            checker.ctx.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_nolib_emits_ts2583_for_es2015_type() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that references an ES2015+ type
+        let source = r#"
+let p: Promise<number>;
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        // Don't merge any lib symbols to simulate low target lib
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2583 for Promise since it's an ES2015+ type
+        let ts2583_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == MISSING_ES2015_LIB_SUPPORT)
+            .count();
+
+        assert!(
+            ts2583_count >= 1,
+            "Expected at least one TS2583 error for ES2015+ type 'Promise', got diagnostics: {:?}",
+            checker.ctx.diagnostics
+        );
+
+        // Verify it's not TS2318 (the generic global type error)
+        let ts2318_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == CANNOT_FIND_GLOBAL_TYPE && d.message_text.contains("Promise"))
+            .count();
+
+        assert_eq!(
+            ts2318_count, 0,
+            "ES2015+ types should get TS2583, not TS2318: {:?}",
+            checker.ctx.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_es2015_plus_types_comprehensive() {
+        // Test that all expected ES2015+ types are in the list
+        // ES2015 core types
+        assert!(is_es2015_plus_type("Promise"));
+        assert!(is_es2015_plus_type("PromiseLike"));
+        assert!(is_es2015_plus_type("PromiseConstructor"));
+        assert!(is_es2015_plus_type("PromiseConstructorLike"));
+        assert!(is_es2015_plus_type("PromiseSettledResult"));
+        assert!(is_es2015_plus_type("PromiseFulfilledResult"));
+        assert!(is_es2015_plus_type("PromiseRejectedResult"));
+        assert!(is_es2015_plus_type("Map"));
+        assert!(is_es2015_plus_type("MapConstructor"));
+        assert!(is_es2015_plus_type("Set"));
+        assert!(is_es2015_plus_type("SetConstructor"));
+        assert!(is_es2015_plus_type("WeakMap"));
+        assert!(is_es2015_plus_type("WeakMapConstructor"));
+        assert!(is_es2015_plus_type("WeakSet"));
+        assert!(is_es2015_plus_type("WeakSetConstructor"));
+        assert!(is_es2015_plus_type("Proxy"));
+        assert!(is_es2015_plus_type("ProxyHandler"));
+        assert!(is_es2015_plus_type("ProxyConstructor"));
+        assert!(is_es2015_plus_type("Reflect"));
+        assert!(is_es2015_plus_type("Symbol"));
+        assert!(is_es2015_plus_type("SymbolConstructor"));
+
+        // Iterator types
+        assert!(is_es2015_plus_type("Iterator"));
+        assert!(is_es2015_plus_type("Iterable"));
+        assert!(is_es2015_plus_type("IterableIterator"));
+        assert!(is_es2015_plus_type("IteratorResult"));
+        assert!(is_es2015_plus_type("IteratorYieldResult"));
+        assert!(is_es2015_plus_type("IteratorReturnResult"));
+        assert!(is_es2015_plus_type("AsyncIterator"));
+        assert!(is_es2015_plus_type("AsyncIterable"));
+        assert!(is_es2015_plus_type("AsyncIterableIterator"));
+
+        // Generator types
+        assert!(is_es2015_plus_type("Generator"));
+        assert!(is_es2015_plus_type("GeneratorFunction"));
+        assert!(is_es2015_plus_type("GeneratorFunctionConstructor"));
+
+        // ES2017
+        assert!(is_es2015_plus_type("AsyncFunction"));
+        assert!(is_es2015_plus_type("AsyncFunctionConstructor"));
+        assert!(is_es2015_plus_type("SharedArrayBuffer"));
+        assert!(is_es2015_plus_type("SharedArrayBufferConstructor"));
+        assert!(is_es2015_plus_type("Atomics"));
+
+        // ES2018
+        assert!(is_es2015_plus_type("AsyncGenerator"));
+        assert!(is_es2015_plus_type("AsyncGeneratorFunction"));
+        assert!(is_es2015_plus_type("AsyncGeneratorFunctionConstructor"));
+
+        // ES2020
+        assert!(is_es2015_plus_type("BigInt"));
+        assert!(is_es2015_plus_type("BigIntConstructor"));
+        assert!(is_es2015_plus_type("BigInt64Array"));
+        assert!(is_es2015_plus_type("BigInt64ArrayConstructor"));
+        assert!(is_es2015_plus_type("BigUint64Array"));
+        assert!(is_es2015_plus_type("BigUint64ArrayConstructor"));
+
+        // ES2021
+        assert!(is_es2015_plus_type("FinalizationRegistry"));
+        assert!(is_es2015_plus_type("FinalizationRegistryConstructor"));
+        assert!(is_es2015_plus_type("WeakRef"));
+        assert!(is_es2015_plus_type("WeakRefConstructor"));
+        assert!(is_es2015_plus_type("AggregateError"));
+        assert!(is_es2015_plus_type("AggregateErrorConstructor"));
+
+        // ES2022
+        assert!(is_es2015_plus_type("Awaited"));
+        assert!(is_es2015_plus_type("ErrorOptions"));
+
+        // Additional types
+        assert!(is_es2015_plus_type("ArrayLike"));
+        assert!(is_es2015_plus_type("ReadonlyMap"));
+        assert!(is_es2015_plus_type("ReadonlySet"));
+        assert!(is_es2015_plus_type("TemplateStringsArray"));
+        assert!(is_es2015_plus_type("TypedPropertyDescriptor"));
+
+        // Verify pre-ES2015 types are NOT in the list
+        assert!(!is_es2015_plus_type("Object"));
+        assert!(!is_es2015_plus_type("Array"));
+        assert!(!is_es2015_plus_type("Function"));
+        assert!(!is_es2015_plus_type("String"));
+        assert!(!is_es2015_plus_type("Number"));
+        assert!(!is_es2015_plus_type("Boolean"));
+        assert!(!is_es2015_plus_type("Error")); // Error is pre-ES2015
+        assert!(!is_es2015_plus_type("Date"));
+        assert!(!is_es2015_plus_type("RegExp"));
+        assert!(!is_es2015_plus_type("JSON"));
+        assert!(!is_es2015_plus_type("Math"));
+    }
+
+    #[test]
+    fn test_nolib_multiple_es2015_types() {
+        use crate::binder::BinderState;
+        use crate::checker::context::CheckerOptions;
+        use crate::checker::state::CheckerState;
+        use crate::parser::ParserState;
+        use crate::solver::TypeInterner;
+
+        // Source that references multiple ES2015+ types
+        let source = r#"
+let p: Promise<number>;
+let m: Map<string, number>;
+let s: Set<string>;
+"#;
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Parse errors: {:?}",
+            parser.get_diagnostics()
+        );
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+
+        let types = TypeInterner::new();
+        let mut options = CheckerOptions::default();
+        options.no_lib = true;
+
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            options,
+        );
+        checker.check_source_file(root);
+
+        // Should emit TS2583 for Promise, Map, and Set
+        let ts2583_count = checker
+            .ctx
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == MISSING_ES2015_LIB_SUPPORT)
+            .count();
+
+        assert!(
+            ts2583_count >= 3,
+            "Expected at least 3 TS2583 errors for ES2015+ types (Promise, Map, Set), got {}: {:?}",
+            ts2583_count,
+            checker.ctx.diagnostics
+        );
     }
 }
