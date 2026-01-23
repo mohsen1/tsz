@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use super::*;
 use crate::parser::ParserState;
 
