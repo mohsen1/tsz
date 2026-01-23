@@ -208,4 +208,57 @@ impl<'a> CheckerState<'a> {
         // The full version would extract the return type from callable types
         TypeId::ANY
     }
+
+    // =========================================================================
+    // Type Construction Utilities
+    // =========================================================================
+
+    /// Create a union type from multiple types.
+    ///
+    /// This is a convenience wrapper that automatically normalizes:
+    /// - Flattens nested unions
+    /// - Deduplicates members
+    /// - Sorts for canonical representation
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// // union([number, string, number]) => number | string
+    /// ```
+    pub fn get_union_type(&self, types: Vec<TypeId>) -> TypeId {
+        self.ctx.types.union(types)
+    }
+
+    /// Create an intersection type from multiple types.
+    ///
+    /// This is a convenience wrapper that automatically normalizes:
+    /// - Flattens nested intersections
+    /// - Deduplicates members
+    /// - Sorts for canonical representation
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// // intersection([{ name: string }, { age: number }])
+    /// // => { name: string } & { age: number }
+    /// ```
+    pub fn get_intersection_type(&self, types: Vec<TypeId>) -> TypeId {
+        self.ctx.types.intersection(types)
+    }
+
+    /// Check if a type is a subtype of another type.
+    ///
+    /// This is a convenience wrapper around `is_subtype_of`.
+    ///
+    /// ## Stricter than Assignability:
+    /// Subtyping is stricter than assignability and uses coinductive semantics
+    /// for recursive types.
+    pub fn check_is_subtype(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_subtype_of(source, target)
+    }
+
+    /// Get the string representation of a type.
+    ///
+    /// This is a convenience wrapper for type display in error messages.
+    pub fn type_to_string(&self, ty: TypeId) -> String {
+        self.format_type(ty)
+    }
 }
