@@ -174,6 +174,8 @@ pub mod diagnostic_messages {
     pub const ASYNC_FUNCTION_RETURNS_PROMISE: &str = "Async function return type must be Promise.";
     pub const ASYNC_FUNCTION_REQUIRES_PROMISE_CONSTRUCTOR: &str = "An async function or method in ES5/ES3 requires the 'Promise' constructor. \
          Make sure you have a declaration for the 'Promise' constructor or include 'ES2015' in your `--lib` option.";
+    pub const ASYNC_FUNCTION_MUST_RETURN_PROMISE: &str = "An async function or method must return a 'Promise'. \
+         Make sure you have a declaration for 'Promise' or include 'ES2015' in your `--lib` option.";
     pub const UNREACHABLE_CODE_DETECTED: &str = "Unreachable code detected.";
 
     // Generic/type parameter errors
@@ -393,6 +395,7 @@ pub mod diagnostic_codes {
     pub const AWAIT_OUTSIDE_ASYNC: u32 = 1308;
     pub const AWAIT_EXPRESSION_ONLY_IN_ASYNC_FUNCTION: u32 = 1359;
     pub const TYPE_IS_NOT_A_PROMISE: u32 = 2345;
+    pub const ASYNC_FUNCTION_MUST_RETURN_PROMISE: u32 = 2697; // An async function or method must return a 'Promise'.
     pub const VOID_NOT_AWAITED: u32 = 2801;
     pub const ASYNC_FUNCTION_WITHOUT_AWAIT: u32 = 80006;
 

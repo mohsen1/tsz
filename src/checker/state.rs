@@ -10881,23 +10881,39 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            // Check async function requirements
+            let (is_async, is_generator, async_node_idx): (bool, bool, NodeIndex) =
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    (func.is_async, func.asterisk_token, func.name)
+                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    (
+                        self.has_async_modifier(&method.modifiers),
+                        method.asterisk_token,
+                        method.name,
+                    )
+                } else {
+                    (false, false, NodeIndex::NONE)
+                };
+
+            // TS2697: Check if async function has access to Promise type
+            // This error is emitted when Promise global type is not available
+            if is_async && !is_generator && !self.is_promise_global_available() {
+                use crate::checker::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages,
+                };
+                let error_node = if async_node_idx.is_none() { idx } else { async_node_idx };
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                    diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                );
+            }
+
             // TS2705: Async function must return Promise
             // Check ALL async functions (not just arrow functions and function expressions)
             // Note: Async generators (async function* or async *method) should NOT trigger TS2705
             // because they return AsyncGenerator or AsyncIterator, not Promise
             if has_type_annotation {
-                let (is_async, is_generator) = if let Some(func) = self.ctx.arena.get_function(node)
-                {
-                    (func.is_async, func.asterisk_token)
-                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                    (
-                        self.has_async_modifier(&method.modifiers),
-                        method.asterisk_token,
-                    )
-                } else {
-                    (false, false)
-                };
-
                 // Only check non-generator async functions with explicit return types that aren't Promise
                 // Skip this check if:
                 // 1. The return type is ERROR (unresolved reference, likely Promise not in lib)
@@ -16783,6 +16799,19 @@ impl<'a> CheckerState<'a> {
                         // Note: Removed extra TS2705 checks for:
                         // - async functions without type annotations (TSC doesn't emit TS2705 for these)
                         // - async functions when Promise is not in lib (this was causing false positives)
+
+                        // TS2697: Check if async function has access to Promise type
+                        // This error is emitted when Promise global type is not available
+                        if func.is_async && !func.asterisk_token && !self.is_promise_global_available() {
+                            use crate::checker::types::diagnostics::{
+                                diagnostic_codes, diagnostic_messages,
+                            };
+                            self.error_at_node(
+                                func.name,
+                                diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                                diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                            );
+                        }
 
                         // Enter async context for await expression checking
                         if func.is_async {
@@ -24611,6 +24640,20 @@ impl<'a> CheckerState<'a> {
                 return_type = self.infer_return_type_from_body(method.body, None);
             }
 
+            let is_async = self.has_async_modifier(&method.modifiers);
+            let is_generator = method.asterisk_token;
+
+            // TS2697: Check if async method has access to Promise type
+            // This error is emitted when Promise global type is not available
+            if is_async && !is_generator && !self.is_promise_global_available() {
+                use crate::checker::types::diagnostics::diagnostic_messages;
+                self.error_at_node(
+                    method.name,
+                    diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                    diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
+                );
+            }
+
             // TS7011 (implicit any return) is only emitted for ambient methods,
             // matching TypeScript's behavior
             let is_ambient_class = self
@@ -24635,9 +24678,6 @@ impl<'a> CheckerState<'a> {
 
             self.push_return_type(return_type);
             self.check_statement(method.body);
-
-            let is_async = self.has_async_modifier(&method.modifiers);
-            let is_generator = method.asterisk_token;
             let check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
             let requires_return = self.requires_return_value(check_return_type);
@@ -24824,9 +24864,8 @@ impl<'a> CheckerState<'a> {
         // Parameter properties are only allowed in constructors, not in accessors
         self.check_parameter_properties(&accessor.parameters.nodes);
 
-        // TS7006 (implicit any parameter) is NOT emitted for setter parameters
-        // because the setter parameter type is inferred from the getter's return type
-        // Only check getter parameters
+        // Check getter parameters for TS7006 here
+        // Setter parameters are checked separately in check_setter_parameter below
         if is_getter {
             for &param_idx in &accessor.parameters.nodes {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -25362,6 +25401,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check if the global Promise type is available in lib contexts.
+    /// Used for TS2697: async function must return Promise.
+    fn is_promise_global_available(&self) -> bool {
+        for lib_ctx in &self.ctx.lib_contexts {
+            if lib_ctx.binder.file_locals.get("Promise").is_some() {
+                return true;
+            }
+        }
+        // Also check if Promise is defined in the current file's scope
+        if self.ctx.binder.file_locals.get("Promise").is_some() {
+            return true;
+        }
         false
     }
 
