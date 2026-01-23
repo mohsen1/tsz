@@ -89,6 +89,9 @@ pub mod diagnostic_messages {
     pub const MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS: &str =
         "Multiple constructor implementations are not allowed.";
     pub const PROPERTY_DOES_NOT_EXIST: &str = "Property '{0}' does not exist on type '{1}'.";
+    pub const TYPE_IS_NOT_AN_ARRAY_TYPE: &str = "Type '{0}' is not an array type.";
+    pub const TYPE_IS_NOT_AN_ARRAY_OR_STRING: &str =
+        "Type '{0}' is not an array type or a string type.";
     pub const PROPERTY_MISSING: &str = "Property '{0}' is missing in type '{1}'.";
     pub const PROPERTY_MISSING_BUT_REQUIRED: &str =
         "Property '{0}' is missing in type '{1}' but required in type '{2}'.";
@@ -414,6 +417,10 @@ pub mod diagnostic_codes {
     pub const EXCESS_PROPERTY_CHECK: u32 = 2353;
     pub const PROPERTY_ASSIGNMENT_EXPECTED: u32 = 1136;
     pub const DUPLICATE_PROPERTY: u32 = 2300;
+
+    // Destructuring errors
+    pub const TYPE_IS_NOT_AN_ARRAY_TYPE: u32 = 2461; // Type '{0}' is not an array type.
+    pub const TYPE_IS_NOT_AN_ARRAY_OR_DOES_NOT_HAVE_ITERATOR: u32 = 2548; // Type '{0}' is not an array type or does not have a '[Symbol.iterator]()' method that returns an iterator.
 
     // Index signature errors
     pub const INDEX_SIGNATURE_MISSING: u32 = 2329;

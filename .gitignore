@@ -46,7 +46,6 @@ TypeScript/tests/cases/rwc/*
 
 # Misc
 .env.local
-.claude/settings.local.json
 .role/
 .notify/*.notify
 test-args.txt
@@ -65,7 +64,9 @@ Dockerfile
 Dockerfile.*
 
 
-.claude/
+# Claude Code Plugins - ignore everything in .claude except local settings
+.claude/*
+!.claude/settings.local.json
 # Runaway process daemon files
 .runaway-daemon.pid
 .runaway-daemon.log
