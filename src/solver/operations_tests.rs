@@ -7027,3 +7027,180 @@ fn test_generic_function_tuple_with_optional_to_array_constraint() {
         "[string, string?] should satisfy T extends string[] constraint"
     );
 }
+
+// =============================================================================
+// BinaryOpEvaluator::is_arithmetic_operand tests
+// =============================================================================
+
+#[test]
+fn test_is_arithmetic_operand_number() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // number should be a valid arithmetic operand
+    assert!(
+        evaluator.is_arithmetic_operand(TypeId::NUMBER),
+        "number should be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_number_literal() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // Number literal should be a valid arithmetic operand
+    let num_literal = interner.literal_number(42.0);
+    assert!(
+        evaluator.is_arithmetic_operand(num_literal),
+        "number literal should be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_bigint() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // bigint should be a valid arithmetic operand
+    assert!(
+        evaluator.is_arithmetic_operand(TypeId::BIGINT),
+        "bigint should be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_bigint_literal() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // BigInt literal should be a valid arithmetic operand
+    let bigint_literal = interner.literal_bigint("42");
+    assert!(
+        evaluator.is_arithmetic_operand(bigint_literal),
+        "bigint literal should be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_any() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // any should be a valid arithmetic operand
+    assert!(
+        evaluator.is_arithmetic_operand(TypeId::ANY),
+        "any should be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_numeric_enum() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // Numeric enum (union of number literals) should be a valid arithmetic operand
+    let enum_val1 = interner.literal_number(0.0);
+    let enum_val2 = interner.literal_number(1.0);
+    let enum_val3 = interner.literal_number(2.0);
+    let enum_type = interner.union(vec![enum_val1, enum_val2, enum_val3]);
+
+    assert!(
+        evaluator.is_arithmetic_operand(enum_type),
+        "numeric enum (union of number literals) should be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_string_invalid() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // string should NOT be a valid arithmetic operand
+    assert!(
+        !evaluator.is_arithmetic_operand(TypeId::STRING),
+        "string should NOT be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_string_literal_invalid() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // String literal should NOT be a valid arithmetic operand
+    let str_literal = interner.literal_string("hello");
+    assert!(
+        !evaluator.is_arithmetic_operand(str_literal),
+        "string literal should NOT be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_boolean_invalid() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // boolean should NOT be a valid arithmetic operand
+    assert!(
+        !evaluator.is_arithmetic_operand(TypeId::BOOLEAN),
+        "boolean should NOT be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_undefined_invalid() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // undefined should NOT be a valid arithmetic operand
+    assert!(
+        !evaluator.is_arithmetic_operand(TypeId::UNDEFINED),
+        "undefined should NOT be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_null_invalid() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // null should NOT be a valid arithmetic operand
+    assert!(
+        !evaluator.is_arithmetic_operand(TypeId::NULL),
+        "null should NOT be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_object_invalid() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // object type should NOT be a valid arithmetic operand
+    let obj_type = interner.object(vec![PropertyInfo {
+        name: interner.intern_string("x"),
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    assert!(
+        !evaluator.is_arithmetic_operand(obj_type),
+        "object type should NOT be a valid arithmetic operand"
+    );
+}
+
+#[test]
+fn test_is_arithmetic_operand_mixed_union_invalid() {
+    let interner = TypeInterner::new();
+    let evaluator = BinaryOpEvaluator::new(&interner);
+
+    // Union of number and string should NOT be a valid arithmetic operand
+    let mixed_union = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    assert!(
+        !evaluator.is_arithmetic_operand(mixed_union),
+        "union of number and string should NOT be a valid arithmetic operand"
+    );
+}

@@ -3124,13 +3124,32 @@ impl<'a> BinaryOpEvaluator<'a> {
         BinaryOpEvaluator { interner }
     }
 
-    /// Check if a type is number-like (number, number literal, or any)
+    /// Check if a type is number-like (number, number literal, numeric enum, or any)
     fn is_number_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
             return true;
         }
-        if let Some(TypeKey::Literal(LiteralValue::Number(_))) = self.interner.lookup(type_id) {
-            return true;
+        if let Some(key) = self.interner.lookup(type_id) {
+            match key {
+                TypeKey::Literal(LiteralValue::Number(_)) => return true,
+                // Enum types are represented as unions of number literals
+                TypeKey::Union(list_id) => {
+                    let members = self.interner.type_list(list_id);
+                    // An empty union is not number-like
+                    if members.is_empty() {
+                        return false;
+                    }
+                    // Check if all members are number-like (numeric enum)
+                    return members.iter().all(|&m| self.is_number_like(m));
+                }
+                // Ref types (enum references) need to be resolved
+                TypeKey::Ref(_) => {
+                    // Enum refs are not directly number-like without resolution
+                    // The checker handles this at a higher level
+                    return false;
+                }
+                _ => {}
+            }
         }
         false
     }
@@ -3150,15 +3169,36 @@ impl<'a> BinaryOpEvaluator<'a> {
         false
     }
 
-    /// Check if a type is bigint-like (bigint, bigint literal, or any)
+    /// Check if a type is bigint-like (bigint, bigint literal, bigint enum, or any)
     fn is_bigint_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
             return true;
         }
-        if let Some(TypeKey::Literal(LiteralValue::BigInt(_))) = self.interner.lookup(type_id) {
-            return true;
+        if let Some(key) = self.interner.lookup(type_id) {
+            match key {
+                TypeKey::Literal(LiteralValue::BigInt(_)) => return true,
+                // Enum types can also be bigint-based (though rare)
+                TypeKey::Union(list_id) => {
+                    let members = self.interner.type_list(list_id);
+                    if members.is_empty() {
+                        return false;
+                    }
+                    // Check if all members are bigint-like (bigint enum)
+                    return members.iter().all(|&m| self.is_bigint_like(m));
+                }
+                _ => {}
+            }
         }
         false
+    }
+
+    /// Check if a type is valid for arithmetic operations (number, bigint, enum, or any)
+    /// This is used for TS2362/TS2363 error checking.
+    pub fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::ANY {
+            return true;
+        }
+        self.is_number_like(type_id) || self.is_bigint_like(type_id)
     }
 
     /// Evaluate a binary operation: left op right -> result
