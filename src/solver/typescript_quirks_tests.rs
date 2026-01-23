@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Tests for TypeScript compatibility quirks ("Lawyer" layer).
 //!
 //! TypeScript has intentional violations of sound type theory. These tests

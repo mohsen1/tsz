@@ -22957,10 +22957,8 @@ declare var x: Circular<tup>;
 
     // May have errors, but should not crash
     // The recursion guard should prevent infinite loops
-    assert!(
-        checker.ctx.diagnostics.len() >= 0,
-        "Checker should complete"
-    );
+    // If we get here without panicking, the test passed
+    let _ = checker.ctx.diagnostics.len();
 }
 
 #[test]
@@ -22997,10 +22995,8 @@ product.users;
     // Should complete without crashing or hanging
     checker.check_source_file(root);
 
-    assert!(
-        checker.ctx.diagnostics.len() >= 0,
-        "Checker should complete"
-    );
+    // If we get here without panicking, the test passed
+    let _ = checker.ctx.diagnostics.len();
 }
 #[test]
 fn test_object_destructuring_assignability() {

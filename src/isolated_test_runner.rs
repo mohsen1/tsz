@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Isolated Test Runner - Process-based test execution with resource limits
 //!
 //! This module provides a robust test runner that can:

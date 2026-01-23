@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Tests for type predicate compatibility in function subtyping.
 //!
 //! Type predicates (`x is T` and `asserts x is T`) make functions more specific.

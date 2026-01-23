@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Destructuring ES5 Transform
 //!
 //! Transforms ES6 destructuring patterns to ES5-compatible assignments.

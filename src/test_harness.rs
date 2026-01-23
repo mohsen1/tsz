@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Test Harness Module - Infrastructure for unit and conformance tests
 //!
 //! This module provides utilities for:

@@ -169,6 +169,7 @@ impl CompilationCache {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn export_hash(&self, path: &Path) -> Option<u64> {
         self.export_hashes.get(path).copied()
     }
