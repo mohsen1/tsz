@@ -46,7 +46,7 @@ function updateReadme(stats: ConformanceStats): void {
   const progressBar = generateProgressBar(stats.passRate, stats.passed, stats.total);
 
   const newContent = `<!-- CONFORMANCE_START -->
-Currently targeting TypeScript ${stats.tsVersion}
+Currently targeting \`TypeScript\`@\`${stats.tsVersion}\`
 
 \`\`\`
 ${progressBar}
