@@ -178,7 +178,9 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Whether indexed access includes `undefined`.
     /// Default: false (legacy TS behavior).
     pub no_unchecked_indexed_access: bool,
-    /// Whether to enforce weak type detection (optional-only targets require overlap).
+    /// DEPRECATED: Weak type checking is now handled by CompatChecker only.
+    /// This field is kept for API compatibility but is no longer used.
+    /// See compat.rs for the authoritative weak type checking logic.
     pub enforce_weak_types: bool,
     // When true, disables method bivariance (methods use contravariance).
     // Default: false (methods are bivariant in TypeScript for compatibility).
@@ -2060,96 +2062,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         true
     }
 
-    fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
-        let target_key = match self.interner.lookup(target) {
-            Some(key) => key,
-            None => return false,
-        };
-
-        let target_shape = match &target_key {
-            TypeKey::Object(shape_id) => self.interner.object_shape(*shape_id),
-            TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(*shape_id);
-                if shape.string_index.is_some() || shape.number_index.is_some() {
-                    return false;
-                }
-                shape
-            }
-            _ => return false,
-        };
-
-        let target_props = target_shape.properties.as_slice();
-        if target_props.is_empty() || target_props.iter().any(|prop| !prop.optional) {
-            return false;
-        }
-
-        self.violates_weak_type_with_target_props(source, target_props)
-    }
-
-    fn violates_weak_type_with_target_props(
-        &self,
-        source: TypeId,
-        target_props: &[PropertyInfo],
-    ) -> bool {
-        let source_key = match self.interner.lookup(source) {
-            Some(key) => key,
-            None => return false,
-        };
-
-        match &source_key {
-            TypeKey::Object(shape_id) => {
-                let shape = self.interner.object_shape(*shape_id);
-                // Empty objects don't violate weak types - they have no extra properties
-                // that would indicate a mismatch. Only objects with properties that
-                // have NONE in common with the target are weak type violations.
-                // e.g., { b: 1 } assigned to { a?: string } is a violation (TS2559)
-                //       {} assigned to { a?: string } is NOT a violation
-                if shape.properties.is_empty() {
-                    return false;
-                }
-                !self.has_common_property(shape.properties.as_slice(), target_props)
-            }
-            TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(*shape_id);
-                // Empty objects with index signatures also don't violate weak types
-                if shape.properties.is_empty() {
-                    return false;
-                }
-                !self.has_common_property(shape.properties.as_slice(), target_props)
-            }
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(*members);
-                members
-                    .iter()
-                    .any(|member| self.violates_weak_type_with_target_props(*member, target_props))
-            }
-            _ => false,
-        }
-    }
-
-    fn has_common_property(
-        &self,
-        source_props: &[PropertyInfo],
-        target_props: &[PropertyInfo],
-    ) -> bool {
-        let mut source_idx = 0;
-        let mut target_idx = 0;
-
-        while source_idx < source_props.len() && target_idx < target_props.len() {
-            let source_name = source_props[source_idx].name;
-            let target_name = target_props[target_idx].name;
-            if source_name == target_name {
-                return true;
-            }
-            if source_name < target_name {
-                source_idx += 1;
-            } else {
-                target_idx += 1;
-            }
-        }
-
-        false
-    }
+    // Note: violates_weak_type, violates_weak_type_with_target_props, and has_common_property
+    // were removed as dead code. Weak type checking is now handled exclusively by CompatChecker
+    // (see compat.rs:167-170 and compat.rs:289-481) to avoid double-checking which caused
+    // false positives (TS2322).
 
     fn lookup_property<'props>(
         &self,
