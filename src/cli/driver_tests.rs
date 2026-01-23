@@ -4844,8 +4844,8 @@ export enum Direction {
     Right = "RIGHT"
 }
 
-export function move(dir: Direction): void {
-    console.log(dir);
+export function move(dir: Direction): Direction {
+    return dir;
 }
 "#,
     );
@@ -5260,8 +5260,8 @@ export function apply(fn: (...args: number[]) => number, args: number[]): number
     return fn(...args);
 }
 
-export function log(...items: string[]): void {
-    console.log(...items);
+export function log(...items: string[]): string[] {
+    return items;
 }
 "#,
     );

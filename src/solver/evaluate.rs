@@ -626,7 +626,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut inferred = check_type;
             if let Some(constraint) = info.constraint {
                 let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                checker.enforce_weak_types = true;
                 let Some(filtered) =
                     self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                 else {
@@ -1128,7 +1127,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 && let Some(constraint) = param.constraint
             {
                 let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                checker.enforce_weak_types = true;
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
                 if self.match_infer_pattern(
@@ -1148,7 +1146,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Step 3: Perform subtype check or infer pattern matching
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-        checker.enforce_weak_types = true;
 
         if self.type_contains_infer(extends_type) {
             let mut bindings = FxHashMap::default();
