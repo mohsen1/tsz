@@ -369,6 +369,17 @@ impl<'a> CheckerState<'a> {
         self.ctx.binder.file_locals.get(name)
     }
 
+    /// Collect lib binders from lib_contexts for cross-arena symbol lookup.
+    /// This enables symbol resolution across lib.d.ts files when lib_binders
+    /// is not populated in the binder (e.g., in the driver.rs path).
+    fn get_lib_binders(&self) -> Vec<std::sync::Arc<crate::binder::BinderState>> {
+        self.ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .collect()
+    }
+
     fn is_class_member_symbol(flags: u32) -> bool {
         (flags
             & (symbol_flags::PROPERTY
@@ -409,12 +420,7 @@ impl<'a> CheckerState<'a> {
         let name = self.ctx.arena.get_identifier(node)?.escaped_text.as_str();
 
         // Collect lib binders for cross-arena symbol lookup
-        let lib_binders: Vec<Arc<crate::binder::BinderState>> = self
-            .ctx
-            .lib_contexts
-            .iter()
-            .map(|lc| Arc::clone(&lc.binder))
-            .collect();
+        let lib_binders = self.get_lib_binders();
 
         let debug = std::env::var("BIND_DEBUG").is_ok();
 
@@ -2656,13 +2662,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing right node - propagate error
         };
 
+        // Collect lib binders for cross-arena symbol lookup (fixes TS2694 false positives)
+        let lib_binders = self.get_lib_binders();
+
         // First, try to resolve the left side as a symbol and check its exports.
         // This handles merged class+namespace, function+namespace, and enum+namespace symbols.
         let mut member_sym_id_from_symbol = None;
         if let Some(left_node) = self.ctx.arena.get(qn.left)
             && left_node.kind == SyntaxKind::Identifier as u16
             && let Some(sym_id) = self.resolve_identifier_symbol(qn.left)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
             && let Some(ref exports) = symbol.exports
             && let Some(member_id) = exports.get(&right_name)
         {
@@ -2671,7 +2680,7 @@ impl<'a> CheckerState<'a> {
 
         // If found via symbol resolution, use it
         if let Some(member_sym_id) = member_sym_id_from_symbol {
-            if let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id) {
+            if let Some(member_symbol) = self.ctx.binder.get_symbol_with_libs(member_sym_id, &lib_binders) {
                 let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                 if !is_namespace
                     && (self.alias_resolves_to_value_only(member_sym_id)
@@ -2688,7 +2697,7 @@ impl<'a> CheckerState<'a> {
         // Look up the member in the left side's exports
         if let Some(crate::solver::TypeKey::Ref(crate::solver::SymbolRef(sym_id))) =
             self.ctx.types.lookup(left_type)
-            && let Some(symbol) = self.ctx.binder.get_symbol(crate::binder::SymbolId(sym_id))
+            && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(crate::binder::SymbolId(sym_id), &lib_binders)
         {
             // Check exports table
             if let Some(ref exports) = symbol.exports
@@ -2696,7 +2705,7 @@ impl<'a> CheckerState<'a> {
             {
                 // Check value-only, but skip for namespaces since they can be used
                 // to navigate to types (e.g., Outer.Inner.Type)
-                if let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id) {
+                if let Some(member_symbol) = self.ctx.binder.get_symbol_with_libs(member_sym_id, &lib_binders) {
                     let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                     if !is_namespace
                         && (self.alias_resolves_to_value_only(member_sym_id)

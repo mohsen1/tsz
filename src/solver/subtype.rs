@@ -372,9 +372,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None => return SubtypeResult::False,
         };
 
-        if self.enforce_weak_types && self.violates_weak_type(source, target) {
-            return SubtypeResult::False;
-        }
+        // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
+        // Removed redundant check here to avoid double-checking which caused false positives.
 
         if let Some(shape) = self.apparent_primitive_shape_for_key(&source_key) {
             match &target_key {
@@ -3721,12 +3720,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_key = self.interner.lookup(source)?;
         let target_key = self.interner.lookup(target)?;
 
-        if self.enforce_weak_types && self.violates_weak_type(source, target) {
-            return Some(SubtypeFailureReason::NoCommonProperties {
-                source_type: source,
-                target_type: target,
-            });
-        }
+        // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
+        // Removed redundant check here to avoid double-checking which caused false positives.
 
         self.explain_failure_inner(source, target, &source_key, &target_key)
     }

@@ -759,9 +759,14 @@ fn test_primitive_boxing_symbol_assignability() {
 
 #[test]
 fn test_weak_type_detection_requires_overlap() {
+    // Note: Weak type checking is now handled by CompatChecker, not SubtypeChecker.
+    // SubtypeChecker's enforce_weak_types flag is no longer enforced to avoid
+    // double-checking which caused false positives (TS2322).
+    // See compat_tests::test_weak_type_rejects_no_common_properties for the
+    // authoritative test of weak type behavior.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
-    checker.enforce_weak_types = true;
+    // enforce_weak_types is ignored - weak checking is done by CompatChecker
 
     let a = interner.intern_string("a");
     let b = interner.intern_string("b");
@@ -793,7 +798,9 @@ fn test_weak_type_detection_requires_overlap() {
         is_method: false,
     }]);
 
-    assert!(!checker.is_subtype_of(no_overlap, weak_target));
+    // SubtypeChecker no longer rejects based on weak type rules
+    // (that's handled by CompatChecker to avoid double-checking)
+    assert!(checker.is_subtype_of(no_overlap, weak_target));
     assert!(checker.is_subtype_of(overlap, weak_target));
 }
 
@@ -824,10 +831,12 @@ fn test_weak_type_detection_empty_object_allowed() {
 
 #[test]
 fn test_weak_type_detection_multiple_optional_properties() {
-    // Test weak type detection with multiple optional properties
+    // Note: Weak type checking is now handled by CompatChecker, not SubtypeChecker.
+    // See compat_tests::test_weak_type_all_optional_properties_detection for the
+    // authoritative test of this behavior.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
-    checker.enforce_weak_types = true;
+    // enforce_weak_types is ignored - weak checking is done by CompatChecker
 
     let a = interner.intern_string("a");
     let b = interner.intern_string("b");
@@ -852,7 +861,7 @@ fn test_weak_type_detection_multiple_optional_properties() {
         },
     ]);
 
-    // No overlap at all - should fail
+    // SubtypeChecker no longer rejects based on weak type rules
     let no_overlap = interner.object(vec![PropertyInfo {
         name: c,
         type_id: TypeId::BOOLEAN,
@@ -861,7 +870,8 @@ fn test_weak_type_detection_multiple_optional_properties() {
         readonly: false,
         is_method: false,
     }]);
-    assert!(!checker.is_subtype_of(no_overlap, weak_target));
+    // SubtypeChecker passes this (CompatChecker would reject it)
+    assert!(checker.is_subtype_of(no_overlap, weak_target));
 
     // Partial overlap (shares 'a' property) - should pass
     let partial_overlap = interner.object(vec![PropertyInfo {
