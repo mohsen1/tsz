@@ -69,6 +69,10 @@ pub struct EnclosingClassInfo {
     pub in_constructor: bool,
     /// Whether this is a `declare class` (ambient context for error 1183).
     pub is_declared: bool,
+    /// Whether we're in a static property initializer (for TS17011 checking).
+    pub in_static_property_initializer: bool,
+    /// Whether we're in a static method context.
+    pub in_static_method: bool,
 }
 
 /// Persistent cache for type checking results across LSP queries.

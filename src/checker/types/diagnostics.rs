@@ -150,6 +150,20 @@ pub mod diagnostic_messages {
     pub const THIS_IMPLICITLY_HAS_TYPE_ANY: &str =
         "'this' implicitly has type 'any' because it does not have a type annotation.";
 
+    // Super keyword errors
+    /// TS2335: 'super' can only be referenced in a derived class.
+    pub const SUPER_ONLY_IN_DERIVED_CLASS: &str =
+        "'super' can only be referenced in a derived class.";
+    /// TS2336: 'super' property access is permitted only in a constructor, member function, or member accessor of a derived class.
+    pub const SUPER_PROPERTY_ACCESS_INVALID_CONTEXT: &str = "'super' property access is permitted only in a constructor, member function, or member accessor of a derived class.";
+    /// TS2337: Super calls are not permitted outside constructors or in nested functions inside constructors.
+    pub const SUPER_CALL_NOT_IN_CONSTRUCTOR: &str = "Super calls are not permitted outside constructors or in nested functions inside constructors.";
+    /// TS2376: A 'super' call must be the first statement in the constructor to refer to 'super' or 'this' when a derived class contains initialized properties, parameter properties, or private identifiers.
+    pub const SUPER_MUST_BE_CALLED_BEFORE_THIS: &str = "A 'super' call must be the first statement in the constructor to refer to 'super' or 'this' when a derived class contains initialized properties, parameter properties, or private identifiers.";
+    /// TS17011: 'super' cannot be referenced in a static property initializer.
+    pub const SUPER_IN_STATIC_PROPERTY_INITIALIZER: &str =
+        "'super' cannot be referenced in a static property initializer.";
+
     // Interface errors
     pub const INTERFACE_INCORRECTLY_EXTENDS: &str =
         "Interface '{0}' incorrectly extends interface '{1}'.";
@@ -345,6 +359,14 @@ pub mod diagnostic_codes {
     pub const ABSTRACT_PROPERTY_IN_CONSTRUCTOR: u32 = 2715; // Abstract property 'X' in class 'C' cannot be accessed in the constructor.
     pub const PROPERTY_USED_BEFORE_INITIALIZATION: u32 = 2729; // Property '{0}' is used before its initialization.
     pub const SUPER_ONLY_IN_DERIVED_CLASS: u32 = 2335;
+    /// TS2336: 'super' property access is permitted only in a constructor, member function, or member accessor of a derived class.
+    pub const SUPER_PROPERTY_ACCESS_INVALID_CONTEXT: u32 = 2336;
+    /// TS2337: Super calls are not permitted outside constructors or in nested functions inside constructors.
+    pub const SUPER_CALL_NOT_IN_CONSTRUCTOR: u32 = 2337;
+    /// TS2376: A 'super' call must be the first statement in the constructor...
+    pub const SUPER_MUST_BE_CALLED_BEFORE_THIS: u32 = 2376;
+    /// TS17011: 'super' cannot be referenced in a static property initializer.
+    pub const SUPER_IN_STATIC_PROPERTY_INITIALIZER: u32 = 17011;
     pub const THIS_CANNOT_BE_REFERENCED: u32 = 2332;
     pub const THIS_IMPLICITLY_HAS_TYPE_ANY: u32 = 2683; // 'this' implicitly has type 'any' because it does not have a type annotation.
     pub const PROPERTY_HAS_NO_INITIALIZER_AND_NOT_DEFINITELY_ASSIGNED: u32 = 2564;

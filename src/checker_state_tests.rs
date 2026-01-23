@@ -28732,3 +28732,315 @@ for (const x of tuple) {
         codes
     );
 }
+
+// =============================================================================
+// Super Keyword Validation Tests (TS2335, TS2336, TS2337, TS17011)
+// =============================================================================
+
+/// Test TS2335: 'super' can only be referenced in a derived class
+#[test]
+fn test_ts2335_super_in_non_derived_class() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Base {
+    constructor() {
+        super();  // Error: super in non-derived class
+    }
+    method() {
+        super.method();  // Error: super in non-derived class
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should emit TS2335 for both super() and super.method()
+    let ts2335_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS)
+        .count();
+    assert!(
+        ts2335_count >= 2,
+        "Expected at least 2 TS2335 errors for super in non-derived class. Got {} with codes: {:?}",
+        ts2335_count,
+        codes
+    );
+}
+
+/// Test TS2337: Super calls are not permitted outside constructors
+#[test]
+fn test_ts2337_super_call_outside_constructor() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Parent {
+    parentMethod() {}
+}
+
+class Child extends Parent {
+    method() {
+        super();  // Error: super call outside constructor
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should emit TS2337 for super call in method
+    assert!(
+        codes.contains(&diagnostic_codes::SUPER_CALL_NOT_IN_CONSTRUCTOR),
+        "Expected TS2337 for super call outside constructor. Got codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS17011: 'super' cannot be referenced in a static property initializer
+#[test]
+fn test_ts17011_super_in_static_property_initializer() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Parent {
+    static parentProp = 42;
+}
+
+class Child extends Parent {
+    static prop = super.parentProp;  // Error: super in static property initializer
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should emit TS17011 for super in static property initializer
+    assert!(
+        codes.contains(&diagnostic_codes::SUPER_IN_STATIC_PROPERTY_INITIALIZER),
+        "Expected TS17011 for super in static property initializer. Got codes: {:?}",
+        codes
+    );
+}
+
+/// Test valid super usage in derived class constructor
+#[test]
+fn test_valid_super_in_derived_constructor() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Parent {
+    constructor(public value: number) {}
+}
+
+class Child extends Parent {
+    constructor() {
+        super(42);  // Valid: super in derived class constructor
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should NOT emit any super-related errors for valid super() in derived class constructor
+    assert!(
+        !codes.contains(&diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS),
+        "Should not emit TS2335 for valid super. Got codes: {:?}",
+        codes
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::SUPER_CALL_NOT_IN_CONSTRUCTOR),
+        "Should not emit TS2337 for valid super. Got codes: {:?}",
+        codes
+    );
+}
+
+/// Test valid super property access in derived class method
+#[test]
+fn test_valid_super_property_access_in_method() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Parent {
+    parentMethod() {
+        return 42;
+    }
+}
+
+class Child extends Parent {
+    childMethod() {
+        return super.parentMethod();  // Valid: super property access in method
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should NOT emit super-related errors for valid super property access
+    assert!(
+        !codes.contains(&diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS),
+        "Should not emit TS2335 for valid super. Got codes: {:?}",
+        codes
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::SUPER_PROPERTY_ACCESS_INVALID_CONTEXT),
+        "Should not emit TS2336 for valid super. Got codes: {:?}",
+        codes
+    );
+}
+
+/// Test TS2337: Super calls in nested function inside constructor
+#[test]
+fn test_ts2337_super_call_in_nested_function() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Parent {}
+
+class Child extends Parent {
+    constructor() {
+        const nested = () => {
+            super();  // Error: super call in nested function
+        };
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+
+    // Should emit TS2337 for super call in nested function
+    assert!(
+        codes.contains(&diagnostic_codes::SUPER_CALL_NOT_IN_CONSTRUCTOR),
+        "Expected TS2337 for super call in nested function inside constructor. Got codes: {:?}",
+        codes
+    );
+}

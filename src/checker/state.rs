@@ -15646,6 +15646,9 @@ impl<'a> CheckerState<'a> {
     /// - In static members: base class constructor type (`super.staticMember`)
     /// - In instance members: base class instance type (`super.method()`)
     fn get_type_of_super_keyword(&mut self, idx: NodeIndex) -> TypeId {
+        // Check super expression validity and emit any errors
+        self.check_super_expression(idx);
+
         let Some(class_info) = self.ctx.enclosing_class.clone() else {
             return TypeId::ERROR;
         };
@@ -15696,6 +15699,236 @@ impl<'a> CheckerState<'a> {
         }
 
         self.get_class_instance_type(base_class_idx, base_class)
+    }
+
+    /// Check and validate `super` expression usage.
+    ///
+    /// Validates:
+    /// - TS2335: 'super' can only be referenced in a derived class
+    /// - TS2336: 'super' property access is permitted only in constructor, member function, or member accessor
+    /// - TS2337: Super calls are not permitted outside constructors or in nested functions
+    /// - TS2376: 'super' call must be first statement when class has initialized properties
+    /// - TS17011: 'super' cannot be referenced in a static property initializer
+    fn check_super_expression(&mut self, idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // Check TS17011: super in static property initializer
+        if let Some(ref class_info) = self.ctx.enclosing_class {
+            if class_info.in_static_property_initializer {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
+                    diagnostic_codes::SUPER_IN_STATIC_PROPERTY_INITIALIZER,
+                );
+                return;
+            }
+        }
+
+        // Check if we're in a class context at all
+        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+            // TS2335: super outside of class (no enclosing class)
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_ONLY_IN_DERIVED_CLASS,
+                diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS,
+            );
+            return;
+        };
+
+        // Check if the class has a base class (is a derived class)
+        let has_base_class = self.get_base_class_idx(class_info.class_idx).is_some();
+
+        // Detect if this is a super() call or super property access
+        let parent_info = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n)));
+
+        let is_super_call = parent_info
+            .as_ref()
+            .map(|(_, parent_node)| {
+                if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                    return false;
+                }
+                let Some(call) = self.ctx.arena.get_call_expr(parent_node) else {
+                    return false;
+                };
+                call.expression == idx
+            })
+            .unwrap_or(false);
+
+        let is_super_property_access = parent_info
+            .as_ref()
+            .map(|(_, parent_node)| {
+                parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            })
+            .unwrap_or(false);
+
+        // TS2335: super can only be referenced in a derived class
+        if !has_base_class {
+            if is_super_call {
+                // TS2337: Super calls are not permitted outside constructors
+                // But if there's no base class, it's really TS2335
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_ONLY_IN_DERIVED_CLASS,
+                    diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS,
+                );
+            } else {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_ONLY_IN_DERIVED_CLASS,
+                    diagnostic_codes::SUPER_ONLY_IN_DERIVED_CLASS,
+                );
+            }
+            return;
+        }
+
+        // TS2337: Super calls are not permitted outside constructors
+        if is_super_call {
+            if !class_info.in_constructor {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_CALL_NOT_IN_CONSTRUCTOR,
+                    diagnostic_codes::SUPER_CALL_NOT_IN_CONSTRUCTOR,
+                );
+                return;
+            }
+
+            // Check for nested function inside constructor
+            if self.is_super_in_nested_function(idx) {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_CALL_NOT_IN_CONSTRUCTOR,
+                    diagnostic_codes::SUPER_CALL_NOT_IN_CONSTRUCTOR,
+                );
+                return;
+            }
+        }
+
+        // TS2336: super property access must be in constructor, method, or accessor
+        if is_super_property_access {
+            // Check if we're in a valid context for super property access
+            let in_valid_context = class_info.in_constructor
+                || self.is_in_class_method_body(idx)
+                || self.is_in_class_accessor_body(idx);
+
+            if !in_valid_context {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_PROPERTY_ACCESS_INVALID_CONTEXT,
+                    diagnostic_codes::SUPER_PROPERTY_ACCESS_INVALID_CONTEXT,
+                );
+            }
+        }
+    }
+
+    /// Check if a super expression is inside a nested function within a constructor.
+    fn is_super_in_nested_function(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut function_depth = 0;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            // Count function/arrow function boundaries
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                function_depth += 1;
+            }
+
+            // Check if we've reached the constructor
+            if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                // If function_depth > 0, super is in a nested function
+                return function_depth > 0;
+            }
+
+            // Check if we've left the class
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    /// Check if a node is inside a class method body (non-static).
+    fn is_in_class_method_body(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                if let Some(method) = self.ctx.arena.get_method_decl(parent_node) {
+                    // Check if it's not static
+                    return !self.has_static_modifier(&method.modifiers);
+                }
+            }
+
+            // Check if we've left the class
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    /// Check if a node is inside a class accessor body (getter/setter).
+    fn is_in_class_accessor_body(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                return true;
+            }
+
+            // Check if we've left the class
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
@@ -19470,6 +19703,8 @@ impl<'a> CheckerState<'a> {
                 member_nodes: class.members.nodes.clone(),
                 in_constructor: false,
                 is_declared,
+                in_static_property_initializer: false,
+                in_static_method: false,
             });
         }
 
@@ -19528,6 +19763,8 @@ impl<'a> CheckerState<'a> {
             member_nodes: class.members.nodes.clone(),
             in_constructor: false,
             is_declared: false,
+            in_static_property_initializer: false,
+            in_static_method: false,
         });
 
         for &member_idx in &class.members.nodes {
@@ -25112,6 +25349,20 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Track static property initializer context for TS17011
+        let is_static = self.has_static_modifier(&prop.modifiers);
+        let prev_static_prop_init = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.in_static_property_initializer)
+            .unwrap_or(false);
+        if is_static && !prop.initializer.is_none() {
+            if let Some(ref mut class_info) = self.ctx.enclosing_class {
+                class_info.in_static_property_initializer = true;
+            }
+        }
+
         // If property has type annotation and initializer, check type compatibility
         if !prop.type_annotation.is_none() && !prop.initializer.is_none() {
             let declared_type = self.get_type_from_type_node(prop.type_annotation);
@@ -25132,6 +25383,11 @@ impl<'a> CheckerState<'a> {
         } else if !prop.initializer.is_none() {
             // Just check the initializer to catch errors within it
             self.get_type_of_node(prop.initializer);
+        }
+
+        // Restore static property initializer context
+        if let Some(ref mut class_info) = self.ctx.enclosing_class {
+            class_info.in_static_property_initializer = prev_static_prop_init;
         }
 
         // Error 2729: Property is used before its initialization
