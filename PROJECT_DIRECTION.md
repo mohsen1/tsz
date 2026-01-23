@@ -111,6 +111,62 @@ Parser error recovery is emitting errors where TSC doesn't. May indicate:
 
 ---
 
+## CRITICAL: Checker vs Solver Architectural Issues
+
+**Problem:** The checker contains assignability logic that should be in the solver, causing:
+1. Duplicate code paths for the same checks
+2. Inconsistent behavior between checker and solver
+3. Double-checking that compounds strictness (likely contributing to 12k TS2322 false positives)
+
+### Assignability Overrides in Wrong Layer
+
+Four assignability override functions exist in `src/checker/state.rs:11615-11890` that should be in the solver:
+
+| Function | Lines | Purpose |
+|----------|-------|---------|
+| `enum_assignability_override()` | 11615-11680 | Enum compatibility checks |
+| `abstract_constructor_assignability_override()` | 11682-11750 | Abstract constructor checks |
+| `constructor_accessibility_override()` | 11752-11820 | Constructor accessibility |
+| `private_brand_assignability_override()` | 11822-11890 | Private field brand checks |
+
+**These overrides are called TWICE:**
+- First call: `state.rs:12431-12442`
+- Second call: `state.rs:12464-12474`
+
+This double-calling compounds the strictness problem.
+
+### Type Evaluation Duplication
+
+Type evaluation logic is split between:
+- **Checker:** `src/checker/state.rs:12399-12832` - inline type evaluation
+- **Solver:** `src/solver/evaluate.rs` - `TypeEvaluator` struct
+
+This duplication means the same types may be evaluated differently depending on the code path.
+
+### Action Plan
+
+**Priority 1: Move Assignability Overrides to Solver**
+1. Move all 4 override functions from `state.rs` to `src/solver/compat.rs`
+2. Remove duplicate calls (keep single call site)
+3. Ensure solver has all context needed for these checks
+
+**Priority 2: Centralize Type Evaluation**
+1. All type evaluation should go through solver's `TypeEvaluator`
+2. Checker should only call solver, not duplicate evaluation logic
+3. This ensures consistent type semantics
+
+**Key Files:**
+| File | What to Change |
+|------|----------------|
+| `src/checker/state.rs:11615-11890` | MOVE overrides to solver |
+| `src/checker/state.rs:12431-12474` | REMOVE duplicate override calls |
+| `src/solver/compat.rs` | ADD override functions here |
+| `src/solver/evaluate.rs` | Ensure all evaluation routes through here |
+
+**Expected Impact:** Removing duplicate checking should significantly reduce TS2322 false positives.
+
+---
+
 ## High Priority: Missing Errors Coverage
 
 **Problem:** Some legitimate errors are not being emitted.
@@ -284,7 +340,14 @@ if self.enforce_weak_types && self.violates_weak_type(source, target) {
 
 Run conformance to measure impact.
 
-### Day 2: Debug Remaining TS2322 False Positives
+### Day 2: Move Assignability Overrides to Solver
+
+Move the 4 override functions from checker to solver:
+1. Copy `enum_assignability_override()`, `abstract_constructor_assignability_override()`, `constructor_accessibility_override()`, `private_brand_assignability_override()` to `src/solver/compat.rs`
+2. Remove the duplicate calls at `state.rs:12431-12442` and `state.rs:12464-12474` (keep single call)
+3. Update solver's `is_assignable()` to use these overrides
+
+### Day 3: Debug Remaining TS2322 False Positives
 
 ```bash
 # Find tests with extra TS2322
@@ -298,11 +361,11 @@ cargo run -- --check conformance/path/to/test.ts
 
 Focus on `violates_weak_union()` in `compat.rs:315-357`.
 
-### Day 3-4: Fix `violates_weak_union()` Logic
+### Day 4-5: Fix `violates_weak_union()` Logic
 
 Review the complex union handling - likely generating false positives.
 
-### Day 5: Fix Symbol Resolution False Positives
+### Day 6: Fix Symbol Resolution False Positives
 
 Debug TS2304/TS2694 extra errors.
 
