@@ -1005,6 +1005,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check Ref to structural type subtype.
+    ///
+    /// When the source type is a nominal reference (Ref), we must resolve it to
+    /// its structural type and then check subtyping against the target.
+    ///
+    /// ## Resolution Process:
+    /// 1. Look up the symbol referenced by the Ref
+    /// 2. If found, check if the resolved type is a subtype of target
+    /// 3. If not found, the types are incompatible
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Animal { name: string; }
+    /// interface Dog extends Animal { bark(): void; }
+    /// let dog: Dog;
+    /// let animal: Animal = dog; // Resolves Dog, checks Dog <: Animal
+    /// ```
     fn check_ref_subtype(
         &mut self,
         _source: TypeId,
@@ -1018,6 +1034,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check structural type to Ref subtype.
+    ///
+    /// When the target type is a nominal reference (Ref), we must resolve it to
+    /// its structural type and then check if the source is a subtype of that.
+    ///
+    /// ## Resolution Process:
+    /// 1. Look up the symbol referenced by the target Ref
+    /// 2. If found, check if source is a subtype of the resolved type
+    /// 3. If not found, the types are incompatible
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// interface Animal { name: string; }
+    /// interface Dog extends Animal { bark(): void; }
+    /// let animal: Animal;
+    /// let dog: Dog = animal; // Error: Resolves Dog, checks Animal <: Dog (fails)
+    /// ```
     fn check_to_ref_subtype(
         &mut self,
         source: TypeId,
