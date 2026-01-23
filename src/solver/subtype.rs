@@ -2127,6 +2127,89 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
+    /// Check string index signature compatibility between source and target.
+    ///
+    /// Validates that string index signatures are compatible, handling:
+    /// - Source has string index → must be subtype of target's index
+    /// - Source lacks string index → all source properties must be compatible with target's index
+    fn check_string_index_compatibility(
+        &mut self,
+        source: &ObjectShape,
+        target: &ObjectShape,
+    ) -> SubtypeResult {
+        let Some(ref t_string_idx) = target.string_index else {
+            return SubtypeResult::True; // Target has no string index constraint
+        };
+
+        match &source.string_index {
+            Some(s_string_idx) => {
+                // Source string index must be subtype of target
+                if s_string_idx.readonly && !t_string_idx.readonly {
+                    return SubtypeResult::False;
+                }
+                if !self
+                    .check_subtype(s_string_idx.value_type, t_string_idx.value_type)
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+                SubtypeResult::True
+            }
+            None => {
+                // Target has string index, source doesn't
+                // All source properties must be compatible with target's string index
+                for prop in &source.properties {
+                    if !t_string_idx.readonly && prop.readonly {
+                        return SubtypeResult::False;
+                    }
+                    let prop_type = self.optional_property_type(prop);
+                    if !self
+                        .check_subtype(prop_type, t_string_idx.value_type)
+                        .is_true()
+                    {
+                        return SubtypeResult::False;
+                    }
+                }
+                SubtypeResult::True
+            }
+        }
+    }
+
+    /// Check number index signature compatibility between source and target.
+    ///
+    /// Validates that number index signatures are compatible.
+    /// Number indexing is optional, so it's OK if source lacks a number index.
+    fn check_number_index_compatibility(
+        &mut self,
+        source: &ObjectShape,
+        target: &ObjectShape,
+    ) -> SubtypeResult {
+        let Some(ref t_number_idx) = target.number_index else {
+            return SubtypeResult::True; // Target has no number index constraint
+        };
+
+        match &source.number_index {
+            Some(s_number_idx) => {
+                // Source number index must be subtype of target
+                if s_number_idx.readonly && !t_number_idx.readonly {
+                    return SubtypeResult::False;
+                }
+                if !self
+                    .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+                SubtypeResult::True
+            }
+            None => {
+                // Target has number index but source doesn't - this is OK
+                // (number indexing is optional)
+                SubtypeResult::True
+            }
+        }
+    }
+
     /// Check object with index signature subtyping
     fn check_object_with_index_subtype(
         &mut self,
@@ -2143,59 +2226,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check string index signature compatibility
-        if let Some(ref t_string_idx) = target.string_index {
-            match &source.string_index {
-                Some(s_string_idx) => {
-                    // Source string index must be subtype of target
-                    if s_string_idx.readonly && !t_string_idx.readonly {
-                        return SubtypeResult::False;
-                    }
-                    if !self
-                        .check_subtype(s_string_idx.value_type, t_string_idx.value_type)
-                        .is_true()
-                    {
-                        return SubtypeResult::False;
-                    }
-                }
-                None => {
-                    // Target has string index, source doesn't
-                    // All source properties must be compatible with target's string index
-                    for prop in &source.properties {
-                        if !t_string_idx.readonly && prop.readonly {
-                            return SubtypeResult::False;
-                        }
-                        let prop_type = self.optional_property_type(prop);
-                        if !self
-                            .check_subtype(prop_type, t_string_idx.value_type)
-                            .is_true()
-                        {
-                            return SubtypeResult::False;
-                        }
-                    }
-                }
-            }
+        if !self
+            .check_string_index_compatibility(source, target)
+            .is_true()
+        {
+            return SubtypeResult::False;
         }
 
         // Check number index signature compatibility
-        if let Some(ref t_number_idx) = target.number_index {
-            match &source.number_index {
-                Some(s_number_idx) => {
-                    // Source number index must be subtype of target
-                    if s_number_idx.readonly && !t_number_idx.readonly {
-                        return SubtypeResult::False;
-                    }
-                    if !self
-                        .check_subtype(s_number_idx.value_type, t_number_idx.value_type)
-                        .is_true()
-                    {
-                        return SubtypeResult::False;
-                    }
-                }
-                None => {
-                    // Target has number index but source doesn't - this is OK
-                    // (number indexing is optional)
-                }
-            }
+        if !self
+            .check_number_index_compatibility(source, target)
+            .is_true()
+        {
+            return SubtypeResult::False;
         }
 
         if !self
