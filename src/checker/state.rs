@@ -12487,8 +12487,12 @@ impl<'a> CheckerState<'a> {
         checker.is_assignable_with_overrides(source, target, &overrides)
     }
 
+    /// Check if we should skip the general assignability error for an object literal.
+    /// Returns true if:
+    /// 1. It's a weak union violation (TypeScript shows excess property error instead)
+    /// 2. OR if the object literal has excess properties (TypeScript prioritizes TS2353 over TS2345/TS2322)
     fn should_skip_weak_union_error(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
         source_idx: NodeIndex,
@@ -12502,10 +12506,97 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let env = self.ctx.type_env.borrow();
-        let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-        checker.set_strict_null_checks(self.ctx.strict_null_checks());
-        checker.is_weak_union_violation(source, target)
+        // Check for weak union violation first (using scoped borrow)
+        let is_weak_union_violation = {
+            let env = self.ctx.type_env.borrow();
+            let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            checker.is_weak_union_violation(source, target)
+        };
+
+        if is_weak_union_violation {
+            return true;
+        }
+
+        // Check if the object literal has excess properties.
+        // If so, TypeScript only shows TS2353 (excess property), not the general assignability error.
+        self.object_literal_has_excess_properties(source, target)
+    }
+
+    /// Check if source object literal has properties that don't exist in target.
+    fn object_literal_has_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        let source_shape = match self.ctx.types.lookup(source) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                self.ctx.types.object_shape(shape_id)
+            }
+            _ => return false,
+        };
+
+        let source_props = source_shape.properties.as_slice();
+        if source_props.is_empty() {
+            return false;
+        }
+
+        let resolved_target = self.resolve_type_for_property_access(target);
+
+        match self.ctx.types.lookup(resolved_target) {
+            Some(TypeKey::Object(shape_id)) => {
+                let target_shape = self.ctx.types.object_shape(shape_id);
+                let target_props = target_shape.properties.as_slice();
+
+                // Empty object {} accepts any properties
+                if target_props.is_empty() {
+                    return false;
+                }
+
+                // Check if any source property doesn't exist in target
+                source_props
+                    .iter()
+                    .any(|source_prop| !target_props.iter().any(|p| p.name == source_prop.name))
+            }
+            Some(TypeKey::Union(members_id)) => {
+                let members = self.ctx.types.type_list(members_id);
+                let mut target_shapes = Vec::new();
+
+                for &member in members.iter() {
+                    let resolved_member = self.resolve_type_for_property_access(member);
+                    let shape = match self.ctx.types.lookup(resolved_member) {
+                        Some(TypeKey::Object(shape_id))
+                        | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                            self.ctx.types.object_shape(shape_id)
+                        }
+                        _ => continue,
+                    };
+
+                    // If any union member has empty props or index signature, accept all
+                    if shape.properties.is_empty()
+                        || shape.string_index.is_some()
+                        || shape.number_index.is_some()
+                    {
+                        return false;
+                    }
+
+                    target_shapes.push(shape);
+                }
+
+                if target_shapes.is_empty() {
+                    return false;
+                }
+
+                // Check if any source property doesn't exist in any union member
+                source_props.iter().any(|source_prop| {
+                    !target_shapes.iter().any(|shape| {
+                        shape
+                            .properties
+                            .iter()
+                            .any(|prop| prop.name == source_prop.name)
+                    })
+                })
+            }
+            _ => false,
+        }
     }
 
     /// Check if `source` type is a subtype of `target` type.
