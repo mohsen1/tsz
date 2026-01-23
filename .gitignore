@@ -69,3 +69,4 @@ Dockerfile.*
 
 .env
 logs/
+conformance/.tsc-cache
