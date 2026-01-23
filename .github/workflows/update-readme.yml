@@ -12,7 +12,7 @@ jobs:
   update-conformance:
     name: Update Conformance Progress
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -43,13 +43,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: conformance/package.json
+
+      - name: Install conformance dependencies
+        run: cd conformance && npm install
+
+      - name: Build WASM
+        run: wasm-pack build --target nodejs --out-dir pkg
+
+      - name: Fetch TypeScript conformance tests
+        run: git submodule update --init --depth 1 -- TypeScript
+
+      - name: Build conformance runner
+        run: cd conformance && npm run build
 
       - name: Run conformance tests
         id: conformance
         run: |
+          cd conformance
           set +e
-          # Run with Docker (default) - 500 tests, 4 workers for CI
-          OUTPUT=$(./conformance/run-conformance.sh --max=500 --workers=4 --timeout=1200 2>&1)
+          OUTPUT=$(timeout 1800 bash run-conformance.sh --all --workers=4 2>&1)
           EXIT_CODE=$?
           set -e
 
@@ -79,8 +93,6 @@ jobs:
         if: steps.conformance.outputs.success == 'true'
         run: |
           cd conformance
-          npm install --silent
-          npm run build --silent
           node dist/update-readme.js \
             --passed=${{ steps.conformance.outputs.passed }} \
             --total=${{ steps.conformance.outputs.total }} \
