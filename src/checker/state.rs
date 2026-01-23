@@ -28,6 +28,7 @@ use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::solver::{ContextualTypeContext, TypeId, TypeInterner};
 use rustc_hash::FxHashSet;
+use std::sync::Arc;
 use tracing::{Level, debug, span, trace};
 
 // =============================================================================
