@@ -28,22 +28,16 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Cache cargo registry
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-conformance-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-conformance-
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -55,9 +49,6 @@ jobs:
       - name: Install conformance dependencies
         run: cd conformance && npm install
 
-      - name: Build WASM
-        run: wasm-pack build --target nodejs --out-dir pkg
-
       - name: Fetch TypeScript conformance tests
         run: git submodule update --init --depth 1 -- TypeScript
 
@@ -68,7 +59,9 @@ jobs:
         id: conformance
         run: |
           set +e
-          OUTPUT=$(timeout 2400 ./conformance/run-conformance.sh --all --workers=4 2>&1)
+          # Use --no-sandbox since GitHub Actions provides isolation
+          # Use --native for speed (no WASM overhead)
+          OUTPUT=$(timeout 1800 ./conformance/run-conformance.sh --no-sandbox --native --all --workers=4 2>&1)
           EXIT_CODE=$?
           set -e
 
