@@ -456,7 +456,13 @@ async function runCompiler(testCase: ParsedTestCase): Promise<{ codes: number[];
 
         // Write test files
         for (const file of testCase.files) {
-          fs.writeFileSync(path.join(tmpDir, file.name), file.content);
+          const filePath = path.join(tmpDir, file.name);
+          // Ensure parent directories exist for nested paths like node_modules/...
+          const parentDir = path.dirname(filePath);
+          if (parentDir !== tmpDir) {
+            fs.mkdirSync(parentDir, { recursive: true });
+          }
+          fs.writeFileSync(filePath, file.content);
           filesToCheck.push(file.name);
         }
 
