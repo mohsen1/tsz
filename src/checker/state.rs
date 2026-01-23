@@ -54,6 +54,14 @@ pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
 /// Maximum depth for call expression resolution.
 pub const MAX_CALL_DEPTH: u32 = 20;
 
+/// Maximum iterations for tree-walking loops (scope chain, parent traversal).
+/// Prevents infinite loops in malformed or pathological AST structures.
+pub const MAX_TREE_WALK_ITERATIONS: usize = 10_000;
+
+/// Maximum number of type resolution operations per checker instance.
+/// Prevents timeout on deeply recursive or pathological type definitions.
+pub const MAX_TYPE_RESOLUTION_OPS: u32 = 500_000;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum EnumKind {
     Numeric,
@@ -430,7 +438,13 @@ impl<'a> CheckerState<'a> {
 
     fn find_enclosing_scope(&self, node_idx: NodeIndex) -> Option<ScopeId> {
         let mut current = node_idx;
+        let mut iterations = 0;
         while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - break to prevent infinite loop
+                break;
+            }
             if let Some(&scope_id) = self.ctx.binder.node_scope_ids.get(&current.0) {
                 return Some(scope_id);
             }
@@ -493,6 +507,10 @@ impl<'a> CheckerState<'a> {
             let mut scope_depth = 0;
             while !scope_id.is_none() {
                 scope_depth += 1;
+                // Safety limit to prevent infinite loops in malformed scope chains
+                if scope_depth > MAX_TREE_WALK_ITERATIONS {
+                    break;
+                }
                 if let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) {
                     if debug {
                         trace!(
@@ -866,7 +884,12 @@ impl<'a> CheckerState<'a> {
             return (symbols, saw_class_scope);
         };
 
+        let mut iterations = 0;
         while !scope_id.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                break;
+            }
             let Some(scope) = self.ctx.binder.scopes.get(scope_id.0 as usize) else {
                 break;
             };
@@ -1936,7 +1959,12 @@ impl<'a> CheckerState<'a> {
 
     fn missing_type_query_left(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
             let node = self.ctx.arena.get(current)?;
             if node.kind == SyntaxKind::Identifier as u16 {
                 if self.resolve_identifier_symbol(current).is_none() {
@@ -6668,7 +6696,12 @@ impl<'a> CheckerState<'a> {
 
     fn find_enclosing_variable_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
             let node = self.ctx.arena.get(current)?;
             if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                 return Some(current);
@@ -6683,7 +6716,12 @@ impl<'a> CheckerState<'a> {
 
     fn node_is_or_within_kind(&self, idx: NodeIndex, kind: u16) -> bool {
         let mut current = idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
             let node = match self.ctx.arena.get(current) {
                 Some(node) => node,
                 None => return false,
@@ -6706,7 +6744,12 @@ impl<'a> CheckerState<'a> {
     /// This is used to detect `await` used in default parameter values (TS2524).
     fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
             let ext = match self.ctx.arena.get_extended(current) {
                 Some(ext) => ext,
                 None => return false,
@@ -6754,7 +6797,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         let mut current = node_idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
             let ext = match self.ctx.arena.get_extended(current) {
                 Some(ext) => ext,
                 None => return false,
@@ -6771,7 +6819,12 @@ impl<'a> CheckerState<'a> {
 
     fn is_for_in_of_assignment_target(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
             let ext = match self.ctx.arena.get_extended(current) {
                 Some(ext) => ext,
                 None => return false,
@@ -8477,7 +8530,12 @@ impl<'a> CheckerState<'a> {
 
     fn class_expression_from_expr(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = expr_idx;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
             let node = self.ctx.arena.get(current)?;
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                 let paren = self.ctx.arena.get_parenthesized(node)?;
@@ -8565,7 +8623,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut current = ctor_type;
+        let mut iterations = 0;
         loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
             if !visited.insert(current) {
                 return None;
             }
