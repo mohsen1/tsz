@@ -454,10 +454,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         match &source_key {
             TypeKey::Union(members) => {
+                // When source is a union, ALL members must lack common property for the union to lack it.
+                // If ANY member has a common property with the target, the union overall has some overlap.
                 let members = self.interner.type_list(*members);
                 members
                     .iter()
-                    .any(|member| self.source_lacks_union_common_property(*member, target_members))
+                    .all(|member| self.source_lacks_union_common_property(*member, target_members))
             }
             TypeKey::TypeParameter(param) => match param.constraint {
                 Some(constraint) => {
