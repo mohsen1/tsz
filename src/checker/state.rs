@@ -103,6 +103,44 @@ struct FlowResult {
     exits: Option<FxHashSet<PropertyKey>>,
 }
 
+// =============================================================================
+// AssignabilityOverrideProvider Implementation
+// =============================================================================
+
+/// Helper struct that implements AssignabilityOverrideProvider by delegating
+/// to CheckerState methods. Captures the TypeEnvironment reference.
+struct CheckerOverrideProvider<'a, 'b> {
+    checker: &'a CheckerState<'b>,
+    env: Option<&'a crate::solver::TypeEnvironment>,
+}
+
+impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
+    fn new(checker: &'a CheckerState<'b>, env: Option<&'a crate::solver::TypeEnvironment>) -> Self {
+        Self { checker, env }
+    }
+}
+
+impl<'a, 'b> crate::solver::AssignabilityOverrideProvider for CheckerOverrideProvider<'a, 'b> {
+    fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        self.checker
+            .enum_assignability_override(source, target, self.env)
+    }
+
+    fn abstract_constructor_assignability_override(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<bool> {
+        self.checker
+            .abstract_constructor_assignability_override(source, target, self.env)
+    }
+
+    fn constructor_accessibility_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        self.checker
+            .constructor_accessibility_override(source, target, self.env)
+    }
+}
+
 impl<'a> CheckerState<'a> {
     /// Create a new CheckerState.
     ///
@@ -2682,7 +2720,11 @@ impl<'a> CheckerState<'a> {
 
         // If found via symbol resolution, use it
         if let Some(member_sym_id) = member_sym_id_from_symbol {
-            if let Some(member_symbol) = self.ctx.binder.get_symbol_with_libs(member_sym_id, &lib_binders) {
+            if let Some(member_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(member_sym_id, &lib_binders)
+            {
                 let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                 if !is_namespace
                     && (self.alias_resolves_to_value_only(member_sym_id)
@@ -2699,7 +2741,10 @@ impl<'a> CheckerState<'a> {
         // Look up the member in the left side's exports
         if let Some(crate::solver::TypeKey::Ref(crate::solver::SymbolRef(sym_id))) =
             self.ctx.types.lookup(left_type)
-            && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(crate::binder::SymbolId(sym_id), &lib_binders)
+            && let Some(symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(crate::binder::SymbolId(sym_id), &lib_binders)
         {
             // Check exports table
             if let Some(ref exports) = symbol.exports
@@ -2707,7 +2752,11 @@ impl<'a> CheckerState<'a> {
             {
                 // Check value-only, but skip for namespaces since they can be used
                 // to navigate to types (e.g., Outer.Inner.Type)
-                if let Some(member_symbol) = self.ctx.binder.get_symbol_with_libs(member_sym_id, &lib_binders) {
+                if let Some(member_symbol) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(member_sym_id, &lib_binders)
+                {
                     let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
                     if !is_namespace
                         && (self.alias_resolves_to_value_only(member_sym_id)
@@ -11876,37 +11925,8 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Private brand assignability override.
-    /// If both source and target types have private brands, they must match exactly.
-    /// This implements nominal typing for classes with private fields.
-    fn private_brand_assignability_override(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        _env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<bool> {
-        let source_brand = self.get_private_brand(source);
-        let target_brand = self.get_private_brand(target);
-
-        match (source_brand, target_brand) {
-            (Some(brand1), Some(brand2)) => {
-                // Both types have private brands - they must match exactly
-                // Different private brands = different class declarations = not assignable
-                Some(brand1 == brand2)
-            }
-            (None, Some(_)) => {
-                // Target has a private brand but source doesn't
-                // Source cannot satisfy target's private requirements
-                Some(false)
-            }
-            (Some(_), None) => {
-                // Source has a private brand but target doesn't (e.g., interface)
-                // Fall through to structural check - a class can implement an interface
-                None
-            }
-            (None, None) => None, // Neither has private brand, fall through to normal check
-        }
-    }
+    // NOTE: private_brand_assignability_override moved to solver/compat.rs
+    // It only needs TypeDatabase, not checker context, so it lives in the solver layer.
 
     fn class_symbol_from_expression(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
         let Some(node) = self.ctx.arena.get(expr_idx) else {
@@ -12438,26 +12458,11 @@ impl<'a> CheckerState<'a> {
         let target = self.evaluate_type_for_assignability(target);
 
         let env = self.ctx.type_env.borrow();
-        if let Some(result) =
-            self.abstract_constructor_assignability_override(source, target, Some(&*env))
-        {
-            return result;
-        }
-        if let Some(result) = self.constructor_accessibility_override(source, target, Some(&*env)) {
-            return result;
-        }
-        if let Some(result) = self.private_brand_assignability_override(source, target, Some(&*env))
-        {
-            return result;
-        }
-        if let Some(result) = self.enum_assignability_override(source, target, Some(&*env)) {
-            return result;
-        }
-
+        let overrides = CheckerOverrideProvider::new(self, Some(&*env));
         let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
         checker.set_strict_function_types(self.ctx.strict_function_types());
         checker.set_strict_null_checks(self.ctx.strict_null_checks());
-        checker.is_assignable(source, target)
+        checker.is_assignable_with_overrides(source, target, &overrides)
     }
 
     /// Check if `source` type is assignable to `target` type, resolving Ref types.
@@ -12471,25 +12476,11 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::solver::CompatChecker;
 
-        if let Some(result) =
-            self.abstract_constructor_assignability_override(source, target, Some(env))
-        {
-            return result;
-        }
-        if let Some(result) = self.constructor_accessibility_override(source, target, Some(env)) {
-            return result;
-        }
-        if let Some(result) = self.private_brand_assignability_override(source, target, Some(env)) {
-            return result;
-        }
-        if let Some(result) = self.enum_assignability_override(source, target, Some(env)) {
-            return result;
-        }
-
+        let overrides = CheckerOverrideProvider::new(self, Some(env));
         let mut checker = CompatChecker::with_resolver(self.ctx.types, env);
         checker.set_strict_function_types(self.ctx.strict_function_types());
         checker.set_strict_null_checks(self.ctx.strict_null_checks());
-        checker.is_assignable(source, target)
+        checker.is_assignable_with_overrides(source, target, &overrides)
     }
 
     fn should_skip_weak_union_error(

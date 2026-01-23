@@ -19,7 +19,6 @@ fn main() {
         println!("cargo:rustc-cfg=in_docker");
     }
 
-
     // Mark when running in CI (tests allowed outside Docker in CI)
     if std::env::var("CI").is_ok() {
         println!("cargo:rustc-cfg=ci");

@@ -15490,6 +15490,8 @@ fn test_abstract_class_instantiation_error() {
     use crate::parser::ParserState;
 
     let source = r#"
+declare const console: { log: (message: string) => void };
+
 abstract class Animal {
     abstract speak(): void;
 }
@@ -16913,6 +16915,8 @@ fn test_method_bivariance_event_handler_pattern() {
     use crate::parser::ParserState;
 
     let source = r#"
+declare const console: { log: (...args: any[]) => void };
+
 interface Event { type: string }
 interface MouseEvent extends Event { x: number; y: number }
 

@@ -5071,3 +5071,227 @@ fn test_best_common_type_single_element() {
         "BCT of single element should be that element"
     );
 }
+
+// =============================================================================
+// Private Brand Assignability Override Tests
+// =============================================================================
+
+#[test]
+fn test_private_brand_same_brand_assignable() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Two types with the same private brand should be assignable
+    let brand = interner.intern_string("__private_brand_Foo");
+    let source = interner.object(vec![PropertyInfo {
+        name: brand,
+        type_id: TypeId::NEVER,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.object(vec![PropertyInfo {
+        name: brand,
+        type_id: TypeId::NEVER,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Same brand = same class declaration = assignable
+    assert!(checker.is_assignable(source, target));
+}
+
+#[test]
+fn test_private_brand_different_brand_not_assignable() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Two types with different private brands should NOT be assignable
+    let brand1 = interner.intern_string("__private_brand_Foo");
+    let brand2 = interner.intern_string("__private_brand_Bar");
+
+    let source = interner.object(vec![PropertyInfo {
+        name: brand1,
+        type_id: TypeId::NEVER,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.object(vec![PropertyInfo {
+        name: brand2,
+        type_id: TypeId::NEVER,
+        write_type: TypeId::NEVER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Different brands = different class declarations = not assignable
+    assert!(!checker.is_assignable(source, target));
+}
+
+#[test]
+fn test_private_brand_source_without_brand_not_assignable_to_target_with_brand() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Source without brand cannot satisfy target's private requirements
+    let brand = interner.intern_string("__private_brand_Foo");
+    let name = interner.intern_string("value");
+
+    let source = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.object(vec![
+        PropertyInfo {
+            name: brand,
+            type_id: TypeId::NEVER,
+            write_type: TypeId::NEVER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+
+    // Source without brand cannot be assigned to target with brand
+    assert!(!checker.is_assignable(source, target));
+}
+
+#[test]
+fn test_private_brand_source_with_brand_assignable_to_target_without_brand() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Source with brand CAN be assigned to target without brand (e.g., interface)
+    let brand = interner.intern_string("__private_brand_Foo");
+    let name = interner.intern_string("value");
+
+    let source = interner.object(vec![
+        PropertyInfo {
+            name: brand,
+            type_id: TypeId::NEVER,
+            write_type: TypeId::NEVER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+        PropertyInfo {
+            name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        },
+    ]);
+    let target = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // A class can implement an interface (source with brand -> target without brand)
+    assert!(checker.is_assignable(source, target));
+}
+
+#[test]
+fn test_private_brand_neither_has_brand_falls_through() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // When neither has a brand, fall through to structural checking
+    let name = interner.intern_string("value");
+
+    let source = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+    let target = interner.object(vec![PropertyInfo {
+        name,
+        type_id: TypeId::NUMBER,
+        write_type: TypeId::NUMBER,
+        optional: false,
+        readonly: false,
+        is_method: false,
+    }]);
+
+    // Structural check passes
+    assert!(checker.is_assignable(source, target));
+}
+
+#[test]
+fn test_private_brand_callable_with_brand() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Callable types (constructors) can also have private brands
+    let brand1 = interner.intern_string("__private_brand_Foo");
+    let brand2 = interner.intern_string("__private_brand_Bar");
+
+    let source = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature {
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::ANY,
+            type_predicate: None,
+            type_params: Vec::new(),
+        }],
+        properties: vec![PropertyInfo {
+            name: brand1,
+            type_id: TypeId::NEVER,
+            write_type: TypeId::NEVER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        }],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature {
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::ANY,
+            type_predicate: None,
+            type_params: Vec::new(),
+        }],
+        properties: vec![PropertyInfo {
+            name: brand2,
+            type_id: TypeId::NEVER,
+            write_type: TypeId::NEVER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+        }],
+        ..Default::default()
+    });
+
+    // Different brands in callables = not assignable
+    assert!(!checker.is_assignable(source, target));
+}
