@@ -3060,27 +3060,10 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
             property_is_readonly(interner, inner, prop_name)
         }
         Some(TypeKey::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            let prop_atom = interner.intern_string(prop_name);
-            shape
-                .properties
-                .iter()
-                .find(|prop| prop.name == prop_atom)
-                .is_some_and(|prop| prop.readonly)
+            object_property_is_readonly(interner, shape_id, prop_name)
         }
         Some(TypeKey::ObjectWithIndex(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            let prop_atom = interner.intern_string(prop_name);
-            if let Some(prop) = shape.properties.iter().find(|prop| prop.name == prop_atom) {
-                return prop.readonly;
-            }
-            if shape.string_index.as_ref().is_some_and(|idx| idx.readonly) {
-                return true;
-            }
-            if shape.number_index.as_ref().is_some_and(|idx| idx.readonly) {
-                return true;
-            }
-            false
+            indexed_object_property_is_readonly(interner, shape_id, prop_name)
         }
         Some(TypeKey::Union(types)) | Some(TypeKey::Intersection(types)) => {
             let types = interner.type_list(types);
@@ -3090,6 +3073,49 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
         }
         _ => false,
     }
+}
+
+/// Check if a property on a plain object type is readonly.
+fn object_property_is_readonly(
+    interner: &dyn TypeDatabase,
+    shape_id: ObjectShapeId,
+    prop_name: &str,
+) -> bool {
+    let shape = interner.object_shape(shape_id);
+    let prop_atom = interner.intern_string(prop_name);
+    shape
+        .properties
+        .iter()
+        .find(|prop| prop.name == prop_atom)
+        .is_some_and(|prop| prop.readonly)
+}
+
+/// Check if a property on an indexed object type is readonly.
+/// Checks both named properties and index signatures.
+fn indexed_object_property_is_readonly(
+    interner: &dyn TypeDatabase,
+    shape_id: ObjectShapeId,
+    prop_name: &str,
+) -> bool {
+    let shape = interner.object_shape(shape_id);
+    let prop_atom = interner.intern_string(prop_name);
+
+    // Check named property first
+    if let Some(prop) = shape.properties.iter().find(|prop| prop.name == prop_atom) {
+        return prop.readonly;
+    }
+
+    // Check index signatures for numeric properties
+    if is_numeric_index_name(prop_name) {
+        if shape.string_index.as_ref().is_some_and(|idx| idx.readonly) {
+            return true;
+        }
+        if shape.number_index.as_ref().is_some_and(|idx| idx.readonly) {
+            return true;
+        }
+    }
+
+    false
 }
 
 pub fn is_readonly_index_signature(
