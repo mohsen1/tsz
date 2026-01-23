@@ -3784,6 +3784,69 @@ impl BinderState {
         None
     }
 
+    /// Look up a global type by name from file_locals and lib binders.
+    ///
+    /// This method is used by the checker to find built-in types like Array, Object,
+    /// Function, Promise, etc. It checks:
+    /// 1. Local file_locals (for user-defined globals or already-merged lib symbols)
+    /// 2. Lib binders (for symbols from lib.d.ts that haven't been merged yet)
+    ///
+    /// Returns the SymbolId if found, None otherwise.
+    pub fn get_global_type(&self, name: &str) -> Option<SymbolId> {
+        // First check file_locals (includes merged lib symbols)
+        if let Some(sym_id) = self.file_locals.get(name) {
+            return Some(sym_id);
+        }
+
+        // Then check lib binders directly
+        for lib_binder in &self.lib_binders {
+            if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    /// Look up a global type by name, using provided lib binders.
+    ///
+    /// This variant is used when the checker has its own lib contexts and needs
+    /// to search them explicitly.
+    pub fn get_global_type_with_libs(
+        &self,
+        name: &str,
+        lib_binders: &[Arc<BinderState>],
+    ) -> Option<SymbolId> {
+        // First check file_locals (includes merged lib symbols)
+        if let Some(sym_id) = self.file_locals.get(name) {
+            return Some(sym_id);
+        }
+
+        // Then check provided lib binders
+        for lib_binder in lib_binders {
+            if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        // Finally check our own lib binders
+        for lib_binder in &self.lib_binders {
+            if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    /// Check if a global type exists (in file_locals or lib binders).
+    ///
+    /// This is a convenience method for checking type availability without
+    /// actually retrieving the symbol.
+    pub fn has_global_type(&self, name: &str) -> bool {
+        self.get_global_type(name).is_some()
+    }
+
     pub fn get_node_symbol(&self, node: NodeIndex) -> Option<SymbolId> {
         self.node_symbols.get(&node.0).copied()
     }
