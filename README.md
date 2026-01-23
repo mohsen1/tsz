@@ -6,6 +6,21 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 TypeScript is intentionally unsound. Zang keeps a sound core solver and layers a compatibility
 engine on top to match TypeScript behavior while preserving correctness where possible.
 
+## Conformance Progress
+
+<!-- CONFORMANCE_START -->
+| Metric | Value |
+|--------|-------|
+| **TypeScript Version** | `6.0.0-dev.20260116` |
+| **Tests Passed** | 0 / 0 |
+| **Pass Rate** | 0.0% |
+
+```
+Progress: [░░░░░░░░░░░░░░░░░░░░] 0.0%
+```
+
+*Automatically updated by CI on each push to main*
+<!-- CONFORMANCE_END -->
 
 ## Status
 
@@ -13,36 +28,21 @@ Work in progress.
 
 This project is not ready for general use yet.
 
+## Documentation
 
-## Development
+- [Development Guide](docs/DEVELOPMENT.md) - Setup, building, and contributing
+- [Testing Guide](docs/TESTING.md) - Testing infrastructure details
+- [Benchmarks](docs/BENCHMARKS.md) - Performance benchmarking
 
-### Getting Started
+## Quick Start
 
 ```bash
-# Clone the repository
 git clone https://github.com/mohsen1/tsz.git
 cd tsz
-
-# Build the project (also installs git hooks automatically)
 cargo build
 ```
 
-### Git Hooks
-
-Pre-commit hooks are automatically installed on first build. They run:
-- `cargo fmt` - Format code
-- `cargo clippy --fix` - Lint and auto-fix issues
-- Unit tests via `scripts/test.sh`
-
-To manually install hooks:
-```bash
-./scripts/install-hooks.sh
-```
-
-To skip hooks for a single commit (not recommended):
-```bash
-git commit --no-verify
-```
+See the [Development Guide](docs/DEVELOPMENT.md) for detailed setup instructions.
 
 ---
 
