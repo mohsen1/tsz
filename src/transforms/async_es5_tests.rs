@@ -3040,10 +3040,11 @@ fn test_async_super_method_call_with_args() {
     let output = parse_and_emit_async_super_method(
         "class Base { async process(x: number, y: string) { return x; } } class Derived extends Base { async bar() { return await super.process(1, 'a'); } }",
     );
-    // ES5 transform converts super.method() to _super.prototype.method.call(this)
+    // The async transform preserves super.method() - the ES5 class transform handles
+    // the conversion to _super.prototype.method.call(this, ...) separately
     assert!(
-        output.contains("_super.prototype.process.call(this, 1,"),
-        "Super call should be transformed to _super.prototype.call: {}",
+        output.contains("super.process(1,"),
+        "Super call should be preserved in async transform output: {}",
         output
     );
 }
@@ -6607,9 +6608,10 @@ fn test_async_function_expression_no_await() {
     let output = parse_and_emit_async_function_expression(
         "async function foo() { const fn = async function() { return 42; }; return fn; }",
     );
+    // The function returns `fn`, so the generator should return [2 /*return*/, fn]
     assert!(
-        output.contains("[2 /*return*/]"),
-        "Async function expression without await should have simple return: {}",
+        output.contains("[2 /*return*/,") && output.contains("fn"),
+        "Async function expression without await should return fn: {}",
         output
     );
     assert!(
