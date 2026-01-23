@@ -2457,29 +2457,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeKey::TemplateLiteral(_) => self.apparent_primitive_keyof(IntrinsicKind::String),
             TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                // keyof (A | B) = keyof A & keyof B
-                // Use recurse_keyof to respect depth limits
-                let key_sets: Vec<TypeId> =
-                    members.iter().map(|&m| self.recurse_keyof(m)).collect();
-                // Prefer explicit key-set intersection to avoid opaque literal intersections.
-                if let Some(intersection) = self.intersect_keyof_sets(&key_sets) {
-                    intersection
-                } else {
-                    self.interner.intersection(key_sets)
-                }
+                // keyof (A | B) = keyof A & keyof B (distributive contravariance)
+                self.keyof_union(members, operand)
             }
             TypeKey::Intersection(members) => {
-                let members = self.interner.type_list(members);
-                // keyof (A & B) = keyof A | keyof B
-                // Use recurse_keyof to respect depth limits
-                let key_sets: Vec<TypeId> =
-                    members.iter().map(|&m| self.recurse_keyof(m)).collect();
-                self.interner.union(key_sets)
+                // keyof (A & B) = keyof A | keyof B (covariance)
+                self.keyof_intersection(members, operand)
             }
             // For other types (type parameters, etc.), keep as KeyOf (deferred)
             _ => self.interner.intern(TypeKey::KeyOf(operand)),
         }
+    }
+
+    /// Compute keyof for a union type: keyof (A | B) = keyof A & keyof B
+    fn keyof_union(&self, members: TypeListId, _operand: TypeId) -> TypeId {
+        let members = self.interner.type_list(members);
+        // Use recurse_keyof to respect depth limits
+        let key_sets: Vec<TypeId> = members.iter().map(|&m| self.recurse_keyof(m)).collect();
+        // Prefer explicit key-set intersection to avoid opaque literal intersections.
+        if let Some(intersection) = self.intersect_keyof_sets(&key_sets) {
+            intersection
+        } else {
+            self.interner.intersection(key_sets)
+        }
+    }
+
+    /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
+    fn keyof_intersection(&self, members: TypeListId, _operand: TypeId) -> TypeId {
+        let members = self.interner.type_list(members);
+        // Use recurse_keyof to respect depth limits
+        let key_sets: Vec<TypeId> = members.iter().map(|&m| self.recurse_keyof(m)).collect();
+        self.interner.union(key_sets)
     }
 
     /// Evaluate string manipulation intrinsic types (Uppercase, Lowercase, Capitalize, Uncapitalize)
