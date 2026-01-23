@@ -9,17 +9,11 @@ engine on top to match TypeScript behavior while preserving correctness where po
 ## Conformance Progress
 
 <!-- CONFORMANCE_START -->
-| Metric | Value |
-|--------|-------|
-| **TypeScript Version** | `6.0.0-dev.20260116` |
-| **Tests Passed** | 0 / 0 |
-| **Pass Rate** | 0.0% |
+Currently targeting TypeScript 6.0.0-dev.20260116
 
 ```
-Progress: [░░░░░░░░░░░░░░░░░░░░] 0.0%
+Progress: [░░░░░░░░░░░░░░░░░░░░] 0.0% (0 / 0 tests)
 ```
-
-*Automatically updated by CI on each push to main*
 <!-- CONFORMANCE_END -->
 
 ## Status
@@ -33,16 +27,6 @@ This project is not ready for general use yet.
 - [Development Guide](docs/DEVELOPMENT.md) - Setup, building, and contributing
 - [Testing Guide](docs/TESTING.md) - Testing infrastructure details
 - [Benchmarks](docs/BENCHMARKS.md) - Performance benchmarking
-
-## Quick Start
-
-```bash
-git clone https://github.com/mohsen1/tsz.git
-cd tsz
-cargo build
-```
-
-See the [Development Guide](docs/DEVELOPMENT.md) for detailed setup instructions.
 
 ---
 
