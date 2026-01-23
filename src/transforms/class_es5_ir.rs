@@ -871,7 +871,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Async method: use async transformer to build proper generator body
                     let mut async_transformer = AsyncES5Transformer::new(self.arena);
                     let has_await = async_transformer.body_contains_await(method_data.body);
-                    let generator_body = async_transformer.transform_generator_body(method_data.body, has_await);
+                    let generator_body =
+                        async_transformer.transform_generator_body(method_data.body, has_await);
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
@@ -1065,7 +1066,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Async method: use async transformer to build proper generator body
                     let mut async_transformer = AsyncES5Transformer::new(self.arena);
                     let has_await = async_transformer.body_contains_await(method_data.body);
-                    let generator_body = async_transformer.transform_generator_body(method_data.body, has_await);
+                    let generator_body =
+                        async_transformer.transform_generator_body(method_data.body, has_await);
                     vec![IRNode::AwaiterCall {
                         this_arg: Box::new(IRNode::this()),
                         generator_body: Box::new(generator_body),
@@ -2151,7 +2153,9 @@ impl<'a> AstToIr<'a> {
                         body: vec![IRNode::ReturnStatement(Some(Box::new(func_expr)))],
                         is_expression_body: false,
                     }),
-                    arguments: vec![IRNode::This { captured: prev_captured }],
+                    arguments: vec![IRNode::This {
+                        captured: prev_captured,
+                    }],
                 }
             } else {
                 func_expr
