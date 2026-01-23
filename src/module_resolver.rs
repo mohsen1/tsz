@@ -1676,4 +1676,184 @@ mod tests {
         assert_eq!(package_json.name, Some("typed-package".to_string()));
         assert!(package_json.types_versions.is_some());
     }
+
+    // =========================================================================
+    // TS2307 Diagnostic Emission Tests
+    // =========================================================================
+
+    #[test]
+    fn test_emit_resolution_error_for_not_found() {
+        let mut diagnostics = DiagnosticBag::new();
+        let resolver = ModuleResolver::node_resolver();
+
+        let failure = ResolutionFailure::NotFound {
+            specifier: "./missing-module".to_string(),
+            containing_file: "/src/file.ts".to_string(),
+            span: Span::new(10, 30),
+        };
+
+        resolver.emit_resolution_error(&mut diagnostics, &failure);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics.has_errors());
+        let errors: Vec<_> = diagnostics.errors().collect();
+        assert_eq!(errors[0].code, CANNOT_FIND_MODULE);
+        assert!(errors[0].message.contains("Cannot find module"));
+        assert!(errors[0].message.contains("./missing-module"));
+    }
+
+    #[test]
+    fn test_emit_resolution_error_non_not_found_ignored() {
+        let mut diagnostics = DiagnosticBag::new();
+        let resolver = ModuleResolver::node_resolver();
+
+        // Non-NotFound failures should not be emitted by emit_resolution_error
+        // since it only emits TS2307 for NotFound errors
+        let failure = ResolutionFailure::InvalidSpecifier("bad specifier".to_string());
+        resolver.emit_resolution_error(&mut diagnostics, &failure);
+        assert!(diagnostics.is_empty());
+
+        let failure = ResolutionFailure::PackageJsonError("parse error".to_string());
+        resolver.emit_resolution_error(&mut diagnostics, &failure);
+        assert!(diagnostics.is_empty());
+
+        let failure = ResolutionFailure::CircularResolution("a -> b -> a".to_string());
+        resolver.emit_resolution_error(&mut diagnostics, &failure);
+        assert!(diagnostics.is_empty());
+
+        let failure = ResolutionFailure::PathMappingFailed("@/ pattern".to_string());
+        resolver.emit_resolution_error(&mut diagnostics, &failure);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_resolution_failure_all_variants_to_diagnostic() {
+        // Test that all ResolutionFailure variants can produce diagnostics
+        let failures = vec![
+            ResolutionFailure::NotFound {
+                specifier: "./test".to_string(),
+                containing_file: "file.ts".to_string(),
+                span: Span::new(0, 10),
+            },
+            ResolutionFailure::InvalidSpecifier("bad".to_string()),
+            ResolutionFailure::PackageJsonError("error".to_string()),
+            ResolutionFailure::CircularResolution("loop".to_string()),
+            ResolutionFailure::PathMappingFailed("@/path".to_string()),
+        ];
+
+        for failure in failures {
+            let diagnostic = failure.span_to_diagnostic();
+            // All failures should produce TS2307 diagnostic code
+            assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        }
+    }
+
+    #[test]
+    fn test_relative_import_failure_produces_ts2307() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "./components/Button".to_string(),
+            containing_file: "/src/App.tsx".to_string(),
+            span: Span::new(20, 45),
+        };
+
+        let diagnostic = failure.span_to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert_eq!(diagnostic.file_name, "/src/App.tsx");
+        assert!(diagnostic.message.contains("./components/Button"));
+        assert_eq!(diagnostic.span.start, 20);
+        assert_eq!(diagnostic.span.end, 45);
+    }
+
+    #[test]
+    fn test_bare_specifier_failure_produces_ts2307() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "nonexistent-package".to_string(),
+            containing_file: "/project/src/index.ts".to_string(),
+            span: Span::new(7, 28),
+        };
+
+        let diagnostic = failure.span_to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert!(diagnostic.message.contains("nonexistent-package"));
+    }
+
+    #[test]
+    fn test_scoped_package_failure_produces_ts2307() {
+        let failure = ResolutionFailure::NotFound {
+            specifier: "@org/missing-lib".to_string(),
+            containing_file: "/app/main.ts".to_string(),
+            span: Span::new(15, 35),
+        };
+
+        let diagnostic = failure.span_to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert!(diagnostic.message.contains("@org/missing-lib"));
+    }
+
+    #[test]
+    fn test_hash_import_failure_produces_ts2307() {
+        // Package.json subpath import failure
+        let failure = ResolutionFailure::NotFound {
+            specifier: "#utils/helpers".to_string(),
+            containing_file: "/pkg/src/index.ts".to_string(),
+            span: Span::new(8, 25),
+        };
+
+        let diagnostic = failure.span_to_diagnostic();
+        assert_eq!(diagnostic.code, CANNOT_FIND_MODULE);
+        assert!(diagnostic.message.contains("#utils/helpers"));
+    }
+
+    #[test]
+    fn test_resolution_failure_span_preservation() {
+        // Ensure span information is correctly preserved in diagnostics
+        let test_cases = vec![(0, 10), (100, 150), (1000, 1050)];
+
+        for (start, end) in test_cases {
+            let failure = ResolutionFailure::NotFound {
+                specifier: "test".to_string(),
+                containing_file: "file.ts".to_string(),
+                span: Span::new(start, end),
+            };
+
+            let diagnostic = failure.span_to_diagnostic();
+            assert_eq!(diagnostic.span.start, start);
+            assert_eq!(diagnostic.span.end, end);
+        }
+    }
+
+    #[test]
+    fn test_diagnostic_bag_collects_multiple_resolution_errors() {
+        let mut diagnostics = DiagnosticBag::new();
+        let resolver = ModuleResolver::node_resolver();
+
+        let failures = vec![
+            ResolutionFailure::NotFound {
+                specifier: "./module1".to_string(),
+                containing_file: "a.ts".to_string(),
+                span: Span::new(0, 10),
+            },
+            ResolutionFailure::NotFound {
+                specifier: "./module2".to_string(),
+                containing_file: "b.ts".to_string(),
+                span: Span::new(5, 15),
+            },
+            ResolutionFailure::NotFound {
+                specifier: "external-pkg".to_string(),
+                containing_file: "c.ts".to_string(),
+                span: Span::new(10, 25),
+            },
+        ];
+
+        for failure in &failures {
+            resolver.emit_resolution_error(&mut diagnostics, failure);
+        }
+
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics.error_count(), 3);
+
+        // Verify all have TS2307 code
+        let codes: Vec<_> = diagnostics.errors().map(|d| d.code).collect();
+        assert!(codes.iter().all(|&c| c == CANNOT_FIND_MODULE));
+    }
 }
