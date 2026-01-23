@@ -3300,7 +3300,22 @@ impl<'a> BinaryOpEvaluator<'a> {
         false
     }
 
-    /// Check if a type is bigint-like (bigint, bigint literal, bigint enum, or any)
+    /// Check if a type is bigint-like (bigint, bigint literal, bigint enum, or any).
+    ///
+    /// This is used for type inference in bigint arithmetic operations.
+    /// A type is considered bigint-like if it is:
+    /// - The `bigint` intrinsic type
+    /// - A bigint literal (e.g., `42n`)
+    /// - A union of bigint literals (bigint enum type)
+    /// - The `any` type (accepts all)
+    ///
+    /// ## Examples:
+    /// - `bigint` ✅
+    /// - `42n` ✅ (bigint literal)
+    /// - `1n | 2n | 3n` ✅ (bigint enum)
+    /// - `any` ✅
+    /// - `number` ❌
+    /// - `42` ❌ (number literal)
     fn is_bigint_like(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
             return true;
