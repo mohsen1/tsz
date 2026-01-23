@@ -24,6 +24,7 @@ use crate::solver::evaluate::evaluate_type;
 use crate::solver::infer::InferenceContext;
 use crate::solver::instantiate::{TypeSubstitution, instantiate_type};
 use crate::solver::types::*;
+use crate::solver::utils;
 use crate::solver::{
     ApparentMemberKind, QueryDatabase, TypeDatabase, apparent_object_member_kind,
     apparent_primitive_member_kind,
@@ -1570,7 +1571,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let prop_type = self.optional_property_type(prop);
 
             if let Some(number_idx) = number_index
-                && self.is_numeric_property_name(prop.name)
+                && utils::is_numeric_property_name(self.interner, prop.name)
             {
                 self.constrain_types(ctx, var_map, prop_type, number_idx.value_type);
             }
@@ -1599,7 +1600,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let prop_type = self.optional_property_type(prop);
 
             if let Some(number_idx) = number_index
-                && self.is_numeric_property_name(prop.name)
+                && utils::is_numeric_property_name(self.interner, prop.name)
             {
                 self.constrain_types(ctx, var_map, number_idx.value_type, prop_type);
             }
@@ -1616,11 +1617,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             prop.type_id
         }
-    }
-
-    fn is_numeric_property_name(&self, name: Atom) -> bool {
-        let prop_name = self.interner.resolve_atom_ref(name);
-        InferenceContext::is_numeric_literal_name(prop_name.as_ref())
     }
 
     fn constrain_tuple_types(

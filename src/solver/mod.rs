@@ -30,6 +30,7 @@ mod operations;
 mod subtype;
 mod types;
 pub mod unsoundness_audit;
+mod utils;
 
 pub(crate) use apparent::*;
 pub use compat::*;

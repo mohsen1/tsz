@@ -12,12 +12,12 @@
 //! - Supports distributivity for naked type parameters in unions
 
 use crate::interner::Atom;
-use crate::solver::infer::InferenceContext;
 use crate::solver::instantiate::{
     TypeSubstitution, instantiate_generic, instantiate_type, instantiate_type_with_infer,
 };
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::solver::types::*;
+use crate::solver::utils;
 use crate::solver::{ApparentMemberKind, TypeDatabase, apparent_primitive_members};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -1463,7 +1463,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.optional_property_type(prop);
                 }
             }
-            if self.is_numeric_property_name(name)
+            if utils::is_numeric_property_name(self.interner, name)
                 && let Some(number_index) = shape.number_index.as_ref()
             {
                 return self.add_undefined_if_unchecked(number_index.value_type);
@@ -1714,7 +1714,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(TypeKey::Literal(LiteralValue::String(name))) = self.interner.lookup(index_type)
         {
-            if self.is_numeric_property_name(name) {
+            if utils::is_numeric_property_name(self.interner, name) {
                 return self.add_undefined_if_unchecked(elem);
             }
             let name_str = self.interner.resolve_atom_ref(name);
@@ -1839,7 +1839,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(TypeKey::Literal(LiteralValue::String(name))) = self.interner.lookup(index_type)
         {
-            if self.is_numeric_property_name(name) {
+            if utils::is_numeric_property_name(self.interner, name) {
                 let name_str = self.interner.resolve_atom_ref(name);
                 if let Ok(idx) = name_str.as_ref().parse::<i64>()
                     && let Ok(idx) = usize::try_from(idx)
@@ -4929,7 +4929,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             let values: Vec<TypeId> = source_shape
                                 .properties
                                 .iter()
-                                .filter(|prop| self.is_numeric_property_name(prop.name))
+                                .filter(|prop| utils::is_numeric_property_name(self.interner, prop.name))
                                 .map(|prop| self.optional_property_type(prop))
                                 .collect();
                             let value_type = if values.is_empty() {
@@ -5293,11 +5293,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         true
-    }
-
-    fn is_numeric_property_name(&self, name: Atom) -> bool {
-        let prop_name = self.interner.resolve_atom_ref(name);
-        InferenceContext::is_numeric_literal_name(prop_name.as_ref())
     }
 }
 
