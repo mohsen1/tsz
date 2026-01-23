@@ -153,10 +153,6 @@ struct TupleRestExpansion {
     tail: Vec<TupleElement>,
 }
 
-/// Maximum recursion depth for subtype checking.
-/// Prevents stack overflow on deeply nested recursive types.
-pub const MAX_SUBTYPE_DEPTH: u32 = 100;
-
 /// Maximum number of unique type pairs to track in cycle detection.
 /// Prevents unbounded memory growth in pathological cases.
 pub const MAX_IN_PROGRESS_PAIRS: usize = 10_000;
