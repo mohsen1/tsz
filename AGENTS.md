@@ -67,7 +67,3 @@ ALWAYS run commands with a reasonable timeout to avoid commands that will hang
 
 ## Run tests in docker
 Always run tests in docker to ensure a consistent environment. Using `scripts/test.sh` will automatically use docker
-
-## THE MOST IMPORTANT RULE
-
-NEVER RUN TESTS ON THE HOST MACHINE. ALWAYS USE DOCKER. DO NOT SPECIFIFY ZANG_ env var to go around this rule.
