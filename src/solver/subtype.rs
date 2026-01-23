@@ -3139,6 +3139,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::False
     }
 
+    /// Check subtype with optional method bivariance.
+    ///
+    /// When `allow_bivariant` is true, temporarily disables strict function types
+    /// to allow bivariant parameter checking. This is used for method compatibility
+    /// where TypeScript allows bivariance even in strict mode.
+    ///
+    /// ## Variance Modes:
+    /// - **Contravariant (strict)**: `target <: source` - Function parameters in strict mode
+    /// - **Bivariant (legacy)**: `target <: source OR source <: target` - Methods, legacy functions
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// // Bivariant methods allow unsound but convenient assignments
+    /// interface Animal { name: string; }
+    /// interface Dog extends Animal { bark(): void; }
+    /// class AnimalKeeper {
+    ///   feed(animal: Animal) { ... }  // Contravariant parameter
+    /// }
+    /// class DogKeeper {
+    ///   feed(dog: Dog) { ... }  // More specific
+    /// }
+    /// // DogKeeper.feed is assignable to AnimalKeeper.feed (bivariant)
+    /// ```
     fn check_subtype_with_method_variance(
         &mut self,
         source: TypeId,
