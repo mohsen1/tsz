@@ -148,6 +148,14 @@ struct TupleRestExpansion {
     tail: Vec<TupleElement>,
 }
 
+/// Maximum recursion depth for subtype checking.
+/// Prevents stack overflow on deeply nested recursive types.
+pub const MAX_SUBTYPE_DEPTH: u32 = 100;
+
+/// Maximum number of unique type pairs to track in cycle detection.
+/// Prevents unbounded memory growth in pathological cases.
+pub const MAX_IN_PROGRESS_PAIRS: usize = 10_000;
+
 /// Subtype checking context.
 /// Maintains the "seen" set for cycle detection.
 pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
@@ -157,6 +165,8 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     in_progress: HashSet<(TypeId, TypeId)>,
     /// Current recursion depth (for stack overflow prevention)
     depth: u32,
+    /// Total number of check_subtype calls (iteration limit)
+    total_checks: u32,
     /// Whether the recursion depth limit was exceeded (for TS2589 diagnostic)
     pub depth_exceeded: bool,
     /// Whether to use strict function types (contravariant parameters).
@@ -183,6 +193,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub disable_method_bivariance: bool,
 }
 
+/// Maximum total subtype checks allowed per SubtypeChecker instance.
+/// Prevents infinite loops in pathological type comparison scenarios.
+pub const MAX_TOTAL_SUBTYPE_CHECKS: u32 = 100_000;
+
 impl<'a> SubtypeChecker<'a, NoopResolver> {
     /// Create a new SubtypeChecker without a resolver (basic mode).
     pub fn new(interner: &'a dyn TypeDatabase) -> SubtypeChecker<'a, NoopResolver> {
@@ -192,6 +206,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             resolver: &NOOP,
             in_progress: HashSet::new(),
             depth: 0,
+            total_checks: 0,
             depth_exceeded: false,
             strict_function_types: true, // Default to strict (sound) behavior
             allow_void_return: false,
@@ -213,6 +228,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             resolver,
             in_progress: HashSet::new(),
             depth: 0,
+            total_checks: 0,
             depth_exceeded: false,
             strict_function_types: true,
             allow_void_return: false,
@@ -314,10 +330,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =========================================================================
+        // Iteration limit check (timeout prevention)
+        // =========================================================================
+
+        self.total_checks += 1;
+        if self.total_checks > MAX_TOTAL_SUBTYPE_CHECKS {
+            // Too many checks - likely in an infinite expansion scenario
+            // Return false to break out of the loop
+            self.depth_exceeded = true;
+            return SubtypeResult::False;
+        }
+
+        // =========================================================================
         // Depth Check (stack overflow prevention)
         // =========================================================================
 
-        if self.depth > 100 {
+        if self.depth > MAX_SUBTYPE_DEPTH {
             // Recursion too deep - mark as exceeded and return false to prevent stack overflow
             // The caller can check depth_exceeded to emit TS2589 diagnostic
             // Note: This differs from coinductive cycle detection which returns Provisional
@@ -334,6 +362,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // We're in a cycle - return provisional true
             // This implements coinductive semantics for recursive types
             return SubtypeResult::Provisional;
+        }
+
+        // Memory safety: limit the number of in-progress pairs to prevent unbounded growth
+        if self.in_progress.len() >= MAX_IN_PROGRESS_PAIRS {
+            // Too many pairs being tracked - likely pathological case
+            self.depth_exceeded = true;
+            return SubtypeResult::False;
         }
 
         // Mark as in-progress and increment depth
