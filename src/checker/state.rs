@@ -2075,6 +2075,113 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if an expression is a property access on an unresolved import.
+    /// Used to suppress TS2304 errors when TS2307 was already emitted for the module.
+    fn is_property_access_on_unresolved_import(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        // Handle property access expressions (e.g., B.B in extends B.B)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                return false;
+            };
+            // Check if the left side is an unresolved import or a property access on one
+            return self.is_unresolved_import_symbol(access.expression)
+                || self.is_property_access_on_unresolved_import(access.expression);
+        }
+
+        // Handle qualified names (e.g., A.B in type position)
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                return false;
+            };
+            return self.is_unresolved_import_symbol(qn.left)
+                || self.is_property_access_on_unresolved_import(qn.left);
+        }
+
+        // Direct identifier - check if it's an unresolved import
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.is_unresolved_import_symbol(idx);
+        }
+
+        false
+    }
+
+    /// Check if an identifier refers to an import from an unresolved module.
+    fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Check if this is an ALIAS symbol (import)
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+
+        // Check if it has an import_module - if so, check if that module is resolved
+        if let Some(ref module_name) = symbol.import_module {
+            // Check various ways a module can be resolved
+            if self.ctx.binder.module_exports.contains_key(module_name) {
+                return false; // Module is resolved
+            }
+            if self
+                .ctx
+                .binder
+                .shorthand_ambient_modules
+                .contains(module_name)
+            {
+                return false; // Ambient module exists
+            }
+            if self.ctx.binder.declared_modules.contains(module_name) {
+                return false; // Declared module exists
+            }
+            if let Some(ref resolved) = self.ctx.resolved_modules {
+                if resolved.contains(module_name) {
+                    return false; // CLI resolved module
+                }
+            }
+            // Module is not resolved - this is an unresolved import
+            return true;
+        }
+
+        // For import equals declarations without import_module set,
+        // check if the value_declaration is an import equals with a require
+        if !symbol.value_declaration.is_none() {
+            let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if let Some(import) = self.ctx.arena.get_import_decl(decl_node) {
+                    if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
+                        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
+                            if let Some(lit) = self.ctx.arena.get_literal(ref_node) {
+                                let module_name = &lit.text;
+                                if !self.ctx.binder.module_exports.contains_key(module_name)
+                                    && !self
+                                        .ctx
+                                        .binder
+                                        .shorthand_ambient_modules
+                                        .contains(module_name)
+                                    && !self.ctx.binder.declared_modules.contains(module_name)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     fn heritage_name_text(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
 
@@ -18472,6 +18579,11 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if self.is_known_global_type_name(&name) {
+                            continue;
+                        }
+                        // Skip TS2304 for property accesses on imports from unresolved modules
+                        // TS2307 is already emitted for the unresolved module
+                        if self.is_property_access_on_unresolved_import(expr_idx) {
                             continue;
                         }
                         self.error_cannot_find_name_at(&name, expr_idx);
