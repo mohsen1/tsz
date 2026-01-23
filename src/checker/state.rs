@@ -9587,7 +9587,13 @@ impl<'a> CheckerState<'a> {
                         return self.ctx.types.union(vec![base_type, TypeId::UNDEFINED]);
                     }
 
-                    // Report error based on the cause
+                    // When strictNullChecks is disabled, treat null/undefined as valid (like any)
+                    if !self.ctx.strict_null_checks() {
+                        // Return any - allowing property access without error
+                        return TypeId::ANY;
+                    }
+
+                    // Report error based on the cause (TS2531/TS2532/TS2533)
                     use crate::checker::types::diagnostics::diagnostic_codes;
 
                     let (code, message) = if cause == TypeId::NULL {
@@ -10277,8 +10283,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Split a type into its non-nullable part and its nullable cause.
+    ///
+    /// When strictNullChecks is disabled, this function returns the original type
+    /// without any nullish separation - null/undefined can be accessed like any.
     fn split_nullish_type(&mut self, type_id: TypeId) -> (Option<TypeId>, Option<TypeId>) {
         use crate::solver::{IntrinsicKind, TypeKey};
+
+        // When strictNullChecks is disabled, treat null/undefined as valid (like any)
+        if !self.ctx.strict_null_checks() {
+            return (Some(type_id), None);
+        }
 
         let Some(key) = self.ctx.types.lookup(type_id) else {
             return (Some(type_id), None);
