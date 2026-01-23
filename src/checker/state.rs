@@ -7765,7 +7765,9 @@ impl<'a> CheckerState<'a> {
         if let Some(op) = op_str {
             return match evaluator.evaluate(left_type, right_type, op) {
                 BinaryOpResult::Success(result) => result,
-                BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
+                // Return ANY instead of UNKNOWN for type errors to prevent cascading errors
+                // (e.g., TS2571 "Object is of type 'unknown'" when accessing result properties)
+                BinaryOpResult::TypeError { .. } => TypeId::ANY,
             };
         }
 
@@ -7785,8 +7787,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::NUMBER;
         }
 
-        // Return UNKNOWN instead of ANY for unknown binary operand types
-        TypeId::UNKNOWN
+        // Return ANY for unknown binary operand types to prevent cascading errors
+        TypeId::ANY
     }
 
     /// Get type of binary expression.
