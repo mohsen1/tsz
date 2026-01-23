@@ -220,6 +220,14 @@ pub mod diagnostic_messages {
         "Numeric separators are not allowed here.";
     pub const MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_NOT_PERMITTED: &str =
         "Multiple consecutive numeric separators are not permitted.";
+
+    // Iterator/iterable errors
+    /// TS2488: Type must have Symbol.iterator
+    pub const TYPE_MUST_HAVE_SYMBOL_ITERATOR: &str =
+        "Type '{0}' must have a '[Symbol.iterator]()' method that returns an iterator.";
+    /// TS2504: Type must have Symbol.asyncIterator
+    pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR: &str =
+        "Type '{0}' must have a '[Symbol.asyncIterator]()' method that returns an async iterator.";
 }
 
 /// TypeScript diagnostic error codes.
@@ -423,8 +431,15 @@ pub mod diagnostic_codes {
     pub const CONST_ENUM_MEMBER_MUST_BE_INITIALIZED: u32 = 2474;
     pub const COMPUTED_PROPERTY_NAME_IN_ENUM: u32 = 1164;
 
-    // Spread/rest errors
+    // Spread/rest/iterator errors
+    /// TS2488: Type '{0}' must have a '[Symbol.iterator]()' method that returns an iterator.
+    /// Used for for-of loops with non-iterable types and spread operations.
+    pub const TYPE_MUST_HAVE_SYMBOL_ITERATOR: u32 = 2488;
+    /// Alias for TS2488 for spread argument context
     pub const SPREAD_ARGUMENT_MUST_BE_ARRAY: u32 = 2488;
+    /// TS2504: Type '{0}' must have a '[Symbol.asyncIterator]()' method that returns an async iterator.
+    /// Used for for-await-of loops with non-async-iterable types.
+    pub const TYPE_MUST_HAVE_SYMBOL_ASYNC_ITERATOR: u32 = 2504;
     pub const REST_ELEMENT_MUST_BE_LAST: u32 = 2462;
 
     // JSX errors
