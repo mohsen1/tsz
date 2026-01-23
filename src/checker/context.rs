@@ -279,6 +279,14 @@ pub struct CheckerContext<'a> {
     /// Async context depth - tracks nesting of async functions.
     /// Used to check if await expressions are within async context (TS1359).
     pub async_depth: u32,
+
+    /// Fuel counter for type resolution operations.
+    /// Decremented on each type resolution to prevent timeout on pathological types.
+    /// When exhausted, type resolution returns ERROR to prevent infinite loops.
+    pub type_resolution_fuel: RefCell<u32>,
+
+    /// Whether type resolution fuel was exhausted (for timeout detection).
+    pub fuel_exhausted: RefCell<bool>,
 }
 
 /// Context for a lib file (arena + binder) for global type resolution.
@@ -346,6 +354,8 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
+            fuel_exhausted: RefCell::new(false),
         }
     }
 
@@ -404,6 +414,8 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
+            fuel_exhausted: RefCell::new(false),
         }
     }
 
@@ -464,6 +476,8 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
+            fuel_exhausted: RefCell::new(false),
         }
     }
 
@@ -523,6 +537,8 @@ impl<'a> CheckerContext<'a> {
             lib_contexts: Vec::new(),
             flow_graph,
             async_depth: 0,
+            type_resolution_fuel: RefCell::new(crate::checker::state::MAX_TYPE_RESOLUTION_OPS),
+            fuel_exhausted: RefCell::new(false),
         }
     }
 
@@ -630,6 +646,24 @@ impl<'a> CheckerContext<'a> {
     /// Check if we're currently inside an async function.
     pub fn in_async_context(&self) -> bool {
         self.async_depth > 0
+    }
+
+    /// Consume one unit of type resolution fuel.
+    /// Returns true if fuel is still available, false if exhausted.
+    /// When exhausted, type resolution should return ERROR to prevent timeout.
+    pub fn consume_fuel(&self) -> bool {
+        let mut fuel = self.type_resolution_fuel.borrow_mut();
+        if *fuel == 0 {
+            *self.fuel_exhausted.borrow_mut() = true;
+            return false;
+        }
+        *fuel -= 1;
+        true
+    }
+
+    /// Check if type resolution fuel has been exhausted.
+    pub fn is_fuel_exhausted(&self) -> bool {
+        *self.fuel_exhausted.borrow()
     }
 
     /// Check if Promise is available in lib files or global scope.

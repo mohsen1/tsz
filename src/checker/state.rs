@@ -916,6 +916,11 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
+        // Check fuel - return ERROR if exhausted to prevent timeout
+        if !self.ctx.consume_fuel() {
+            return TypeId::ERROR;
+        }
+
         // Check for circular reference - return ERROR to expose resolution bugs
         if self.ctx.node_resolution_set.contains(&idx) {
             return TypeId::ERROR;
@@ -6474,7 +6479,13 @@ impl<'a> CheckerState<'a> {
     /// Returns Some(NodeIndex) if inside a function, None if at module/global scope.
     fn find_enclosing_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
+        let mut iterations = 0;
         while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return None to prevent infinite loop
+                return None;
+            }
             if let Some(node) = self.ctx.arena.get(current)
                 && node.is_function_like()
             {
@@ -6499,7 +6510,13 @@ impl<'a> CheckerState<'a> {
     fn find_enclosing_non_arrow_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use crate::parser::syntax_kind_ext::*;
         let mut current = idx;
+        let mut iterations = 0;
         while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return None to prevent infinite loop
+                return None;
+            }
             if let Some(node) = self.ctx.arena.get(current) {
                 // Check for non-arrow functions that define their own `this` context
                 if node.kind == FUNCTION_DECLARATION
@@ -6597,7 +6614,13 @@ impl<'a> CheckerState<'a> {
     /// Find the enclosing variable statement for a node.
     fn find_enclosing_variable_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
+        let mut iterations = 0;
         while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return None to prevent infinite loop
+                return None;
+            }
             if let Some(node) = self.ctx.arena.get(current)
                 && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
             {
@@ -6839,7 +6862,13 @@ impl<'a> CheckerState<'a> {
     /// Returns the NodeIndex of the CLASS_STATIC_BLOCK_DECLARATION if the node is inside one.
     fn find_enclosing_static_block(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
+        let mut iterations = 0;
         while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return None to prevent infinite loop
+                return None;
+            }
             if let Some(node) = self.ctx.arena.get(current) {
                 if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                     return Some(current);
@@ -7180,6 +7209,11 @@ impl<'a> CheckerState<'a> {
         // Check cache first
         if let Some(&cached) = self.ctx.symbol_types.get(&sym_id) {
             return cached;
+        }
+
+        // Check fuel - return ERROR if exhausted to prevent timeout
+        if !self.ctx.consume_fuel() {
+            return TypeId::ERROR;
         }
 
         // Check for circular reference
