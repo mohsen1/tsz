@@ -167,7 +167,7 @@ fn test_union_literal_widening_to_optional_properties() {
     // Union should be assignable to target with all optional properties
     assert!(
         checker.is_subtype_of(union_ab, target),
-        "{a: 'x'} | {b: 'y'} should be assignable to {a?: string, b?: string}"
+        "{{a: 'x'}} | {{b: 'y'}} should be assignable to {{a?: string, b?: string}}"
     );
 }
 
@@ -221,7 +221,7 @@ fn test_union_literal_widening_with_different_types() {
 
     assert!(
         checker.is_subtype_of(union_ab, target),
-        "{a: 1} | {b: true} should be assignable to {a?: number, b?: boolean}"
+        "{{a: 1}} | {{b: true}} should be assignable to {{a?: number, b?: boolean}}"
     );
 }
 
@@ -277,7 +277,7 @@ fn test_union_not_assignable_to_mixed_optional_required() {
     // Should NOT be assignable because obj_b doesn't have required property 'a'
     assert!(
         !checker.is_subtype_of(union_ab, target),
-        "{a: 'x'} | {b: 'y'} should NOT be assignable to {a: string, b?: string}"
+        "{{a: 'x'}} | {{b: 'y'}} should NOT be assignable to {{a: string, b?: string}}"
     );
 }
 
