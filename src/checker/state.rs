@@ -6884,7 +6884,67 @@ impl<'a> CheckerState<'a> {
         ));
     }
 
-    /// Check if a type can be narrowed (unions, nullable types, etc.)
+    /// Check if a type can be narrowed through control flow analysis.
+    ///
+    /// This function determines whether a type is eligible for type narrowing
+    /// based on typeof guards, discriminant checks, null checks, etc.
+    ///
+    /// ## Narrowable Types:
+    /// - **Union types**: `string | number` can be narrowed to `string` or `number`
+    /// - **Type parameters**: Generic `T` can be narrowed based on constraints
+    /// - **Infer types**: `infer R` from conditional types can be narrowed
+    ///
+    /// ## Non-Narrowable Types:
+    /// - **Primitives**: `string`, `number`, etc. are already as narrow as possible
+    /// - **Object types**: `{ x: number }` cannot be narrowed without guards
+    /// - **Function types**: Already specific
+    ///
+    /// ## Type Narrowing Triggers:
+    /// - `typeof x === "string"` - Narrows union types
+    /// - `x !== null` - Narrows nullable types
+    /// - `x.kind === "add"` - Narrows discriminated unions
+    /// - `x instanceof Class` - Narrows to class type
+    ///
+    /// ## Flow Analysis Integration:
+    /// - Called during flow analysis to determine if narrowing should be applied
+    /// - Enables precise type tracking through conditionals
+    /// - Critical for TypeScript's type guard feature
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Union types are narrowable
+    /// type StringOrNumber = string | number;
+    /// function example(x: StringOrNumber) {
+    ///   if (typeof x === "string") {
+    ///     // x is narrowed to string
+    ///     x.toUpperCase();
+    ///   }
+    /// }
+    ///
+    /// // Type parameters are narrowable
+    /// function process<T>(value: T) {
+    ///   if (typeof value === "string") {
+    ///     // T is narrowed to string
+    ///   }
+    /// }
+    ///
+    /// // Primitives are NOT narrowable
+    /// function example2(x: string) {
+    ///   if (typeof x === "string") {
+    ///     // x is already string, no narrowing applied
+    ///   }
+    /// }
+    ///
+    /// // Discriminated unions
+    /// type Action =
+    ///   | { type: "add"; payload: number }
+    ///   | { type: "remove"; payload: number };
+    /// function reducer(action: Action) {
+    ///   if (action.type === "add") {
+    ///     // action narrowed to { type: "add"; payload: number }
+    ///   }
+    /// }
+    /// ```
     fn is_narrowable_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
 
