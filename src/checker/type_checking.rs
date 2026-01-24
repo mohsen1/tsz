@@ -4776,91 +4776,44 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Check for function overloads - multiple function declarations are allowed
-                    // if at most one of them has a body (is an implementation)
-                    let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
-                        && (other_flags & symbol_flags::FUNCTION) != 0;
-                    if both_functions {
-                        let decl_has_body = self.function_has_body(decl_idx);
-                        let other_has_body = self.function_has_body(other_idx);
-                        // Only conflict if BOTH have bodies (multiple implementations)
-                        if !(decl_has_body && other_has_body) {
-                            continue;
+                    // Use the binder's can_merge_flags to determine if declarations can merge
+                    // This ensures consistency with the binder's symbol merging logic
+                    if crate::binder::BinderState::can_merge_flags(decl_flags, other_flags) {
+                        // Declarations can be merged - no conflict
+                        // But we still need to check for multiple function/method implementations
+                        let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
+                            && (other_flags & symbol_flags::FUNCTION) != 0;
+                        let both_methods = (decl_flags & symbol_flags::METHOD) != 0
+                            && (other_flags & symbol_flags::METHOD) != 0;
+
+                        if both_functions {
+                            // Check if both have bodies (multiple implementations)
+                            let decl_has_body = self.function_has_body(decl_idx);
+                            let other_has_body = self.function_has_body(other_idx);
+                            if decl_has_body && other_has_body {
+                                // Multiple implementations - conflict
+                                conflicts.insert(decl_idx);
+                                conflicts.insert(other_idx);
+                            }
+                            // Otherwise, overloads are allowed
+                        } else if both_methods {
+                            // Check if both have bodies (multiple implementations)
+                            let decl_has_body = self.method_has_body(decl_idx);
+                            let other_has_body = self.method_has_body(other_idx);
+                            if decl_has_body && other_has_body {
+                                // Multiple implementations - conflict
+                                conflicts.insert(decl_idx);
+                                conflicts.insert(other_idx);
+                            }
+                            // Otherwise, overloads are allowed
                         }
-                    }
-
-                    // Check for method overloads - multiple method declarations are allowed
-                    // if at most one of them has a body (is an implementation)
-                    let both_methods = (decl_flags & symbol_flags::METHOD) != 0
-                        && (other_flags & symbol_flags::METHOD) != 0;
-                    if both_methods {
-                        let decl_has_body = self.method_has_body(decl_idx);
-                        let other_has_body = self.method_has_body(other_idx);
-                        // Only conflict if BOTH have bodies (multiple implementations)
-                        if !(decl_has_body && other_has_body) {
-                            continue;
+                        // For all other mergeable declarations (interfaces, namespaces, etc.), no conflict
+                    } else {
+                        // Declarations cannot be merged - check if they conflict
+                        if Self::declarations_conflict(decl_flags, other_flags) {
+                            conflicts.insert(decl_idx);
+                            conflicts.insert(other_idx);
                         }
-                    }
-
-                    // Check for interface merging - multiple interface declarations are allowed
-                    let both_interfaces = (decl_flags & symbol_flags::INTERFACE) != 0
-                        && (other_flags & symbol_flags::INTERFACE) != 0;
-                    if both_interfaces {
-                        continue; // Interface merging is always allowed
-                    }
-
-                    // Check for namespace merging - namespaces can merge with functions, classes, and each other
-                    let decl_is_namespace = (decl_flags
-                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                        != 0;
-                    let other_is_namespace = (other_flags
-                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                        != 0;
-
-                    // Namespace + Namespace merging is allowed
-                    if decl_is_namespace && other_is_namespace {
-                        continue;
-                    }
-
-                    // Namespace + Function merging is allowed
-                    let decl_is_function = (decl_flags & symbol_flags::FUNCTION) != 0;
-                    let other_is_function = (other_flags & symbol_flags::FUNCTION) != 0;
-                    if (decl_is_namespace && other_is_function)
-                        || (decl_is_function && other_is_namespace)
-                    {
-                        continue;
-                    }
-
-                    // Namespace + Class merging is allowed
-                    let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
-                    let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
-                    if (decl_is_namespace && other_is_class)
-                        || (decl_is_class && other_is_namespace)
-                    {
-                        continue;
-                    }
-
-                    // Namespace + Enum merging is allowed
-                    let decl_is_enum = (decl_flags & symbol_flags::ENUM) != 0;
-                    let other_is_enum = (other_flags & symbol_flags::ENUM) != 0;
-                    if (decl_is_namespace && other_is_enum) || (decl_is_enum && other_is_namespace)
-                    {
-                        continue;
-                    }
-
-                    // Ambient class + Function merging is allowed
-                    // (declare class provides the type, function provides the value)
-                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
-                    {
-                        let class_idx = if decl_is_class { decl_idx } else { other_idx };
-                        if self.is_ambient_class_declaration(class_idx) {
-                            continue;
-                        }
-                    }
-
-                    if Self::declarations_conflict(decl_flags, other_flags) {
-                        conflicts.insert(decl_idx);
-                        conflicts.insert(other_idx);
                     }
                 }
             }

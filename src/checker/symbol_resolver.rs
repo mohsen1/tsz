@@ -1289,6 +1289,8 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::ENUM_DECLARATION
                 | syntax_kind_ext::GET_ACCESSOR
                 | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::PROPERTY_DECLARATION
                 | syntax_kind_ext::CONSTRUCTOR => {
                     return Some(current);
                 }
