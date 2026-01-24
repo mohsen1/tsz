@@ -40,7 +40,9 @@ cargo test --lib
 
 # Run tests for a specific module
 cargo test --lib scanner
-cargo test --lib thin_parser
+cargo test --lib parser
+cargo test --lib binder
+cargo test --lib checker
 ```
 
 ### Conformance Tests
@@ -92,9 +94,9 @@ wasm-pack build --target web --out-dir pkg
 tsz/
 ├── src/                    # Rust source code
 │   ├── scanner/           # Lexer/tokenizer
-│   ├── thin_parser/       # Parser
-│   ├── thin_binder/       # Name binding
-│   ├── thin_checker/      # Type checker
+│   ├── parser/            # Parser
+│   ├── binder/            # Name binding
+│   ├── checker/           # Type checker
 │   ├── solver/            # Type constraint solver
 │   └── ...
 ├── conformance/           # Conformance test runner

@@ -73,12 +73,12 @@ use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::transforms::arrow_es5::contains_this_reference;
+use crate::syntax::transform_utils::contains_this_reference;
+use crate::syntax::transform_utils::is_private_identifier;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::*;
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
-    is_private_identifier,
 };
 use std::cell::Cell;
 use std::collections::HashMap;

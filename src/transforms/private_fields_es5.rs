@@ -22,10 +22,19 @@
 //! }
 //! _C_value = new WeakMap();
 //! ```
+//!
+//! # Architecture Note
+//!
+//! The `is_private_identifier` function has been moved to `syntax::transform_utils`
+//! as a shared utility to avoid circular dependencies. This module re-exports it
+//! for backward compatibility.
 
 use crate::parser::node::NodeArena;
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
+
+// Re-export from shared utilities to avoid duplication
+pub use crate::syntax::transform_utils::is_private_identifier;
 
 /// Information about a private field in a class
 #[derive(Debug, Clone)]
@@ -149,14 +158,6 @@ impl PrivateFieldState {
         self.current_class_name = None;
         self.private_fields.clear();
     }
-}
-
-/// Check if a property name is a private identifier (starts with #)
-pub fn is_private_identifier(arena: &NodeArena, name_idx: NodeIndex) -> bool {
-    let Some(node) = arena.get(name_idx) else {
-        return false;
-    };
-    node.kind == SyntaxKind::PrivateIdentifier as u16
 }
 
 /// Get the private field name from a private identifier node

@@ -28,6 +28,9 @@ mod scanner_impl_tests;
 // Parser AST types (Phase 3)
 pub mod parser;
 
+// Syntax utilities - Shared helpers for AST and transforms
+pub mod syntax;
+
 // Parser - Cache-optimized parser using NodeArena (Phase 0.1)
 #[cfg(test)]
 mod parser_state_tests;

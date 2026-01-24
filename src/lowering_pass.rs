@@ -43,9 +43,8 @@ use crate::parser::node::{Node, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
+use crate::syntax::transform_utils::{contains_this_reference, is_private_identifier};
 use crate::transform_context::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
-use crate::transforms::arrow_es5::contains_this_reference;
-use crate::transforms::private_fields_es5::is_private_identifier;
 use std::sync::Arc;
 
 /// Maximum recursion depth for AST traversal to prevent stack overflow

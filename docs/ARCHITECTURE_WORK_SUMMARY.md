@@ -18,7 +18,7 @@ Completed **Phase 1** (Critical Stabilization) entirely and made steady progress
 - Enhanced documentation for **type narrowing** (narrow_by_typeof, narrow_by_discriminant, etc.)
 - Enhanced documentation for **union assignability** and **type identity checking**
 - 6 deep analyses performed tracking progress and lessons learned
-- All 10,197 tests passing (100% pass rate)
+- All 10,197 tests passing (100% pass rate for standard unit test suite)
 
 ---
 
@@ -190,7 +190,7 @@ All Phase 1 tasks from ARCHITECTURE_AUDIT_REPORT.md were verified as complete:
 
 **Bug Fixes**:
 - Fixed readonly index signature bug (commit 65)
-- All 10,197 tests passing (100% pass rate)
+- All 10,197 tests passing (100% pass rate for standard unit test suite)
 
 **Utility Expansions**:
 - type_computation.rs: 211 → 540 lines (+329 lines, +156%)
@@ -343,7 +343,7 @@ All Phase 1 tasks from ARCHITECTURE_AUDIT_REPORT.md were verified as complete:
 - Diagnostics: error, get_node_span
 
 **Test Status**:
-- All 10,197 tests passing (100% pass rate)
+- All 10,197 tests passing (100% pass rate for standard unit test suite)
 - No regressions introduced during documentation phase
 
 ### Deep Analysis Insights (Commits 71-79)
@@ -391,7 +391,7 @@ All Phase 1 tasks from ARCHITECTURE_AUDIT_REPORT.md were verified as complete:
 - Utilities: format_type, check_source_file, get_union_type, get_intersection_type
 
 **Test Status**:
-- All 10,197 tests passing (100% pass rate)
+- All 10,197 tests passing (100% pass rate for standard unit test suite)
 - No regressions introduced during documentation phase
 
 ### Deep Analysis Insights (Commits 61-70)
