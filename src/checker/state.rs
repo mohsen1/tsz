@@ -2656,7 +2656,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Left side wasn't a reference to a namespace/module
-        TypeId::ANY
+        // This is likely an error - the left side should resolve to a namespace
+        // Emit an appropriate error for the unresolved qualified name
+        // We don't emit TS2304 here because the left side might have already emitted an error
+        // Returning ERROR prevents cascading errors while still indicating failure
+        TypeId::ERROR
     }
 
     /// Helper to resolve an identifier as a type reference (for qualified name left sides).
