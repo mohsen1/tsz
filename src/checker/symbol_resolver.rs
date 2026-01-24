@@ -779,7 +779,7 @@ impl<'a> CheckerState<'a> {
         let exports = left_symbol.exports.as_ref()?;
 
         // First try direct exports
-        if let Some(&member_sym) = exports.get(right_name) {
+        if let Some(member_sym) = exports.get(right_name) {
             return self.resolve_alias_symbol(member_sym, visited_aliases);
         }
 
@@ -810,7 +810,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<SymbolId> {
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(&sym_id) = module_exports.get(member_name) {
+            if let Some(sym_id) = module_exports.get(member_name) {
                 return self.resolve_alias_symbol(sym_id, visited_aliases);
             }
         }

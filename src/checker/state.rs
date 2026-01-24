@@ -16,6 +16,7 @@
 
 use crate::binder::BinderState;
 use crate::binder::{SymbolId, symbol_flags};
+use crate::Arc;
 use crate::checker::context::CheckerOptions;
 use crate::checker::types::diagnostics::Diagnostic;
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
@@ -1363,7 +1364,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+    pub(crate) fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         self.class_instance_type_with_params_from_symbol(sym_id)
             .map(|(instance_type, _)| instance_type)
     }
@@ -1528,7 +1529,7 @@ impl<'a> CheckerState<'a> {
 
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(&sym_id) = module_exports.get(member_name) {
+            if let Some(sym_id) = module_exports.get(member_name) {
                 // Found direct export - but we need to resolve if it's itself a re-export
                 // Get the symbol and check if it's an alias
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -1565,7 +1566,7 @@ impl<'a> CheckerState<'a> {
         for lib_binder in lib_binders {
             // First check lib binder's module_exports
             if let Some(module_exports) = lib_binder.module_exports.get(module_specifier) {
-                if let Some(&sym_id) = module_exports.get(member_name) {
+                if let Some(sym_id) = module_exports.get(member_name) {
                     return Some(sym_id);
                 }
             }
@@ -1949,8 +1950,7 @@ impl<'a> CheckerState<'a> {
                         (node.pos, node.end - node.pos)
                     }
                 } else if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
-                    || node.kind == syntax_kind_ext::IMPORT_NAMESPACE_SPECIFIER
-                    || node.kind == syntax_kind_ext::IMPORT_DEFAULT_SPECIFIER
+                    || node.kind == syntax_kind_ext::NAMESPACE_IMPORT
                 {
                     // For import specifiers, try to find the parent import declaration
                     if let Some(ext) = self.ctx.arena.get_extended(decl_node) {
@@ -2727,7 +2727,7 @@ impl<'a> CheckerState<'a> {
             // Check exports table for direct export
             let mut member_sym_id = None;
             if let Some(ref exports) = symbol.exports {
-                member_sym_id = exports.get(&right_name).copied();
+                member_sym_id = exports.get(&right_name);
             }
 
             // If not found in direct exports, check for re-exports
