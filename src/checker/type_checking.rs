@@ -8246,4 +8246,97 @@ impl<'a> CheckerState<'a> {
         let excludes_b = Self::excluded_symbol_flags(flags_b);
         (flags_a & excludes_b) != 0 || (flags_b & excludes_a) != 0
     }
+
+    // Section 51: Literal Type Utilities
+    // ----------------------------------
+
+    /// Infer a literal type from an initializer expression.
+    ///
+    /// This function attempts to infer the most specific literal type from an
+    /// expression, enabling const declarations to have literal types.
+    ///
+    /// **Literal Type Inference:**
+    /// - **String literals**: `"hello"` → `"hello"` (string literal type)
+    /// - **Numeric literals**: `42` → `42` (numeric literal type)
+    /// - **Boolean literals**: `true` → `true`, `false` → `false`
+    /// - **Null literal**: `null` → null type
+    /// - **Unary expressions**: `-42` → `-42`, `+42` → `42`
+    ///
+    /// **Non-Literal Expressions:**
+    /// - Complex expressions return None (not a literal)
+    /// - Function calls, object literals, etc. return None
+    ///
+    /// **Const Declarations:**
+    /// - `const x = "hello"` infers type `"hello"` (not `string`)
+    /// - `let y = "hello"` infers type `string` (widened)
+    /// - This function enables the const behavior
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // String literal
+    /// const greeting = "hello";  // Type: "hello"
+    /// literal_type_from_initializer(greeting_node) → Some("hello")
+    ///
+    /// // Numeric literal
+    /// const count = 42;  // Type: 42
+    /// literal_type_from_initializer(count_node) → Some(42)
+    ///
+    /// // Negative number
+    /// const temp = -42;  // Type: -42
+    /// literal_type_from_initializer(temp_node) → Some(-42)
+    ///
+    /// // Boolean
+    /// const flag = true;  // Type: true
+    /// literal_type_from_initializer(flag_node) → Some(true)
+    ///
+    /// // Non-literal
+    /// const arr = [1, 2, 3];  // Type: number[]
+    /// literal_type_from_initializer(arr_node) → None
+    /// ```
+    pub(crate) fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return None;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(node)?;
+                Some(self.ctx.types.literal_string(&lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.ctx.arena.get_literal(node)?;
+                lit.value.map(|value| self.ctx.types.literal_number(value))
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(self.ctx.types.literal_boolean(true)),
+            k if k == SyntaxKind::FalseKeyword as u16 => {
+                Some(self.ctx.types.literal_boolean(false))
+            }
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.ctx.arena.get_unary_expr(node)?;
+                let op = unary.operator;
+                if op != SyntaxKind::MinusToken as u16 && op != SyntaxKind::PlusToken as u16 {
+                    return None;
+                }
+                let operand = unary.operand;
+                let Some(operand_node) = self.ctx.arena.get(operand) else {
+                    return None;
+                };
+                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return None;
+                }
+                let lit = self.ctx.arena.get_literal(operand_node)?;
+                let value = lit.value?;
+                let value = if op == SyntaxKind::MinusToken as u16 {
+                    -value
+                } else {
+                    value
+                };
+                Some(self.ctx.types.literal_number(value))
+            }
+            _ => None,
+        }
+    }
 }
