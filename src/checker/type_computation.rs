@@ -152,10 +152,11 @@ impl<'a> CheckerState<'a> {
                         if tuple_context.is_some() {
                             // For tuple context, add each element with spread flag
                             for elem in elems.iter() {
-                                let (name, optional) = match expected.get(index) {
-                                    Some(el) => (el.name, el.optional),
-                                    None => (None, false),
-                                };
+                                let (name, optional) =
+                                    match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
+                                        Some(el) => (el.name, el.optional),
+                                        None => (None, false),
+                                    };
                                 tuple_elements.push(TupleElement {
                                     type_id: elem.type_id,
                                     name,
@@ -185,10 +186,11 @@ impl<'a> CheckerState<'a> {
                     self.ctx.contextual_type = prev_context;
 
                     if let Some(ref expected) = tuple_context {
-                        let (name, optional) = match expected.get(index) {
-                            Some(el) => (el.name, el.optional),
-                            None => (None, false),
-                        };
+                        let (name, optional) =
+                            match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
+                                Some(el) => (el.name, el.optional),
+                                None => (None, false),
+                            };
                         tuple_elements.push(TupleElement {
                             type_id: elem_type,
                             name,
@@ -208,7 +210,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.contextual_type = prev_context;
 
             if let Some(ref expected) = tuple_context {
-                let (name, optional) = match expected.get(index) {
+                let (name, optional) = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                     Some(el) => (el.name, el.optional),
                     None => (None, false),
                 };
