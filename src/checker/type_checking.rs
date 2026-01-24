@@ -7427,4 +7427,105 @@ impl<'a> CheckerState<'a> {
             current = parent_idx;
         }
     }
+
+    // Section 45: Element Access Utilities
+    // -------------------------------------
+
+    /// Get literal key union from a type (string and/or number literals).
+    pub(crate) fn get_literal_key_union_from_type(
+        &self,
+        index_type: TypeId,
+    ) -> Option<(Vec<Atom>, Vec<f64>)> {
+        use crate::solver::{LiteralValue, TypeKey};
+
+        match self.ctx.types.lookup(index_type)? {
+            TypeKey::Literal(LiteralValue::String(atom)) => Some((vec![atom], Vec::new())),
+            TypeKey::Literal(LiteralValue::Number(num)) => Some((Vec::new(), vec![num.0])),
+            TypeKey::Union(members) => {
+                let members = self.ctx.types.type_list(members);
+                let mut string_keys = Vec::with_capacity(members.len());
+                let mut number_keys = Vec::new();
+                for &member in members.iter() {
+                    match self.ctx.types.lookup(member) {
+                        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                            string_keys.push(atom)
+                        }
+                        Some(TypeKey::Literal(LiteralValue::Number(num))) => {
+                            number_keys.push(num.0)
+                        }
+                        _ => return None,
+                    }
+                }
+                Some((string_keys, number_keys))
+            }
+            _ => None,
+        }
+    }
+
+    /// Get element access type for literal string keys.
+    pub(crate) fn get_element_access_type_for_literal_keys(
+        &mut self,
+        object_type: TypeId,
+        keys: &[Atom],
+    ) -> Option<TypeId> {
+        use crate::solver::{PropertyAccessResult, QueryDatabase};
+
+        if keys.is_empty() {
+            return None;
+        }
+
+        let numeric_as_index = self.is_array_like_type(object_type);
+        let mut types = Vec::with_capacity(keys.len());
+
+        for &key in keys {
+            let name = self.ctx.types.resolve_atom(key);
+            if numeric_as_index && let Some(index) = self.get_numeric_index_from_string(&name) {
+                let element_type =
+                    self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+                types.push(element_type);
+                continue;
+            }
+
+            match self.ctx.types.property_access_type(object_type, &name) {
+                PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    types.push(property_type.unwrap_or(TypeId::UNKNOWN));
+                }
+                PropertyAccessResult::IsUnknown => return None,
+                PropertyAccessResult::PropertyNotFound { .. } => return None,
+            }
+        }
+
+        if types.len() == 1 {
+            Some(types[0])
+        } else {
+            Some(self.ctx.types.union(types))
+        }
+    }
+
+    /// Get element access type for literal number keys.
+    pub(crate) fn get_element_access_type_for_literal_number_keys(
+        &mut self,
+        object_type: TypeId,
+        keys: &[f64],
+    ) -> Option<TypeId> {
+        if keys.is_empty() {
+            return None;
+        }
+
+        let mut types = Vec::with_capacity(keys.len());
+        for &value in keys {
+            if let Some(index) = self.get_numeric_index_from_number(value) {
+                types.push(self.get_element_access_type(object_type, TypeId::NUMBER, Some(index)));
+            } else {
+                return Some(self.get_element_access_type(object_type, TypeId::NUMBER, None));
+            }
+        }
+
+        if types.len() == 1 {
+            Some(types[0])
+        } else {
+            Some(self.ctx.types.union(types))
+        }
+    }
 }
