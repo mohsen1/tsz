@@ -3,7 +3,7 @@
 **Date**: 2026-01-24
 **Status**: Active
 **Current Phase**: Phase 2 - Break Up God Objects
-**Last Updated**: 2026-01-24 (Sections 49-54: Additional utilities extracted to type_checking.rs)
+**Last Updated**: 2026-01-24 (Step 15: Detailed parser/state.rs decomposition plan)
 
 ---
 
@@ -16,7 +16,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 | File | Original Lines | Current Lines | Reduction | Status | Priority |
 |------|---------------|---------------|-----------|--------|----------|
 | `checker/state.rs` | 26,217 | **13,468** | **48.6%** | 🚧 In Progress | **P1 (CURRENT)** |
-| `parser/state.rs` | 10,762 | 10,762 | 0% | ⏳ Pending | P3 (low priority) |
+| `parser/state.rs` | 10,763 | 10,763 | 0% | 📋 Planned | **P3 (MEDIUM)** |
 | `solver/evaluate.rs` | 5,784 | 5,784 | 0% | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 5,000+ | 1,778 | 64% | ✅ **COMPLETE** | P1 (DONE) |
 | `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (after checker) |
@@ -891,24 +891,232 @@ solver/
 
 ---
 
-## Priority 5: parser/state.rs (Low Priority)
+## Priority 3: parser/state.rs (Medium Priority)
 
-**Goal**: Reduce from 10,762 lines to ~3,000 lines  
-**Status**: ⏳ Pending (deferred until other god objects complete)
+**Goal**: Reduce from 10,763 lines to ~3,000 lines (72% reduction)
+**Status**: 🚧 In Progress (Step 15 analysis complete)
+**Key Challenge**: Eliminate code duplication in modifier/declare parsing
 
-### Step 15: Plan parser/state.rs Decomposition
+### Step 15: parser/state.rs Decomposition - Analysis & Planning ✅ COMPLETE
 
-#### 15.1 Analysis
-- [ ] Read through `parser/state.rs`
-- [ ] Identify code duplication patterns
-- [ ] Count lines for duplicate sections
-- [ ] Identify extraction candidates
+**Current State**: 10,763 lines in single file
+**Target**: ~3,000 lines (72% reduction)
+**Key Insight**: Heavy code duplication in modifier/declare parsing
 
-#### 15.2 Create Extraction Plan
-- [ ] Document extraction targets
-- [ ] Estimate effort for each extraction
-- [ ] Plan module structure
-- [ ] Update this TODO with detailed steps
+#### 15.1 Code Structure Analysis ✅ COMPLETE
+
+**Function Distribution**:
+- `parse_*` functions: 196 total
+- `look_ahead_is_*` functions: 24 total
+- `error_*` functions: 12 total
+- `is_*` predicates: 48 total
+
+**Major Sections**:
+| Section | Lines | Description |
+|---------|-------|-------------|
+| Token Utilities | ~250 | Token access, utilities |
+| Error Handling | ~300 | Error reporting functions |
+| Statement Parsing | ~5,000 | All statement types |
+| Expression Parsing | ~1,500 | Expression operators |
+| Type Parsing | ~1,700 | Type annotations |
+| JSX Parsing | ~560 | JSX elements |
+
+#### 15.2 Code Duplication Patterns ✅ IDENTIFIED
+
+**Critical Duplication Issues**:
+
+1. **Modifier Parsing Duplication** (~800 lines duplicated)
+   - `parse_class_declaration_with_modifiers`
+   - `parse_interface_declaration_with_modifiers`
+   - `parse_enum_declaration_with_modifiers`
+   - `parse_type_alias_declaration_with_modifiers`
+   - `parse_module_declaration_with_modifiers`
+   - `parse_variable_statement_with_modifiers`
+   - `parse_constructor_with_modifiers`
+   - `parse_get_accessor_with_modifiers`
+   - `parse_set_accessor_with_modifiers`
+   - `parse_index_signature_with_modifiers`
+
+   **Pattern**: Each function repeats same modifier parsing logic (async, decorate, export, default, declare, abstract, public, private, protected, override, readonly, static)
+
+2. **Declare/Abstract Duplication** (~400 lines duplicated)
+   - `parse_declare_class`
+   - `parse_abstract_class_declaration`
+   - `parse_declare_abstract_class`
+   - `parse_abstract_class_declaration_with_decorators`
+
+   **Pattern**: Similar logic with small variations
+
+3. **Decorator Duplication** (~300 lines duplicated)
+   - `parse_class_declaration_with_decorators`
+   - `parse_abstract_class_declaration_with_decorators`
+
+   **Pattern**: Repeated decorator wrapping logic
+
+4. **Look-ahead Duplication** (~500 lines)
+   - 24 `look_ahead_is_*` functions with similar patterns
+   - Could be unified with a generic look-ahead framework
+
+5. **Error Handling Duplication** (~200 lines)
+   - 12 `error_*` functions with similar structure
+   - Could be unified with error builder pattern
+
+**Total Duplication**: ~2,200 lines (20% of file)
+
+#### 15.3 Extraction Plan
+
+**Target Module Structure**:
+```
+src/parser/
+├── state.rs (orchestration layer, ~3,000 lines)
+├── parse_rules/ (NEW)
+│   ├── mod.rs
+│   ├── modifiers.rs (~800 lines) - Unified modifier parsing
+│   ├── declarations.rs (~1,500 lines) - All declaration types
+│   ├── statements.rs (~1,200 lines) - Statement parsing
+│   ├── expressions.rs (~1,000 lines) - Expression parsing
+│   ├── types.rs (~800 lines) - Type annotation parsing
+│   ├── look_ahead.rs (~400 lines) - Look-ahead utilities
+│   └── errors.rs (~200 lines) - Error reporting helpers
+└── jsx/
+    └── parser.rs (~560 lines) - JSX parsing (already separate)
+```
+
+**Detailed Extraction Steps**:
+
+##### Phase 1: Deduplicate Modifier Parsing (HIGH PRIORITY)
+**Target**: Reduce ~800 lines of duplicated modifier logic to ~200 lines
+**Effort**: HIGH (requires careful refactoring)
+**Impact**: Eliminates most duplication in declaration parsing
+
+1. **Step 15.1: Extract `parse_modifiers` helper** (~200 lines)
+   - Create `parser/parse_rules/modifiers.rs`
+   - Extract unified modifier parsing logic
+   - Functions: `parse_modifiers()`, `parse_modifier_list()`, `should_stop_parsing_modifiers()`
+   - Replace all `*_with_modifiers` functions
+
+2. **Step 15.2: Extract `parse_decorators` helper** (~150 lines)
+   - Extract decorator parsing logic
+   - Functions: `parse_decorators()`, `try_parse_decorator()`
+   - Unify decorated declaration parsing
+
+3. **Step 15.3: Create declaration builder pattern** (~300 lines)
+   - Abstract the pattern: modifiers + decorators + declaration
+   - Eliminate `parse_*_with_modifiers` and `parse_*_with_decorators` variants
+
+##### Phase 2: Extract Declaration Parsing (MEDIUM PRIORITY)
+**Target**: ~1,500 lines to dedicated module
+**Effort**: MEDIUM (straightforward extraction)
+**Impact**: Cleaner separation of concerns
+
+4. **Step 15.4: Extract declaration parsers** (~1,500 lines)
+   - Create `parser/parse_rules/declarations.rs`
+   - Extract all `parse_*_declaration` functions
+   - Functions: class, interface, enum, type alias, module, function, variable
+   - Extract declare/abstract variants
+
+##### Phase 3: Extract Statement Parsing (MEDIUM PRIORITY)
+**Target**: ~1,200 lines to dedicated module
+**Effort**: MEDIUM (straightforward extraction)
+**Impact**: Improved organization
+
+5. **Step 15.5: Extract statement parsers** (~1,200 lines)
+   - Create `parser/parse_rules/statements.rs`
+   - Extract all `parse_*_statement` functions
+   - Functions: if, while, for, switch, try, with, return, break, continue, throw
+
+##### Phase 4: Extract Expression Parsing (MEDIUM PRIORITY)
+**Target**: ~1,000 lines to dedicated module
+**Effort**: MEDIUM (straightforward extraction)
+**Impact**: Better modularity
+
+6. **Step 15.6: Extract expression parsers** (~1,000 lines)
+   - Create `parser/parse_rules/expressions.rs`
+   - Extract binary, unary, postfix, primary expression parsing
+   - Extract assignment, arrow function, member expression parsing
+
+##### Phase 5: Extract Type Parsing (LOW PRIORITY)
+**Target**: ~800 lines to dedicated module
+**Effort**: LOW (isolated section)
+**Impact**: Cleaner separation
+
+7. **Step 15.7: Extract type parsers** (~800 lines)
+   - Create `parser/parse_rules/types.rs`
+   - Extract all `parse_*_type` functions
+   - Functions: union, intersection, conditional, tuple, function, constructor, mapped
+
+##### Phase 6: Deduplicate Look-ahead (LOW PRIORITY)
+**Target**: Reduce ~500 lines of look-ahead duplication
+**Effort**: MEDIUM (requires framework design)
+**Impact**: More maintainable look-ahead logic
+
+8. **Step 15.8: Extract look-ahead utilities** (~400 lines)
+   - Create `parser/parse_rules/look_ahead.rs`
+   - Unify 24 `look_ahead_is_*` functions with generic framework
+   - Create macro-based look-ahead pattern matching
+
+##### Phase 7: Extract Error Handling (LOW PRIORITY)
+**Target**: ~200 lines to dedicated module
+**Effort**: LOW (straightforward extraction)
+**Impact**: Centralized error handling
+
+9. **Step 15.9: Extract error helpers** (~200 lines)
+   - Create `parser/parse_rules/errors.rs`
+   - Extract all `error_*` functions
+   - Create error builder pattern
+
+#### 15.4 Effort Estimates
+
+| Step | Description | Lines | Effort | Priority |
+|------|-------------|-------|--------|----------|
+| 15.1 | Extract modifier parsing | -600 | HIGH | P1 |
+| 15.2 | Extract decorator parsing | -150 | MEDIUM | P1 |
+| 15.3 | Declaration builder pattern | -300 | HIGH | P1 |
+| 15.4 | Extract declarations | -1,500 | MEDIUM | P2 |
+| 15.5 | Extract statements | -1,200 | MEDIUM | P2 |
+| 15.6 | Extract expressions | -1,000 | MEDIUM | P2 |
+| 15.7 | Extract types | -800 | LOW | P3 |
+| 15.8 | Extract look-ahead | -400 | MEDIUM | P3 |
+| 15.9 | Extract errors | -200 | LOW | P3 |
+| **Total** | | **~7,700** | | |
+
+**Expected Final Size**: ~3,000 lines (72% reduction)
+
+#### 15.5 Implementation Checklist
+
+- [x] 15.1: Complete code structure analysis
+- [x] 15.2: Identify duplication patterns
+- [x] 15.3: Document extraction targets
+- [x] 15.4: Create detailed extraction plan
+- [x] 15.5: Estimate effort for each step
+- [x] 15.6: Update GOD_OBJECT_DECOMPOSITION_TODO.md
+- [ ] 15.7: Create `parser/parse_rules/mod.rs`
+- [ ] 15.8: Implement unified modifier parsing
+- [ ] 15.9: Refactor all `*_with_modifiers` functions
+- [ ] 15.10: Extract declarations module
+- [ ] 15.11: Extract statements module
+- [ ] 15.12: Extract expressions module
+- [ ] 15.13: Extract types module
+- [ ] 15.14: Extract look-ahead utilities
+- [ ] 15.15: Extract error helpers
+- [ ] 15.16: Verify all tests pass
+- [ ] 15.17: Update documentation
+- [ ] 15.18: Commit with descriptive message
+
+#### 15.6 Success Criteria
+
+**Quantitative Metrics**:
+- [ ] `parser/state.rs` reduced to ~3,000 lines (from 10,763)
+- [ ] Code duplication reduced from ~2,200 lines to <200 lines
+- [ ] Number of functions reduced from 280+ to <100
+- [ ] All parse modules created and integrated
+
+**Qualitative Goals**:
+- [ ] Zero modifier/declare duplication
+- [ ] Unified parsing patterns
+- [ ] Clear module boundaries
+- [ ] All tests passing
+- [ ] Zero clippy warnings
 
 ---
 
