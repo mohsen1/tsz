@@ -32,6 +32,7 @@ pub mod enum_checker;
 pub mod error_handler;
 pub mod error_reporter;
 pub mod expr;
+pub mod flow_analysis;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod flow_narrowing;
