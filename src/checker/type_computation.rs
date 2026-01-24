@@ -136,24 +136,73 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let elem_is_spread = elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT;
-            let elem_type = if elem_is_spread {
+
+            // Handle spread elements - expand tuple types
+            if elem_is_spread {
                 if let Some(spread_data) = self.ctx.arena.get_spread(elem_node) {
                     let spread_expr_type = self.get_type_of_node(spread_data.expression);
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_expr_type, spread_data.expression);
-                    // In array context (`[...a]`), a spread contributes its *element* type, not the
-                    // array/tuple type itself. Otherwise we'd infer `number[][]` for `[...number[]]`.
-                    if tuple_context.is_some() {
+
+                    // If it's a tuple type, expand its elements
+                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_expr_type) {
+                        let elems = self.ctx.types.tuple_list(elems_id);
+
+                        if tuple_context.is_some() {
+                            // For tuple context, add each element with spread flag
+                            for elem in elems.iter() {
+                                let (name, optional) = match expected.get(index) {
+                                    Some(el) => (el.name, el.optional),
+                                    None => (None, false),
+                                };
+                                tuple_elements.push(TupleElement {
+                                    type_id: elem.type_id,
+                                    name,
+                                    optional,
+                                    rest: false, // Individual tuple elements are not spreads
+                                });
+                                // Don't increment index here - each tuple element maps to position
+                            }
+                        } else {
+                            // For array context, add element types
+                            for elem in elems.iter() {
+                                element_types.push(elem.type_id);
+                            }
+                        }
+                        self.ctx.contextual_type = prev_context;
+                        continue;
+                    }
+
+                    // For non-tuple spreads in array context, use element type
+                    // For tuple context, use the spread type itself
+                    let elem_type = if tuple_context.is_some() {
                         spread_expr_type
                     } else {
                         self.for_of_element_type(spread_expr_type)
+                    };
+
+                    self.ctx.contextual_type = prev_context;
+
+                    if let Some(ref expected) = tuple_context {
+                        let (name, optional) = match expected.get(index) {
+                            Some(el) => (el.name, el.optional),
+                            None => (None, false),
+                        };
+                        tuple_elements.push(TupleElement {
+                            type_id: elem_type,
+                            name,
+                            optional,
+                            rest: true, // Mark as spread for non-tuple spreads in tuple context
+                        });
+                    } else {
+                        element_types.push(elem_type);
                     }
-                } else {
-                    TypeId::ANY
+                    continue;
                 }
-            } else {
-                self.get_type_of_node(elem_idx)
-            };
+            }
+
+            // Regular (non-spread) element
+            let elem_type = self.get_type_of_node(elem_idx);
 
             self.ctx.contextual_type = prev_context;
 
@@ -166,7 +215,7 @@ impl<'a> CheckerState<'a> {
                     type_id: elem_type,
                     name,
                     optional,
-                    rest: elem_is_spread,
+                    rest: false,
                 });
             } else {
                 element_types.push(elem_type);

@@ -72,6 +72,8 @@ mod no_filename_based_behavior_tests;
 #[cfg(test)]
 mod null_assignability_tests;
 #[cfg(test)]
+mod spread_rest_tests;
+#[cfg(test)]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
 mod value_usage_tests;
