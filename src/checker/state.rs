@@ -2765,14 +2765,19 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
                 trace!("=== get_type_from_type_query ===");
                 trace!(name = ?name_text, sym_id, "get_type_from_type_query");
-                if !has_type_args {
-                    let resolved = self.get_type_of_symbol(crate::binder::SymbolId(sym_id));
-                    trace!(resolved = ?resolved, "resolved type");
-                    if resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                        trace!("=> returning resolved type directly");
-                        return resolved;
-                    }
+
+                // Always compute the symbol type to ensure it's in the type environment
+                // This is important for Application resolution and TypeQuery resolution during subtype checking
+                let resolved = self.get_type_of_symbol(crate::binder::SymbolId(sym_id));
+                trace!(resolved = ?resolved, "resolved type");
+
+                if !has_type_args && resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                    // Return resolved type directly when there are no type arguments
+                    trace!("=> returning resolved type directly");
+                    return resolved;
                 }
+
+                // For type arguments or when resolved is ANY/ERROR, use TypeQuery
                 let typequery_type = self.ctx.types.intern(TypeKey::TypeQuery(SymbolRef(sym_id)));
                 trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
                 typequery_type

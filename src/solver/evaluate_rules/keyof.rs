@@ -88,6 +88,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         match key {
             TypeKey::ReadonlyType(inner) => self.recurse_keyof(inner),
+            TypeKey::TypeQuery(sym) => {
+                // Resolve typeof query before computing keyof
+                if let Some(resolved) = self.resolver().resolve_ref(sym, self.interner()) {
+                    self.recurse_keyof(resolved)
+                } else {
+                    TypeId::ERROR
+                }
+            }
             TypeKey::Ref(sym) => {
                 if let Some(resolved) = self.resolver().resolve_ref(sym, self.interner()) {
                     if resolved == evaluated_operand {
