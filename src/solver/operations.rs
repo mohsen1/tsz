@@ -3217,7 +3217,7 @@ fn is_numeric_index_name(name: &str) -> bool {
 // Binary operation evaluation has been extracted to `solver/binary_ops.rs`.
 // The following are re-exported from that module:
 // - BinaryOpEvaluator
-// - BinaryOpResult  
+// - BinaryOpResult
 // - PrimitiveClass
 //
 // This extraction reduces operations.rs by ~330 lines and makes the code

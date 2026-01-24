@@ -14,7 +14,7 @@
 //! All functions take `TypeId` as input and return structured results,
 //! making them pure logic that can be unit tested independently.
 
-use crate::solver::{TypeDatabase, TypeKey, IntrinsicKind, LiteralValue, TypeId};
+use crate::solver::{IntrinsicKind, LiteralValue, TypeDatabase, TypeId, TypeKey};
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
