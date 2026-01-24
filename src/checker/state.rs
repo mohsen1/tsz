@@ -976,6 +976,37 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Get the type of a node.
+    /// Get the type of an AST node with caching and circular reference detection.
+    ///
+    /// This is the main entry point for type computation. All type checking ultimately
+    /// flows through this function to get the type of AST nodes.
+    ///
+    /// ## Caching:
+    /// - Types are cached in `ctx.node_types` by node index
+    /// - Subsequent calls for the same node return the cached type
+    /// - Cache is checked first before computation
+    ///
+    /// ## Fuel Management:
+    /// - Consumes fuel on each call to prevent infinite loops
+    /// - Returns ERROR if fuel is exhausted (prevents type checker timeout)
+    /// - Fuel is reset between file check operations
+    ///
+    /// ## Circular Reference Detection:
+    /// - Tracks currently resolving nodes in `ctx.node_resolution_set`
+    /// - Returns ERROR if a circular reference is detected
+    /// - Helps expose type resolution bugs early
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// let x = 42;           // Type: number
+    /// let y = x;            // Type: number (from cache)
+    /// let z = x + y;        // Types: x=number, y=number, result=number
+    /// ```
+    ///
+    /// ## Performance:
+    /// - Caching prevents redundant type computation
+    /// - Circular reference detection prevents infinite recursion
+    /// - Fuel management ensures termination even for malformed code
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
@@ -3044,6 +3075,30 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type from a union type node (A | B).
+    ///
+    /// Parses a union type expression and creates a Union type with all members.
+    ///
+    /// ## Type Normalization:
+    /// - Empty union → NEVER (the empty type)
+    /// - Single member → the member itself (no union wrapper)
+    /// - Multiple members → Union type with all members
+    ///
+    /// ## Member Resolution:
+    /// - Each member is resolved via `get_type_from_type_node`
+    /// - This handles nested typeof expressions and type references
+    /// - Type arguments are recursively resolved
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// type StringOrNumber = string | number;
+    /// // Creates Union(STRING, NUMBER)
+    ///
+    /// type ThreeTypes = string | number | boolean;
+    /// // Creates Union(STRING, NUMBER, BOOLEAN)
+    ///
+    /// type Nested = (string | number) | boolean;
+    /// // Normalized to Union(STRING, NUMBER, BOOLEAN)
+    /// ```
     fn get_type_from_union_type(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -3071,6 +3126,34 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type from an intersection type node (A & B).
+    ///
+    /// Parses an intersection type expression and creates an Intersection type with all members.
+    ///
+    /// ## Type Normalization:
+    /// - Empty intersection → UNKNOWN (the top type for intersections)
+    /// - Single member → the member itself (no intersection wrapper)
+    /// - Multiple members → Intersection type with all members
+    ///
+    /// ## Member Resolution:
+    /// - Each member is resolved via `get_type_from_type_node`
+    /// - Handles nested typeof expressions and type references
+    ///
+    /// ## TypeScript Semantics:
+    /// Intersection types combine multiple types into one:
+    /// - Objects: Merges properties from all members
+    /// - Primitives: Usually results in NEVER (except for any/unknown)
+    /// - Functions: Combines function signatures (overload resolution)
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// type NameAndAge = { name: string } & { age: number };
+    /// // Creates Intersection with properties { name: string; age: number }
+    ///
+    /// type Extended = BaseModel & { id: number } & Serializable;
+    /// // Combines all three types into one
+    ///
+    /// type Neverish = string & number;  // NEVER (primitives don't intersect)
+    /// ```
     fn get_type_from_intersection_type(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -3098,7 +3181,48 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type from a type query node (typeof X).
-    /// Creates a TypeQuery type with the actual SymbolId from the binder.
+    ///
+    /// Creates a TypeQuery type that captures the type of a value, enabling type-level
+    /// queries and conditional type logic.
+    ///
+    /// ## Resolution Strategy:
+    /// 1. **Value symbol resolved** (typeof value):
+    ///    - Without type args: Return the actual type directly
+    ///    - With type args: Create TypeQuery type for deferred resolution
+    ///    - Exception: ANY/ERROR types still create TypeQuery for proper error handling
+    ///
+    /// 2. **Type symbol only**: Emit TS2504 error (type cannot be used as value)
+    ///
+    /// 3. **Unknown identifier**:
+    ///    - Known global value → return ANY (allows property access)
+    ///    - Unresolved import → return ANY (TS2307 already emitted)
+    ///    - Otherwise → emit TS2304 error and return ERROR
+    ///
+    /// 4. **Missing member** (typeof obj.prop): Emit appropriate error
+    ///
+    /// 5. **Fallback**: Hash the name for forward compatibility
+    ///
+    /// ## Type Arguments:
+    /// - If present, creates TypeApplication(base, args)
+    /// - Used in generic type queries: `typeof Array<string>`
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// let x = 42;
+    /// type T1 = typeof x;  // number
+    ///
+    /// function foo(): string { return "hello"; }
+    /// type T2 = typeof foo;  // () => string
+    ///
+    /// class MyClass {
+    ///   prop = 123;
+    /// }
+    /// type T3 = typeof MyClass;  // typeof MyClass (constructor type)
+    /// type T4 = MyClass;  // MyClass (instance type)
+    ///
+    /// // Type query with type arguments (advanced)
+    /// type T5 = typeof Array<string>;  // typeof Array with type args
+    /// ```
     fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use crate::solver::{SymbolRef, TypeKey};
 
