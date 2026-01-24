@@ -7301,7 +7301,44 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Get type of a symbol.
+    /// Get type of a symbol with caching and circular reference detection.
+    ///
+    /// This is the main entry point for resolving the type of symbols (variables,
+    /// functions, classes, interfaces, type aliases, etc.). All type resolution
+    /// ultimately flows through this function.
+    ///
+    /// ## Caching:
+    /// - Symbol types are cached in `ctx.symbol_types` by symbol ID
+    /// - Subsequent calls for the same symbol return the cached type
+    /// - Cache is populated on first successful resolution
+    ///
+    /// ## Fuel Management:
+    /// - Consumes fuel on each call to prevent infinite loops
+    /// - Returns ERROR if fuel is exhausted (prevents type checker timeout)
+    ///
+    /// ## Circular Reference Detection:
+    /// - Tracks currently resolving symbols in `ctx.symbol_resolution_set`
+    /// - Returns ERROR if a circular reference is detected
+    /// - Uses a stack to track resolution depth
+    ///
+    /// ## Type Environment Population:
+    /// - After resolution, populates the type environment for generic type expansion
+    /// - For classes: Handles instance type with type parameters specially
+    /// - For generic types: Stores both the type and its type parameters
+    /// - Skips ANY/ERROR types (don't populate environment for errors)
+    ///
+    /// ## Symbol Dependency Tracking:
+    /// - Records symbol dependencies for incremental type checking
+    /// - Pushes/pops from dependency stack during resolution
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// let x = 42;              // get_type_of_symbol(x) → number
+    /// function foo(): void {}  // get_type_of_symbol(foo) → () => void
+    /// class C {}               // get_type_of_symbol(C) → typeof C (constructor)
+    /// interface I {}           // get_type_of_symbol(I) → I (interface type)
+    /// type T = string;         // get_type_of_symbol(T) → string
+    /// ```
     pub fn get_type_of_symbol(&mut self, sym_id: SymbolId) -> TypeId {
         use crate::solver::SymbolRef;
 
@@ -13097,8 +13134,55 @@ impl<'a> CheckerState<'a> {
 
     /// Check if `source` type is a subtype of `target` type.
     ///
-    /// Stricter than assignability. Uses coinductive semantics for recursive types.
-    /// Uses the context's TypeEnvironment for resolving type references and expanding Applications.
+    /// Check if source type is a subtype of target type.
+    ///
+    /// This is the main entry point for subtype checking, used for type compatibility
+    /// throughout the type system. Subtyping is stricter than assignability.
+    ///
+    /// ## Subtype Relationship:
+    /// - A subtype `S <: T` means S can be used wherever T is expected
+    /// - Covariant positions: return types, read-only properties
+    /// - Contravariant positions: function parameters (except bivariant methods)
+    /// - Invariant positions: mutable properties, type parameters
+    ///
+    /// ## Coinductive Semantics:
+    /// - Uses coinductive (greatest fixpoint) semantics for recursive types
+    /// - Allows cyclic types to be subtypes of themselves without infinite expansion
+    /// - Prevents infinite recursion in mutually recursive type checks
+    ///
+    /// ## Type Environment:
+    /// - Uses the context's TypeEnvironment for resolving type references
+    /// - Expands generic Applications (e.g., `Array<string>`)
+    /// - Resolves type parameters to their concrete types
+    ///
+    /// ## Recursion Depth:
+    /// - Tracks recursion depth during subtype checking
+    /// - Emits TS2589 if depth is exceeded (type instantiation excessively deep)
+    /// - Returns false (not a subtype) when depth exceeded
+    ///
+    /// ## Strict Null Checks:
+    /// - Respects the strict_null_checks compiler option
+    /// - When strict: undefined is not a subtype of non-null types
+    /// - When non-strict: undefined is a subtype of all object types
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Basic subtypes
+    /// let x: string = "hello";        // string <: string ✅
+    /// let y: string = "hello" as any; // any <: string ✅
+    ///
+    /// // Covariant returns
+    /// type Animal = { speak(): string };
+    /// type Dog = { speak(): string; bark(): void };
+    /// let dog: Dog;
+    /// let animal: Animal = dog;       // Dog <: Animal ✅
+    ///
+    /// // Contravariant parameters (functions)
+    /// type Handler = (data: string) => void;
+    /// type AnyHandler = (data: any) => void;
+    /// let h1: Handler = (x: any) => {}; // Error: any is not contravariant to string
+    /// let h2: AnyHandler = (x: string) => {}; // ✅ string <: any (covariant position)
+    /// ```
     pub fn is_subtype_of(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages};
         use crate::solver::SubtypeChecker;
@@ -14537,16 +14621,115 @@ impl<'a> CheckerState<'a> {
 
     /// Narrow a type by a typeof guard.
     ///
-    /// Example: `typeof x === "string"` narrows `string | number` to `string`.
+    /// Narrow a union type by a typeof guard (positive case).
+    ///
+    /// This is the core of TypeScript's type narrowing for typeof expressions.
+    /// When a typeof check is used in a conditional, the type is narrowed to
+    /// only the members that match the typeof result.
+    ///
+    /// ## Type Narrowing:
+    /// - Unions are distributively narrowed by typeof result
+    /// - Non-unions are returned unchanged (already narrow)
+    /// - Primitives are narrowed based on typeof result matching
+    ///
+    /// ## Supported typeof Results:
+    /// - "string" → string literal types and string
+    /// - "number" → numeric literals and number
+    /// - "boolean" → true/false and boolean
+    /// - "bigint" → bigint literals and bigint
+    /// - "symbol" → symbol
+    /// - "undefined" → undefined
+    /// - "object" → object types (excluding null in strict mode)
+    /// - "function" → function types
+    ///
+    /// ## Flow Analysis Integration:
+    /// - Called by flow analysis when typeof guards are encountered
+    /// - Results are used to narrow types in conditional branches
+    /// - Enables precise type tracking through control flow
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// function example(x: string | number) {
+    ///     if (typeof x === "string") {
+    ///         // x is narrowed to string
+    ///         x.toUpperCase(); // ✅
+    ///     } else {
+    ///         // x is narrowed to number
+    ///         x.toFixed(2); // ✅
+    ///     }
+    /// }
+    ///
+    /// function example2(x: string | number | boolean) {
+    ///     if (typeof x === "string") {
+    ///         // x: string
+    ///     } else if (typeof x === "number") {
+    ///         // x: number
+    ///     } else {
+    ///         // x: boolean
+    ///     }
+    /// }
+    /// ```
     pub fn narrow_by_typeof(&self, source: TypeId, typeof_result: &str) -> TypeId {
         use crate::solver::NarrowingContext;
         let ctx = NarrowingContext::new(self.ctx.types);
         ctx.narrow_by_typeof(source, typeof_result)
     }
 
-    /// Narrow a type by excluding a typeof guard.
+    /// Narrow a union type by a typeof guard (negative case).
     ///
-    /// Example: `typeof x !== "string"` narrows `string | number` to `number`.
+    /// This handles the negated typeof check (`typeof x !== "string"`), narrowing
+    /// the type to exclude the typeof result. This is the dual of `narrow_by_typeof`.
+    ///
+    /// ## Type Narrowing:
+    /// - Unions are narrowed by excluding the typeof result
+    /// - Non-unions are returned unchanged (already narrow)
+    /// - Primitives are excluded based on typeof result
+    ///
+    /// ## Supported typeof Results:
+    /// - "string" → exclude string types, keep others
+    /// - "number" → exclude numeric types
+    /// - "boolean" → exclude boolean types
+    /// - "bigint" → exclude bigint types
+    /// - "symbol" → exclude symbol
+    /// - "undefined" → exclude undefined
+    /// - "object" → exclude object types
+    /// - "function" → exclude function types (special handling)
+    ///
+    /// ## Function Special Case:
+    /// - Uses `narrow_excluding_function` to exclude callable types
+    /// - Handles both Function and Callable type keys
+    ///
+    /// ## Flow Analysis Integration:
+    /// - Called by flow analysis for negated typeof guards
+    /// - Enables precise type tracking in else branches
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// function example(x: string | number) {
+    ///     if (typeof x !== "string") {
+    ///         // x is narrowed to number (string excluded)
+    ///         x.toFixed(2); // ✅
+    ///     }
+    /// }
+    ///
+    /// function example2(x: string | number | Function) {
+    ///     if (typeof x !== "function") {
+    ///         // x is narrowed to string | number (function excluded)
+    ///         // Can use string/number operations
+    ///     }
+    /// }
+    ///
+    /// // Combining positive and negative guards
+    /// function example3(x: string | number | boolean) {
+    ///     if (typeof x === "string") {
+    ///         // x: string
+    ///     } else if (typeof x !== "number") {
+    ///         // x: boolean (string excluded by first guard, number excluded by second)
+    ///     } else {
+    ///         // x: number
+    ///     }
+    /// }
+    /// ```
     pub fn narrow_by_typeof_negation(&self, source: TypeId, typeof_result: &str) -> TypeId {
         use crate::solver::NarrowingContext;
         let ctx = NarrowingContext::new(self.ctx.types);
