@@ -49,13 +49,13 @@
 
 pub mod arrow_es5;
 pub mod async_es5;
-pub mod emitter;
 pub mod async_es5_ir;
 pub mod block_scoping_es5;
 pub mod class_es5;
 pub mod class_es5_ir;
 pub mod destructuring_es5;
 mod emit_utils;
+pub mod emitter;
 pub mod enum_es5;
 pub mod enum_es5_ir;
 pub mod es5;
