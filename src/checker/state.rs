@@ -93,8 +93,7 @@
 use crate::binder::BinderState;
 use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::context::CheckerOptions;
-use crate::checker::types::diagnostics::Diagnostic;
-use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
+use crate::checker::{CheckerContext, EnclosingClassInfo};
 use crate::interner::Atom;
 use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
@@ -1617,8 +1616,6 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         lib_binders: &[Arc<crate::binder::BinderState>],
     ) -> Option<SymbolId> {
-        use crate::binder::BinderState;
-
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
             if let Some(sym_id) = module_exports.get(member_name) {
@@ -2071,7 +2068,7 @@ impl<'a> CheckerState<'a> {
         sig: &crate::solver::CallSignature,
         type_args: &[TypeId],
     ) -> crate::solver::CallSignature {
-        use crate::solver::{ParamInfo, TypePredicate, TypeSubstitution, instantiate_type};
+        use crate::solver::{ParamInfo, TypeSubstitution, instantiate_type};
 
         let substitution = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
         let params: Vec<ParamInfo> = sig
