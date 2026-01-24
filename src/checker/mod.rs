@@ -81,6 +81,8 @@ mod stability_validation_tests;
 mod value_usage_tests;
 #[cfg(test)]
 mod ts2304_tests;
+#[cfg(test)]
+mod global_type_tests;
 
 // Re-export key types
 pub use arena::TypeArena;
