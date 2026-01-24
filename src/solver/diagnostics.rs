@@ -13,6 +13,14 @@
 //!
 //! This prevents calling `type_to_string()` thousands of times for errors that are
 //! discarded during overload resolution.
+//!
+//! ## Tracer Pattern (Zero-Cost Abstraction)
+//!
+//! The tracer pattern allows the same subtype checking logic to be used for both
+//! fast boolean checks and detailed diagnostic generation, eliminating logic drift.
+//!
+//! - **FastTracer**: Zero-cost abstraction that compiles to a simple boolean return
+//! - **DiagnosticTracer**: Collects detailed `SubtypeFailureReason` for error messages
 
 use crate::binder::SymbolId;
 use crate::interner::Atom;
@@ -23,6 +31,247 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use crate::solver::TypeInterner;
+
+// =============================================================================
+// Tracer Pattern: Zero-Cost Diagnostic Abstraction
+// =============================================================================
+
+/// A trait for tracing subtype check failures.
+///
+/// This trait enables the same subtype checking logic to be used for both
+/// fast boolean checks (via `FastTracer`) and detailed diagnostics (via `DiagnosticTracer`).
+///
+/// The key insight is that failure reasons are constructed lazily via a closure,
+/// so `FastTracer` can skip the allocation entirely while `DiagnosticTracer` collects
+/// detailed information.
+///
+/// # Example
+///
+/// ```rust
+/// fn check_subtype_with_tracer<T: SubtypeTracer>(
+///     source: TypeId,
+///     target: TypeId,
+///     tracer: &mut T,
+/// ) -> bool {
+///     if source == target {
+///         return true;
+///     }
+///     tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch { source, target })
+/// }
+/// ```
+pub trait SubtypeTracer {
+    /// Called when a subtype mismatch is detected.
+    ///
+    /// The `reason` closure is only called if the tracer needs to collect
+    /// the failure reason. This allows `FastTracer` to skip the allocation
+    /// entirely while `DiagnosticTracer` can collect detailed information.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if checking should continue (for collecting more nested failures)
+    /// - `false` if checking should stop immediately (fast path)
+    ///
+    /// # Type Parameters
+    ///
+    /// The `reason` parameter is a closure that constructs the failure reason.
+    /// It's wrapped in `FnOnce` so it's only called when needed.
+    fn on_mismatch(&mut self, reason: impl FnOnce() -> SubtypeFailureReason) -> bool;
+}
+
+/// Fast tracer that returns immediately on mismatch (zero-cost abstraction).
+///
+/// This tracer is used for fast subtype checks where we only care about the
+/// boolean result. The `#[inline(always)]` attribute ensures that this compiles
+/// to the same code as a simple `return false` statement with no runtime overhead.
+///
+/// # Zero-Cost Abstraction
+///
+/// ```rust
+/// // With FastTracer, this compiles to:
+/// // if condition { return false; }
+/// if !tracer.on_mismatch(|| reason) { return false; }
+/// ```
+///
+/// The closure is never called, so no allocations occur.
+#[derive(Clone, Copy, Debug)]
+pub struct FastTracer;
+
+impl SubtypeTracer for FastTracer {
+    /// Always return `false` to stop checking immediately.
+    ///
+    /// The `reason` closure is never called, so no `SubtypeFailureReason` is constructed.
+    /// This is the zero-cost path - the compiler will optimize this to a simple boolean return.
+    #[inline(always)]
+    fn on_mismatch(&mut self, _reason: impl FnOnce() -> SubtypeFailureReason) -> bool {
+        false
+    }
+}
+
+/// Diagnostic tracer that collects detailed failure reasons.
+///
+/// This tracer is used when we need to generate detailed error messages.
+/// It collects the first `SubtypeFailureReason` encountered and stops checking.
+///
+/// # Example
+///
+/// ```rust
+/// let mut tracer = DiagnosticTracer::new();
+/// check_subtype_with_tracer(source, target, &mut tracer);
+/// if let Some(reason) = tracer.take_failure() {
+///     // Generate error message from reason
+/// }
+/// ```
+#[derive(Debug)]
+pub struct DiagnosticTracer {
+    /// The first failure reason encountered (if any).
+    failure: Option<SubtypeFailureReason>,
+}
+
+impl DiagnosticTracer {
+    /// Create a new diagnostic tracer.
+    pub fn new() -> Self {
+        Self { failure: None }
+    }
+
+    /// Take the collected failure reason, leaving `None` in its place.
+    pub fn take_failure(&mut self) -> Option<SubtypeFailureReason> {
+        self.failure.take()
+    }
+
+    /// Get a reference to the collected failure reason (if any).
+    pub fn get_failure(&self) -> Option<&SubtypeFailureReason> {
+        self.failure.as_ref()
+    }
+
+    /// Check if any failure was collected.
+    pub fn has_failure(&self) -> bool {
+        self.failure.is_some()
+    }
+}
+
+impl Default for DiagnosticTracer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SubtypeTracer for DiagnosticTracer {
+    /// Collect the failure reason and stop checking.
+    ///
+    /// The `reason` closure is called to construct the detailed failure reason,
+    /// which is stored for later use in error message generation.
+    ///
+    /// Returns `false` to stop checking after collecting the first failure.
+    /// This matches the semantics of `FastTracer` while collecting diagnostics.
+    #[inline]
+    fn on_mismatch(&mut self, reason: impl FnOnce() -> SubtypeFailureReason) -> bool {
+        // Only collect the first failure (subsequent failures are nested details)
+        if self.failure.is_none() {
+            self.failure = Some(reason());
+        }
+        false
+    }
+}
+
+/// Detailed reason for a subtype check failure.
+///
+/// This enum captures all the different ways a subtype check can fail,
+/// with enough detail to generate helpful error messages.
+///
+/// # Nesting
+///
+/// Some variants include `nested_reason` to capture failures in nested types.
+/// For example, a property type mismatch might include why the property types
+/// themselves don't match.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SubtypeFailureReason {
+    /// A required property is missing in the source type.
+    MissingProperty {
+        property_name: Atom,
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Property types are incompatible.
+    PropertyTypeMismatch {
+        property_name: Atom,
+        source_property_type: TypeId,
+        target_property_type: TypeId,
+        nested_reason: Option<Box<SubtypeFailureReason>>,
+    },
+    /// Optional property cannot satisfy required property.
+    OptionalPropertyRequired { property_name: Atom },
+    /// Readonly property cannot satisfy mutable property.
+    ReadonlyPropertyMismatch { property_name: Atom },
+    /// Return types are incompatible.
+    ReturnTypeMismatch {
+        source_return: TypeId,
+        target_return: TypeId,
+        nested_reason: Option<Box<SubtypeFailureReason>>,
+    },
+    /// Parameter types are incompatible.
+    ParameterTypeMismatch {
+        param_index: usize,
+        source_param: TypeId,
+        target_param: TypeId,
+    },
+    /// Too many parameters in source.
+    TooManyParameters {
+        source_count: usize,
+        target_count: usize,
+    },
+    /// Tuple element count mismatch.
+    TupleElementMismatch {
+        source_count: usize,
+        target_count: usize,
+    },
+    /// Tuple element type mismatch.
+    TupleElementTypeMismatch {
+        index: usize,
+        source_element: TypeId,
+        target_element: TypeId,
+    },
+    /// Array element type mismatch.
+    ArrayElementMismatch {
+        source_element: TypeId,
+        target_element: TypeId,
+    },
+    /// Index signature value type mismatch.
+    IndexSignatureMismatch {
+        index_kind: &'static str, // "string" or "number"
+        source_value_type: TypeId,
+        target_value_type: TypeId,
+    },
+    /// No union member matches.
+    NoUnionMemberMatches {
+        source_type: TypeId,
+        target_union_members: Vec<TypeId>,
+    },
+    /// No overlapping properties for weak type target.
+    NoCommonProperties {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Generic type mismatch (no more specific reason).
+    TypeMismatch {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Intrinsic type mismatch (e.g., string vs number).
+    IntrinsicTypeMismatch {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Literal type mismatch (e.g., "hello" vs "world" or "hello" vs 42).
+    LiteralTypeMismatch {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+    /// Error type encountered - indicates unresolved type that should not be silently compatible.
+    ErrorType {
+        source_type: TypeId,
+        target_type: TypeId,
+    },
+}
 
 /// Diagnostic severity level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

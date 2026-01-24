@@ -2,31 +2,30 @@
 
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
+use crate::parser::NodeArena;
 use crate::parser::ParserState;
 use crate::solver::TypeInterner;
+use crate::test_fixtures::TestContext;
 
 /// Helper function to create a checker
-fn create_checker(source: &str) -> CheckerState {
+fn create_checker(source: &str) -> (TestContext, CheckerState) {
+    let arena = NodeArena::new();
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    binder.bind_source_file(&arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::checker::context::CheckerOptions {
-            strict_null_checks: true,
-            ..Default::default()
-        },
-    );
+    let ctx = TestContext {
+        arena,
+        binder,
+        types,
+    };
 
+    let mut checker = ctx.checker();
     checker.check_source_file(root);
-    checker
+    (ctx, checker)
 }
 
 #[test]
@@ -37,7 +36,7 @@ const t: Tuple = ["hello", 42];
 const arr = [...t];  // Should be (string | number)[]
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322 or TS2488
     let errors = checker
@@ -60,7 +59,7 @@ const nums = [1, 2, 3];
 const arr = [...nums];  // Should be number[]
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322 or TS2488
     let errors = checker
@@ -83,7 +82,7 @@ const num = 42;
 const arr = [...num];  // Should emit TS2488
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should emit TS2488
     let ts2488_count = checker
@@ -106,7 +105,7 @@ type Tuple = [string, number, boolean];
 const t: Tuple = ["hello", ...[1, 2], true];  // Error: can't spread number[] into tuple position
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should emit TS2322 for the spread
     let ts2322_count = checker
@@ -126,7 +125,7 @@ const obj2 = { c: 3 };
 const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: number }
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -151,7 +150,7 @@ function sum(...nums: number[]) {
 sum(1, 2, 3);
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -176,7 +175,7 @@ function sum(...nums: number[]) {
 sum(1, "two", 3);  // Should emit TS2322
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should emit TS2322 for string argument
     let ts2322_count = checker
@@ -200,7 +199,7 @@ const [first, second, ...rest] = arr;
 // first: number, second: number, rest: number[]
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -225,7 +224,7 @@ const [s, n, ...rest] = t;
 // s: string, n: number, rest: (boolean | string)[]
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -251,7 +250,7 @@ const args = [1, 2, 3];
 add(...args);  // Should work
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -277,7 +276,7 @@ const args = [1, "two", 3];
 add(...args);  // Should emit TS2322
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should emit TS2322
     let ts2322_count = checker
@@ -304,7 +303,7 @@ const args: Tuple = ["Alice", 30, true];
 greet(...args);  // Should work
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -331,7 +330,7 @@ const args: Tuple = ["Alice", true, 30];
 greet(...args);  // Should emit TS2322
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should emit TS2322
     let ts2322_count = checker
@@ -358,7 +357,7 @@ const partial = { name: "Alice" };
 const person: Person = { ...partial, age: 30 };
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -382,7 +381,7 @@ const arr2 = [3, 4];
 const combined = [...arr1, ...arr2];  // Should be number[]
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -408,7 +407,7 @@ logAll("hello", "world");
 logAll("hello", 42);  // Should emit TS2322
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should emit TS2322 for number argument
     let ts2322_count = checker
@@ -432,7 +431,7 @@ const createTuple = (): Tuple => [42, "hello"];
 const t: Tuple = [1, "test", ...createTuple()];
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // This is a complex case - spread in tuple context
     // The behavior depends on implementation
@@ -445,7 +444,7 @@ const str = "hello";
 const chars = [...str];  // Should be string[]
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2488 (string is iterable)
     let ts2488_count = checker

@@ -314,21 +314,31 @@ impl<'a> QueryCache<'a> {
     }
 
     pub fn clear(&self) {
-        self.eval_cache.write().expect("eval cache lock").clear();
-        self.subtype_cache
-            .write()
-            .expect("subtype cache lock")
-            .clear();
+        // Handle poisoned locks gracefully - if poisoned, clear the cache anyway
+        match self.eval_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.subtype_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
     }
 
     #[cfg(test)]
     pub fn eval_cache_len(&self) -> usize {
-        self.eval_cache.read().expect("eval cache lock").len()
+        match self.eval_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
     }
 
     #[cfg(test)]
     pub fn subtype_cache_len(&self) -> usize {
-        self.subtype_cache.read().expect("subtype cache lock").len()
+        match self.subtype_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
     }
 }
 
@@ -484,39 +494,49 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
-        if let Some(&cached) = self
-            .eval_cache
-            .read()
-            .expect("eval cache lock")
-            .get(&type_id)
-        {
-            return cached;
+        // Handle poisoned locks gracefully
+        let cached = match self.eval_cache.read() {
+            Ok(cache) => cache.get(&type_id).copied(),
+            Err(e) => e.into_inner().get(&type_id).copied(),
+        };
+
+        if let Some(result) = cached {
+            return result;
         }
 
         let result = crate::solver::evaluate::evaluate_type(self.as_type_database(), type_id);
-        self.eval_cache
-            .write()
-            .expect("eval cache lock")
-            .insert(type_id, result);
+        match self.eval_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(type_id, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(type_id, result);
+            }
+        }
         result
     }
 
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         let key = (source, target);
-        if let Some(&cached) = self
-            .subtype_cache
-            .read()
-            .expect("subtype cache lock")
-            .get(&key)
-        {
-            return cached;
+        // Handle poisoned locks gracefully
+        let cached = match self.subtype_cache.read() {
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
+        };
+
+        if let Some(result) = cached {
+            return result;
         }
 
         let result = crate::solver::subtype::is_subtype_of(self.as_type_database(), source, target);
-        self.subtype_cache
-            .write()
-            .expect("subtype cache lock")
-            .insert(key, result);
+        match self.subtype_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
+        }
         result
     }
 }

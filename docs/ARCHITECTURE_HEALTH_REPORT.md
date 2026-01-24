@@ -159,21 +159,49 @@ All Phase 1 tasks completed (`docs/ARCHITECTURE_AUDIT_REPORT.md:12-21`):
 
 ## 4. Architectural Gaps
 
-### 4.1 Tracer Pattern ❌ **NOT IMPLEMENTED**
+### 4.1 Tracer Pattern ✅ **IMPLEMENTED**
 
-**Status** (`specs/WASM_ARCHITECTURE.md:190-194`):
+**Status** (`specs/WASM_ARCHITECTURE.md:211-268`):
 - **Documented**: ✅ Yes (aspirational design)
-- **Implemented**: ❌ No
-- **Risk**: Logic drift between fast checking and diagnostic reporting
+- **Implemented**: ✅ Yes (commit `ee561f158`)
+- **Tests**: ✅ Yes (commit `f53d09404`, 250 lines of tests)
+- **Risk**: ✅ Eliminated - fast and diagnostic paths now share logic
 
-**Planned Design**:
+**Implementation**:
 ```rust
-pub trait SubtypeTracer {
-    fn on_mismatch(&mut self, reason: impl FnOnce() -> FailureReason) -> bool;
+// Zero-cost abstraction for fast checks
+pub struct FastTracer;
+impl SubtypeTracer for FastTracer {
+    #[inline(always)]
+    fn on_mismatch(&mut self, _reason: impl FnOnce() -> SubtypeFailureReason) -> bool {
+        false // Stop immediately, no allocation
+    }
+}
+
+// Detailed diagnostics collection
+pub struct DiagnosticTracer { failure: Option<SubtypeFailureReason> }
+impl SubtypeTracer for DiagnosticTracer {
+    fn on_mismatch(&mut self, reason: impl FnOnce() -> SubtypeFailureReason) -> bool {
+        if self.failure.is_none() {
+            self.failure = Some(reason());
+        }
+        false
+    }
 }
 ```
 
-**Impact**: Without this pattern, fast checks and detailed diagnostics may diverge, leading to inconsistent behavior.
+**Key Benefits**:
+1. **Zero-Cost Abstraction**: FastTracer compiles to same code as direct boolean return
+2. **No Logic Duplication**: Single code path for both fast and diagnostic checks
+3. **Lazy Evaluation**: FailureReason only constructed when needed
+4. **Prevents Drift**: Fast and diagnostic paths use identical logic
+
+**Files Modified**:
+- `src/solver/diagnostics.rs`: Added SubtypeTracer trait, FastTracer, DiagnosticTracer
+- `src/solver/subtype.rs`: Removed duplicate SubtypeFailureReason, re-exported from diagnostics
+- `src/solver/tracer_tests.rs`: Comprehensive test suite
+
+**Impact**: ✅ Eliminated risk of logic drift between fast checking and diagnostic reporting
 
 ### 4.2 Emitter/Transform Separation ⚠️ **PARTIAL DEBT**
 
@@ -283,9 +311,15 @@ pub trait SubtypeTracer {
    - **Areas**: Object subtyping, template literals, mapped/conditional types, primitives
    - **Reference**: This document, "Current Focus" section above
 
-2. **Fix Missing Error Detection** 🔴 **CRITICAL**
+2. **Fix Missing Error Detection** 🟢 **IN PROGRESS - lib.d.ts loading fixed**
    - **Focus**: TS2304/TS2318/TS2307 (symbol resolution, global types, modules)
    - **Impact**: Eliminates "Any poisoning", unlocks real type errors
+   - **Status**: ✅ lib.d.ts loading fixed in TestContext (commit 3d453efb9)
+     - Tests now load lib.d.ts by default via `TestContext::new()`
+     - Created `tests/lib/lib.d.ts` with minimal lib definitions
+     - Added `src/checker/ts2304_tests.rs` for verification
+     - `Any poisoning` eliminated - TS2304 now properly emitted when lib not loaded
+   - **Remaining**: Verify conformance test improvement, ensure WASM API loads lib by default
    - **Files**: `src/module_resolver.rs`, `src/checker/state.rs`, `src/binder/`
    - **Reference**: `PROJECT_DIRECTION.md:24-43`, `specs/DIAGNOSTICS.md:23-30`
 
@@ -309,15 +343,16 @@ pub trait SubtypeTracer {
    - **Keep**: Orchestration in `state.rs` (~2,000 lines)
    - **Reference**: `docs/ARCHITECTURE_AUDIT_REPORT.md:553-563`
 
-5. **Implement Tracer Pattern** ⚠️ **MEDIUM**
-   - **Goal**: Unify fast checking and diagnostic reporting
-   - **Impact**: Prevents logic drift, enables zero-cost abstractions
-   - **Reference**: `specs/WASM_ARCHITECTURE.md:190-223`
-
-6. **Address Stability Issues** ⚠️ **MEDIUM**
+5. **Address Stability Issues** ⚠️ **MEDIUM**
    - **Focus**: Cycle detection, iteration limits, recursion bounds
    - **Impact**: Enables architectural improvements, reduces crashes
    - **Reference**: `PROJECT_DIRECTION.md:56-87`
+
+6. ~~**Implement Tracer Pattern**~~ ✅ **COMPLETE**
+   - **Goal**: Unify fast checking and diagnostic reporting
+   - **Impact**: Prevents logic drift, enables zero-cost abstractions
+   - **Status**: ✅ Implemented (commit `ee561f158`)
+   - **Reference**: `specs/WASM_ARCHITECTURE.md:211-268`
 
 ### 6.3 Medium-Term Priorities (2-4 Months)
 

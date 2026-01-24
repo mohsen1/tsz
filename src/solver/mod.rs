@@ -3,6 +3,7 @@
 //! This module implements a declarative, query-based type solver architecture
 //! that replaces the legacy imperative checker. It uses:
 //!
+//! - **Salsa**: For incremental recomputation and query memoization
 //! - **Ena**: For unification (Union-Find) in generic type inference
 //! - **Custom TypeKey**: Structural type representation with interning
 //! - **Cycle Detection**: Coinductive semantics for recursive types
@@ -11,9 +12,7 @@
 //! - O(1) type equality via interning (TypeId comparison)
 //! - Automatic cycle handling via coinductive semantics
 //! - Lazy evaluation - only compute types that are queried
-//!
-//! Note: Salsa integration is planned but requires nightly Rust features.
-//! For now, we use manual query caching.
+//! - Incremental recomputation via Salsa queries
 mod apparent;
 pub mod binary_ops;
 mod compat;
@@ -30,6 +29,7 @@ mod lawyer;
 mod lower;
 mod narrowing;
 mod operations;
+pub mod salsa_db;
 mod subtype;
 mod subtype_rules;
 mod types;
@@ -53,6 +53,7 @@ pub use lawyer::*;
 pub use lower::*;
 pub use narrowing::*;
 pub use operations::*;
+pub use salsa_db::*;
 pub use subtype::*;
 pub use types::*;
 pub use unsoundness_audit::*;
@@ -93,6 +94,8 @@ mod narrowing_tests;
 mod operations_tests;
 #[cfg(test)]
 mod subtype_tests;
+#[cfg(test)]
+mod tracer_tests;
 #[cfg(test)]
 mod type_law_tests;
 #[cfg(test)]

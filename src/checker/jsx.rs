@@ -232,8 +232,11 @@ impl<'a> JsxChecker<'a> {
         if tag_name.is_empty() {
             return false;
         }
-        let first_char = tag_name.chars().next().unwrap();
-        first_char.is_ascii_lowercase()
+        // Use proper error handling instead of unwrap
+        match tag_name.chars().next() {
+            Some(first_char) => first_char.is_ascii_lowercase(),
+            None => false,
+        }
     }
 
     /// Check if a tag name is a known HTML intrinsic element

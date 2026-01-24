@@ -130,6 +130,62 @@ impl<'a> CheckerState<'a> {
         right_type
     }
 
+    /// Check if an operand type is valid for arithmetic operations.
+    ///
+    /// Returns true if the type is number, bigint, any, or an enum type.
+    /// This is used to validate operands for TS2362/TS2363 errors.
+    fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
+        use crate::solver::BinaryOpEvaluator;
+        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        evaluator.is_arithmetic_operand(type_id)
+    }
+
+    /// Check and emit TS2362/TS2363 errors for arithmetic operations.
+    ///
+    /// For operators like -, *, /, %, **, -=, *=, /=, %=, **=,
+    /// validates that operands are of type number, bigint, any, or enum.
+    /// Emits appropriate errors when operands are invalid.
+    fn check_arithmetic_operands(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        left_type: TypeId,
+        right_type: TypeId,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        let left_is_valid = self.is_arithmetic_operand(left_type);
+        let right_is_valid = self.is_arithmetic_operand(right_type);
+
+        if !left_is_valid {
+            if let Some(loc) = self.get_source_location(left_idx) {
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                    category: DiagnosticCategory::Error,
+                    message_text: "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+            }
+        }
+
+        if !right_is_valid {
+            if let Some(loc) = self.get_source_location(right_idx) {
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                    category: DiagnosticCategory::Error,
+                    message_text: "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+            }
+        }
+    }
+
     /// Check a compound assignment expression (+=, &&=, ??=, etc.).
     ///
     /// Compound assignments have special type computation rules:
@@ -164,6 +220,34 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(left_type);
 
         self.check_readonly_assignment(left_idx, expr_idx);
+
+        // Check arithmetic operands for compound arithmetic assignments
+        // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
+        let is_arithmetic_compound = matches!(
+            operator,
+            k if k == SyntaxKind::MinusEqualsToken as u16
+                || k == SyntaxKind::AsteriskEqualsToken as u16
+                || k == SyntaxKind::SlashEqualsToken as u16
+                || k == SyntaxKind::PercentEqualsToken as u16
+                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+        );
+        if is_arithmetic_compound {
+            self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+        }
+
+        // Check bitwise compound assignments: &=, |=, ^=, <<=, >>=, >>>=
+        let is_bitwise_compound = matches!(
+            operator,
+            k if k == SyntaxKind::AmpersandEqualsToken as u16
+                || k == SyntaxKind::BarEqualsToken as u16
+                || k == SyntaxKind::CaretEqualsToken as u16
+                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+        );
+        if is_bitwise_compound {
+            self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+        }
 
         let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
         let is_logical_assignment = matches!(
@@ -3311,6 +3395,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Check if type has a prototype property (functions with prototype are constructable)
+        // This handles cases like `function Foo() {}` where `Foo.prototype` exists
+        if self.type_has_prototype_property(type_id) {
+            return true;
+        }
+
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
         match self.ctx.types.lookup(type_id) {
@@ -3325,6 +3415,29 @@ impl<'a> CheckerState<'a> {
                 let member_types = self.ctx.types.type_list(members);
                 member_types.iter().any(|&m| self.is_constructor_type(m))
             }
+            _ => false,
+        }
+    }
+
+    /// Check if a type has a 'prototype' property.
+    ///
+    /// Functions with a prototype property can be used as constructors.
+    /// This handles cases like:
+    /// ```typescript
+    /// function Foo() {}
+    /// new Foo(); // Valid if Foo.prototype exists
+    /// ```
+    pub(crate) fn type_has_prototype_property(&self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                // Check if properties contain 'prototype'
+                let prototype_atom = self.ctx.types.intern_string("prototype");
+                shape.properties.iter().any(|p| p.name == prototype_atom)
+            }
+            Some(TypeKey::Function(_)) => true, // Function types typically have prototype
             _ => false,
         }
     }
@@ -3676,7 +3789,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type is narrowable (can be narrowed via control flow).
     ///
-    /// Narrowable types include unions, type parameters, and infer types.
+    /// Narrowable types include unions, type parameters, infer types, and unknown.
     /// These types can be narrowed to more specific types through
     /// type guards and control flow analysis.
     ///
@@ -3684,8 +3797,22 @@ impl<'a> CheckerState<'a> {
     /// - `type_id`: The type ID to check
     ///
     /// Returns true if the type can be narrowed.
+    ///
+    /// ## Narrowable Types
+    /// - **Union types**: Can be narrowed to specific members via discriminant checks
+    /// - **Type parameters**: Can be narrowed via constraints
+    /// - **Infer types**: Can be narrowed during type inference
+    /// - **Unknown type**: Can be narrowed via typeof guards and user-defined type guards
+    /// - **Nullish types**: Can be narrowed via null/undefined checks
     pub(crate) fn is_narrowable_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
+
+        // unknown type is narrowable - typeof guards and user-defined type guards
+        // should narrow unknown to the guard's target type
+        // This prevents false positive TS2571 errors after type guards
+        if type_id == TypeId::UNKNOWN {
+            return true;
+        }
 
         // Check if it's a union type or a type parameter (which can be narrowed)
         if let Some(key) = self.ctx.types.lookup(type_id)
@@ -3697,8 +3824,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Could also check for types that include null/undefined
-        // For now, only narrow unions
+        // Types that include null or undefined can be narrowed via null checks
+        if self.type_contains_nullish(type_id) {
+            return true;
+        }
+
         false
     }
 
@@ -7378,19 +7508,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // Section 44: Definite Assignment Utilities
-    // ------------------------------------------
-
-    /// Check if a variable is definitely assigned at a given node.
-    pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
-        let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => return false, // No flow info means variable is not definitely assigned
-        };
-        let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
-        analyzer.is_definitely_assigned(idx, flow_node)
-    }
-
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
@@ -8089,57 +8206,12 @@ impl<'a> CheckerState<'a> {
     /// constructor_access_rank(Some(Protected)) // → 1
     /// constructor_access_rank(None)            // → 0 (Public)
     /// ```
-    fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
+    pub(crate) fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
         match level {
             Some(MemberAccessLevel::Private) => 2,
             Some(MemberAccessLevel::Protected) => 1,
             None => 0,
         }
-    }
-
-    // Section 50: Symbol Flags Utilities
-    // ----------------------------------
-
-    /// Check if an operator token is an assignment operator.
-    ///
-    /// This function determines whether a given operator token represents
-    /// an assignment operation, including compound assignments.
-    ///
-    /// ## Assignment Operators:
-    /// - **Simple assignment**: `=`
-    /// - **Compound assignments**: `+=`, `-=`, `*=`, `/=`, `%=`, etc.
-    /// - **Bitwise assignments**: `&=`, `|=`, `^=`, `<<=`, `>>=`, `>>>=`
-    /// - **Logical assignments**: `&&=`, `||=`, `??=`
-    /// - **Exponentiation**: `**=`
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// x = 5;        // is_assignment_operator(EqualsToken) → true
-    /// x += 5;       // is_assignment_operator(PlusEqualsToken) → true
-    /// x **= 2;      // is_assignment_operator(AsteriskAsteriskEqualsToken) → true
-    /// x + 5;        // is_assignment_operator(PlusToken) → false
-    /// x === y;      // is_assignment_operator(EqualsEqualsToken) → false
-    /// ```
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
-        matches!(
-            operator,
-            k if k == SyntaxKind::EqualsToken as u16
-                || k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-        )
     }
 
     /// Get the excluded symbol flags for a given symbol.
@@ -8976,7 +9048,7 @@ impl<'a> CheckerState<'a> {
     /// type D = "a" | "b";    // (true, false) - union of strings
     /// type E = "a" | 1;      // (true, true) - mixed literals
     /// ```
-    fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
+    pub(crate) fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
         use crate::solver::{IntrinsicKind, TypeKey};
 
         // Use utility methods for literal type checks

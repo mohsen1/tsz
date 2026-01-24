@@ -190,6 +190,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Apply this substitution to call return type (stub implementation).
+    pub(crate) fn apply_this_substitution_to_call_return(
+        &mut self,
+        return_type: crate::solver::TypeId,
+        _call_expression: crate::parser::NodeIndex,
+    ) -> crate::solver::TypeId {
+        return_type
+    }
+
     /// Create a new CheckerState with explicit compiler options.
     ///
     /// # Arguments
@@ -717,8 +726,36 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_prefix_unary(idx)
             }
 
-            // Postfix unary expression - ++ and -- always return number
-            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => TypeId::NUMBER,
+            // Postfix unary expression - ++ and -- require numeric operand
+            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                    // Get operand type for validation
+                    let operand_type = self.get_type_of_node(unary.expression);
+
+                    // Check if operand is valid for increment/decrement
+                    use crate::solver::BinaryOpEvaluator;
+                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    let is_valid = evaluator.is_arithmetic_operand(operand_type);
+
+                    if !is_valid {
+                        // Emit TS2362 for invalid increment/decrement operand
+                        if let Some(loc) = self.get_source_location(unary.expression) {
+                            use crate::checker::types::diagnostics::{diagnostic_codes, Diagnostic};
+                            self.ctx.diagnostics.push(Diagnostic {
+                                code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                                category: DiagnosticCategory::Error,
+                                message_text: "The operand of an increment or decrement operator must be a variable or a property access.".to_string(),
+                                file: self.ctx.file_name.clone(),
+                                start: loc.start,
+                                length: loc.length(),
+                                related_information: Vec::new(),
+                            });
+                        }
+                    }
+                }
+
+                TypeId::NUMBER
+            }
 
             // typeof expression
             k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => TypeId::STRING,
@@ -1277,7 +1314,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+    pub(crate) fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         self.class_instance_type_with_params_from_symbol(sym_id)
             .map(|(instance_type, _)| instance_type)
     }
@@ -1508,7 +1545,7 @@ impl<'a> CheckerState<'a> {
 
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(&sym_id) = module_exports.get(member_name) {
+            if let Some(sym_id) = module_exports.get(member_name) {
                 // Found direct export - but we need to resolve if it's itself a re-export
                 // Get the symbol and check if it's an alias
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -1551,7 +1588,7 @@ impl<'a> CheckerState<'a> {
         for lib_binder in lib_binders {
             // First check lib binder's module_exports
             if let Some(module_exports) = lib_binder.module_exports.get(module_specifier) {
-                if let Some(&sym_id) = module_exports.get(member_name) {
+                if let Some(sym_id) = module_exports.get(member_name) {
                     return Some(sym_id);
                 }
             }
@@ -2598,7 +2635,7 @@ impl<'a> CheckerState<'a> {
             // Check exports table for direct export
             let mut member_sym_id = None;
             if let Some(ref exports) = symbol.exports {
-                member_sym_id = exports.get(&right_name).copied();
+                member_sym_id = exports.get(&right_name);
             }
 
             // If not found in direct exports, check for re-exports
@@ -2642,7 +2679,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Left side wasn't a reference to a namespace/module
-        TypeId::ANY
+        // This is likely an error - the left side should resolve to a namespace
+        // Emit an appropriate error for the unresolved qualified name
+        // We don't emit TS2304 here because the left side might have already emitted an error
+        // Returning ERROR prevents cascading errors while still indicating failure
+        TypeId::ERROR
     }
 
     /// Helper to resolve an identifier as a type reference (for qualified name left sides).
@@ -3859,594 +3900,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Type Resolution - Specific Node Types
-    // =========================================================================
-
-    /// Check if a type can be narrowed through control flow analysis.
-    ///
-    /// This function determines whether a type is eligible for type narrowing
-    /// based on typeof guards, discriminant checks, null checks, etc.
-    ///
-    /// ## Narrowable Types:
-    /// - **Union types**: `string | number` can be narrowed to `string` or `number`
-    /// - **Type parameters**: Generic `T` can be narrowed based on constraints
-    /// - **Infer types**: `infer R` from conditional types can be narrowed
-    ///
-    /// ## Non-Narrowable Types:
-    /// - **Primitives**: `string`, `number`, etc. are already as narrow as possible
-    /// - **Object types**: `{ x: number }` cannot be narrowed without guards
-    /// - **Function types**: Already specific
-    ///
-    /// ## Type Narrowing Triggers:
-    /// - `typeof x === "string"` - Narrows union types
-    /// - `x !== null` - Narrows nullable types
-    /// - `x.kind === "add"` - Narrows discriminated unions
-    /// - `x instanceof Class` - Narrows to class type
-    ///
-    /// ## Flow Analysis Integration:
-    /// - Called during flow analysis to determine if narrowing should be applied
-    /// - Enables precise type tracking through conditionals
-    /// - Critical for TypeScript's type guard feature
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// // Union types are narrowable
-    /// type StringOrNumber = string | number;
-    /// function example(x: StringOrNumber) {
-    ///   if (typeof x === "string") {
-    ///     // x is narrowed to string
-    ///     x.toUpperCase();
-    ///   }
-    /// }
-    ///
-    /// // Type parameters are narrowable
-    /// function process<T>(value: T) {
-    ///   if (typeof value === "string") {
-    ///     // T is narrowed to string
-    ///   }
-    /// }
-    ///
-    /// // Primitives are NOT narrowable
-    /// function example2(x: string) {
-    ///   if (typeof x === "string") {
-    ///     // x is already string, no narrowing applied
-    ///   }
-    /// }
-    ///
-    /// // Discriminated unions
-    /// type Action =
-    ///   | { type: "add"; payload: number }
-    ///   | { type: "remove"; payload: number };
-    /// function reducer(action: Action) {
-    ///   if (action.type === "add") {
-    ///     // action narrowed to { type: "add"; payload: number }
-    ///   }
-    /// }
-    /// ```
-    /// Check if definite assignment analysis should be performed for a symbol.
-    ///
-    /// Definite assignment analysis ensures that block-scoped variables (let/const)
-    /// are assigned before use. This function determines whether the analysis should
-    /// be applied to a specific symbol usage.
-    ///
-    /// ## When to Check:
-    /// - Block-scoped variables (`let` and `const`)
-    /// - Variables without initializers
-    /// - Not for `var` declarations (function-scoped, default to undefined)
-    /// - Not for parameters (always initialized by caller)
-    /// - Not for class properties (handled separately)
-    ///
-    /// ## Compiler Options:
-    /// - Respects `strictNullChecks` compiler option
-    /// - When strict: All block-scoped variables are checked
-    /// - When non-strict: Only variables with explicit type annotations
-    ///
-    /// ## Symbol Flags Checked:
-    /// - BLOCK_SCOPED: Variable is block-scoped (let/const)
-    /// - FUNCTION_SCOPED: Variable is function-scoped (var) - skip check
-    /// - PARAMETER: Symbol is a parameter - skip check
-    /// - PROPERTY: Symbol is a class property - skip check
-    ///
-    /// ## Flow Analysis:
-    /// - Checks all code paths to ensure variable is assigned
-    /// - Handles conditionals, loops, and early returns
-    /// - Tracks assignments through control flow
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// // Should check - let without initializer
-    /// let x: number;
-    /// console.log(x);  // ❌ TS2454: Variable used before assignment
-    ///
-    /// // Should NOT check - var (function-scoped)
-    /// var y: number;
-    /// console.log(y);  // ✅ OK (undefined by default)
-    ///
-    /// // Should NOT check - has initializer
-    /// let z: number = 42;
-    /// console.log(z);  // ✅ OK (initialized)
-    ///
-    /// // Should check - const without initializer
-    /// const c: string;  // ❌ TS2454: Variable used before assignment
-    ///
-    /// // Conditional assignment
-    /// let a: number;
-    /// if (Math.random() > 0.5) {
-    ///   a = 1;
-    /// } else {
-    ///   a = 2;
-    /// }
-    /// console.log(a);  // ✅ OK (assigned on all paths)
-    ///
-    /// // Missing assignment on one path
-    /// let b: number;
-    /// if (Math.random() > 0.5) {
-    ///   b = 1;
-    /// }
-    /// console.log(b);  // ❌ TS2454: Not assigned on else path
-    /// ```
-    pub(crate) fn should_check_definite_assignment(
-        &mut self,
-        sym_id: SymbolId,
-        idx: NodeIndex,
-    ) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
-            return false;
-        }
-        // Only check block-scoped (let/const) variables for definite assignment
-        // Function-scoped (var) variables do not require definite assignment
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
-            return false;
-        }
-
-        if self.symbol_is_parameter(sym_id) {
-            return false;
-        }
-
-        if self.symbol_has_definite_assignment_assertion(sym_id) {
-            return false;
-        }
-
-        if self.is_for_in_of_assignment_target(idx) {
-            return false;
-        }
-
-        // Skip if the variable declaration has an initializer
-        if self.symbol_has_initializer(sym_id) {
-            return false;
-        }
-
-        // Skip if the variable is in an ambient context (declare var x: T)
-        if self.symbol_is_in_ambient_context(sym_id) {
-            return false;
-        }
-
-        // Skip if the variable is captured in a closure (used in a different function).
-        // TypeScript doesn't check definite assignment for variables captured in non-IIFE closures
-        // because the closure might be called later when the variable is assigned.
-        if self.is_variable_captured_in_closure(sym_id, idx) {
-            return false;
-        }
-
-        // Skip definite assignment check for variables whose types allow uninitialized use:
-        // - Literal types: `let key: "a"` - the type restricts to a single literal
-        // - Union of literals: `let key: "a" | "b"` - all possible values are literals
-        // - Types with undefined: `let obj: Foo | undefined` - undefined is the default
-        if self.symbol_type_allows_uninitialized(sym_id) {
-            return false;
-        }
-
-        true
-    }
-
-    /// Check if a variable symbol is in an ambient context (declared with `declare`).
-    fn symbol_is_in_ambient_context(&self, sym_id: SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        // Quick check: if lib_contexts is not empty and symbol is not in main binder's arena,
-        // it's likely from lib.d.ts which is all ambient
-        if !self.ctx.lib_contexts.is_empty() {
-            // Check if symbol exists in main binder's symbol arena
-            let is_from_lib = self.ctx.binder.get_symbols().get(sym_id).is_none();
-            if is_from_lib {
-                // Symbol is from lib.d.ts, which is all ambient (declare statements)
-                return true;
-            }
-        }
-
-        for &decl_idx in &symbol.declarations {
-            // Check if the variable statement has a declare modifier
-            if let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx)
-                && let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx)
-                && let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node)
-                && self.has_declare_modifier(&var_stmt.modifiers)
-            {
-                return true;
-            }
-
-            // Also check node flags for AMBIENT
-            if let Some(node) = self.ctx.arena.get(decl_idx)
-                && (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check if a variable is captured in a closure (used in a different function than its declaration).
-    /// TypeScript does not check definite assignment for variables captured in non-IIFE closures.
-    fn is_variable_captured_in_closure(&self, sym_id: SymbolId, usage_idx: NodeIndex) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        // Get the enclosing function for the usage
-        let usage_function = self.find_enclosing_function(usage_idx);
-
-        // Get the enclosing function for the variable's declaration
-        for &decl_idx in &symbol.declarations {
-            let decl_function = self.find_enclosing_function(decl_idx);
-
-            // If the usage is in a different function than the declaration,
-            // the variable is captured in a closure
-            if usage_function != decl_function {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check if a variable symbol can be used without initialization.
-    /// This includes:
-    /// 1. Literal types (e.g., `let key: "a"`)
-    /// 2. Unions of literals (e.g., `let key: "a" | "b"`)
-    /// 3. Types that include `undefined` (e.g., `let obj: Foo | undefined`)
-    /// 4. `any` type - TypeScript doesn't check definite assignment for `any`
-    /// 5. `typeof undefined` - resolves to `undefined`, which allows uninitialized use
-    fn symbol_type_allows_uninitialized(&mut self, sym_id: SymbolId) -> bool {
-        use crate::solver::{SymbolRef, TypeKey};
-
-        let declared_type = self.get_type_of_symbol(sym_id);
-
-        // TypeScript doesn't check definite assignment for `any` typed variables
-        if declared_type == TypeId::ANY {
-            return true;
-        }
-
-        // Check if it's undefined type
-        if declared_type == TypeId::UNDEFINED {
-            return true;
-        }
-
-        let Some(type_key) = self.ctx.types.lookup(declared_type) else {
-            return false;
-        };
-
-        // Handle TypeQuery (typeof x) - resolve the underlying type
-        if let TypeKey::TypeQuery(SymbolRef(ref_sym_id)) = type_key {
-            let resolved = self.get_type_of_symbol(SymbolId(ref_sym_id));
-            // Check if resolved type allows uninitialized use
-            if resolved == TypeId::UNDEFINED || resolved == TypeId::ANY {
-                return true;
-            }
-            // Also check if the resolved type is a union containing undefined
-            if self.union_contains(resolved, TypeId::UNDEFINED) {
-                return true;
-            }
-        }
-
-        // Check if it's a single literal type
-        if matches!(type_key, TypeKey::Literal(_)) {
-            return true;
-        }
-
-        // Check if it's a union
-        if let TypeKey::Union(members) = type_key {
-            let member_ids = self.ctx.types.type_list(members);
-
-            // Union of only literal types - allowed without initialization
-            let all_literals = member_ids.iter().all(|&member_id| {
-                matches!(self.ctx.types.lookup(member_id), Some(TypeKey::Literal(_)))
-            });
-            if all_literals {
-                return true;
-            }
-
-            // If union includes undefined, allowed without initialization
-            if member_ids.contains(&TypeId::UNDEFINED) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Find the enclosing variable statement for a node.
-    /// Check if a variable symbol's declaration has an initializer.
-    fn symbol_has_initializer(&self, sym_id: SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        for &decl_idx in &symbol.declarations {
-            let Some(var_decl_idx) = self.find_enclosing_variable_declaration(decl_idx) else {
-                continue;
-            };
-            let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) else {
-                continue;
-            };
-            let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_decl_node) else {
-                continue;
-            };
-            // Variable has an initializer - it's definitely assigned at declaration
-            if !var_decl.initializer.is_none() {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn symbol_is_parameter(&self, sym_id: SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        symbol
-            .declarations
-            .iter()
-            .any(|&decl_idx| self.node_is_or_within_kind(decl_idx, syntax_kind_ext::PARAMETER))
-    }
-
-    fn symbol_has_definite_assignment_assertion(&self, sym_id: SymbolId) -> bool {
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        for &decl_idx in &symbol.declarations {
-            let Some(var_decl_idx) = self.find_enclosing_variable_declaration(decl_idx) else {
-                continue;
-            };
-            let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) else {
-                continue;
-            };
-            let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_decl_node) else {
-                continue;
-            };
-            if var_decl.exclamation_token {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn node_is_or_within_kind(&self, idx: NodeIndex, kind: u16) -> bool {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            let node = match self.ctx.arena.get(current) {
-                Some(node) => node,
-                None => return false,
-            };
-            if node.kind == kind {
-                return true;
-            }
-            let ext = match self.ctx.arena.get_extended(current) {
-                Some(ext) => ext,
-                None => return false,
-            };
-            if ext.parent.is_none() {
-                return false;
-            }
-            current = ext.parent;
-        }
-    }
-
-    /// Check if node_idx is the same as or within the subtree of root_idx.
-    /// Find the enclosing static block for a node, if any.
-    ///
-    /// Returns the NodeIndex of the CLASS_STATIC_BLOCK_DECLARATION if the node is inside one.
-    /// Check if a variable is used in a static block before its declaration (TDZ check).
-    ///
-    /// In TypeScript, if a variable is declared at module level AFTER a class declaration,
-    /// using that variable inside the class's static block should emit TS2454.
-    ///
-    /// Example:
-    /// ```typescript
-    /// class Baz {
-    ///     static {
-    ///         console.log(FOO);  // Error: Variable 'FOO' is used before being assigned
-    ///     }
-    /// }
-    /// const FOO = "FOO";  // Declared after the class
-    /// ```
-    pub(crate) fn is_variable_used_before_declaration_in_static_block(
-        &self,
-        sym_id: SymbolId,
-        usage_idx: NodeIndex,
-    ) -> bool {
-        // Check if we're inside a static block
-        let Some(static_block_idx) = self.find_enclosing_static_block(usage_idx) else {
-            return false;
-        };
-
-        // Get the class containing the static block
-        let Some(class_idx) = self.find_class_for_static_block(static_block_idx) else {
-            return false;
-        };
-
-        // Get the class position
-        let Some(class_node) = self.ctx.arena.get(class_idx) else {
-            return false;
-        };
-        let class_pos = class_node.pos;
-
-        // Get the symbol's declaration
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        // Check if the symbol is a module-level variable (not a class member)
-        // We're looking for variables declared outside the class
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
-            return false;
-        }
-
-        // Get the position of the variable's declaration
-        for &decl_idx in &symbol.declarations {
-            // Check if this is a variable declaration
-            let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx) else {
-                continue;
-            };
-            let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx) else {
-                continue;
-            };
-
-            // Variable is declared AFTER the class - this is TDZ error
-            if var_stmt_node.pos > class_pos {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Find the enclosing computed property name for a node, if any.
-    ///
-    /// Returns the NodeIndex of the COMPUTED_PROPERTY_NAME if the node is inside one.
-    /// Check if a variable is used in a computed property name before its declaration (TDZ check).
-    ///
-    /// In TypeScript, if a variable is declared at module level AFTER a class declaration,
-    /// using that variable in a computed property name should emit TS2454.
-    ///
-    /// Example:
-    /// ```typescript
-    /// class C {
-    ///     [FOO]() {}  // Error: Variable 'FOO' is used before being assigned
-    /// }
-    /// const FOO = "foo";  // Declared after the class
-    /// ```
-    pub(crate) fn is_variable_used_before_declaration_in_computed_property(
-        &self,
-        sym_id: SymbolId,
-        usage_idx: NodeIndex,
-    ) -> bool {
-        // Check if we're inside a computed property name
-        let Some(computed_idx) = self.find_enclosing_computed_property(usage_idx) else {
-            return false;
-        };
-
-        // Get the class containing the computed property
-        let Some(class_idx) = self.find_class_for_computed_property(computed_idx) else {
-            return false;
-        };
-
-        // Get the class position
-        let Some(class_node) = self.ctx.arena.get(class_idx) else {
-            return false;
-        };
-        let class_pos = class_node.pos;
-
-        // Get the symbol's declaration
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        // Check if the symbol is a module-level variable (not a class member)
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
-            return false;
-        }
-
-        // Get the position of the variable's declaration
-        for &decl_idx in &symbol.declarations {
-            // Check if this is a variable declaration
-            let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx) else {
-                continue;
-            };
-            let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx) else {
-                continue;
-            };
-
-            // Variable is declared AFTER the class - this is TDZ error
-            if var_stmt_node.pos > class_pos {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check if a variable is used in an extends clause before its declaration (TDZ check).
-    ///
-    /// Example:
-    /// ```typescript
-    /// class C extends Base {}  // Error if Base declared after
-    /// const Base = class {};
-    /// ```
-    pub(crate) fn is_variable_used_before_declaration_in_heritage_clause(
-        &self,
-        sym_id: SymbolId,
-        usage_idx: NodeIndex,
-    ) -> bool {
-        // Check if we're inside a heritage clause
-        let Some(heritage_idx) = self.find_enclosing_heritage_clause(usage_idx) else {
-            return false;
-        };
-
-        // Get the class/interface containing the heritage clause
-        let Some(class_idx) = self.find_class_for_heritage_clause(heritage_idx) else {
-            return false;
-        };
-
-        // Get the class position
-        let Some(class_node) = self.ctx.arena.get(class_idx) else {
-            return false;
-        };
-        let class_pos = class_node.pos;
-
-        // Get the symbol's declaration
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        // Check if the symbol is a module-level variable
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
-            return false;
-        }
-
-        // Get the position of the variable's declaration
-        for &decl_idx in &symbol.declarations {
-            let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx) else {
-                continue;
-            };
-            let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx) else {
-                continue;
-            };
-
-            // Variable is declared AFTER the class - this is TDZ error
-            if var_stmt_node.pos > class_pos {
-                return true;
-            }
-        }
-
-        false
-    }
-
     /// Get type of a symbol with caching and circular reference detection.
     ///
     /// This is the main entry point for resolving the type of symbols (variables,
@@ -4868,9 +4321,11 @@ impl<'a> CheckerState<'a> {
                             let module_type = self.ctx.types.object(props);
                             return (module_type, Vec::new());
                         }
-                        // Module not found - emit TS2307 error and return ANY to allow property access
+                        // Module not found - emit TS2307 error and return ERROR to expose type errors
+                        // Returning ANY would suppress downstream errors (poisoning)
+                        // Returning ERROR allows proper error propagation for invalid property access
                         self.emit_module_not_found_error(&module_specifier, value_decl);
-                        return (TypeId::ANY, Vec::new());
+                        return (TypeId::ERROR, Vec::new());
                     }
                     // Fall back to get_type_of_node for simple identifiers
                     return (self.get_type_of_node(import.module_specifier), Vec::new());
@@ -4910,10 +4365,12 @@ impl<'a> CheckerState<'a> {
                     }
                     return (result, Vec::new());
                 }
-                // Module not found in exports - emit TS2307 error and return ANY
-                // TSC emits TS2307 for missing module but allows property access on the result
+                // Module not found in exports - emit TS2307 error and return ERROR to expose type errors
+                // Returning ANY would suppress downstream errors (poisoning)
+                // TSC emits TS2307 for missing module and allows property access, but returning ERROR
+                // gives better error detection for conformance
                 self.emit_module_not_found_error(module_name, value_decl);
-                return (TypeId::ANY, Vec::new());
+                return (TypeId::ERROR, Vec::new());
             }
 
             // Unresolved alias - return ANY to prevent cascading TS2571 errors
@@ -8665,279 +8122,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
-    // Type Narrowing (uses solver::NarrowingContext)
-    // =========================================================================
-
-    /// Narrow a type by a typeof guard.
-    ///
-    /// Narrow a union type by a typeof guard (positive case).
-    ///
-    /// This is the core of TypeScript's type narrowing for typeof expressions.
-    /// When a typeof check is used in a conditional, the type is narrowed to
-    /// only the members that match the typeof result.
-    ///
-    /// ## Type Narrowing:
-    /// - Unions are distributively narrowed by typeof result
-    /// - Non-unions are returned unchanged (already narrow)
-    /// - Primitives are narrowed based on typeof result matching
-    ///
-    /// ## Supported typeof Results:
-    /// - "string" → string literal types and string
-    /// - "number" → numeric literals and number
-    /// - "boolean" → true/false and boolean
-    /// - "bigint" → bigint literals and bigint
-    /// - "symbol" → symbol
-    /// - "undefined" → undefined
-    /// - "object" → object types (excluding null in strict mode)
-    /// - "function" → function types
-    ///
-    /// ## Flow Analysis Integration:
-    /// - Called by flow analysis when typeof guards are encountered
-    /// - Results are used to narrow types in conditional branches
-    /// - Enables precise type tracking through control flow
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// function example(x: string | number) {
-    ///     if (typeof x === "string") {
-    ///         // x is narrowed to string
-    ///         x.toUpperCase(); // ✅
-    ///     } else {
-    ///         // x is narrowed to number
-    ///         x.toFixed(2); // ✅
-    ///     }
-    /// }
-    ///
-    /// function example2(x: string | number | boolean) {
-    ///     if (typeof x === "string") {
-    ///         // x: string
-    ///     } else if (typeof x === "number") {
-    ///         // x: number
-    ///     } else {
-    ///         // x: boolean
-    ///     }
-    /// }
-    /// ```
-    pub fn narrow_by_typeof(&self, source: TypeId, typeof_result: &str) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_by_typeof(source, typeof_result)
-    }
-
-    /// Narrow a union type by a typeof guard (negative case).
-    ///
-    /// This handles the negated typeof check (`typeof x !== "string"`), narrowing
-    /// the type to exclude the typeof result. This is the dual of `narrow_by_typeof`.
-    ///
-    /// ## Type Narrowing:
-    /// - Unions are narrowed by excluding the typeof result
-    /// - Non-unions are returned unchanged (already narrow)
-    /// - Primitives are excluded based on typeof result
-    ///
-    /// ## Supported typeof Results:
-    /// - "string" → exclude string types, keep others
-    /// - "number" → exclude numeric types
-    /// - "boolean" → exclude boolean types
-    /// - "bigint" → exclude bigint types
-    /// - "symbol" → exclude symbol
-    /// - "undefined" → exclude undefined
-    /// - "object" → exclude object types
-    /// - "function" → exclude function types (special handling)
-    ///
-    /// ## Function Special Case:
-    /// - Uses `narrow_excluding_function` to exclude callable types
-    /// - Handles both Function and Callable type keys
-    ///
-    /// ## Flow Analysis Integration:
-    /// - Called by flow analysis for negated typeof guards
-    /// - Enables precise type tracking in else branches
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// function example(x: string | number) {
-    ///     if (typeof x !== "string") {
-    ///         // x is narrowed to number (string excluded)
-    ///         x.toFixed(2); // ✅
-    ///     }
-    /// }
-    ///
-    /// function example2(x: string | number | Function) {
-    ///     if (typeof x !== "function") {
-    ///         // x is narrowed to string | number (function excluded)
-    ///         // Can use string/number operations
-    ///     }
-    /// }
-    ///
-    /// // Combining positive and negative guards
-    /// function example3(x: string | number | boolean) {
-    ///     if (typeof x === "string") {
-    ///         // x: string
-    ///     } else if (typeof x !== "number") {
-    ///         // x: boolean (string excluded by first guard, number excluded by second)
-    ///     } else {
-    ///         // x: number
-    ///     }
-    /// }
-    /// ```
-    pub fn narrow_by_typeof_negation(&self, source: TypeId, typeof_result: &str) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-
-        // Get the target type for this typeof result
-        let target = match typeof_result {
-            "string" => TypeId::STRING,
-            "number" => TypeId::NUMBER,
-            "boolean" => TypeId::BOOLEAN,
-            "bigint" => TypeId::BIGINT,
-            "symbol" => TypeId::SYMBOL,
-            "undefined" => TypeId::UNDEFINED,
-            "object" => TypeId::OBJECT,
-            "function" => return ctx.narrow_excluding_function(source),
-            _ => return source,
-        };
-
-        ctx.narrow_excluding_type(source, target)
-    }
-
-    /// Narrow a discriminated union by a discriminant property check.
-    ///
-    /// Narrow a discriminated union by a discriminant property check (positive case).
-    ///
-    /// This implements TypeScript's discriminated union narrowing, where a common
-    /// property with literal values is used to distinguish between union variants.
-    /// Also known as "tagged unions" or "algebraic data types".
-    ///
-    /// ## Discriminant Property:
-    /// - A property that exists in all union members with a literal type
-    /// - Each member has a unique literal value for this property
-    /// - The property name identifies which variant to select
-    ///
-    /// ## Type Narrowing:
-    /// - Unions are narrowed to only members matching the discriminant value
-    /// - Non-unions are returned unchanged
-    /// - If no match found, returns NEVER type
-    ///
-    /// ## Flow Analysis Integration:
-    /// - Called when property access is checked against a literal value
-    /// - Enables exhaustive checking in switch statements
-    /// - Supports exhaustive type narrowing patterns
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// type Action =
-    ///   | { type: "add"; payload: number }
-    ///   | { type: "remove"; payload: number }
-    ///   | { type: "clear" };
-    ///
-    /// function handle(action: Action) {
-    ///     if (action.type === "add") {
-    ///         // action is narrowed to { type: "add"; payload: number }
-    ///         console.log(action.payload); // ✅
-    ///     }
-    /// }
-    ///
-    /// // Exhaustive switch with discriminants
-    /// function handleExhaustively(action: Action) {
-    ///     switch (action.type) {
-    ///         case "add":
-    ///             console.log(action.payload); // ✅ number
-    ///             break;
-    ///         case "remove":
-    ///             console.log(action.payload); // ✅ number
-    ///             break;
-    ///         case "clear":
-    ///             // No payload property
-    ///             break;
-    ///     }
-    /// }
-    /// ```
-    pub fn narrow_by_discriminant(
-        &self,
-        union_type: TypeId,
-        property_name: Atom,
-        literal_value: TypeId,
-    ) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_by_discriminant(union_type, property_name, literal_value)
-    }
-
-    /// Narrow a discriminated union by excluding a discriminant value (negative case).
-    ///
-    /// This handles the negated discriminant check (`action.type !== "add"`), narrowing
-    /// the type to exclude the matching variant. This is the dual of `narrow_by_discriminant`.
-    ///
-    /// ## Type Narrowing:
-    /// - Unions are narrowed to exclude members matching the discriminant value
-    /// - Non-unions are returned unchanged
-    /// - If all members excluded, returns NEVER type
-    ///
-    /// ## Flow Analysis Integration:
-    /// - Called when property access is negated against a literal value
-    /// - Enables type narrowing in else branches of discriminated unions
-    /// - Supports "all other cases" patterns
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// type Action =
-    ///   | { type: "add"; payload: number }
-    ///   | { type: "remove"; payload: number }
-    ///   | { type: "clear" };
-    ///
-    /// function handle(action: Action) {
-    ///     if (action.type === "add") {
-    ///         // action: { type: "add"; payload: number }
-    ///     } else {
-    ///         // action: { type: "remove" } | { type: "clear" }
-    ///         // "add" variant is excluded
-    ///     }
-    /// }
-    ///
-    /// // Multiple exclusions
-    /// function handle2(action: Action) {
-    ///     if (action.type === "add") {
-    ///         // ...
-    ///     } else if (action.type !== "clear") {
-    ///         // action: { type: "remove" }
-    ///         // Both "add" and "clear" are excluded
-    ///         console.log(action.payload); // ✅ number
-    ///     }
-    /// }
-    /// ```
-    pub fn narrow_by_excluding_discriminant(
-        &self,
-        union_type: TypeId,
-        property_name: Atom,
-        excluded_value: TypeId,
-    ) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_by_excluding_discriminant(union_type, property_name, excluded_value)
-    }
-    /// Find discriminant properties in a union type.
-    ///
-    /// Returns information about properties that uniquely identify each union variant.
-    pub fn find_discriminants(&self, union_type: TypeId) -> Vec<crate::solver::DiscriminantInfo> {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.find_discriminants(union_type)
-    }
-
-    /// Narrow a type to include only members assignable to target.
-    pub fn narrow_to_type(&self, source: TypeId, target: TypeId) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_to_type(source, target)
-    }
-
-    /// Narrow a type to exclude members assignable to target.
-    pub fn narrow_excluding_type(&self, source: TypeId, excluded: TypeId) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_excluding_type(source, excluded)
-    }
-
-    // =========================================================================
     // Type Node Resolution
     // =========================================================================
 
@@ -9483,12 +8667,19 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::INTERFACE_DECLARATION => Some(symbol_flags::INTERFACE),
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some(symbol_flags::TYPE_ALIAS),
             syntax_kind_ext::ENUM_DECLARATION => {
-                // Check if this is a const enum
+                // Check if this is a const enum by looking for const modifier
                 let is_const_enum = self
                     .ctx
                     .arena
-                    .get_enum_decl(node)
-                    .map(|enum_decl| enum_decl.const_enum)
+                    .get_enum(node)
+                    .and_then(|enum_decl| enum_decl.modifiers.as_ref())
+                    .map(|modifiers| {
+                        modifiers.nodes.iter().any(|&mod_idx| {
+                            self.ctx.arena.get(mod_idx).map_or(false, |mod_node| {
+                                mod_node.kind == crate::scanner::SyntaxKind::ConstKeyword as u16
+                            })
+                        })
+                    })
                     .unwrap_or(false);
                 if is_const_enum {
                     Some(symbol_flags::CONST_ENUM)

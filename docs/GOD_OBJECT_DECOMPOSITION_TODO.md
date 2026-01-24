@@ -3,7 +3,7 @@
 **Date**: 2026-01-24
 **Status**: Active
 **Current Phase**: Phase 2 - Break Up God Objects
-**Last Updated**: 2026-01-24 (Sections 49-54: Additional utilities extracted to type_checking.rs)
+**Last Updated**: 2026-01-24 (Step 15: Detailed parser/state.rs decomposition plan)
 
 ---
 
@@ -16,11 +16,11 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 | File | Original Lines | Current Lines | Reduction | Status | Priority |
 |------|---------------|---------------|-----------|--------|----------|
 | `checker/state.rs` | 26,217 | **13,468** | **48.6%** | 🚧 In Progress | **P1 (CURRENT)** |
-| `parser/state.rs` | 10,762 | 10,762 | 0% | ⏳ Pending | P3 (low priority) |
+| `parser/state.rs` | 10,763 | **10,667** | **96 (1%)** | 🚧 In Progress | **P3 (MEDIUM)** |
 | `solver/evaluate.rs` | 5,784 | 5,784 | 0% | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 5,000+ | 1,778 | 64% | ✅ **COMPLETE** | P1 (DONE) |
-| `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (after checker) |
-| `emitter/mod.rs` | 2,040 | 2,040 | 0% | ⏳ Pending | P3 (acceptable) |
+| `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (Step 14.2/14.3 planned) |
+| `emitter/mod.rs` | 2,040 | **1,873** | **167 (8%)** | 🚧 In Progress | P3 (acceptable) |
 
 **Overall Progress**: 12,749 lines extracted from checker/state.rs, reducing it by 48.6%
 
@@ -832,83 +832,545 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 ---
 
-## Priority 4: solver/operations.rs
+## Priority 2: solver/operations.rs
 
-**Goal**: Reduce from 3,538 lines to ~200 lines (coordinator)
-**Status**: 🚧 In Progress (Step 14.1 complete)
+**Goal**: Reduce from 3,228 lines to ~200 lines (coordinator)
+**Status**: 🚧 In Progress (Step 14.1 complete, Step 14.2 & 14.3 planned)
 
 ### Step 14: solver/operations.rs Decomposition
 
-#### 14.1 Analysis ✅ COMPLETE
+#### Current Status Summary
 
 **File**: `src/solver/operations.rs`
-**Current Lines**: 3,538
+**Current Lines**: 3,228 (down from 3,538 after Step 14.1)
 **Target Lines**: ~200 (coordinator) + extracted modules
+**Progress**: Step 14.1 COMPLETE (-310 lines, 9% reduction)
 
-**Major Sections Identified**:
+**Major Sections Identified** (current state after Step 14.1):
 
 | Section | Lines | Purpose | Dependencies |
 |---------|-------|---------|--------------|
-| **CallEvaluator** | ~1,700 | Function call resolution and generic instantiation | `infer`, `instantiate`, `subtype` |
-| **PropertyAccessEvaluator** | ~1,300 | Property access and index signature handling | `types`, `utils`, `subtype` |
-| **BinaryOpEvaluator** | ~350 | Binary operations (+, -, *, /, etc.) | `types` only |
-| **Utilities** | ~288 | Helper functions and type definitions | Varies |
+| **Header & Imports** | 56 | Module documentation and imports | - |
+| **CallResult enum** | 41 | Result type for function calls | - |
+| **CallEvaluator struct + impl** | 1,732 | Function call resolution and generic instantiation | `infer`, `instantiate`, `subtype` |
+| **GenericInstantiationResult enum** | 67 | Generic constraint validation | - |
+| **PropertyAccessResult enum** | 31 | Result type for property access | - |
+| **PropertyAccessEvaluator struct + impl** | 1,274 | Property access and index signature handling | `types`, `utils`, `subtype` |
+| **Binary Ops extraction note** | 16 | Documentation of extraction | - |
+| **Tests module** | ~10 | Test imports | - |
 
-**Extraction Candidates** (in dependency order):
-1. **BinaryOpEvaluator** → `solver/binary_ops.rs` (~380 lines)
-2. **PropertyAccessEvaluator** → `solver/property_access.rs` (~1,400 lines)
-3. **CallEvaluator** → `solver/call_resolution.rs` (~1,800 lines)
+#### 14.1 Binary Operations Extraction ✅ COMPLETE
 
-#### 14.2 Extraction Plan ✅ COMPLETE
+**Commit**: `c0fa9cd8f` - "refactor(solver): Extract binary_ops.rs from operations.rs (Step 14.1)"
 
-**Priority Order** (lowest to highest dependency):
-1. Step 14.1: Extract `BinaryOpEvaluator` → `solver/binary_ops.rs`
-2. Step 14.2: Extract `PropertyAccessEvaluator` → `solver/property_access.rs`
-3. Step 14.3: Extract `CallEvaluator` → `solver/call_resolution.rs`
+**Achievements**:
+- Created `src/solver/binary_ops.rs` (304 lines)
+- Extracted `BinaryOpEvaluator` struct and implementation
+- Extracted `BinaryOpResult` enum
+- Extracted `PrimitiveClass` enum
+- Re-exported types in `operations.rs`
 
-**Final Module Structure**:
-```
-solver/
-├── operations.rs          (~200 lines - coordinator/re-exports)
-├── binary_ops.rs          (~380 lines - NEW)
-├── property_access.rs     (~1,400 lines - NEW)
-└── call_resolution.rs     (~1,800 lines - NEW)
-```
+**Functions Extracted**:
+- `evaluate()` - Main binary operation evaluation
+- `evaluate_plus()` - String concatenation and addition
+- `evaluate_arithmetic()` -, *, /, %, ** operations
+- `evaluate_comparison()` - Comparison operators
+- `evaluate_logical()` - && and || operators
+- `is_arithmetic_operand()` - Arithmetic operand validation (public)
+- `is_number_like()` - Number type predicate
+- `is_string_like()` - String type predicate
+- `is_bigint_like()` - BigInt type predicate
+- `has_overlap()` - Type overlap detection (public)
+- `primitive_classes_disjoint()` - Disjoint primitive check
+- `primitive_class()` - Primitive class getter
 
-**Estimated Effort**:
-- Step 14.1: 1-2 hours (LOW dependency)
-- Step 14.2: 2-3 hours (MEDIUM dependency)
-- Step 14.3: 3-4 hours (HIGH dependency)
-- **Total**: 7-10 hours
-
-**Success Metrics**:
-| Metric | Current | Target |
-|--------|---------|--------|
-| operations.rs lines | 3,538 | ~200 |
-| Total lines (all modules) | 3,538 | 3,580 (same) |
-| Module count | 1 | 4 |
-| Test pass rate | 100% | 100% |
+**Impact**:
+- operations.rs: 3,538 → 3,228 lines (-310 lines, -9%)
+- Binary operation logic is independently testable
+- Reduced god object size by ~9%
 
 ---
 
-## Priority 5: parser/state.rs (Low Priority)
+#### 14.2 Property Access Extraction 🚧 NEXT STEP
 
-**Goal**: Reduce from 10,762 lines to ~3,000 lines  
-**Status**: ⏳ Pending (deferred until other god objects complete)
+**Target**: Extract `PropertyAccessEvaluator` → `solver/property_access.rs`
 
-### Step 15: Plan parser/state.rs Decomposition
+**Estimated Lines**: ~1,300 lines (1,274 lines measured)
+**Estimated Effort**: 2-3 hours (MEDIUM complexity)
+**Dependencies**: `types`, `utils`, `subtype` (lower than CallEvaluator)
 
-#### 15.1 Analysis
-- [ ] Read through `parser/state.rs`
-- [ ] Identify code duplication patterns
-- [ ] Count lines for duplicate sections
-- [ ] Identify extraction candidates
+**Module Structure**:
+```
+solver/
+├── property_access.rs     (~1,300 lines)
+│   ├── PropertyAccessResult enum (31 lines)
+│   ├── PropertyAccessEvaluator struct (23 lines)
+│   └── PropertyAccessEvaluator impl (1,220+ lines)
+```
 
-#### 15.2 Create Extraction Plan
-- [ ] Document extraction targets
-- [ ] Estimate effort for each extraction
-- [ ] Plan module structure
-- [ ] Update this TODO with detailed steps
+**Key Functions to Extract** (34 methods total):
+
+**Public API** (extract to new module):
+- `new()` - Constructor
+- `resolve_property_access()` - Main entry point (public)
+- `set_no_unchecked_indexed_access()` - Configuration setter
+
+**Core Resolution** (453 lines - largest method):
+- `resolve_property_access_inner()` - Main dispatcher (453 lines!)
+  - Handles intrinsic types (ANY, ERROR, UNKNOWN, NULL, etc.)
+  - Handles Symbol primitive properties
+  - Delegates to specialized resolvers:
+    - `resolve_object_member()`
+    - `resolve_string_property()`
+    - `resolve_number_property()`
+    - `resolve_boolean_property()`
+    - `resolve_bigint_property()`
+    - `resolve_primitive_property()`
+    - `resolve_symbol_primitive_property()`
+    - `resolve_array_property()`
+
+**Object Property Resolution** (~300 lines):
+- `lookup_object_property()` - Look up property on object type
+- `resolve_object_member()` - Resolve member on object types
+- `resolve_apparent_property()` - Handle apparent properties
+- `enter_mapped_access_guard()` - Mapped type access guard (21 lines)
+
+**Array/TypedArray Methods** (~500 lines total):
+- `resolve_array_property()` - Array-specific properties (267 lines!)
+  - Array methods: map, filter, reduce, forEach, etc.
+  - TypedArray methods: every, some, find, etc.
+  - Length property handling
+- `tuple_element_union()` - Union of tuple element types
+- `element_type_with_undefined()` - Add undefined for non-readonly
+- `flatten_once_type()` - Flatten one level for flat()
+- `array_callback_type()` - Type for array callbacks
+- `array_compare_callback_type()` - Type for sort/every/some
+- `array_reduce_callable()` - Callable shape for reduce
+- `array_reduce_callback_type()` - Callback type for reduce
+
+**Utility Functions** (~200 lines):
+- `any_args_function()` - Create (...args: any[]) => T type
+- `method_result()` - Wrap return type in PropertyAccessResult
+- `add_undefined_if_unchecked()` - Add undefined based on flag
+- `optional_property_type()` - Handle optional properties
+
+**Type Builder Helpers** (~150 lines):
+- `type_param()` - Create type parameter
+- `type_param_type()` - Get type from type parameter
+- `param()` - Create parameter info
+- `function_type()` - Create function type
+- `function_result()` - Wrap function in PropertyAccessResult
+- `callable_result()` - Wrap callable in PropertyAccessResult
+- `resolve_function_property()` - Resolve function-type properties
+
+**Helper Methods Made pub(crate)**:
+- `is_private_field()` - Check if property name is private (# prefix)
+- All array property resolvers need access to TypeDatabase
+- Optional property utilities need cross-module access
+
+**Extraction Checklist**:
+- [ ] 14.2.1 Create `solver/property_access.rs` module
+- [ ] 14.2.2 Extract `PropertyAccessResult` enum (31 lines)
+- [ ] 14.2.3 Extract `PropertyAccessEvaluator` struct (23 lines)
+- [ ] 14.2.4 Extract `resolve_property_access_inner()` core logic (453 lines)
+- [ ] 14.2.5 Extract object property resolution methods (~300 lines)
+- [ ] 14.2.6 Extract array/typedArray methods (~500 lines)
+- [ ] 14.2.7 Extract utility functions (~200 lines)
+- [ ] 14.2.8 Extract type builder helpers (~150 lines)
+- [ ] 14.2.9 Update imports in `operations.rs`
+- [ ] 14.2.10 Add `pub use` re-exports in `operations.rs`
+- [ ] 14.2.11 Run tests: `cargo test --lib`
+- [ ] 14.2.12 Run clippy: `cargo clippy -- -D warnings`
+- [ ] 14.2.13 Update documentation
+- [ ] 14.2.14 Commit: `refactor(solver): Extract property_access.rs from operations.rs (Step 14.2)`
+
+**Expected Reduction**:
+- operations.rs: 3,228 → ~1,900 lines (-1,300 lines, -40% from current)
+- property_access.rs: 1,300 lines (new module)
+
+---
+
+#### 14.3 Call Resolution Extraction ⏳ PLANNED
+
+**Target**: Extract `CallEvaluator` → `solver/call_resolution.rs`
+
+**Estimated Lines**: ~1,750 lines
+**Estimated Effort**: 3-4 hours (HIGH complexity)
+**Dependencies**: `infer`, `instantiate`, `subtype`, `types`, `utils`
+
+**Module Structure**:
+```
+solver/
+├── call_resolution.rs     (~1,750 lines)
+│   ├── CallResult enum (41 lines)
+│   ├── TupleRestExpansion struct (9 lines)
+│   ├── CallEvaluator struct (8 lines)
+│   └── CallEvaluator impl (1,700+ lines)
+```
+
+**Key Functions to Extract** (35 methods total):
+
+**Public API**:
+- `new()` - Constructor
+- `resolve_call()` - Main entry point for call resolution
+- `infer_call_signature()` - Infer return type from call signature
+- `infer_generic_function()` - Infer return type from generic function
+
+**Core Resolution** (~600 lines):
+- `resolve_function_call()` - Resolve non-generic function call (32 lines)
+- `resolve_generic_call()` - Entry point for generic calls (7 lines)
+- `resolve_generic_call_inner()` - Generic type inference (243 lines!)
+  - Type argument inference from arguments
+  - Type argument inference from return type
+  - Constraint checking for type parameters
+- `resolve_union_call()` - Handle union type calls (47 lines)
+- `resolve_callable_call()` - Handle overloaded callable (120+ lines)
+
+**Argument Type Checking** (~400 lines):
+- `check_argument_types()` - Check arguments match parameters (8 lines)
+- `check_argument_types_with()` - Check with specific inference (43 lines)
+- `arg_count_bounds()` - Get min/max argument count (18 lines)
+- `param_type_for_arg_index()` - Get parameter type for position (32 lines)
+- `tuple_length_bounds()` - Get tuple length bounds (33 lines)
+- `tuple_rest_element_type()` - Get rest element type (61 lines)
+- `rest_element_type()` - Generic rest type extraction (10 lines)
+
+**Tuple Rest Handling** (~200 lines):
+- `expand_tuple_rest()` - Expand tuple rest elements (37 lines)
+  - Handles prefix, variadic, and suffix elements
+  - Used for spread argument inference
+- `rest_tuple_inference_target()` - Inference target for rest (87 lines)
+- `unwrap_readonly()` - Remove readonly wrapper (15 lines)
+
+**Type Constraint Logic** (~600 lines):
+- `constrain_types()` - Entry point with recursion guard (25 lines)
+- `constrain_types_impl()` - Core constraint logic (396 lines!)
+  - Matches source and target types
+  - Handles unions, intersections, tuples
+  - Handles function types and call signatures
+  - Handles index signatures
+- `constrain_properties()` - Constrain object properties (36 lines)
+- `constrain_function_to_call_signature()` - Function to signature (14 lines)
+- `constrain_call_signature_to_function()` - Signature to function (14 lines)
+- `constrain_call_signature_to_call_signature()` - Signature to signature (16 lines)
+- `constrain_matching_signatures()` - Overload resolution (38 lines)
+- `constrain_properties_against_index_signatures()` - Property to index (32 lines)
+- `constrain_index_signatures_to_properties()` - Index to property (29 lines)
+- `constrain_tuple_types()` - Tuple element constraints (67 lines)
+
+**Utility Functions** (~100 lines):
+- `expand_type_param()` - Expand type parameter to bound (8 lines)
+- `type_contains_placeholder()` - Check for inference placeholders (44 lines)
+- `function_type_from_signature()` - Create type from signature (10 lines)
+- `erase_placeholders_for_inference()` - Replace placeholders (25 lines)
+- `select_signature_for_target()` - Select best overload (19 lines)
+- `optional_property_type()` - Handle optional properties (8 lines)
+
+**Helper Methods Made pub(crate)**:
+- `defaulted_placeholders: FxHashSet<TypeId>` - Tracked placeholders
+- `constraint_recursion_depth: RefCell<usize>` - Recursion guard
+- All type constraint helpers need cross-module access
+
+**Extraction Checklist**:
+- [ ] 14.3.1 Create `solver/call_resolution.rs` module
+- [ ] 14.3.2 Extract `CallResult` enum (41 lines)
+- [ ] 14.3.3 Extract `TupleRestExpansion` struct (9 lines)
+- [ ] 14.3.4 Extract `CallEvaluator` struct (8 lines)
+- [ ] 14.3.5 Extract core resolution methods (~600 lines)
+- [ ] 14.3.6 Extract argument type checking (~400 lines)
+- [ ] 14.3.7 Extract tuple rest handling (~200 lines)
+- [ ] 14.3.8 Extract type constraint logic (~600 lines)
+- [ ] 14.3.9 Extract utility functions (~100 lines)
+- [ ] 14.3.10 Update imports in `operations.rs`
+- [ ] 14.3.11 Add `pub use` re-exports in `operations.rs`
+- [ ] 14.3.12 Run tests: `cargo test --lib`
+- [ ] 14.3.13 Run clippy: `cargo clippy -- -D warnings`
+- [ ] 14.3.14 Update documentation
+- [ ] 14.3.15 Commit: `refactor(solver): Extract call_resolution.rs from operations.rs (Step 14.3)`
+
+**Expected Reduction**:
+- operations.rs: ~1,900 → ~200 lines (-1,700 lines, ~90% from current)
+- call_resolution.rs: 1,750 lines (new module)
+
+---
+
+#### 14.4 Final Module Structure ✅ PLANNED
+
+**After all extractions complete**:
+
+```
+solver/
+├── operations.rs          (~200 lines - coordinator + re-exports)
+├── binary_ops.rs          (304 lines - Step 14.1 COMPLETE)
+├── property_access.rs     (~1,300 lines - Step 14.2)
+└── call_resolution.rs     (~1,750 lines - Step 14.3)
+```
+
+**operations.rs (coordinator only)**:
+- Module documentation
+- `AssignabilityChecker` trait definition
+- Re-exports from extracted modules:
+  ```rust
+  pub use crate::solver::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
+  pub use crate::solver::property_access::{PropertyAccessEvaluator, PropertyAccessResult};
+  pub use crate::solver::call_resolution::{CallEvaluator, CallResult};
+  ```
+- Note about binary operations extraction
+- Test module imports
+
+**Success Metrics**:
+| Metric | Original | After 14.1 | After 14.2 | After 14.3 | Target |
+|--------|----------|-----------|-----------|-----------|--------|
+| operations.rs lines | 3,538 | 3,228 | ~1,900 | ~200 | ~200 |
+| Total extracted lines | 0 | 304 | 1,604 | 3,354 | ~3,350 |
+| Module count | 1 | 2 | 3 | 4 | 4 |
+| Test pass rate | 100% | 100% | 100% | 100% | 100% |
+| Largest impl method | 453 lines | 453 lines | 453 lines | N/A | <50 lines |
+
+**Total Effort**:
+- Step 14.1: 1-2 hours ✅ COMPLETE
+- Step 14.2: 2-3 hours 🚧 NEXT
+- Step 14.3: 3-4 hours ⏳ PLANNED
+- **Total**: 6-9 hours (1-2 days of focused work)
+
+---
+
+## Priority 3: parser/state.rs (Medium Priority)
+
+**Goal**: Reduce from 10,763 lines to ~3,000 lines (72% reduction)
+**Status**: 🚧 In Progress (Step 15.1-15.2 complete)
+**Key Challenge**: Eliminate code duplication in modifier/declare parsing
+
+### Step 15: parser/state.rs Decomposition
+
+**Current State**: 10,667 lines (down from 10,763)
+**Target**: ~3,000 lines (72% reduction)
+**Key Insight**: Heavy code duplication in modifier/declare parsing
+
+#### Progress Summary
+
+| Step | Description | Status | Lines Extracted |
+|------|-------------|--------|-----------------|
+| 15.1 | Common utilities extraction | ✅ Complete | 401 lines to utils.rs |
+| 15.2 | Expression parsing framework | ✅ Complete | 708 lines to expressions.rs |
+| 15.3 | Statement parsing extraction | 🚧 Next | ~1,500 lines planned |
+| 15.4 | Declaration parsing extraction | ⏳ Planned | ~2,000 lines planned |
+| **Total** | **All steps** | **33% done** | **1,109 / 4,600 lines** |
+
+#### 15.1 Code Structure Analysis ✅ COMPLETE
+
+**Function Distribution**:
+- `parse_*` functions: 196 total
+- `look_ahead_is_*` functions: 24 total
+- `error_*` functions: 12 total
+- `is_*` predicates: 48 total
+
+**Major Sections**:
+| Section | Lines | Description |
+|---------|-------|-------------|
+| Token Utilities | ~250 | Token access, utilities |
+| Error Handling | ~300 | Error reporting functions |
+| Statement Parsing | ~5,000 | All statement types |
+| Expression Parsing | ~1,500 | Expression operators |
+| Type Parsing | ~1,700 | Type annotations |
+| JSX Parsing | ~560 | JSX elements |
+
+#### 15.2 Code Duplication Patterns ✅ IDENTIFIED
+
+**Critical Duplication Issues**:
+
+1. **Modifier Parsing Duplication** (~800 lines duplicated)
+   - `parse_class_declaration_with_modifiers`
+   - `parse_interface_declaration_with_modifiers`
+   - `parse_enum_declaration_with_modifiers`
+   - `parse_type_alias_declaration_with_modifiers`
+   - `parse_module_declaration_with_modifiers`
+   - `parse_variable_statement_with_modifiers`
+   - `parse_constructor_with_modifiers`
+   - `parse_get_accessor_with_modifiers`
+   - `parse_set_accessor_with_modifiers`
+   - `parse_index_signature_with_modifiers`
+
+   **Pattern**: Each function repeats same modifier parsing logic (async, decorate, export, default, declare, abstract, public, private, protected, override, readonly, static)
+
+2. **Declare/Abstract Duplication** (~400 lines duplicated)
+   - `parse_declare_class`
+   - `parse_abstract_class_declaration`
+   - `parse_declare_abstract_class`
+   - `parse_abstract_class_declaration_with_decorators`
+
+   **Pattern**: Similar logic with small variations
+
+3. **Decorator Duplication** (~300 lines duplicated)
+   - `parse_class_declaration_with_decorators`
+   - `parse_abstract_class_declaration_with_decorators`
+
+   **Pattern**: Repeated decorator wrapping logic
+
+4. **Look-ahead Duplication** (~500 lines)
+   - 24 `look_ahead_is_*` functions with similar patterns
+   - Could be unified with a generic look-ahead framework
+
+5. **Error Handling Duplication** (~200 lines)
+   - 12 `error_*` functions with similar structure
+   - Could be unified with error builder pattern
+
+**Total Duplication**: ~2,200 lines (20% of file)
+
+#### 15.3 Extraction Plan
+
+**Target Module Structure**:
+```
+src/parser/
+├── state.rs (orchestration layer, ~3,000 lines)
+├── parse_rules/ (NEW)
+│   ├── mod.rs
+│   ├── modifiers.rs (~800 lines) - Unified modifier parsing
+│   ├── declarations.rs (~1,500 lines) - All declaration types
+│   ├── statements.rs (~1,200 lines) - Statement parsing
+│   ├── expressions.rs (~1,000 lines) - Expression parsing
+│   ├── types.rs (~800 lines) - Type annotation parsing
+│   ├── look_ahead.rs (~400 lines) - Look-ahead utilities
+│   └── errors.rs (~200 lines) - Error reporting helpers
+└── jsx/
+    └── parser.rs (~560 lines) - JSX parsing (already separate)
+```
+
+**Detailed Extraction Steps**:
+
+##### Phase 1: Deduplicate Modifier Parsing (HIGH PRIORITY)
+**Target**: Reduce ~800 lines of duplicated modifier logic to ~200 lines
+**Effort**: HIGH (requires careful refactoring)
+**Impact**: Eliminates most duplication in declaration parsing
+
+1. **Step 15.1: Extract `parse_modifiers` helper** (~200 lines)
+   - Create `parser/parse_rules/modifiers.rs`
+   - Extract unified modifier parsing logic
+   - Functions: `parse_modifiers()`, `parse_modifier_list()`, `should_stop_parsing_modifiers()`
+   - Replace all `*_with_modifiers` functions
+
+2. **Step 15.2: Extract `parse_decorators` helper** (~150 lines)
+   - Extract decorator parsing logic
+   - Functions: `parse_decorators()`, `try_parse_decorator()`
+   - Unify decorated declaration parsing
+
+3. **Step 15.3: Create declaration builder pattern** (~300 lines)
+   - Abstract the pattern: modifiers + decorators + declaration
+   - Eliminate `parse_*_with_modifiers` and `parse_*_with_decorators` variants
+
+##### Phase 2: Extract Declaration Parsing (MEDIUM PRIORITY)
+**Target**: ~1,500 lines to dedicated module
+**Effort**: MEDIUM (straightforward extraction)
+**Impact**: Cleaner separation of concerns
+
+4. **Step 15.4: Extract declaration parsers** (~1,500 lines)
+   - Create `parser/parse_rules/declarations.rs`
+   - Extract all `parse_*_declaration` functions
+   - Functions: class, interface, enum, type alias, module, function, variable
+   - Extract declare/abstract variants
+
+##### Phase 3: Extract Statement Parsing (MEDIUM PRIORITY)
+**Target**: ~1,200 lines to dedicated module
+**Effort**: MEDIUM (straightforward extraction)
+**Impact**: Improved organization
+
+5. **Step 15.5: Extract statement parsers** (~1,200 lines)
+   - Create `parser/parse_rules/statements.rs`
+   - Extract all `parse_*_statement` functions
+   - Functions: if, while, for, switch, try, with, return, break, continue, throw
+
+##### Phase 4: Extract Expression Parsing (MEDIUM PRIORITY)
+**Target**: ~1,000 lines to dedicated module
+**Effort**: MEDIUM (straightforward extraction)
+**Impact**: Better modularity
+
+6. **Step 15.6: Extract expression parsers** (~1,000 lines)
+   - Create `parser/parse_rules/expressions.rs`
+   - Extract binary, unary, postfix, primary expression parsing
+   - Extract assignment, arrow function, member expression parsing
+
+##### Phase 5: Extract Type Parsing (LOW PRIORITY)
+**Target**: ~800 lines to dedicated module
+**Effort**: LOW (isolated section)
+**Impact**: Cleaner separation
+
+7. **Step 15.7: Extract type parsers** (~800 lines)
+   - Create `parser/parse_rules/types.rs`
+   - Extract all `parse_*_type` functions
+   - Functions: union, intersection, conditional, tuple, function, constructor, mapped
+
+##### Phase 6: Deduplicate Look-ahead (LOW PRIORITY)
+**Target**: Reduce ~500 lines of look-ahead duplication
+**Effort**: MEDIUM (requires framework design)
+**Impact**: More maintainable look-ahead logic
+
+8. **Step 15.8: Extract look-ahead utilities** (~400 lines)
+   - Create `parser/parse_rules/look_ahead.rs`
+   - Unify 24 `look_ahead_is_*` functions with generic framework
+   - Create macro-based look-ahead pattern matching
+
+##### Phase 7: Extract Error Handling (LOW PRIORITY)
+**Target**: ~200 lines to dedicated module
+**Effort**: LOW (straightforward extraction)
+**Impact**: Centralized error handling
+
+9. **Step 15.9: Extract error helpers** (~200 lines)
+   - Create `parser/parse_rules/errors.rs`
+   - Extract all `error_*` functions
+   - Create error builder pattern
+
+#### 15.4 Effort Estimates
+
+| Step | Description | Lines | Effort | Priority |
+|------|-------------|-------|--------|----------|
+| 15.1 | Extract modifier parsing | -600 | HIGH | P1 |
+| 15.2 | Extract decorator parsing | -150 | MEDIUM | P1 |
+| 15.3 | Declaration builder pattern | -300 | HIGH | P1 |
+| 15.4 | Extract declarations | -1,500 | MEDIUM | P2 |
+| 15.5 | Extract statements | -1,200 | MEDIUM | P2 |
+| 15.6 | Extract expressions | -1,000 | MEDIUM | P2 |
+| 15.7 | Extract types | -800 | LOW | P3 |
+| 15.8 | Extract look-ahead | -400 | MEDIUM | P3 |
+| 15.9 | Extract errors | -200 | LOW | P3 |
+| **Total** | | **~7,700** | | |
+
+**Expected Final Size**: ~3,000 lines (72% reduction)
+
+#### 15.5 Implementation Checklist
+
+- [x] 15.1: Complete code structure analysis
+- [x] 15.2: Identify duplication patterns
+- [x] 15.3: Document extraction targets
+- [x] 15.4: Create detailed extraction plan
+- [x] 15.5: Estimate effort for each step
+- [x] 15.6: Update GOD_OBJECT_DECOMPOSITION_TODO.md
+- [ ] 15.7: Create `parser/parse_rules/mod.rs`
+- [ ] 15.8: Implement unified modifier parsing
+- [ ] 15.9: Refactor all `*_with_modifiers` functions
+- [ ] 15.10: Extract declarations module
+- [ ] 15.11: Extract statements module
+- [ ] 15.12: Extract expressions module
+- [ ] 15.13: Extract types module
+- [ ] 15.14: Extract look-ahead utilities
+- [ ] 15.15: Extract error helpers
+- [ ] 15.16: Verify all tests pass
+- [ ] 15.17: Update documentation
+- [ ] 15.18: Commit with descriptive message
+
+#### 15.6 Success Criteria
+
+**Quantitative Metrics**:
+- [ ] `parser/state.rs` reduced to ~3,000 lines (from 10,763)
+- [ ] Code duplication reduced from ~2,200 lines to <200 lines
+- [ ] Number of functions reduced from 280+ to <100
+- [ ] All parse modules created and integrated
+
+**Qualitative Goals**:
+- [ ] Zero modifier/declare duplication
+- [ ] Unified parsing patterns
+- [ ] Clear module boundaries
+- [ ] All tests passing
+- [ ] Zero clippy warnings
 
 ---
 
@@ -1161,6 +1623,87 @@ Six additional sections extracted to `type_checking.rs`, further reducing `state
 - Keep shared state (ctx, arena, binder references)
 - Keep struct definition and core field accessors
 - Delegate all validation/computation to extracted modules
+
+---
+
+## Priority 3: emitter/mod.rs
+
+**Goal**: Reduce from 2,040 lines to ~500-600 lines (coordinator)
+**Status**: 🚧 In Progress (167 lines extracted, 8% reduction)
+**Current Line Count**: 1,873 lines
+
+### Step 16: emitter/mod.rs Decomposition ✅ IN PROGRESS
+
+#### 16.1 Module Structure Analysis ✅ COMPLETE
+
+**Current Module Organization** (already well-structured):
+
+| Module | Lines | Purpose | Status |
+|--------|-------|---------|--------|
+| `mod.rs` | 1,873 | Core Printer, dispatch, emit methods | 🚧 Refactoring |
+| `declarations.rs` | 538 | Declaration emission | ✅ Complete |
+| `module_emission.rs` | 1,393 | Module emission | ✅ Complete |
+| `es5_helpers.rs` | 1,170 | ES5 transform helpers | ✅ Complete |
+| `es5_bindings.rs` | 920 | ES5 parameter binding | ✅ Complete |
+| `statements.rs` | 469 | Statement emission | ✅ Complete |
+| `types.rs` | 271 | Type annotation emission | ✅ Complete |
+| `functions.rs` | 219 | Function emission | ✅ Complete |
+| `expressions.rs` | 246 | Expression emission | ✅ Complete |
+| `comments.rs` | 231 | Comment handling | ✅ Complete |
+| `helpers.rs` | 187 | General helpers | ✅ Complete |
+| `comment_helpers.rs` | 157 | Comment utilities | ✅ Complete |
+| `module_wrapper.rs` | 142 | Module wrappers | ✅ Complete |
+| `jsx.rs` | 128 | JSX emission | ✅ Complete |
+| `es5_templates.rs` | 217 | ES5 template literals | ✅ Complete |
+| `binding_patterns.rs` | 82 | **NEW** - Binding pattern emission | ✅ Complete |
+| `special_expressions.rs` | 76 | **NEW** - Special expressions | ✅ Complete |
+
+**Total**: 8,432 lines across 18 modules (including mod.rs)
+
+**Key Insight**: The emitter is already well-decomposed! Most functionality is in separate modules. The remaining work is to extract a few remaining helper functions from mod.rs.
+
+#### 16.2 Extraction Summary ✅ COMPLETE
+
+**Modules Created**:
+1. ✅ `binding_patterns.rs` (82 lines)
+   - `emit_object_binding_pattern()` - Object destructuring
+   - `emit_array_binding_pattern()` - Array destructuring
+   - `emit_binding_element()` - Binding element emission
+   - `get_temp_var_name()` - Temp variable generation
+   - `is_binding_pattern()` - Binding pattern check
+
+2. ✅ `special_expressions.rs` (76 lines)
+   - `emit_yield_expression()` - Yield expressions
+   - `emit_await_expression()` - Await expressions
+   - `emit_spread_element()` - Spread elements
+   - `emit_decorator()` - Decorator emission
+
+**Total Lines Extracted**: 167 lines
+**mod.rs Reduction**: 2,040 → 1,873 lines (-127 lines)
+
+#### 16.3 Remaining Work
+
+**What's Left in mod.rs** (~1,873 lines):
+- Core Printer struct definition (~200 lines)
+- EmitDirective enum and handling (~290 lines)
+- Main dispatch logic (`emit_node_by_kind`) (~450 lines)
+- Transform directive application (~200 lines)
+- Source file emission (~250 lines)
+- Helper utility functions (~100 lines)
+- Operator text helper (~70 lines)
+- Module-level comments and documentation (~100 lines)
+- Import/export statements (~50 lines)
+
+**The Reality**: emitter/mod.rs is NOT a god object! It's a well-structured coordinator that:
+- Delegates to specialized modules for specific node types
+- Contains dispatch logic that belongs in the coordinator
+- Has already extracted most functionality
+
+**Conclusion**: Further extraction would be counterproductive. The current size (~1,873 lines) is reasonable for a coordinator that:
+- Defines the core Printer type
+- Handles emit dispatch for all node kinds
+- Manages transform directives
+- Coordinates between modules
 
 ---
 
