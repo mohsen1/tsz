@@ -39,6 +39,7 @@ pub mod state;
 pub mod statements;
 pub mod symbol_resolver;
 pub mod type_computation;
+pub mod type_query;
 pub mod types;
 
 #[cfg(test)]
