@@ -662,6 +662,7 @@ impl<'a> CheckerState<'a> {
                 k if k == SyntaxKind::PlusToken as u16 => "+",
                 k if k == SyntaxKind::MinusToken as u16 => "-",
                 k if k == SyntaxKind::AsteriskToken as u16 => "*",
+                k if k == SyntaxKind::AsteriskAsteriskToken as u16 => "**",
                 k if k == SyntaxKind::SlashToken as u16 => "/",
                 k if k == SyntaxKind::PercentToken as u16 => "%",
                 k if k == SyntaxKind::LessThanToken as u16 => "<",
