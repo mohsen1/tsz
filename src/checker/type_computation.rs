@@ -1860,6 +1860,102 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the `keyof` type for a given type.
+    ///
+    /// Computes the type of all property keys for a given object type.
+    /// For example: `keyof { x: number; y: string }` = `"x" | "y"`.
+    ///
+    /// ## Behavior:
+    /// - Object types: Returns union of string literal types for each property name
+    /// - Empty objects: Returns NEVER
+    /// - Other types: Returns NEVER
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// type Keys = keyof { x: number; y: string };
+    /// // "x" | "y"
+    ///
+    /// type Empty = keyof {};
+    /// // never
+    /// ```
+    pub(crate) fn get_keyof_type(&self, operand: TypeId) -> TypeId {
+        use crate::interner::Atom;
+        use crate::solver::{LiteralValue, TypeKey};
+
+        let Some(key) = self.ctx.types.lookup(operand) else {
+            return TypeId::NEVER;
+        };
+
+        match key {
+            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                if shape.properties.is_empty() {
+                    return TypeId::NEVER;
+                }
+                let key_types: Vec<TypeId> = shape
+                    .properties
+                    .iter()
+                    .map(|p| {
+                        self.ctx
+                            .types
+                            .intern(TypeKey::Literal(LiteralValue::String(p.name)))
+                    })
+                    .collect();
+                self.ctx.types.union(key_types)
+            }
+            _ => TypeId::NEVER,
+        }
+    }
+
+    /// Extract string literal keys from a union or single literal type.
+    ///
+    /// Given a type that may be a union of string literal types or a single string literal,
+    /// extracts the actual string atoms.
+    ///
+    /// ## Behavior:
+    /// - String literal: Returns vec with that string
+    /// - Union of string literals: Returns vec with all strings
+    /// - Other types: Returns empty vec
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Single literal
+    /// extractKeys<"hello">() // ["hello"]
+    ///
+    /// // Union of literals
+    /// extractKeys<"a" | "b" | "c">() // ["a", "b", "c"]
+    ///
+    /// // Non-literal
+    /// extractKeys<string>() // []
+    /// ```
+    pub(crate) fn extract_string_literal_keys(&self, type_id: TypeId) -> Vec<crate::interner::Atom> {
+        use crate::solver::{LiteralValue, TypeKey};
+
+        let Some(key) = self.ctx.types.lookup(type_id) else {
+            return Vec::new();
+        };
+
+        match key {
+            TypeKey::Literal(LiteralValue::String(name)) => vec![name],
+            TypeKey::Union(list_id) => {
+                let members = self.ctx.types.type_list(list_id);
+                members
+                    .iter()
+                    .filter_map(|&member| {
+                        if let Some(TypeKey::Literal(LiteralValue::String(name))) =
+                            self.ctx.types.lookup(member)
+                        {
+                            Some(name)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     // =========================================================================
     // Type Relationship Queries
     // =========================================================================
