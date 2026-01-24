@@ -1763,6 +1763,173 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.callable(new_shape)
     }
 
+    /// Apply explicit type arguments to a callable type for function calls.
+    ///
+    /// When a function is called with explicit type arguments like `fn<T>(x: T)`,
+    /// calling it as `fn<number>("hello")` should substitute `T` with `number` and
+    /// then check if `"hello"` is assignable to `number`.
+    ///
+    /// This function creates a new callable type with the type parameters substituted,
+    /// so that argument type checking can work correctly.
+    pub(crate) fn apply_type_arguments_to_callable_type(
+        &mut self,
+        callee_type: TypeId,
+        type_arguments: Option<&NodeList>,
+    ) -> TypeId {
+        use crate::solver::{CallableShape, TypeKey};
+
+        let Some(type_arguments) = type_arguments else {
+            return callee_type;
+        };
+
+        if type_arguments.nodes.is_empty() {
+            return callee_type;
+        }
+
+        let mut type_args: Vec<TypeId> = Vec::with_capacity(type_arguments.nodes.len());
+        for &arg_idx in &type_arguments.nodes {
+            type_args.push(self.get_type_from_type_node(arg_idx));
+        }
+
+        if type_args.is_empty() {
+            return callee_type;
+        }
+
+        let key = match self.ctx.types.lookup(callee_type) {
+            Some(k) => k,
+            None => return callee_type,
+        };
+
+        match key {
+            TypeKey::Callable(shape_id) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+
+                // Find call signatures that match the type argument count
+                let mut matching: Vec<&crate::solver::CallSignature> = shape
+                    .call_signatures
+                    .iter()
+                    .filter(|sig| sig.type_params.len() == type_args.len())
+                    .collect();
+
+                // If no exact match, try signatures with type params
+                if matching.is_empty() {
+                    matching = shape
+                        .call_signatures
+                        .iter()
+                        .filter(|sig| !sig.type_params.is_empty())
+                        .collect();
+                }
+
+                if matching.is_empty() {
+                    return callee_type;
+                }
+
+                // Instantiate each matching signature with the type arguments
+                let instantiated_calls: Vec<crate::solver::CallSignature> = matching
+                    .iter()
+                    .map(|sig| {
+                        let mut args = type_args.clone();
+                        // Fill in default type arguments if needed
+                        if args.len() < sig.type_params.len() {
+                            for param in sig.type_params.iter().skip(args.len()) {
+                                let fallback = param
+                                    .default
+                                    .or(param.constraint)
+                                    .unwrap_or(TypeId::UNKNOWN);
+                                args.push(fallback);
+                            }
+                        }
+                        if args.len() > sig.type_params.len() {
+                            args.truncate(sig.type_params.len());
+                        }
+                        self.instantiate_call_signature(sig, &args)
+                    })
+                    .collect();
+
+                let new_shape = CallableShape {
+                    call_signatures: instantiated_calls,
+                    construct_signatures: shape.construct_signatures.clone(),
+                    properties: shape.properties.clone(),
+                    string_index: shape.string_index.clone(),
+                    number_index: shape.number_index.clone(),
+                };
+                self.ctx.types.callable(new_shape)
+            }
+            TypeKey::Function(shape_id) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                if shape.type_params.len() != type_args.len() {
+                    return callee_type;
+                }
+
+                let instantiated_call = self.instantiate_call_signature(
+                    &crate::solver::CallSignature {
+                        type_params: shape.type_params.clone(),
+                        params: shape.params.clone(),
+                        this_type: None,
+                        return_type: shape.return_type,
+                        type_predicate: None,
+                    },
+                    &type_args,
+                );
+
+                // Convert single signature to callable
+                let new_shape = CallableShape {
+                    call_signatures: vec![instantiated_call],
+                    construct_signatures: vec![],
+                    properties: vec![],
+                    string_index: None,
+                    number_index: None,
+                };
+                self.ctx.types.callable(new_shape)
+            }
+            _ => callee_type,
+        }
+    }
+
+    /// Instantiate a call signature with type arguments.
+    /// Similar to instantiate_constructor_signature but for call signatures.
+    fn instantiate_call_signature(
+        &self,
+        sig: &crate::solver::CallSignature,
+        type_args: &[TypeId],
+    ) -> crate::solver::CallSignature {
+        use crate::solver::{
+            ParamInfo, TypePredicate, TypeSubstitution, instantiate_type,
+        };
+
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
+        let params: Vec<ParamInfo> = sig
+            .params
+            .iter()
+            .map(|param| ParamInfo {
+                name: param.name,
+                type_id: instantiate_type(self.ctx.types, param.type_id, &substitution),
+                optional: param.optional,
+                rest: param.rest,
+            })
+            .collect();
+
+        let this_type = sig
+            .this_type
+            .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution));
+        let return_type = instantiate_type(self.ctx.types, sig.return_type, &substitution);
+        let type_predicate = sig.type_predicate.as_ref().map(|predicate| crate::solver::TypePredicate {
+            asserts: predicate.asserts,
+            target: predicate.target.clone(),
+            type_id: predicate
+                .type_id
+                .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
+        });
+
+        crate::solver::CallSignature {
+            type_params: Vec::new(),
+            params,
+            this_type,
+            return_type,
+            type_predicate,
+        }
+    }
+
     fn instantiate_constructor_signature(
         &self,
         sig: &crate::solver::CallSignature,
