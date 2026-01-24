@@ -3,7 +3,7 @@ use crate::parser::node::Node;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
-use crate::transforms::class_es5::ClassES5Emitter;
+use crate::transforms::ClassES5Emitter;
 
 impl<'a> Printer<'a> {
     // =========================================================================

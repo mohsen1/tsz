@@ -29,9 +29,7 @@ use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};
-use crate::transforms::class_es5::ClassES5Emitter;
-use crate::transforms::enum_es5::EnumES5Emitter;
-use crate::transforms::namespace_es5::NamespaceES5Emitter;
+use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use std::sync::Arc;
 
 mod comment_helpers;

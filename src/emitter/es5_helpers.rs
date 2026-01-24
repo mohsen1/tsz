@@ -5,7 +5,7 @@ use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::transform_context::TransformDirective;
-use crate::transforms::class_es5::ClassES5Emitter;
+use crate::transforms::ClassES5Emitter;
 
 impl<'a> Printer<'a> {
     pub(super) fn emit_object_literal_entries_es5(&mut self, elements: &[NodeIndex]) {

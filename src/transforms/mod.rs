@@ -37,46 +37,19 @@
 //! | `block_scoping_es5` | ℹ️ Helper | Analysis only, no emit |
 //! | `module_commonjs` | ℹ️ N/A | Module transform (different pattern) |
 //!
-//! # Migration Pattern
+//! # Public Emitter API
 //!
-//! To migrate a transform from string emission to IR:
+//! The following emitter types are re-exported from this module for use by
+//! the emitter. This provides a clean API boundary and breaks direct dependencies
+//! on internal submodules.
 //!
-//! 1. Create a new `*Transformer` struct that produces `IRNode` trees
-//! 2. Keep the old `*Emitter` as a wrapper for backward compatibility
-//! 3. Update the emitter to use the transformer + `IRPrinter`
-//! 4. Add tests comparing old and new output
-//! 5. Update callers to use the new transformer directly
-//!
-//! Example from `enum_es5.rs`:
-//! ```ignore
-//! // NEW: Transformer produces IR
-//! pub struct EnumES5Transformer<'a> {
-//!     arena: &'a NodeArena,
-//! }
-//!
-//! impl<'a> EnumES5Transformer<'a> {
-//!     pub fn transform_enum(&mut self, idx: NodeIndex) -> Option<IRNode> {
-//!         // Build IR tree...
-//!     }
-//! }
-//!
-//! // LEGACY: Wrapper for backward compatibility
-//! pub struct EnumES5Emitter<'a> {
-//!     transformer: EnumES5Transformer<'a>,
-//! }
-//!
-//! impl<'a> EnumES5Emitter<'a> {
-//!     pub fn emit_enum(&mut self, idx: NodeIndex) -> String {
-//!         let ir = self.transformer.transform_enum(idx)?;
-//!         IRPrinter::emit_to_string(&ir)
-//!     }
-//! }
-//! ```
-//!
-//! The transforms are used by the emitter for ES5 downleveling.
+//! - `ClassES5Emitter` - ES5 class transformation
+//! - `EnumES5Emitter` - ES5 enum transformation
+//! - `NamespaceES5Emitter` - ES5 namespace transformation
 
 pub mod arrow_es5;
 pub mod async_es5;
+pub mod emitter;
 pub mod async_es5_ir;
 pub mod block_scoping_es5;
 pub mod class_es5;
@@ -95,6 +68,12 @@ pub mod namespace_es5;
 pub mod namespace_es5_ir;
 pub mod private_fields_es5;
 pub mod spread_es5;
+
+// Re-export concrete emitter types for use by the emitter module
+// This breaks the dependency on internal submodules (transforms::class_es5)
+pub use class_es5::ClassES5Emitter;
+pub use enum_es5::EnumES5Emitter;
+pub use namespace_es5::NamespaceES5Emitter;
 
 #[cfg(test)]
 mod module_commonjs_tests;
