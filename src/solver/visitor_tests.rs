@@ -27,22 +27,37 @@ fn test_type_kind_classification() {
 
     // Literal types
     let lit = interner.literal_string("hello");
-    assert_eq!(TypeKindVisitor::get_kind_of(&interner, lit), TypeKind::Literal);
+    assert_eq!(
+        TypeKindVisitor::get_kind_of(&interner, lit),
+        TypeKind::Literal
+    );
 
     let lit_num = interner.literal_number(42.0);
-    assert_eq!(TypeKindVisitor::get_kind_of(&interner, lit_num), TypeKind::Literal);
+    assert_eq!(
+        TypeKindVisitor::get_kind_of(&interner, lit_num),
+        TypeKind::Literal
+    );
 
     // Object types
     let obj = interner.object(vec![]);
-    assert_eq!(TypeKindVisitor::get_kind_of(&interner, obj), TypeKind::Object);
+    assert_eq!(
+        TypeKindVisitor::get_kind_of(&interner, obj),
+        TypeKind::Object
+    );
 
     // Array types
     let arr = interner.array(TypeId::STRING);
-    assert_eq!(TypeKindVisitor::get_kind_of(&interner, arr), TypeKind::Array);
+    assert_eq!(
+        TypeKindVisitor::get_kind_of(&interner, arr),
+        TypeKind::Array
+    );
 
     // Union types
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(TypeKindVisitor::get_kind_of(&interner, union), TypeKind::Union);
+    assert_eq!(
+        TypeKindVisitor::get_kind_of(&interner, union),
+        TypeKind::Union
+    );
 
     // Intersection types
     let inter = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -61,7 +76,10 @@ fn test_type_kind_classification() {
         is_constructor: false,
         is_method: false,
     });
-    assert_eq!(TypeKindVisitor::get_kind_of(&interner, func), TypeKind::Function);
+    assert_eq!(
+        TypeKindVisitor::get_kind_of(&interner, func),
+        TypeKind::Function
+    );
 }
 
 #[test]
@@ -362,9 +380,8 @@ fn test_contains_type_matching() {
     let lit = interner.literal_string("hello");
     let union = interner.union(vec![TypeId::STRING, lit]);
 
-    let has_literal = contains_type_matching(&interner, union, |key| {
-        matches!(key, TypeKey::Literal(_))
-    });
+    let has_literal =
+        contains_type_matching(&interner, union, |key| matches!(key, TypeKey::Literal(_)));
     assert!(has_literal);
 
     let no_literal = contains_type_matching(&interner, TypeId::STRING, |key| {

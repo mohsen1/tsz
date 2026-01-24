@@ -145,7 +145,8 @@ impl<'a> CheckerState<'a> {
                     self.check_spread_iterability(spread_expr_type, spread_data.expression);
 
                     // If it's a tuple type, expand its elements
-                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_expr_type) {
+                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_expr_type)
+                    {
                         let elems = self.ctx.types.tuple_list(elems_id);
 
                         if tuple_context.is_some() {
@@ -2413,7 +2414,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Create contextual context from callee type with type arguments applied
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, callee_type_for_resolution);
+        let ctx_helper =
+            ContextualTypeContext::with_expected(self.ctx.types, callee_type_for_resolution);
         let check_excess_properties = overload_signatures.is_none();
         let arg_types = self.collect_call_argument_types_with_context(
             args,
