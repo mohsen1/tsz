@@ -5584,8 +5584,8 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Get type of new expression.
-    fn enum_member_type_for_name(&self, sym_id: SymbolId, property_name: &str) -> Option<TypeId> {
+    /// Get enum member type by property name.
+    pub(crate) fn enum_member_type_for_name(&self, sym_id: SymbolId, property_name: &str) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::ENUM == 0 {
             return None;
