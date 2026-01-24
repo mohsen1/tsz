@@ -42,7 +42,14 @@ impl TypeSubstitution {
     ///
     /// When type_args has fewer elements than type_params, default values
     /// from the type parameters are used for the remaining parameters.
-    pub fn from_args(type_params: &[TypeParamInfo], type_args: &[TypeId]) -> Self {
+    ///
+    /// IMPORTANT: Defaults may reference earlier type parameters, so they need
+    /// to be instantiated with the substitution built so far.
+    pub fn from_args(
+        interner: &dyn TypeDatabase,
+        type_params: &[TypeParamInfo],
+        type_args: &[TypeId],
+    ) -> Self {
         let mut map = FxHashMap::default();
         for (i, param) in type_params.iter().enumerate() {
             let type_id = if i < type_args.len() {
@@ -50,7 +57,15 @@ impl TypeSubstitution {
             } else {
                 // Use default value if type argument not provided
                 match param.default {
-                    Some(default) => default,
+                    Some(default) => {
+                        // Defaults may reference earlier type parameters, so instantiate them
+                        if i > 0 && !map.is_empty() {
+                            let subst = TypeSubstitution { map: map.clone() };
+                            instantiate_type(interner, default, &subst)
+                        } else {
+                            default
+                        }
+                    }
                     None => {
                         // No default and no argument - leave this parameter unsubstituted
                         // It will remain as a TypeParameter in the result
@@ -660,7 +675,7 @@ pub fn instantiate_generic(
     if type_params.is_empty() || type_args.is_empty() {
         return type_id;
     }
-    let substitution = TypeSubstitution::from_args(type_params, type_args);
+    let substitution = TypeSubstitution::from_args(interner, type_params, type_args);
     instantiate_type(interner, type_id, &substitution)
 }
 
