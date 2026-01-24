@@ -11050,11 +11050,16 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        // For object literals, also check for excess properties
+                        // For object literals, also check for excess and missing properties
                         if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
                             && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         {
                             checker.check_object_literal_excess_properties(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            );
+                            checker.check_object_literal_missing_properties(
                                 init_type,
                                 declared_type,
                                 var_decl.initializer,
@@ -11586,6 +11591,71 @@ impl<'a> CheckerState<'a> {
             _ => (),
         }
         // Note: Missing property checks are handled by solver's explain_failure
+        // But we also add explicit checks below for better error messages
+    }
+
+    /// Check for missing required properties in object literals.
+    ///
+    /// When an object literal is assigned to an object type, check that all
+    /// required properties are present. This catches errors like:
+    ///   interface Foo { a: string; b: number }
+    ///   const x: Foo = { a: "hello" };  // TS2741: Missing property 'b'
+    ///
+    /// ## Parameters:
+    /// - `source`: The object literal type
+    /// - `target`: The target object type
+    /// - `idx`: The node index for error reporting
+    pub(crate) fn check_object_literal_missing_properties(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        use crate::solver::TypeKey;
+
+        let source_shape = match self.ctx.types.lookup(source) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                self.ctx.types.object_shape(shape_id)
+            }
+            _ => return,
+        };
+
+        let source_props = source_shape.properties.as_slice();
+        let resolved_target = self.resolve_type_for_property_access(target);
+
+        let target_shape = match self.ctx.types.lookup(resolved_target) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                self.ctx.types.object_shape(shape_id)
+            }
+            _ => return,
+        };
+
+        let target_props = target_shape.properties.as_slice();
+
+        // Check for missing required properties
+        for target_prop in target_props {
+            // Skip optional properties - they don't need to be present
+            if target_prop.optional {
+                continue;
+            }
+
+            // Skip if property exists in source
+            let exists = source_props.iter().any(|p| p.name == target_prop.name);
+            if exists {
+                continue;
+            }
+
+            // Check if there's an index signature that could provide this property
+            if let Some(ref index) = target_shape.string_index {
+                // If the object has a string index signature, the property might
+                // be provided dynamically, so we don't report it as missing
+                continue;
+            }
+
+            // Property is missing - report error
+            let prop_name = self.ctx.types.resolve_atom(target_prop.name);
+            self.error_property_missing_at(&prop_name, source, target, idx);
+        }
     }
 
     /// Check array literal elements against a tuple type for assignability.
