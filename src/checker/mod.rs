@@ -62,9 +62,9 @@ pub mod union_type;
 #[cfg(test)]
 mod assignability_tests;
 #[cfg(test)]
-mod control_flow_tests;
-#[cfg(test)]
 mod contextual_typing_tests;
+#[cfg(test)]
+mod control_flow_tests;
 #[cfg(test)]
 mod iterability_tests;
 #[cfg(test)]

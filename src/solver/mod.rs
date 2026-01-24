@@ -15,6 +15,7 @@
 //! Note: Salsa integration is planned but requires nightly Rust features.
 //! For now, we use manual query caching.
 mod apparent;
+pub mod binary_ops;
 mod compat;
 mod contextual;
 mod db;
@@ -29,7 +30,6 @@ mod lawyer;
 mod lower;
 mod narrowing;
 mod operations;
-pub mod binary_ops;
 mod subtype;
 mod subtype_rules;
 mod types;
