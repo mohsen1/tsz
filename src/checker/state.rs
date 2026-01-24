@@ -9094,26 +9094,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type of conditional expression (ternary: a ? b : c).
-    fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        let Some(cond) = self.ctx.arena.get_conditional_expr(node) else {
-            return TypeId::ERROR; // Missing conditional expression data - propagate error
-        };
-
-        let when_true = self.get_type_of_node(cond.when_true);
-        let when_false = self.get_type_of_node(cond.when_false);
-
-        if when_true == when_false {
-            when_true
-        } else {
-            // Use TypeInterner's union method for automatic normalization
-            self.ctx.types.union(vec![when_true, when_false])
-        }
-    }
-
     /// Get type of array literal.
     fn get_type_of_array_literal(&mut self, idx: NodeIndex) -> TypeId {
         use crate::solver::{TupleElement, TypeKey};
