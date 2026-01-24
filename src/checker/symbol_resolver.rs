@@ -748,8 +748,62 @@ impl<'a> CheckerState<'a> {
 
         let left_symbol = self.ctx.binder.get_symbol(left_sym)?;
         let exports = left_symbol.exports.as_ref()?;
-        let member_sym = exports.get(right_name)?;
-        self.resolve_alias_symbol(member_sym, visited_aliases)
+
+        // First try direct exports
+        if let Some(&member_sym) = exports.get(right_name) {
+            return self.resolve_alias_symbol(member_sym, visited_aliases);
+        }
+
+        // If not found in direct exports, check for re-exports
+        // This handles cases like: export { foo } from './bar'
+        if let Some(ref module_specifier) = left_symbol.import_module {
+            if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
+                module_specifier,
+                right_name,
+                visited_aliases
+            ) {
+                return Some(reexported_sym);
+            }
+        }
+
+        None
+    }
+
+    /// Resolve a re-exported member symbol by following re-export chains.
+    ///
+    /// This function handles cases where a namespace member is re-exported from
+    /// another module using `export { foo } from './bar'` or `export * from './bar'`.
+    fn resolve_reexported_member_symbol(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<SymbolId> {
+        // First, check if it's a direct export from this module
+        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
+            if let Some(&sym_id) = module_exports.get(member_name) {
+                return self.resolve_alias_symbol(sym_id, visited_aliases);
+            }
+        }
+
+        // Check for named re-exports: `export { foo } from 'bar'`
+        if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
+            if let Some((source_module, original_name)) = file_reexports.get(member_name) {
+                let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
+                return self.resolve_reexported_member_symbol(source_module, name_to_lookup, visited_aliases);
+            }
+        }
+
+        // Check for wildcard re-exports: `export * from 'bar'`
+        if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
+            for source_module in source_modules {
+                if let Some(sym_id) = self.resolve_reexported_member_symbol(source_module, member_name, visited_aliases) {
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        None
     }
 
     // =========================================================================

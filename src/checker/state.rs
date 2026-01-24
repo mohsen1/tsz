@@ -1459,6 +1459,103 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Resolve a re-exported member from a module by following re-export chains.
+    ///
+    /// This function handles cases where a namespace member is re-exported from
+    /// another module using `export { foo } from './bar'` or `export * from './bar'`.
+    ///
+    /// ## Re-export Chain Resolution:
+    /// 1. Check if the member is directly exported from the module
+    /// 2. If not, check for named re-exports: `export { foo } from 'bar'`
+    /// 3. If not found, check wildcard re-exports: `export * from 'bar'`
+    /// 4. Recursively follow re-export chains to find the original member
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // bar.ts
+    /// export const foo = 42;
+    ///
+    /// // a.ts
+    /// export { foo } from './bar';
+    ///
+    /// // b.ts
+    /// export * from './a';
+    ///
+    /// // main.ts
+    /// import * as b from './b';
+    /// let x = b.foo;  // Should find foo through re-export chain
+    /// ```
+    fn resolve_reexported_member(
+        &self,
+        module_specifier: &str,
+        member_name: &str,
+        lib_binders: &[Arc<crate::binder::BinderState>],
+    ) -> Option<SymbolId> {
+        use crate::binder::BinderState;
+
+        // First, check if it's a direct export from this module
+        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
+            if let Some(&sym_id) = module_exports.get(member_name) {
+                // Found direct export - but we need to resolve if it's itself a re-export
+                // Get the symbol and check if it's an alias
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    if symbol.flags & crate::binder::symbol_flags::ALIAS != 0 {
+                        // Follow the alias
+                        if let Some(ref import_module) = symbol.import_module {
+                            let export_name = symbol.import_name.as_deref().unwrap_or(member_name);
+                            return self.resolve_reexported_member(import_module, export_name, lib_binders);
+                        }
+                    }
+                }
+                return Some(sym_id);
+            }
+        }
+
+        // Check for named re-exports: `export { foo } from 'bar'`
+        if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
+            if let Some((source_module, original_name)) = file_reexports.get(member_name) {
+                let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
+                return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
+            }
+        }
+
+        // Check for wildcard re-exports: `export * from 'bar'`
+        if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
+            for source_module in source_modules {
+                if let Some(sym_id) = self.resolve_reexported_member(source_module, member_name, lib_binders) {
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        // Check lib binders for the module
+        for lib_binder in lib_binders {
+            // First check lib binder's module_exports
+            if let Some(module_exports) = lib_binder.module_exports.get(module_specifier) {
+                if let Some(&sym_id) = module_exports.get(member_name) {
+                    return Some(sym_id);
+                }
+            }
+            // Then check lib binder's re-exports
+            if let Some(file_reexports) = lib_binder.reexports.get(module_specifier) {
+                if let Some((source_module, original_name)) = file_reexports.get(member_name) {
+                    let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
+                    return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
+                }
+            }
+            // Then check lib binder's wildcard re-exports
+            if let Some(source_modules) = lib_binder.wildcard_reexports.get(module_specifier) {
+                for source_module in source_modules {
+                    if let Some(sym_id) = self.resolve_reexported_member(source_module, member_name, lib_binders) {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Resolve a named type reference to its TypeId.
     ///
     /// This is a core function for resolving type names like `User`, `Array`, `Promise`,
@@ -2433,10 +2530,28 @@ impl<'a> CheckerState<'a> {
             && left_node.kind == SyntaxKind::Identifier as u16
             && let Some(sym_id) = self.resolve_identifier_symbol(qn.left)
             && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-            && let Some(ref exports) = symbol.exports
-            && let Some(member_id) = exports.get(&right_name)
         {
-            member_sym_id_from_symbol = Some(member_id);
+            // Try direct exports first
+            if let Some(ref exports) = symbol.exports
+                && let Some(member_id) = exports.get(&right_name)
+            {
+                member_sym_id_from_symbol = Some(member_id);
+            }
+            // If not found in direct exports, check for re-exports
+            else if let Some(ref exports) = symbol.exports {
+                // The member might be re-exported from another module
+                // Check if this symbol has an import_module (it's an imported namespace)
+                if let Some(ref module_specifier) = symbol.import_module {
+                    // Try to resolve the member through the re-export chain
+                    if let Some(reexported_sym_id) = self.resolve_reexported_member(
+                        module_specifier,
+                        &right_name,
+                        &lib_binders
+                    ) {
+                        member_sym_id_from_symbol = Some(reexported_sym_id);
+                    }
+                }
+            }
         }
 
         // If found via symbol resolution, use it
@@ -2467,10 +2582,27 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_symbol_with_libs(crate::binder::SymbolId(sym_id), &lib_binders)
         {
-            // Check exports table
-            if let Some(ref exports) = symbol.exports
-                && let Some(member_sym_id) = exports.get(&right_name)
-            {
+            // Check exports table for direct export
+            let mut member_sym_id = None;
+            if let Some(ref exports) = symbol.exports {
+                member_sym_id = exports.get(&right_name).copied();
+            }
+
+            // If not found in direct exports, check for re-exports
+            if member_sym_id.is_none() {
+                // The symbol might be an imported namespace - check if it has an import_module
+                if let Some(ref module_specifier) = symbol.import_module {
+                    if let Some(reexported_sym_id) = self.resolve_reexported_member(
+                        module_specifier,
+                        &right_name,
+                        &lib_binders
+                    ) {
+                        member_sym_id = Some(reexported_sym_id);
+                    }
+                }
+            }
+
+            if let Some(member_sym_id) = member_sym_id {
                 // Check value-only, but skip for namespaces since they can be used
                 // to navigate to types (e.g., Outer.Inner.Type)
                 if let Some(member_symbol) = self
