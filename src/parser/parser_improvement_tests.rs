@@ -14,7 +14,7 @@ const fn = (a: number, b: string)
     let _root = parser.parse_source_file();
 
     // Should not have cascading TS1005 errors
-    let ts1005_count = parser.diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1005_count = parser.get_diagnostics().iter().filter(|d| d.code == 1005).count();
     assert!(
         ts1005_count <= 1,
         "Expected at most 1 TS1005 error, got {}",
@@ -38,7 +38,7 @@ function foo(
     let _root = parser.parse_source_file();
 
     // Should not emit TS1005 for missing comma when there's a line break
-    let ts1005_count = parser.diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1005_count = parser.get_diagnostics().iter().filter(|d| d.code == 1005).count();
     assert!(
         ts1005_count <= 1,
         "Expected at most 1 TS1005 error, got {}",
@@ -61,7 +61,7 @@ interface Foo {
     let _root = parser.parse_source_file();
 
     // Should not emit TS2300 for interface merging
-    let ts2300_count = parser.diagnostics.iter().filter(|d| d.code == 2300).count();
+    let ts2300_count = parser.get_diagnostics().iter().filter(|d| d.code == 2300).count();
     assert_eq!(
         ts2300_count, 0,
         "Expected no TS2300 errors for interface merging, got {}",
@@ -83,7 +83,7 @@ function foo(x: number | string): void {
     let _root = parser.parse_source_file();
 
     // Should not emit TS2300 for function overloads
-    let ts2300_count = parser.diagnostics.iter().filter(|d| d.code == 2300).count();
+    let ts2300_count = parser.get_diagnostics().iter().filter(|d| d.code == 2300).count();
     assert_eq!(
         ts2300_count, 0,
         "Expected no TS2300 errors for function overloads, got {}",
@@ -108,7 +108,7 @@ function Utils() {
     let _root = parser.parse_source_file();
 
     // Should not emit TS2300 for namespace + function merging
-    let ts2300_count = parser.diagnostics.iter().filter(|d| d.code == 2300).count();
+    let ts2300_count = parser.get_diagnostics().iter().filter(|d| d.code == 2300).count();
     assert_eq!(
         ts2300_count, 0,
         "Expected no TS2300 errors for namespace+function merging, got {}",
@@ -129,7 +129,7 @@ function foo() {
     let _root = parser.parse_source_file();
 
     // Should not emit TS1005 for missing semicolon after return with line break
-    let ts1005_count = parser.diagnostics.iter().filter(|d| d.code == 1005).count();
+    let ts1005_count = parser.get_diagnostics().iter().filter(|d| d.code == 1005).count();
     assert_eq!(
         ts1005_count, 0,
         "Expected no TS1005 errors for ASI after return, got {}",
@@ -151,9 +151,9 @@ const obj = {
 
     // Should not emit any errors for trailing comma
     assert!(
-        parser.diagnostics.is_empty(),
+        parser.get_diagnostics().is_empty(),
         "Expected no errors for trailing comma in object literal, got {:?}",
-        parser.diagnostics
+        parser.get_diagnostics()
     );
 }
 
@@ -172,9 +172,9 @@ const arr = [
 
     // Should not emit any errors for trailing comma
     assert!(
-        parser.diagnostics.is_empty(),
+        parser.get_diagnostics().is_empty(),
         "Expected no errors for trailing comma in array literal, got {:?}",
-        parser.diagnostics
+        parser.get_diagnostics()
     );
 }
 
@@ -194,8 +194,8 @@ function foo(
 
     // Should not emit any errors for trailing comma in parameters
     assert!(
-        parser.diagnostics.is_empty(),
+        parser.get_diagnostics().is_empty(),
         "Expected no errors for trailing comma in parameters, got {:?}",
-        parser.diagnostics
+        parser.get_diagnostics()
     );
 }

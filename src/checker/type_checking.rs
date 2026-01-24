@@ -15,17 +15,13 @@
 use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::FlowAnalyzer;
 use crate::checker::state::{
-    CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel,
-    ParamTypeResolutionMode, PropertyKey,
+    CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, PropertyKey,
 };
-use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::node::ImportDeclData;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::solver::{
-    CallSignature, ParamInfo, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget,
-};
+use crate::solver::{TypeId, TypePredicateTarget};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
