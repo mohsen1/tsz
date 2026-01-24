@@ -95,6 +95,8 @@ mod operations_tests;
 #[cfg(test)]
 mod subtype_tests;
 #[cfg(test)]
+mod tracer_tests;
+#[cfg(test)]
 mod type_law_tests;
 #[cfg(test)]
 mod types_tests;
