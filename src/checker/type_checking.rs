@@ -1251,7 +1251,7 @@ impl<'a> CheckerState<'a> {
         // Traverse binding elements
         let pattern_kind = pattern_node.kind;
 
-        // TS2461: Check if array destructuring is applied to a non-array type
+        // TS2488: Check if array destructuring is applied to a non-iterable type
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             self.check_array_destructuring_target_type(pattern_idx, pattern_type);
         }
@@ -1335,16 +1335,16 @@ impl<'a> CheckerState<'a> {
 
     /// Check if the target type is valid for array destructuring.
     ///
-    /// Validates that the type is array-like (has iterator, is tuple, or is string).
-    /// Emits TS2461 if the type is not array-like.
+    /// Validates that the type is iterable (has Symbol.iterator, is array/tuple/string).
+    /// Emits TS2488 if the type is not iterable.
     ///
     /// ## Parameters:
     /// - `pattern_idx`: The array binding pattern node index
     /// - `source_type`: The type being destructured
     ///
     /// ## Validation:
-    /// - Checks if the type is array, tuple, string, or has iterator
-    /// - Emits TS2461 for non-array-like types
+    /// - Checks if the type is iterable using is_iterable_type
+    /// - Emits TS2488 for non-iterable types
     fn check_array_destructuring_target_type(
         &mut self,
         pattern_idx: NodeIndex,
@@ -1363,17 +1363,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if the type is array-like (array, tuple, string, or has iterator)
-        let is_array_like = self.is_array_destructurable_type(source_type);
+        // Check if the type is iterable (array, tuple, string, or has Symbol.iterator)
+        let is_iterable = self.is_iterable_type(source_type);
 
-        if !is_array_like {
+        if !is_iterable {
             let type_str = self.format_type(source_type);
             let message =
-                format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
+                format_message(diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR, &[&type_str]);
             self.error_at_node(
                 pattern_idx,
                 &message,
-                diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
             );
         }
     }
