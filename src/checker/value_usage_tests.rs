@@ -288,3 +288,81 @@ const r5 = a % b;  // OK - number modulo
         error_count
     );
 }
+
+#[test]
+fn test_for_of_variable_type_annotation_emits_ts2322() {
+    let source = r#"
+const numbers = [1, 2, 3];
+for (const x: string of numbers) {
+    // Should emit TS2322: number is not assignable to string
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS2322 for for-of variable with incompatible type annotation
+    let ts2322_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .count();
+    assert!(
+        ts2322_count >= 1,
+        "Expected at least 1 TS2322 error, got {}",
+        ts2322_count
+    );
+}
+
+#[test]
+fn test_for_of_variable_compatible_type_no_error() {
+    let source = r#"
+const numbers = [1, 2, 3];
+for (const x: number of numbers) {
+    // OK - number is assignable to number
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should not emit TS2322 for compatible types
+    let ts2322_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Expected no TS2322 errors, got {}",
+        ts2322_count
+    );
+}

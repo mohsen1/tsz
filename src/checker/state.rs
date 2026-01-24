@@ -10420,24 +10420,51 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let declared = if !var_decl.type_annotation.is_none() {
-                self.get_type_from_type_node(var_decl.type_annotation)
+            // If there's a type annotation, check that the element type is assignable to it
+            if !var_decl.type_annotation.is_none() {
+                let declared = self.get_type_from_type_node(var_decl.type_annotation);
+
+                // TS2322: Check that element type is assignable to declared type
+                if declared != TypeId::ANY
+                    && !self.type_contains_error(declared)
+                    && !self.is_assignable_to(element_type, declared)
+                    && !self.should_skip_weak_union_error(element_type, declared, var_decl.name)
+                {
+                    self.error_type_not_assignable_with_reason_at(
+                        element_type,
+                        declared,
+                        var_decl.name,
+                    );
+                }
+
+                // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
+                if let Some(name_node) = self.ctx.arena.get(var_decl.name)
+                    && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                {
+                    self.assign_binding_pattern_symbol_types(var_decl.name, declared);
+                }
+
+                if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
+                    self.cache_symbol_type(sym_id, declared);
+                } else if let Some(sym_id) = self.ctx.binder.get_node_symbol(var_decl.name) {
+                    self.cache_symbol_type(sym_id, declared);
+                }
             } else {
-                element_type
-            };
+                // No type annotation - use element type
+                // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
+                if let Some(name_node) = self.ctx.arena.get(var_decl.name)
+                    && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                {
+                    self.assign_binding_pattern_symbol_types(var_decl.name, element_type);
+                }
 
-            // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
-            if let Some(name_node) = self.ctx.arena.get(var_decl.name)
-                && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-            {
-                self.assign_binding_pattern_symbol_types(var_decl.name, declared);
-            }
-
-            if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
-                self.cache_symbol_type(sym_id, declared);
-            } else if let Some(sym_id) = self.ctx.binder.get_node_symbol(var_decl.name) {
-                self.cache_symbol_type(sym_id, declared);
+                if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
+                    self.cache_symbol_type(sym_id, element_type);
+                } else if let Some(sym_id) = self.ctx.binder.get_node_symbol(var_decl.name) {
+                    self.cache_symbol_type(sym_id, element_type);
+                }
             }
         }
     }
