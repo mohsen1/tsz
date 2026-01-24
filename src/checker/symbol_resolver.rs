@@ -1168,6 +1168,7 @@ impl<'a> CheckerState<'a> {
     /// Parse a boolean option from test file comments.
     ///
     /// Looks for patterns like `// @key: true` or `// @key: false` in the first 32 lines.
+    /// Also handles comma-separated values like `// @strict: true, false` by taking the first value.
     pub(crate) fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
         for line in text.lines().take(32) {
             let trimmed = line.trim();
@@ -1188,11 +1189,19 @@ impl<'a> CheckerState<'a> {
             let Some(colon_pos) = after_key.find(':') else {
                 continue;
             };
-            let value = after_key[colon_pos + 1..].trim();
-            if value.starts_with("true") {
+            let mut value = after_key[colon_pos + 1..].trim();
+
+            // Handle comma-separated values (e.g., "true, false")
+            // Take only the first value before any comma
+            if let Some(comma_pos) = value.find(',') {
+                value = value[..comma_pos].trim();
+            }
+
+            // Now check the cleaned value
+            if value == "true" {
                 return Some(true);
             }
-            if value.starts_with("false") {
+            if value == "false" {
                 return Some(false);
             }
         }
