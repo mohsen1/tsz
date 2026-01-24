@@ -229,6 +229,7 @@ const r2 = a - b;  // OK - number subtraction
 const r3 = a * b;  // OK - number multiplication
 const r4 = a / b;  // OK - number division
 const r5 = a % b;  // OK - number modulo
+const r6 = a ** b;  // OK - number exponentiation
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -255,4 +256,83 @@ const r5 = a % b;  // OK - number modulo
         .filter(|d| d.code == 2362 || d.code == 2363)
         .count();
     assert_eq!(error_count, 0, "Expected no TS2362/TS2363 errors, got {}", error_count);
+}
+
+#[test]
+fn test_exponentiation_on_non_numeric_types_emits_errors() {
+    let source = r#"
+const str = "hello";
+const obj = { a: 1 };
+const r1 = str ** 2;  // TS2362
+const r2 = 10 ** obj;  // TS2363
+const r3 = true ** 2;  // TS2362
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should emit TS2362 for left-hand side and TS2363 for right-hand side
+    let ts2362_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2362)
+        .count();
+    let ts2363_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2363)
+        .count();
+
+    assert!(ts2362_count >= 2, "Expected at least 2 TS2362 errors, got {}", ts2362_count);
+    assert!(ts2363_count >= 1, "Expected at least 1 TS2363 error, got {}", ts2363_count);
+}
+
+#[test]
+fn test_exponentiation_on_numeric_types_no_errors() {
+    let source = r#"
+const a = 10;
+const b = 3;
+const r1 = a ** b;  // OK - number exponentiation
+const r2 = 2 ** 10;  // OK - number exponentiation
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    // Should not emit TS2362 or TS2363 for valid exponentiation
+    let error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2362 || d.code == 2363)
+        .count();
+    assert_eq!(error_count, 0, "Expected no TS2362/TS2363 errors for valid exponentiation, got {}", error_count);
 }

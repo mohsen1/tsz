@@ -1142,9 +1142,9 @@ impl<'a> CheckerState<'a> {
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
-        // Check if this is an arithmetic operator (-, *, /, %)
+        // Check if this is an arithmetic operator (-, *, /, %, **)
         // Note: + is handled separately - it can be string concatenation or arithmetic
-        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%");
+        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "**");
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
