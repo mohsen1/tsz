@@ -8024,4 +8024,72 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    // Section 54: Type Query and This Substitution Utilities
+    // -----------------------------------------------------
+
+    /// Resolve a type query to its structural type.
+    ///
+    /// Type queries (typeof operator) return the type of a symbol.
+    /// This function resolves the type query to the actual type of the symbol.
+    ///
+    /// **Type Queries:**
+    /// - `typeof T` where T is a type query
+    /// - Resolves to the actual type of the referenced symbol
+    /// - Used in `type T = typeof someExpression`
+    ///
+    /// ## Parameters:
+    /// - `type_id`: The type ID (may be a TypeQuery)
+    ///
+    /// ## Returns:
+    /// - The resolved type if this is a type query
+    /// - The original type_id otherwise
+    pub(crate) fn resolve_type_query_to_structural(&mut self, type_id: TypeId) -> TypeId {
+        use crate::binder::SymbolId;
+        use crate::solver::{SymbolRef, TypeKey};
+
+        if let Some(TypeKey::TypeQuery(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) {
+            // Resolve the symbol to its actual type
+            self.get_type_of_symbol(SymbolId(sym_id))
+        } else {
+            type_id
+        }
+    }
+
+    /// Apply `this` type substitution to a call return type.
+    ///
+    /// When calling a method on a class instance, the `this` type in the
+    /// method's return type should be substituted with the actual receiver type.
+    ///
+    /// **This Type Substitution:**
+    /// - Method signatures can use `this` as the return type
+    /// - When called, `this` is replaced with the actual receiver type
+    /// - Enables fluent API patterns like `builder.method().method2()`
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// class Builder {
+    ///   method(): this { return this; }
+    /// }
+    /// const b = new Builder();
+    /// // b.method() has type Builder, not "this"
+    /// ```
+    ///
+    /// ## Parameters:
+    /// - `return_type`: The return type from the function signature
+    /// - `callee_idx`: The callee expression node index
+    ///
+    /// ## Returns:
+    /// - The substituted type if a receiver type exists
+    /// - The original return_type otherwise
+    pub(crate) fn apply_this_substitution_to_call_return(
+        &mut self,
+        return_type: TypeId,
+        callee_idx: NodeIndex,
+    ) -> TypeId {
+        if let Some(receiver_type) = self.get_call_receiver_type(callee_idx) {
+            return self.substitute_this_type(return_type, receiver_type);
+        }
+        return_type
+    }
 }
