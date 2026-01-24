@@ -262,6 +262,40 @@ impl<'a> CheckerState<'a> {
         TypeId::STRING
     }
 
+    /// Get type of variable declaration.
+    ///
+    /// Computes the type of variable declarations like `let x: number = 5` or `const y = "hello"`.
+    /// Returns the type annotation if present, otherwise infers from the initializer.
+    pub(crate) fn get_type_of_variable_declaration(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
+            return TypeId::ERROR;
+        };
+
+        // First check type annotation - this takes precedence
+        if !var_decl.type_annotation.is_none() {
+            return self.get_type_from_type_node(var_decl.type_annotation);
+        }
+
+        if self.is_catch_clause_variable_declaration(idx)
+            && self.ctx.use_unknown_in_catch_variables()
+        {
+            return TypeId::UNKNOWN;
+        }
+
+        // Infer from initializer
+        if !var_decl.initializer.is_none() {
+            return self.get_type_of_node(var_decl.initializer);
+        }
+
+        // No initializer - use UNKNOWN to enforce strict checking
+        // This requires explicit type annotation or prevents unsafe usage
+        TypeId::UNKNOWN
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
