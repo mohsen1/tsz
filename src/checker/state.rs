@@ -18615,7 +18615,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Walk a type node and emit TS2304 for unresolved type names inside complex types.
-    fn check_type_for_missing_names(&mut self, type_idx: NodeIndex) {
+    pub(crate) fn check_type_for_missing_names(&mut self, type_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
@@ -18797,18 +18797,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn check_type_parameters_for_missing_names(
-        &mut self,
-        type_parameters: &Option<crate::parser::NodeList>,
-    ) {
-        let Some(list) = type_parameters else {
-            return;
-        };
-        for &param_idx in &list.nodes {
-            self.check_type_parameter_node_for_missing_names(param_idx);
-        }
-    }
-
     fn push_missing_name_type_parameters(
         &mut self,
         type_parameters: &Option<crate::parser::NodeList>,
@@ -18845,46 +18833,6 @@ impl<'a> CheckerState<'a> {
         }
 
         updates
-    }
-
-    fn check_type_parameter_node_for_missing_names(&mut self, param_idx: NodeIndex) {
-        let Some(param_node) = self.ctx.arena.get(param_idx) else {
-            return;
-        };
-        let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
-            return;
-        };
-        if !param.constraint.is_none() {
-            self.check_type_for_missing_names(param.constraint);
-        }
-        if !param.default.is_none() {
-            self.check_type_for_missing_names(param.default);
-        }
-    }
-
-    fn check_parameter_type_for_missing_names(&mut self, param_idx: NodeIndex) {
-        let Some(param_node) = self.ctx.arena.get(param_idx) else {
-            return;
-        };
-        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-            return;
-        };
-        if !param.type_annotation.is_none() {
-            self.check_type_for_missing_names(param.type_annotation);
-        }
-    }
-
-    fn check_tuple_element_for_missing_names(&mut self, elem_idx: NodeIndex) {
-        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-            return;
-        };
-        if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
-            if let Some(member) = self.ctx.arena.get_named_tuple_member(elem_node) {
-                self.check_type_for_missing_names(member.type_node);
-            }
-            return;
-        }
-        self.check_type_for_missing_names(elem_idx);
     }
 
     fn check_type_member_for_missing_names(&mut self, member_idx: NodeIndex) {
