@@ -471,6 +471,78 @@ impl<'a> CheckerState<'a> {
         TypeId::ANY
     }
 
+    /// Get the type of an interface member.
+    ///
+    /// Returns an object type containing the member. For method signatures,
+    /// creates a callable type. For property signatures, creates a property type.
+    pub(crate) fn get_type_of_interface_member(&mut self, member_idx: NodeIndex) -> TypeId {
+        use crate::interner::Atom;
+        use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+        use crate::solver::{FunctionShape, PropertyInfo};
+
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return TypeId::ERROR;
+        };
+
+        if member_node.kind == METHOD_SIGNATURE || member_node.kind == PROPERTY_SIGNATURE {
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                return TypeId::ERROR;
+            };
+            let name = self.get_property_name(sig.name);
+            let Some(name) = name else {
+                return TypeId::ERROR;
+            };
+            let name_atom = self.ctx.types.intern_string(&name);
+
+            if member_node.kind == METHOD_SIGNATURE {
+                let (type_params, type_param_updates) =
+                    self.push_type_parameters(&sig.type_parameters);
+                let (params, this_type) = self.extract_params_from_signature(sig);
+                let (return_type, type_predicate) =
+                    self.return_type_and_predicate(sig.type_annotation);
+
+                let shape = FunctionShape {
+                    type_params,
+                    params,
+                    this_type,
+                    return_type,
+                    type_predicate,
+                    is_constructor: false,
+                    is_method: true,
+                };
+                self.pop_type_parameters(type_param_updates);
+                let method_type = self.ctx.types.function(shape);
+
+                let prop = PropertyInfo {
+                    name: name_atom,
+                    type_id: method_type,
+                    write_type: method_type,
+                    optional: sig.question_token,
+                    readonly: self.has_readonly_modifier(&sig.modifiers),
+                    is_method: true,
+                };
+                return self.ctx.types.object(vec![prop]);
+            }
+
+            let type_id = if !sig.type_annotation.is_none() {
+                self.get_type_from_type_node(sig.type_annotation)
+            } else {
+                TypeId::ANY
+            };
+            let prop = PropertyInfo {
+                name: name_atom,
+                type_id,
+                write_type: type_id,
+                optional: sig.question_token,
+                readonly: self.has_readonly_modifier(&sig.modifiers),
+                is_method: false,
+            };
+            return self.ctx.types.object(vec![prop]);
+        }
+
+        TypeId::ANY
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
