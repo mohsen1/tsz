@@ -8089,7 +8089,7 @@ impl<'a> CheckerState<'a> {
     /// constructor_access_rank(Some(Protected)) // → 1
     /// constructor_access_rank(None)            // → 0 (Public)
     /// ```
-    fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
+    pub(crate) fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
         match level {
             Some(MemberAccessLevel::Private) => 2,
             Some(MemberAccessLevel::Protected) => 1,
@@ -8099,48 +8099,6 @@ impl<'a> CheckerState<'a> {
 
     // Section 50: Symbol Flags Utilities
     // ----------------------------------
-
-    /// Check if an operator token is an assignment operator.
-    ///
-    /// This function determines whether a given operator token represents
-    /// an assignment operation, including compound assignments.
-    ///
-    /// ## Assignment Operators:
-    /// - **Simple assignment**: `=`
-    /// - **Compound assignments**: `+=`, `-=`, `*=`, `/=`, `%=`, etc.
-    /// - **Bitwise assignments**: `&=`, `|=`, `^=`, `<<=`, `>>=`, `>>>=`
-    /// - **Logical assignments**: `&&=`, `||=`, `??=`
-    /// - **Exponentiation**: `**=`
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// x = 5;        // is_assignment_operator(EqualsToken) → true
-    /// x += 5;       // is_assignment_operator(PlusEqualsToken) → true
-    /// x **= 2;      // is_assignment_operator(AsteriskAsteriskEqualsToken) → true
-    /// x + 5;        // is_assignment_operator(PlusToken) → false
-    /// x === y;      // is_assignment_operator(EqualsEqualsToken) → false
-    /// ```
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
-        matches!(
-            operator,
-            k if k == SyntaxKind::EqualsToken as u16
-                || k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-        )
-    }
 
     /// Get the excluded symbol flags for a given symbol.
     ///
@@ -8976,7 +8934,7 @@ impl<'a> CheckerState<'a> {
     /// type D = "a" | "b";    // (true, false) - union of strings
     /// type E = "a" | 1;      // (true, true) - mixed literals
     /// ```
-    fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
+    pub(crate) fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
         use crate::solver::{IntrinsicKind, TypeKey};
 
         // Use utility methods for literal type checks
