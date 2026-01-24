@@ -285,11 +285,35 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 **Target**: Create/expand `checker/type_computation.rs`
 
-#### 7.1 Identify `get_type_of_*` Functions
-- [ ] List all `get_type_of_*` functions in `checker/state.rs`
-- [ ] Count lines for each function
-- [ ] Identify dependencies between functions
-- [ ] Plan extraction order (least dependent first)
+#### 7.1 Identify `get_type_of_*` Functions ✅ COMPLETE
+- [x] List all `get_type_of_*` functions in `checker/state.rs`
+- [x] Count lines for each function
+- [x] Identify dependencies between functions
+- [x] Plan extraction order (least dependent first)
+
+**Identified Functions**:
+- `get_type_of_node` - Main entry point
+- `get_type_of_identifier` - ~1,183 lines (complex, defer)
+- `get_type_of_symbol` - ~700 lines
+- `get_type_of_conditional_expression` - ✅ **EXTRACTED** (18 lines → type_computation.rs)
+- `get_type_of_array_literal` - ~130 lines
+- `get_type_of_object_literal` - ~280 lines
+- `get_type_of_binary_expression` - ~150 lines
+- `get_type_of_variable_declaration` - ~50 lines
+- `get_type_of_call_expression` - ~900 lines (complex, defer)
+- `get_type_of_new_expression` - ~400 lines
+- `get_type_of_property_access_by_name` - ~50 lines
+- `get_type_of_private_property_access` - ~250 lines
+- `get_type_of_element_access` - ~200 lines
+- `get_type_of_prefix_unary` - ~40 lines
+- `get_type_of_template_expression` - ~30 lines
+- `get_type_of_super_keyword` - ~100 lines
+- `get_type_of_interface_member` - ~170 lines
+- `get_type_of_class_member` - ~40 lines
+- `get_type_of_interface_member_simple` - ~40 lines
+- `get_type_of_assignment_target` - ~80 lines
+
+**Progress**: state.rs 26,217 → 26,197 lines (-20 lines, 1 function extracted)
 
 #### 7.2 Extract Basic Type Computation
 - [ ] Extract `get_type_of_literal` family (~200-300 lines)
