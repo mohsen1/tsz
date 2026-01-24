@@ -3128,9 +3128,22 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ANY;
                 }
 
-                // Check if the global is actually available in lib contexts
-                // First use get_global_type for accurate lookup
+                // Global is available in lib - try to resolve it and get its type
+                // This eliminates "Any poisoning" by actually resolving the symbol
+                // instead of defaulting to Any type which suppresses real type errors.
                 let lib_binders = self.get_lib_binders();
+
+                // First, try to get the symbol from file_locals (contains merged lib symbols)
+                if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                    return self.get_type_of_symbol(sym_id);
+                }
+
+                // Then try lib binders directly (for lib_contexts path)
+                if let Some(sym_id) = self.ctx.binder.get_global_type_with_libs(name, &lib_binders) {
+                    return self.get_type_of_symbol(sym_id);
+                }
+
+                // Check if global is available but we couldn't resolve it
                 let has_global_type = self
                     .ctx
                     .binder
@@ -3138,6 +3151,7 @@ impl<'a> CheckerState<'a> {
                     .is_some();
                 if has_global_type || self.ctx.has_name_in_lib(name) {
                     // Global is available - return ANY to allow property access
+                    // This is a fallback when we can't resolve the symbol properly
                     TypeId::ANY
                 } else {
                     // Global is not available - emit appropriate error
