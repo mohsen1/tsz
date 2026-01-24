@@ -25,6 +25,12 @@ use crate::parser::{
         UnaryExprDataEx, VariableData, VariableDeclarationData,
     },
     node_flags, syntax_kind_ext,
+    parse_rules::{
+        look_ahead_is, look_ahead_is_abstract_declaration, look_ahead_is_accessor_keyword,
+        look_ahead_is_async_declaration, look_ahead_is_const_enum, look_ahead_is_import_call,
+        look_ahead_is_import_equals, look_ahead_is_module_declaration, is_identifier_or_keyword,
+        look_ahead_is_type_alias_declaration,
+    },
 };
 use crate::scanner::SyntaxKind;
 use crate::scanner_impl::{ScannerState, TokenFlags};
@@ -1345,70 +1351,26 @@ impl ParserState {
 
     /// Look ahead to see if we have "async function"
     fn look_ahead_is_async_function(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        // Skip 'async'
-        self.next_token();
-        let is_function = self.is_token(SyntaxKind::FunctionKeyword);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_function
+        look_ahead_is(&mut self.scanner, self.current_token, |token| {
+            token == SyntaxKind::FunctionKeyword
+        })
     }
 
     /// Look ahead to see if "async" is followed by a declaration keyword.
     fn look_ahead_is_async_declaration(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        // Skip 'async'
-        self.next_token();
-        let is_decl = matches!(
-            self.token(),
-            SyntaxKind::ClassKeyword
-                | SyntaxKind::InterfaceKeyword
-                | SyntaxKind::EnumKeyword
-                | SyntaxKind::NamespaceKeyword
-                | SyntaxKind::ModuleKeyword
-        );
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_decl
+        look_ahead_is_async_declaration(&mut self.scanner, self.current_token)
     }
 
     /// Look ahead to see if we have "abstract class"
     fn look_ahead_is_abstract_class(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        // Skip 'abstract'
-        self.next_token();
-        let is_class = self.is_token(SyntaxKind::ClassKeyword);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_class
+        look_ahead_is(&mut self.scanner, self.current_token, |token| {
+            token == SyntaxKind::ClassKeyword
+        })
     }
 
     /// Look ahead to see if "abstract" is followed by another declaration keyword.
     fn look_ahead_is_abstract_declaration(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        self.next_token(); // skip 'abstract'
-        let is_decl = matches!(
-            self.token(),
-            SyntaxKind::InterfaceKeyword
-                | SyntaxKind::EnumKeyword
-                | SyntaxKind::NamespaceKeyword
-                | SyntaxKind::ModuleKeyword
-        );
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_decl
+        look_ahead_is_abstract_declaration(&mut self.scanner, self.current_token)
     }
 
     /// Look ahead to see if "accessor" is followed by a declaration keyword.
@@ -1441,71 +1403,23 @@ impl ParserState {
 
     /// Look ahead to see if we have "import identifier ="
     fn look_ahead_is_import_equals(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        // Skip 'import'
-        self.next_token();
-        // Check for identifier or keyword that can be used as identifier (require, exports, etc.)
-        if !self.is_identifier_or_keyword() {
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-            return false;
-        }
-        // Skip identifier/keyword
-        self.next_token();
-        // Check for '='
-        let is_equals = self.is_token(SyntaxKind::EqualsToken);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_equals
+        look_ahead_is_import_equals(&mut self.scanner, self.current_token, is_identifier_or_keyword)
     }
 
     /// Look ahead to see if we have "import (" (dynamic import call)
     fn look_ahead_is_import_call(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        // Skip 'import'
-        self.next_token();
-        // Check for '(' or '.' (import.meta)
-        let is_call =
-            self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::DotToken);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_call
+        look_ahead_is_import_call(&mut self.scanner, self.current_token)
     }
 
     /// Look ahead to see if "namespace"/"module" starts a declaration.
     /// Updated to recognize anonymous modules: module { ... }
     fn look_ahead_is_module_declaration(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        self.next_token(); // skip namespace/module
-        let is_decl = matches!(
-            self.token(),
-            SyntaxKind::Identifier | SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken
-        );
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_decl
+        look_ahead_is_module_declaration(&mut self.scanner, self.current_token)
     }
 
     /// Look ahead to see if "type" starts a type alias declaration.
     fn look_ahead_is_type_alias_declaration(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        self.next_token(); // skip 'type'
-        let is_decl = self.is_token(SyntaxKind::Identifier);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_decl
+        look_ahead_is_type_alias_declaration(&mut self.scanner, self.current_token)
     }
 
     /// Look ahead to see if we have "identifier :" (labeled statement)
@@ -1525,17 +1439,7 @@ impl ParserState {
 
     /// Look ahead to see if we have "const enum"
     fn look_ahead_is_const_enum(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        // Skip 'const'
-        self.next_token();
-        // Check for 'enum'
-        let is_enum = self.is_token(SyntaxKind::EnumKeyword);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_enum
+        look_ahead_is_const_enum(&mut self.scanner, self.current_token)
     }
 
     /// Parse const enum declaration
