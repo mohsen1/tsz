@@ -6643,4 +6643,91 @@ impl<'a> CheckerState<'a> {
             | None => false,
         }
     }
+
+    // =========================================================================
+    // Section 37: Nullish Type Utilities
+    // =========================================================================
+
+    /// Split a type into its non-nullable part and its nullable cause.
+    /// Returns (non_null_type, nullable_cause) where nullable_cause is the type that makes it nullable.
+    pub(crate) fn split_nullish_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> (Option<TypeId>, Option<TypeId>) {
+        use crate::solver::{IntrinsicKind, TypeKey};
+
+        let Some(key) = self.ctx.types.lookup(type_id) else {
+            return (Some(type_id), None);
+        };
+
+        match key {
+            TypeKey::Intrinsic(IntrinsicKind::Null) => (None, Some(TypeId::NULL)),
+            TypeKey::Intrinsic(IntrinsicKind::Undefined | IntrinsicKind::Void) => {
+                (None, Some(TypeId::UNDEFINED))
+            }
+            TypeKey::Union(members) => {
+                let members = self.ctx.types.type_list(members);
+                let mut non_null = Vec::with_capacity(members.len());
+                let mut nullish = Vec::new();
+
+                for &member in members.iter() {
+                    match self.ctx.types.lookup(member) {
+                        Some(TypeKey::Intrinsic(IntrinsicKind::Null)) => nullish.push(TypeId::NULL),
+                        Some(TypeKey::Intrinsic(
+                            IntrinsicKind::Undefined | IntrinsicKind::Void,
+                        )) => {
+                            nullish.push(TypeId::UNDEFINED);
+                        }
+                        _ => non_null.push(member),
+                    }
+                }
+
+                if nullish.is_empty() {
+                    return (Some(type_id), None);
+                }
+
+                let non_null_type = if non_null.is_empty() {
+                    None
+                } else if non_null.len() == 1 {
+                    Some(non_null[0])
+                } else {
+                    Some(self.ctx.types.union(non_null))
+                };
+
+                let cause = if nullish.len() == 1 {
+                    Some(nullish[0])
+                } else {
+                    Some(self.ctx.types.union(nullish))
+                };
+
+                (non_null_type, cause)
+            }
+            _ => (Some(type_id), None),
+        }
+    }
+
+    /// Report an error for possibly nullish object access.
+    /// Reports the appropriate error code based on the nullable cause type.
+    pub(crate) fn report_possibly_nullish_object(&mut self, idx: NodeIndex, cause: TypeId) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        let (code, message) = if cause == TypeId::NULL {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
+                "Object is possibly 'null'.",
+            )
+        } else if cause == TypeId::UNDEFINED {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
+                "Object is possibly 'undefined'.",
+            )
+        } else {
+            (
+                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
+                "Object is possibly 'null' or 'undefined'.",
+            )
+        };
+
+        self.error_at_node(idx, message, code);
+    }
 }
