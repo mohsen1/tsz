@@ -18,6 +18,7 @@
 pub mod base;
 pub mod flags;
 pub mod node;
+pub mod parse_rules;
 pub mod state;
 
 #[cfg(test)]

@@ -763,8 +763,11 @@ impl BinderState {
             // First pass: collect hoisted declarations
             self.collect_hoisted_declarations(arena, &sf.statements);
 
-            // Process hoisted function declarations first
+            // Process hoisted function declarations first (for hoisting)
             self.process_hoisted_functions(arena);
+
+            // Process hoisted var declarations (for hoisting)
+            self.process_hoisted_vars(arena);
 
             // Second pass: bind each statement
             for &stmt_idx in &sf.statements.nodes {
@@ -979,6 +982,7 @@ impl BinderState {
 
         self.collect_hoisted_declarations(arena, &new_suffix_list);
         self.process_hoisted_functions(arena);
+        self.process_hoisted_vars(arena);
 
         for &stmt_idx in new_suffix_statements {
             self.bind_node(arena, stmt_idx);
@@ -1113,6 +1117,21 @@ impl BinderState {
                 // Also add to persistent scope
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
             }
+        }
+    }
+
+    /// Process hoisted var declarations.
+    /// Var declarations are hoisted to the top of their function/global scope.
+    fn process_hoisted_vars(&mut self, arena: &NodeArena) {
+        let hoisted_vars = std::mem::take(&mut self.hoisted_vars);
+        for (name, decl_idx) in hoisted_vars {
+            // Declare the var symbol with FUNCTION_SCOPED_VARIABLE flag
+            // This makes it accessible before its actual declaration point
+            let is_exported = self.is_node_exported(arena, decl_idx);
+            let sym_id = self.declare_symbol(&name, symbol_flags::FUNCTION_SCOPED_VARIABLE, decl_idx, is_exported);
+
+            // Also add to persistent scope
+            self.declare_in_persistent_scope(name, sym_id);
         }
     }
 

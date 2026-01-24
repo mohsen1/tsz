@@ -8,7 +8,8 @@
 //! 3. Make transform state explicit and easier to pass around
 //! 4. Enable transforms to manage their own state without bloating Printer
 
-use crate::emitter::{ModuleKind, NewLineKind, PrinterOptions, ScriptTarget};
+use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
+use crate::emitter::PrinterOptions;
 use crate::transforms::block_scoping_es5::BlockScopeState;
 use crate::transforms::private_fields_es5::PrivateFieldState;
 

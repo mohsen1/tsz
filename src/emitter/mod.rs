@@ -22,6 +22,7 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
+use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
 use crate::parser::node::{Node, NodeArena};
@@ -32,6 +33,7 @@ use crate::transform_context::{IdentifierId, TransformContext, TransformDirectiv
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use std::sync::Arc;
 
+mod binding_patterns;
 mod comment_helpers;
 mod comments;
 mod declarations;
@@ -45,6 +47,7 @@ mod jsx;
 mod literals;
 mod module_emission;
 mod module_wrapper;
+mod special_expressions;
 mod statements;
 mod template_literals;
 mod types;
@@ -53,51 +56,12 @@ pub use comments::{
     CommentKind, CommentRange, get_leading_comment_ranges, get_trailing_comment_ranges,
 };
 
+// Re-export common types for backward compatibility
+pub use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
+
 // =============================================================================
 // Emitter Options
 // =============================================================================
-
-/// ECMAScript target version.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ScriptTarget {
-    ES3 = 0,
-    ES5 = 1,
-    ES2015 = 2,
-    ES2016 = 3,
-    ES2017 = 4,
-    ES2018 = 5,
-    ES2019 = 6,
-    ES2020 = 7,
-    ES2021 = 8,
-    ES2022 = 9,
-    #[default]
-    ESNext = 99,
-}
-
-/// Module system kind.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ModuleKind {
-    #[default]
-    None = 0,
-    CommonJS = 1,
-    AMD = 2,
-    UMD = 3,
-    System = 4,
-    ES2015 = 5,
-    ES2020 = 6,
-    ES2022 = 7,
-    ESNext = 99,
-    Node16 = 100,
-    NodeNext = 199,
-}
-
-/// New line kind.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum NewLineKind {
-    #[default]
-    LineFeed = 0,
-    CarriageReturnLineFeed = 1,
-}
 
 /// Printer configuration options.
 #[derive(Clone, Debug)]
@@ -1614,66 +1578,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    // =========================================================================
-    // Yield and Await
-    // =========================================================================
-
-    fn emit_yield_expression(&mut self, node: &Node) {
-        // YieldExpression is stored with UnaryExprData (operand = expression, operator = asterisk flag)
-        let Some(unary) = self.arena.get_unary_expr(node) else {
-            self.write("yield");
-            return;
-        };
-
-        self.write("yield");
-        // Check if this is yield* (operator stores asterisk flag as SyntaxKind)
-        if unary.operator == crate::scanner::SyntaxKind::AsteriskToken as u16 {
-            self.write("*");
-        }
-        if !unary.operand.is_none() {
-            self.write(" ");
-            self.emit_expression(unary.operand);
-        }
-    }
-
-    fn emit_await_expression(&mut self, node: &Node) {
-        // AwaitExpression is stored with UnaryExprData
-        let Some(unary) = self.arena.get_unary_expr(node) else {
-            self.write("await");
-            return;
-        };
-
-        self.write("await ");
-        self.emit_expression(unary.operand);
-    }
-
-    fn emit_spread_element(&mut self, node: &Node) {
-        let Some(spread) = self.arena.get_spread(node) else {
-            self.write("...");
-            return;
-        };
-
-        self.write("...");
-        self.emit_expression(spread.expression);
-    }
-
-    // =========================================================================
-    // Decorators
-    // =========================================================================
-
-    fn emit_decorator(&mut self, node: &Node) {
-        // In ES5 mode, decorators are not supported - skip them entirely
-        if self.ctx.target_es5 {
-            return;
-        }
-
-        let Some(decorator) = self.arena.get_decorator(node) else {
-            return;
-        };
-
-        self.write("@");
-        self.emit(decorator.expression);
-    }
 
     // =========================================================================
     // Source File
@@ -1882,76 +1786,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    // =========================================================================
-    // Binding Patterns (Destructuring)
-    // =========================================================================
-
-    /// Emit an object binding pattern: { x, y }
-    fn emit_object_binding_pattern(&mut self, node: &Node) {
-        let Some(pattern) = self.arena.get_binding_pattern(node) else {
-            return;
-        };
-
-        self.write("{ ");
-        self.emit_comma_separated(&pattern.elements.nodes);
-        self.write(" }");
-    }
-
-    /// Emit an array binding pattern: [x, y]
-    fn emit_array_binding_pattern(&mut self, node: &Node) {
-        let Some(pattern) = self.arena.get_binding_pattern(node) else {
-            return;
-        };
-
-        self.write("[");
-        self.emit_comma_separated(&pattern.elements.nodes);
-        self.write("]");
-    }
-
-    /// Emit a binding element: x or x = default or propertyName: x
-    fn emit_binding_element(&mut self, node: &Node) {
-        let Some(elem) = self.arena.get_binding_element(node) else {
-            return;
-        };
-
-        // Rest element: ...x
-        if elem.dot_dot_dot_token {
-            self.write("...");
-        }
-
-        // propertyName: name  or just name
-        if !elem.property_name.is_none() {
-            self.emit(elem.property_name);
-            self.write(": ");
-        }
-
-        self.emit(elem.name);
-
-        // Default value: = expr
-        if !elem.initializer.is_none() {
-            self.write(" = ");
-            self.emit(elem.initializer);
-        }
-    }
-
-    /// Get the next temporary variable name (_a, _b, _c, etc.)
-    fn get_temp_var_name(&mut self) -> String {
-        let name = format!(
-            "_{}",
-            (b'a' + (self.ctx.destructuring_state.temp_var_counter % 26) as u8) as char
-        );
-        self.ctx.destructuring_state.temp_var_counter += 1;
-        name
-    }
-
-    /// Check if a node is a binding pattern
-    fn is_binding_pattern(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-        node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-    }
 }
 
 // =============================================================================

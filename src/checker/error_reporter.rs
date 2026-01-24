@@ -966,7 +966,11 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .min()
                 .copied()
-                .unwrap();
+                .unwrap_or_else(|| {
+                    // This should never happen as we have a non-empty array
+                    // but provide a safe fallback
+                    usize::MAX
+                });
             }
         }
 

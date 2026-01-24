@@ -910,10 +910,10 @@ impl TypeInterner {
         }
 
         // Second pass: check if we have a matching primitive
-        if let Some(lit_class) = literal_class {
+        if let (Some(lit_class), Some(literal_val)) = (literal_class, literal) {
             for &member in members {
                 if let Some(class) = self.primitive_class_for(member) {
-                    if class == lit_class && member != literal.unwrap() {
+                    if class == lit_class && member != literal_val {
                         has_primitive = true;
                         break;
                     }
