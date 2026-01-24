@@ -13,7 +13,7 @@
 //! operations, providing cleaner APIs for literal type checking.
 
 use crate::checker::state::CheckerState;
-use crate::solver::{LiteralValue, TypeId, TypeKey};
+use crate::solver::{LiteralValue, OrderedFloat, TypeId, TypeKey};
 
 // =============================================================================
 // Literal Type Utilities
@@ -54,15 +54,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check if a type is any literal type.
-    ///
-    /// Returns true for string, number, or boolean literal types.
-    pub fn is_literal_type(&self, type_id: TypeId) -> bool {
-        matches!(
-            self.ctx.types.lookup(type_id),
-            Some(TypeKey::Literal(_))
-        )
-    }
+    // Note: `is_literal_type` is defined in type_computation.rs
 
     // =========================================================================
     // Literal Type Creation
@@ -84,7 +76,7 @@ impl<'a> CheckerState<'a> {
     pub fn create_number_literal(&self, value: f64) -> TypeId {
         self.ctx
             .types
-            .intern(TypeKey::Literal(LiteralValue::Number(value)))
+            .intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(value))))
     }
 
     /// Create a boolean literal type.
@@ -119,7 +111,7 @@ impl<'a> CheckerState<'a> {
     /// or None otherwise.
     pub fn get_number_literal_value(&self, type_id: TypeId) -> Option<f64> {
         match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::Number(value))) => Some(*value),
+            Some(TypeKey::Literal(LiteralValue::Number(value))) => Some(value.0),
             _ => None,
         }
     }
@@ -130,54 +122,12 @@ impl<'a> CheckerState<'a> {
     /// or None otherwise.
     pub fn get_boolean_literal_value(&self, type_id: TypeId) -> Option<bool> {
         match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::Boolean(value))) => Some(*value),
+            Some(TypeKey::Literal(LiteralValue::Boolean(value))) => Some(value),
             _ => None,
         }
     }
 
-    // =========================================================================
-    // Literal Type Widening
-    // =========================================================================
-
-    /// Get the widened type for a literal type.
-    ///
-    /// Literal types are widened to their primitive types in certain contexts:
-    /// - String literals → `string`
-    /// - Number literals → `number`
-    /// - Boolean literals → `boolean`
-    ///
-    /// This function performs that widening.
-    pub fn widen_literal_type(&self, type_id: TypeId) -> TypeId {
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(_)) => {
-                // Determine the primitive type based on the literal
-                if type_id == TypeId::STRING {
-                    TypeId::STRING
-                } else if type_id == TypeId::NUMBER {
-                    TypeId::NUMBER
-                } else if type_id == TypeId::BOOLEAN {
-                    TypeId::BOOLEAN
-                } else {
-                    match type_id {
-                        TypeId::NULL | TypeId::UNDEFINED => type_id,
-                        _ => {
-                            // Check the literal kind
-                            if self.is_string_literal_type(type_id) {
-                                TypeId::STRING
-                            } else if self.is_number_literal_type(type_id) {
-                                TypeId::NUMBER
-                            } else if self.is_boolean_literal_type(type_id) {
-                                TypeId::BOOLEAN
-                            } else {
-                                type_id
-                            }
-                        }
-                    }
-                }
-            }
-            _ => type_id,
-        }
-    }
+    // Note: `widen_literal_type` is defined in state.rs
 
     // =========================================================================
     // Literal Type Comparison

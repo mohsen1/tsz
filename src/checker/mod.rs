@@ -36,6 +36,7 @@ pub mod flow_narrowing;
 pub mod intersection_type;
 pub mod iterable_checker;
 pub mod jsx;
+pub mod literal_type;
 pub mod nullish;
 pub mod optional_chain;
 pub mod promise_checker;
