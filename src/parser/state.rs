@@ -962,6 +962,16 @@ impl ParserState {
         }
     }
 
+    /// Create a NodeList with trailing comma information
+    fn make_node_list_with_trailing_comma(&self, nodes: Vec<NodeIndex>, has_trailing_comma: bool) -> NodeList {
+        NodeList {
+            nodes,
+            pos: 0,
+            end: 0,
+            has_trailing_comma,
+        }
+    }
+
     /// Get operator precedence
     fn get_operator_precedence(&self, token: SyntaxKind) -> u8 {
         match token {
@@ -2126,6 +2136,7 @@ impl ParserState {
     /// Parse parameter list
     fn parse_parameter_list(&mut self) -> NodeList {
         let mut params = Vec::new();
+        let mut has_trailing_comma = false;
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
             let param = self.parse_parameter();
@@ -2143,9 +2154,12 @@ impl ParserState {
                 }
                 break;
             }
+            // We saw a comma after a parameter
+            // If we're now at CloseParenToken, it's a trailing comma
+            has_trailing_comma = self.is_token(SyntaxKind::CloseParenToken);
         }
 
-        self.make_node_list(params)
+        self.make_node_list_with_trailing_comma(params, has_trailing_comma)
     }
 
     /// Check if current token is a parameter modifier
@@ -4278,6 +4292,7 @@ impl ParserState {
     fn parse_enum_members(&mut self) -> NodeList {
         use crate::checker::types::diagnostics::diagnostic_codes;
         let mut members = Vec::new();
+        let mut has_trailing_comma = false;
 
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
@@ -4334,9 +4349,12 @@ impl ParserState {
                 }
                 break;
             }
+            // We saw a comma after an enum member
+            // If we're now at CloseBraceToken, it's a trailing comma
+            has_trailing_comma = self.is_token(SyntaxKind::CloseBraceToken);
         }
 
-        self.make_node_list(members)
+        self.make_node_list_with_trailing_comma(members, has_trailing_comma)
     }
 
     // =========================================================================
@@ -6374,6 +6392,7 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::LessThanToken);
 
+        let mut has_trailing_comma = false;
         while !self.is_greater_than_or_compound() && !self.is_token(SyntaxKind::EndOfFileToken) {
             let param = self.parse_type_parameter();
             params.push(param);
@@ -6381,11 +6400,14 @@ impl ParserState {
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 break;
             }
+            // We saw a comma after a type parameter
+            // If we're now at > (or >>, >>>), it's a trailing comma
+            has_trailing_comma = self.is_greater_than_or_compound();
         }
 
         self.parse_expected_greater_than();
 
-        self.make_node_list(params)
+        self.make_node_list_with_trailing_comma(params, has_trailing_comma)
     }
 
     /// Parse a single type parameter: T or T extends U or T = Default or T extends U = Default
@@ -7893,6 +7915,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBracketToken);
 
         let mut elements = Vec::new();
+        let mut has_trailing_comma = false;
         while !self.is_token(SyntaxKind::CloseBracketToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -7941,6 +7964,9 @@ impl ParserState {
                     break;
                 }
             }
+            // We saw a comma after an element
+            // If we're now at CloseBracketToken, it's a trailing comma
+            has_trailing_comma = self.is_token(SyntaxKind::CloseBracketToken);
         }
 
         let end_pos = self.token_end();
@@ -7951,7 +7977,7 @@ impl ParserState {
             start_pos,
             end_pos,
             LiteralExprData {
-                elements: self.make_node_list(elements),
+                elements: self.make_node_list_with_trailing_comma(elements, has_trailing_comma),
                 multi_line: false,
             },
         )
@@ -7987,6 +8013,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut properties = Vec::new();
+        let mut has_trailing_comma = false;
         while !self.is_token(SyntaxKind::CloseBraceToken) {
             let prop = self.parse_property_assignment();
             if !prop.is_none() {
@@ -8006,6 +8033,9 @@ impl ParserState {
                     break;
                 }
             }
+            // We saw a comma after a property
+            // If we're now at CloseBraceToken, it's a trailing comma
+            has_trailing_comma = self.is_token(SyntaxKind::CloseBraceToken);
         }
 
         let end_pos = self.token_end();
@@ -8016,7 +8046,7 @@ impl ParserState {
             start_pos,
             end_pos,
             LiteralExprData {
-                elements: self.make_node_list(properties),
+                elements: self.make_node_list_with_trailing_comma(properties, has_trailing_comma),
                 multi_line: false,
             },
         )
@@ -9758,6 +9788,7 @@ impl ParserState {
 
         let mut args = Vec::new();
         let mut depth = 1;
+        let mut has_trailing_comma = false;
 
         // Parse type arguments
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
@@ -9765,6 +9796,8 @@ impl ParserState {
             if args.is_empty() || self.is_token(SyntaxKind::CommaToken) {
                 if !args.is_empty() {
                     self.next_token(); // consume comma
+                    // Check if this comma is trailing (followed by >)
+                    has_trailing_comma = self.is_greater_than_or_compound();
                 }
 
                 // Check for nested < (generic types within type arguments)
@@ -9798,7 +9831,7 @@ impl ParserState {
                 || self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
                 || self.is_token(SyntaxKind::TemplateHead)
             {
-                return Some(self.make_node_list(args));
+                return Some(self.make_node_list_with_trailing_comma(args, has_trailing_comma));
             }
         }
 
