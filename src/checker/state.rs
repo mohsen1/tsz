@@ -8052,18 +8052,42 @@ impl<'a> CheckerState<'a> {
         match key {
             TypeKey::Ref(SymbolRef(sym_id)) => {
                 let sym_id = SymbolId(sym_id);
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && symbol.flags & symbol_flags::CLASS != 0
-                    && symbol.flags & symbol_flags::MODULE != 0
-                    && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
-                    && let Some(class_node) = self.ctx.arena.get(class_idx)
-                    && let Some(class_data) = self.ctx.arena.get_class(class_node)
-                {
-                    let ctor_type = self.get_class_constructor_type(class_idx, class_data);
-                    if ctor_type == type_id {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    // Handle merged class+namespace symbols - return constructor type
+                    if symbol.flags & symbol_flags::CLASS != 0
+                        && symbol.flags & symbol_flags::MODULE != 0
+                        && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
+                        && let Some(class_node) = self.ctx.arena.get(class_idx)
+                        && let Some(class_data) = self.ctx.arena.get_class(class_node)
+                    {
+                        let ctor_type = self.get_class_constructor_type(class_idx, class_data);
+                        if ctor_type == type_id {
+                            return type_id;
+                        }
+                        return self.resolve_type_for_property_access_inner(ctor_type, visited);
+                    }
+
+                    // Handle aliases to namespaces/modules (e.g., export { Namespace } from './file')
+                    // When accessing Namespace.member, we need to resolve through the alias
+                    if symbol.flags & symbol_flags::ALIAS != 0
+                        && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE | symbol_flags::MODULE) != 0
+                    {
+                        let mut visited_aliases = Vec::new();
+                        if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                            // Get the type of the target namespace/module
+                            let target_type = self.get_type_of_symbol(target_sym_id);
+                            if target_type != type_id {
+                                return self.resolve_type_for_property_access_inner(target_type, visited);
+                            }
+                        }
+                    }
+
+                    // Handle plain namespace/module references
+                    if symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE | symbol_flags::MODULE) != 0 {
+                        // For namespace references, we want to allow accessing its members
+                        // so we return the type as-is (it will be resolved in resolve_namespace_value_member)
                         return type_id;
                     }
-                    return self.resolve_type_for_property_access_inner(ctor_type, visited);
                 }
 
                 let resolved = self.type_reference_symbol_type(sym_id);
