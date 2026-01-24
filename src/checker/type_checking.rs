@@ -3626,5 +3626,70 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    // 22. Type Checking Utilities (2 functions)
+
+    /// Check if a type is narrowable (can be narrowed via control flow).
+    ///
+    /// Narrowable types include unions, type parameters, and infer types.
+    /// These types can be narrowed to more specific types through
+    /// type guards and control flow analysis.
+    ///
+    /// ## Parameters
+    /// - `type_id`: The type ID to check
+    ///
+    /// Returns true if the type can be narrowed.
+    pub(crate) fn is_narrowable_type(&self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        // Check if it's a union type or a type parameter (which can be narrowed)
+        if let Some(key) = self.ctx.types.lookup(type_id)
+            && matches!(
+                key,
+                TypeKey::Union(_) | TypeKey::TypeParameter(_) | TypeKey::Infer(_)
+            )
+        {
+            return true;
+        }
+
+        // Could also check for types that include null/undefined
+        // For now, only narrow unions
+        false
+    }
+
+    /// Check if a node is within another node in the AST tree.
+    ///
+    /// Traverses up the parent chain to check if `node_idx` is a descendant
+    /// of `root_idx`. Used for scope checking and containment analysis.
+    ///
+    /// ## Parameters
+    /// - `node_idx`: The potential descendant node
+    /// - `root_idx`: The potential ancestor node
+    ///
+    /// Returns true if node_idx is within root_idx.
+    pub(crate) fn is_node_within(&self, node_idx: NodeIndex, root_idx: NodeIndex) -> bool {
+        if node_idx == root_idx {
+            return true;
+        }
+        let mut current = node_idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) => ext,
+                None => return false,
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            if ext.parent == root_idx {
+                return true;
+            }
+            current = ext.parent;
+        }
+    }
 }
 

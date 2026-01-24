@@ -4334,24 +4334,6 @@ impl<'a> CheckerState<'a> {
     ///   }
     /// }
     /// ```
-    fn is_narrowable_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        // Check if it's a union type or a type parameter (which can be narrowed)
-        if let Some(key) = self.ctx.types.lookup(type_id)
-            && matches!(
-                key,
-                TypeKey::Union(_) | TypeKey::TypeParameter(_) | TypeKey::Infer(_)
-            )
-        {
-            return true;
-        }
-
-        // Could also check for types that include null/undefined
-        // For now, only narrow unions
-        false
-    }
-
     /// Check if definite assignment analysis should be performed for a symbol.
     ///
     /// Definite assignment analysis ensures that block-scoped variables (let/const)
@@ -4857,31 +4839,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if node_idx is the same as or within the subtree of root_idx.
-    fn is_node_within(&self, node_idx: NodeIndex, root_idx: NodeIndex) -> bool {
-        if node_idx == root_idx {
-            return true;
-        }
-        let mut current = node_idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            let ext = match self.ctx.arena.get_extended(current) {
-                Some(ext) => ext,
-                None => return false,
-            };
-            if ext.parent.is_none() {
-                return false;
-            }
-            if ext.parent == root_idx {
-                return true;
-            }
-            current = ext.parent;
-        }
-    }
-
     /// Find the enclosing static block for a node, if any.
     ///
     /// Returns the NodeIndex of the CLASS_STATIC_BLOCK_DECLARATION if the node is inside one.
