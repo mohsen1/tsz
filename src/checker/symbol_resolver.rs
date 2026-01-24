@@ -125,4 +125,136 @@ impl<'a> CheckerState<'a> {
             .map(|symbol| symbol.is_type_only)
             .unwrap_or(false)
     }
+
+    // =========================================================================
+    // Symbol Property Queries
+    // =========================================================================
+
+    /// Get the value declaration of a symbol.
+    ///
+    /// Returns the primary value declaration node for the symbol, if any.
+    pub fn get_symbol_value_declaration(&self, sym_id: SymbolId) -> Option<crate::parser::NodeIndex> {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .and_then(|symbol| {
+                let decl = symbol.value_declaration;
+                if decl.0 != u32::MAX {
+                    Some(decl)
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Get all declarations for a symbol.
+    ///
+    /// Returns all declaration nodes associated with the symbol.
+    pub fn get_symbol_declarations(&self, sym_id: SymbolId) -> Vec<crate::parser::NodeIndex> {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.declarations.clone())
+            .unwrap_or_default()
+    }
+
+    /// Check if a symbol has a specific flag.
+    ///
+    /// Returns true if the symbol has the specified flag bit set.
+    pub fn symbol_has_flag(&self, sym_id: SymbolId, flag: u32) -> bool {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| (symbol.flags & flag) != 0)
+            .unwrap_or(false)
+    }
+
+    /// Check if a symbol is a class symbol.
+    ///
+    /// Returns true if any of the symbol's declarations is a class declaration.
+    pub fn is_class_symbol(&self, sym_id: SymbolId) -> bool {
+        self.get_symbol_declarations(sym_id)
+            .iter()
+            .any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_class(node))
+                    .is_some()
+            })
+    }
+
+    /// Check if a symbol is an interface symbol.
+    ///
+    /// Returns true if any of the symbol's declarations is an interface declaration.
+    pub fn is_interface_symbol(&self, sym_id: SymbolId) -> bool {
+        self.get_symbol_declarations(sym_id)
+            .iter()
+            .any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_interface(node))
+                    .is_some()
+            })
+    }
+
+    /// Check if a symbol is an enum symbol.
+    ///
+    /// Returns true if any of the symbol's declarations is an enum declaration.
+    pub fn is_enum_symbol(&self, sym_id: SymbolId) -> bool {
+        self.get_symbol_declarations(sym_id)
+            .iter()
+            .any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_enum_declaration(node))
+                    .is_some()
+            })
+    }
+
+    /// Check if a symbol is a type alias symbol.
+    ///
+    /// Returns true if any of the symbol's declarations is a type alias declaration.
+    pub fn is_type_alias_symbol(&self, sym_id: SymbolId) -> bool {
+        self.get_symbol_declarations(sym_id)
+            .iter()
+            .any(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_type_alias(node))
+                    .is_some()
+            })
+    }
+
+    /// Get the flags for a symbol.
+    ///
+    /// Returns the symbol's flag bits, or 0 if the symbol doesn't exist.
+    pub fn get_symbol_flags(&self, sym_id: SymbolId) -> u32 {
+        self.ctx
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|symbol| symbol.flags)
+            .unwrap_or(0)
+    }
+
+    /// Check if a symbol is declared as const.
+    ///
+    /// Returns true if the symbol has the const flag set.
+    pub fn is_const_symbol(&self, sym_id: SymbolId) -> bool {
+        self.symbol_has_flag(sym_id, crate::binder::symbol_flags::CONST)
+    }
+
+    /// Check if a symbol is declared as let.
+    ///
+    /// Returns true if the symbol has the let flag set.
+    pub fn is_let_symbol(&self, sym_id: SymbolId) -> bool {
+        self.symbol_has_flag(sym_id, crate::binder::symbol_flags::LET)
+    }
 }
