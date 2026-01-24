@@ -1635,107 +1635,6 @@ impl<'a> CheckerState<'a> {
         lib_type_id
     }
 
-    fn lookup_type_parameter(&self, name: &str) -> Option<TypeId> {
-        self.ctx.type_parameter_scope.get(name).copied()
-    }
-
-    /// Get all type parameter bindings for passing to TypeLowering.
-    pub(crate) fn get_type_param_bindings(&self) -> Vec<(crate::interner::Atom, TypeId)> {
-        self.ctx
-            .type_parameter_scope
-            .iter()
-            .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
-            .collect()
-    }
-
-    /// Extract the module specifier from a require() call expression or
-    /// a string literal (for import equals declarations where the parser
-    /// stores only the string literal, not the full require() call).
-    /// Returns the module path string (e.g., './util' from require('./util')).
-    fn resolve_require_call_symbol(
-        &self,
-        idx: NodeIndex,
-        _visited_aliases: Option<&mut Vec<SymbolId>>,
-    ) -> Option<SymbolId> {
-        // For require() calls, we don't resolve to a single symbol.
-        // Instead, compute_type_of_symbol handles this by creating a module namespace type.
-        // This function now just returns None to indicate no single symbol resolution.
-        let _ = self.get_require_module_specifier(idx)?;
-        // Module resolution for require() is handled in compute_type_of_symbol
-        // by creating an object type from module_exports.
-        None
-    }
-
-    fn missing_type_query_left(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return None;
-            }
-            let node = self.ctx.arena.get(current)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                if self.resolve_identifier_symbol(current).is_none() {
-                    return Some(current);
-                }
-                return None;
-            }
-            if node.kind != syntax_kind_ext::QUALIFIED_NAME {
-                return None;
-            }
-            let qn = self.ctx.arena.get_qualified_name(node)?;
-            current = qn.left;
-        }
-    }
-
-    fn report_type_query_missing_member(&mut self, idx: NodeIndex) -> bool {
-        let node = match self.ctx.arena.get(idx) {
-            Some(node) => node,
-            None => return false,
-        };
-        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
-            return false;
-        }
-        let qn = match self.ctx.arena.get_qualified_name(node) {
-            Some(qn) => qn,
-            None => return false,
-        };
-
-        let left_sym = match self.resolve_qualified_symbol(qn.left) {
-            Some(sym) => sym,
-            None => return false,
-        };
-        let left_symbol = match self.ctx.binder.get_symbol(left_sym) {
-            Some(symbol) => symbol,
-            None => return false,
-        };
-        let exports = match left_symbol.exports.as_ref() {
-            Some(exports) => exports,
-            None => return false,
-        };
-        let right_name = match self
-            .ctx
-            .arena
-            .get(qn.right)
-            .and_then(|node| self.ctx.arena.get_identifier(node))
-            .map(|ident| ident.escaped_text.clone())
-        {
-            Some(name) => name,
-            None => return false,
-        };
-
-        if exports.has(&right_name) {
-            return false;
-        }
-
-        let namespace_name = self
-            .entity_name_text(qn.left)
-            .unwrap_or_else(|| left_symbol.escaped_name.clone());
-        self.error_namespace_no_export(&namespace_name, &right_name, qn.right);
-        true
-    }
-
     pub(crate) fn resolve_alias_symbol(
         &self,
         sym_id: SymbolId,
@@ -1790,58 +1689,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let qn = self.ctx.arena.get_qualified_name(node)?;
-            let left = self.entity_name_text(qn.left)?;
-            let right = self.entity_name_text(qn.right)?;
-            let mut combined = String::with_capacity(left.len() + 1 + right.len());
-            combined.push_str(&left);
-            combined.push('.');
-            combined.push_str(&right);
-            return Some(combined);
-        }
-        None
-    }
-
-    pub(crate) fn resolve_heritage_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
-        let node = self.ctx.arena.get(idx)?;
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self.resolve_identifier_symbol(idx);
-        }
-
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return self.resolve_qualified_symbol(idx);
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = self.ctx.arena.get_access_expr(node)?;
-            let left_sym = self.resolve_heritage_symbol(access.expression)?;
-            let name = self
-                .ctx
-                .arena
-                .get(access.name_or_argument)
-                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map(|ident| ident.escaped_text.clone())?;
-            let left_symbol = self.ctx.binder.get_symbol(left_sym)?;
-            let exports = left_symbol.exports.as_ref()?;
-            return exports.get(&name);
-        }
-
-        None
-    }
-
-    /// Check if an expression is a property access on an unresolved import.
-    /// Used to suppress TS2304 errors when TS2307 was already emitted for the module.
     /// Check if an identifier refers to an import from an unresolved module.
     pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
         let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
@@ -2477,28 +2324,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => {}
-        }
-    }
-
-    pub(crate) fn resolve_type_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
-        let sym_id = self.resolve_qualified_symbol(idx)?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        if (symbol.flags & symbol_flags::TYPE) != 0 {
-            Some(sym_id.0)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn resolve_value_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
-        let sym_id = self.resolve_qualified_symbol(idx)?;
-        let lib_binders = self.get_lib_binders();
-        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
-            Some(sym_id.0)
-        } else {
-            None
         }
     }
 
@@ -10440,10 +10265,6 @@ impl<'a> CheckerState<'a> {
         ident.escaped_text == "globalThis"
     }
 
-    fn resolve_global_value_symbol(&self, name: &str) -> Option<SymbolId> {
-        self.ctx.binder.file_locals.get(name)
-    }
-
     pub(crate) fn is_known_global_value_name(&self, name: &str) -> bool {
         matches!(
             name,
@@ -10813,65 +10634,6 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id)
     }
 
-    fn resolve_no_implicit_any_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitany") {
-            return value;
-        }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
-        }
-        self.ctx.no_implicit_any() // Use the value from the strict flag
-    }
-
-    fn resolve_no_implicit_returns_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitreturns") {
-            return value;
-        }
-        // noImplicitReturns is NOT enabled by strict mode by default
-        false
-    }
-
-    fn resolve_use_unknown_in_catch_variables_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@useunknownincatchvariables") {
-            return value;
-        }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
-        }
-        self.ctx.use_unknown_in_catch_variables() // Use the value from the strict flag
-    }
-
-    fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
-        for line in text.lines().take(32) {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let is_comment =
-                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
-            if !is_comment {
-                break;
-            }
-
-            let lower = trimmed.to_ascii_lowercase();
-            let Some(pos) = lower.find(key) else {
-                continue;
-            };
-            let after_key = &lower[pos + key.len()..];
-            let Some(colon_pos) = after_key.find(':') else {
-                continue;
-            };
-            let value = after_key[colon_pos + 1..].trim();
-            if value.starts_with("true") {
-                return Some(true);
-            }
-            if value.starts_with("false") {
-                return Some(false);
-            }
-        }
-        None
-    }
-
     // =========================================================================
     // Source File Checking (Full Traversal)
     // =========================================================================
@@ -10959,34 +10721,6 @@ impl<'a> CheckerState<'a> {
                 self.check_unused_declarations();
             }
         }
-    }
-
-    fn resolve_duplicate_decl_node(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = decl_idx;
-        for _ in 0..8 {
-            let node = self.ctx.arena.get(current)?;
-            match node.kind {
-                syntax_kind_ext::VARIABLE_DECLARATION
-                | syntax_kind_ext::FUNCTION_DECLARATION
-                | syntax_kind_ext::CLASS_DECLARATION
-                | syntax_kind_ext::INTERFACE_DECLARATION
-                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                | syntax_kind_ext::ENUM_DECLARATION
-                | syntax_kind_ext::GET_ACCESSOR
-                | syntax_kind_ext::SET_ACCESSOR
-                | syntax_kind_ext::CONSTRUCTOR => {
-                    return Some(current);
-                }
-                _ => {}
-            }
-
-            let parent = self.ctx.arena.get_extended(current).map(|ext| ext.parent)?;
-            if parent.is_none() {
-                return None;
-            }
-            current = parent;
-        }
-        None
     }
 
     pub(crate) fn declaration_symbol_flags(&self, decl_idx: NodeIndex) -> Option<u32> {
@@ -13954,68 +13688,6 @@ impl<'a> CheckerState<'a> {
                     current = base_idx;
                 }
             }
-        }
-
-        None
-    }
-
-    pub(crate) fn resolve_class_for_access(
-        &mut self,
-        expr_idx: NodeIndex,
-        object_type: TypeId,
-    ) -> Option<(NodeIndex, bool)> {
-        if self.is_this_expression(expr_idx)
-            && let Some(ref class_info) = self.ctx.enclosing_class
-        {
-            return Some((class_info.class_idx, self.is_constructor_type(object_type)));
-        }
-
-        if self.is_super_expression(expr_idx)
-            && let Some(ref class_info) = self.ctx.enclosing_class
-            && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
-        {
-            return Some((base_idx, self.is_constructor_type(object_type)));
-        }
-
-        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::CLASS != 0
-            && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
-        {
-            return Some((class_idx, true));
-        }
-
-        if object_type != TypeId::ANY
-            && object_type != TypeId::ERROR
-            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
-        {
-            return Some((class_idx, false));
-        }
-
-        None
-    }
-
-    pub(crate) fn resolve_receiver_class_for_access(
-        &self,
-        expr_idx: NodeIndex,
-        object_type: TypeId,
-    ) -> Option<NodeIndex> {
-        if self.is_this_expression(expr_idx) || self.is_super_expression(expr_idx) {
-            return self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
-        }
-
-        if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::CLASS != 0
-        {
-            return self.get_class_declaration_from_symbol(sym_id);
-        }
-
-        if object_type != TypeId::ANY
-            && object_type != TypeId::ERROR
-            && let Some(class_idx) = self.get_class_decl_from_type(object_type)
-        {
-            return Some(class_idx);
         }
 
         None
