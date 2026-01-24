@@ -1523,10 +1523,8 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         member_name: &str,
-        lib_binders: &[Arc<crate::binder::BinderState>],
+        lib_binders: &[std::sync::Arc<crate::binder::BinderState>],
     ) -> Option<SymbolId> {
-        use crate::binder::BinderState;
-
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
             if let Some(sym_id) = module_exports.get(member_name) {
@@ -1549,7 +1547,7 @@ impl<'a> CheckerState<'a> {
         if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
             if let Some((source_module, original_name)) = file_reexports.get(member_name) {
                 let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
+                return self.resolve_reexported_member(source_module, &name_to_lookup, lib_binders);
             }
         }
 
