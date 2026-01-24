@@ -16,7 +16,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 | File | Original Lines | Current Lines | Reduction | Status | Priority |
 |------|---------------|---------------|-----------|--------|----------|
 | `checker/state.rs` | 26,217 | **13,468** | **48.6%** | 🚧 In Progress | **P1 (CURRENT)** |
-| `parser/state.rs` | 10,763 | 10,763 | 0% | 📋 Planned | **P3 (MEDIUM)** |
+| `parser/state.rs` | 10,763 | **10,667** | **96 (1%)** | 🚧 In Progress | **P3 (MEDIUM)** |
 | `solver/evaluate.rs` | 5,784 | 5,784 | 0% | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 5,000+ | 1,778 | 64% | ✅ **COMPLETE** | P1 (DONE) |
 | `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (Step 14.2/14.3 planned) |
@@ -1138,14 +1138,24 @@ solver/
 ## Priority 3: parser/state.rs (Medium Priority)
 
 **Goal**: Reduce from 10,763 lines to ~3,000 lines (72% reduction)
-**Status**: 🚧 In Progress (Step 15 analysis complete)
+**Status**: 🚧 In Progress (Step 15.1-15.2 complete)
 **Key Challenge**: Eliminate code duplication in modifier/declare parsing
 
-### Step 15: parser/state.rs Decomposition - Analysis & Planning ✅ COMPLETE
+### Step 15: parser/state.rs Decomposition
 
-**Current State**: 10,763 lines in single file
+**Current State**: 10,667 lines (down from 10,763)
 **Target**: ~3,000 lines (72% reduction)
 **Key Insight**: Heavy code duplication in modifier/declare parsing
+
+#### Progress Summary
+
+| Step | Description | Status | Lines Extracted |
+|------|-------------|--------|-----------------|
+| 15.1 | Common utilities extraction | ✅ Complete | 401 lines to utils.rs |
+| 15.2 | Expression parsing framework | ✅ Complete | 708 lines to expressions.rs |
+| 15.3 | Statement parsing extraction | 🚧 Next | ~1,500 lines planned |
+| 15.4 | Declaration parsing extraction | ⏳ Planned | ~2,000 lines planned |
+| **Total** | **All steps** | **33% done** | **1,109 / 4,600 lines** |
 
 #### 15.1 Code Structure Analysis ✅ COMPLETE
 
