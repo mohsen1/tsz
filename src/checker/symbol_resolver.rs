@@ -324,6 +324,35 @@ impl<'a> CheckerState<'a> {
                                 || symbol.is_exported
                                 || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
                             let is_class_member = Self::is_class_member_symbol(symbol.flags);
+
+                            // For block scopes (let/const), check if we're before the declaration (TDZ)
+                            // This fixes MISSING TS2304 for block-scoped variables before declaration
+                            if scope.kind == ContainerKind::Block
+                                && export_ok
+                                && !is_class_member
+                            {
+                                let is_block_scoped = (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+                                if is_block_scoped {
+                                    // Check if the reference node is before the declaration node
+                                    if let Some(decl_node) = symbol.declarations.first() {
+                                        if self.is_node_before_decl(idx, *decl_node) {
+                                            // This is a reference before declaration - should emit TS2304
+                                            // Skip this symbol and continue to parent scopes
+                                            if debug {
+                                                trace!(
+                                                    name = %name,
+                                                    "[BIND_RESOLVE] Reference before declaration (TDZ) - skipping, continuing to parent scope"
+                                                );
+                                            }
+                                            // Don't return here - continue to parent scopes to find
+                                            // shadowed declarations in outer scopes
+                                            scope_id = scope.parent;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+
                             if debug {
                                 trace!(
                                     flags = format_args!("0x{:x}", symbol.flags),
@@ -1347,5 +1376,38 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Check if a reference node is before a declaration node (for TDZ checking).
+    ///
+    /// This is used to detect block-scoped variable references before their declaration,
+    /// which should emit TS2304 (Temporal Dead Zone).
+    fn is_node_before_decl(&self, ref_idx: NodeIndex, decl_idx: NodeIndex) -> bool {
+        // Get the reference node
+        let ref_node = match self.ctx.arena.get(ref_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+
+        // Get the declaration node
+        let decl_node = match self.ctx.arena.get(decl_idx) {
+            Some(node) => node,
+            None => return false,
+        };
+
+        // Compare positions: reference is before declaration if ref.end <= decl.pos
+        // This means the reference completes before the declaration starts
+        ref_node.pos <= decl_node.pos
+    }
+
+    /// Check if we're currently in a type position (vs value position).
+    ///
+    /// This is used to allow type-only imports in type positions while preventing
+    /// their use in value positions.
+    pub(crate) fn in_type_position(&self, _idx: NodeIndex) -> bool {
+        // TODO: Implement context tracking to determine if we're in a type position
+        // This requires tracking the parent context during traversal
+        // For now, return false to maintain existing behavior
+        false
     }
 }
