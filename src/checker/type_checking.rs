@@ -3705,7 +3705,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type is narrowable (can be narrowed via control flow).
     ///
-    /// Narrowable types include unions, type parameters, and infer types.
+    /// Narrowable types include unions, type parameters, infer types, and unknown.
     /// These types can be narrowed to more specific types through
     /// type guards and control flow analysis.
     ///
@@ -3713,8 +3713,22 @@ impl<'a> CheckerState<'a> {
     /// - `type_id`: The type ID to check
     ///
     /// Returns true if the type can be narrowed.
+    ///
+    /// ## Narrowable Types
+    /// - **Union types**: Can be narrowed to specific members via discriminant checks
+    /// - **Type parameters**: Can be narrowed via constraints
+    /// - **Infer types**: Can be narrowed during type inference
+    /// - **Unknown type**: Can be narrowed via typeof guards and user-defined type guards
+    /// - **Nullish types**: Can be narrowed via null/undefined checks
     pub(crate) fn is_narrowable_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
+
+        // unknown type is narrowable - typeof guards and user-defined type guards
+        // should narrow unknown to the guard's target type
+        // This prevents false positive TS2571 errors after type guards
+        if type_id == TypeId::UNKNOWN {
+            return true;
+        }
 
         // Check if it's a union type or a type parameter (which can be narrowed)
         if let Some(key) = self.ctx.types.lookup(type_id)
@@ -3726,8 +3740,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Could also check for types that include null/undefined
-        // For now, only narrow unions
+        // Types that include null or undefined can be narrowed via null checks
+        if self.type_contains_nullish(type_id) {
+            return true;
+        }
+
         false
     }
 
