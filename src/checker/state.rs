@@ -4442,57 +4442,6 @@ impl<'a> CheckerState<'a> {
     /// Find the enclosing static block for a node, if any.
     ///
     /// Returns the NodeIndex of the CLASS_STATIC_BLOCK_DECLARATION if the node is inside one.
-    fn find_enclosing_static_block(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        while !current.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                // Safety limit reached - return None to prevent infinite loop
-                return None;
-            }
-            if let Some(node) = self.ctx.arena.get(current) {
-                if node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
-                    return Some(current);
-                }
-                // Stop at function boundaries (don't consider outer static blocks)
-                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || node.kind == syntax_kind_ext::CONSTRUCTOR
-                {
-                    return None;
-                }
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
-    /// Find the class declaration containing a static block.
-    ///
-    /// Given a static block node, returns the parent CLASS_DECLARATION or CLASS_EXPRESSION.
-    fn find_class_for_static_block(&self, static_block_idx: NodeIndex) -> Option<NodeIndex> {
-        let ext = self.ctx.arena.get_extended(static_block_idx)?;
-        let parent = ext.parent;
-        if parent.is_none() {
-            return None;
-        }
-        let parent_node = self.ctx.arena.get(parent)?;
-        if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
-            Some(parent)
-        } else {
-            None
-        }
-    }
-
     /// Check if a variable is used in a static block before its declaration (TDZ check).
     ///
     /// In TypeScript, if a variable is declared at module level AFTER a class declaration,
@@ -4561,57 +4510,6 @@ impl<'a> CheckerState<'a> {
     /// Find the enclosing computed property name for a node, if any.
     ///
     /// Returns the NodeIndex of the COMPUTED_PROPERTY_NAME if the node is inside one.
-    fn find_enclosing_computed_property(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    return Some(current);
-                }
-                // Stop at function boundaries (computed properties inside functions are evaluated at call time)
-                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || node.kind == syntax_kind_ext::CONSTRUCTOR
-                {
-                    return None;
-                }
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
-    /// Find the class declaration containing a computed property name.
-    ///
-    /// Walks up from a computed property to find the containing class member,
-    /// then finds the class declaration.
-    fn find_class_for_computed_property(&self, computed_idx: NodeIndex) -> Option<NodeIndex> {
-        // Walk up to find the class member (property, method, accessor)
-        let mut current = computed_idx;
-        while !current.is_none() {
-            let ext = self.ctx.arena.get_extended(current)?;
-            let parent = ext.parent;
-            if parent.is_none() {
-                return None;
-            }
-            let parent_node = self.ctx.arena.get(parent)?;
-            // If we found a class, return it
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                return Some(parent);
-            }
-            current = parent;
-        }
-        None
-    }
-
     /// Check if a variable is used in a computed property name before its declaration (TDZ check).
     ///
     /// In TypeScript, if a variable is declared at module level AFTER a class declaration,
@@ -4672,58 +4570,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    /// Find the enclosing heritage clause (extends/implements) for a node, if any.
-    ///
-    /// Returns the NodeIndex of the HERITAGE_CLAUSE if the node is inside one.
-    fn find_enclosing_heritage_clause(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        use crate::parser::syntax_kind_ext::HERITAGE_CLAUSE;
-
-        let mut current = idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current) {
-                if node.kind == HERITAGE_CLAUSE {
-                    return Some(current);
-                }
-                // Stop at function/class/interface boundaries
-                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                {
-                    return None;
-                }
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
-    /// Find the class or interface declaration containing a heritage clause.
-    fn find_class_for_heritage_clause(&self, heritage_idx: NodeIndex) -> Option<NodeIndex> {
-        let ext = self.ctx.arena.get_extended(heritage_idx)?;
-        let parent = ext.parent;
-        if parent.is_none() {
-            return None;
-        }
-        let parent_node = self.ctx.arena.get(parent)?;
-        if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-        {
-            Some(parent)
-        } else {
-            None
-        }
     }
 
     /// Check if a variable is used in an extends clause before its declaration (TDZ check).
@@ -14176,56 +14022,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if there's a constructor implementation after position `start`.
-    fn find_constructor_impl(&self, members: &[NodeIndex], start: usize) -> bool {
-        for i in start..members.len() {
-            let member_idx = members[i];
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::CONSTRUCTOR {
-                if let Some(ctor) = self.ctx.arena.get_constructor(node)
-                    && !ctor.body.is_none()
-                {
-                    return true;
-                }
-                // Another constructor overload - keep looking
-            } else {
-                // Non-constructor member - no implementation found
-                return false;
-            }
-        }
-        false
-    }
-
-    /// Check if there's a method implementation with the given name after position `start`.
-    fn find_method_impl(
-        &self,
-        members: &[NodeIndex],
-        start: usize,
-        _name: &str,
-    ) -> (bool, Option<String>) {
-        if start >= members.len() {
-            return (false, None);
-        }
-
-        let member_idx = members[start];
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return (false, None);
-        };
-
-        if node.kind == syntax_kind_ext::METHOD_DECLARATION
-            && let Some(method) = self.ctx.arena.get_method_decl(node)
-            && !method.body.is_none()
-        {
-            // This is an implementation - check if name matches
-            let impl_name = self.get_method_name_from_node(member_idx);
-            if impl_name.is_some() {
-                return (true, impl_name);
-            }
-        }
-        (false, None)
-    }
-
     /// Check that accessor pairs (get/set) have consistent abstract modifiers.
     /// Reports error TS2676 if one is abstract and the other is not.
     /// Check that accessor pairs (get/set) have compatible types.
@@ -14384,30 +14180,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find the position of the first return statement's expression in a body.
-    fn find_return_statement_pos(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
-        if body_idx.is_none() {
-            return None;
-        }
-
-        let body_node = self.ctx.arena.get(body_idx)?;
-
-        if body_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(body_node)
-        {
-            for &stmt_idx in &block.statements.nodes {
-                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
-                    && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
-                    && !ret.expression.is_none()
-                {
-                    return Some(ret.expression);
-                }
-            }
-        }
-
-        None
-    }
-
     /// Get the name of a class member (property, method, or accessor).
     pub(crate) fn get_member_name(&self, member_idx: NodeIndex) -> Option<String> {
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -14493,43 +14265,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if there's a function implementation with the given name after position `start`.
-    fn find_function_impl(
-        &self,
-        statements: &[NodeIndex],
-        start: usize,
-        name: &str,
-    ) -> (bool, Option<String>) {
-        if start >= statements.len() {
-            return (false, None);
-        }
-
-        let stmt_idx = statements[start];
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return (false, None);
-        };
-
-        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            && let Some(func) = self.ctx.arena.get_function(node)
-        {
-            // Check if this is an implementation (has body)
-            if !func.body.is_none() {
-                // This is an implementation - check if name matches
-                let impl_name = self.get_function_name_from_node(stmt_idx);
-                return (true, impl_name);
-            } else {
-                // Another overload signature without body - need to look further
-                // but we should check if this is the same function name
-                let overload_name = self.get_function_name_from_node(stmt_idx);
-                if overload_name.as_ref() == Some(&name.to_string()) {
-                    // Same function, continue looking for implementation
-                    return self.find_function_impl(statements, start + 1, name);
-                }
-            }
-        }
-
-        (false, None)
-    }
-
     /// Get the name of a function declaration.
     pub(crate) fn get_function_name_from_node(&self, stmt_idx: NodeIndex) -> Option<String> {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
