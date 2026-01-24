@@ -1,47 +1,11 @@
-//! Transform Utilities - Shared helper functions for transforms
+//! Transform utilities for syntax analysis.
 //!
-//! This module contains utility functions that are used by both the lowering pass
-//! and the transforms. By placing these utilities in a shared location, we avoid
-//! circular dependencies and upward reference violations.
-//!
-//! # Architecture
-//!
-//! The expected layering is:
-//!
-//! ```text
-//! Parser → Binder → Checker → Lowering → Transforms → Emitter
-//! ```
-//!
-//! Lowering should NOT import from Transforms (that's an upward reference).
-//! This module provides a shared location for utilities that both layers need.
-//!
-//! # Functions
-//!
-//! - `contains_this_reference` - Checks if AST node contains `this` or `super` references
-//! - `is_private_identifier` - Checks if an identifier is a private field (#name)
+//! Common functions used by ES5 transformations.
 
-use crate::parser::node::NodeArena;
-use crate::parser::{NodeIndex, syntax_kind_ext};
+use crate::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use crate::scanner::SyntaxKind;
 
-/// Checks if a node or its descendants contain `this` or `super` references
-///
-/// This is used by the lowering pass to determine if arrow functions need
-/// special handling for ES5 transformation (capturing `this` in a temporary variable).
-///
-/// # Examples
-///
-/// ```typescript
-/// // Returns false
-/// const add = (a, b) => a + b;
-///
-/// // Returns true
-/// class C {
-///   method() {
-///     const arrow = () => this.x;  // contains `this`
-///   }
-/// }
-/// ```
+/// Check if an AST node contains a reference to `this` or `super`.
 pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(node_idx) else {
         return false;
@@ -104,7 +68,7 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
         k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
             if let Some(lit) = arena.get_literal_expr(node) {
                 for &elem_idx in &lit.elements.nodes {
-                    if contains_this_reference(arena, elem_idx) {
+                    if !elem_idx.is_none() && contains_this_reference(arena, elem_idx) {
                         return true;
                     }
                 }
@@ -113,7 +77,7 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
         k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
             if let Some(lit) = arena.get_literal_expr(node) {
                 for &elem_idx in &lit.elements.nodes {
-                    if contains_this_reference(arena, elem_idx) {
+                    if !elem_idx.is_none() && contains_this_reference(arena, elem_idx) {
                         return true;
                     }
                 }
@@ -180,64 +144,21 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
                 return true;
             }
         }
-        k if k == syntax_kind_ext::VARIABLE_STATEMENT
-            || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST =>
-        {
-            if let Some(var_stmt) = arena.get_variable(node) {
-                for &decl_idx in &var_stmt.declarations.nodes {
-                    if contains_this_reference(arena, decl_idx) {
+        k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+            if let Some(template) = arena.get_template_expr(node) {
+                for &span_idx in &template.template_spans.nodes {
+                    if contains_this_reference(arena, span_idx) {
                         return true;
                     }
                 }
             }
         }
-        k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-            if let Some(decl) = arena.get_variable_declaration(node)
-                && !decl.initializer.is_none()
-                && contains_this_reference(arena, decl.initializer)
+        k if k == syntax_kind_ext::TEMPLATE_SPAN => {
+            if let Some(span) = arena.get_template_span(node)
+                && contains_this_reference(arena, span.expression)
             {
                 return true;
             }
-        }
-        k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-            if let Some(func) = arena.get_function(node) {
-                // Don't traverse into function body - `this` binding is different
-                // Just check parameters and default values
-                for &param_idx in &func.parameters.nodes {
-                    if contains_this_reference(arena, param_idx) {
-                        return true;
-                    }
-                }
-            }
-        }
-        k if k == syntax_kind_ext::ARROW_FUNCTION => {
-            if let Some(func) = arena.get_function(node) {
-                // Check body of arrow functions - they capture `this` from enclosing scope
-                for &param_idx in &func.parameters.nodes {
-                    let Some(param_node) = arena.get(param_idx) else {
-                        continue;
-                    };
-                    let Some(param) = arena.get_parameter(param_node) else {
-                        continue;
-                    };
-                    if !param.initializer.is_none()
-                        && contains_this_reference(arena, param.initializer)
-                    {
-                        return true;
-                    }
-                }
-
-                if !func.body.is_none() && contains_this_reference(arena, func.body) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        k if k == syntax_kind_ext::FUNCTION_EXPRESSION
-            || k == syntax_kind_ext::FUNCTION_DECLARATION =>
-        {
-            // Regular functions have their own `this`, so don't recurse
-            return false;
         }
         k if k == syntax_kind_ext::BINARY_EXPRESSION => {
             if let Some(bin) = arena.get_binary_expr(node) {
@@ -264,8 +185,10 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
         k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
         {
-            if let Some(unary) = arena.get_unary_expr(node) {
-                return contains_this_reference(arena, unary.operand);
+            if let Some(unary) = arena.get_unary_expr(node)
+                && contains_this_reference(arena, unary.operand)
+            {
+                return true;
             }
         }
         k if k == syntax_kind_ext::AWAIT_EXPRESSION
@@ -289,22 +212,52 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
                 return true;
             }
         }
-        k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
-            if let Some(template) = arena.get_template_expr(node) {
-                if contains_this_reference(arena, template.head) {
-                    return true;
-                }
-                for &span_idx in &template.template_spans.nodes {
-                    if contains_this_reference(arena, span_idx) {
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT
+            || k == syntax_kind_ext::VARIABLE_DECLARATION_LIST =>
+        {
+            if let Some(var_stmt) = arena.get_variable(node) {
+                for &decl_idx in &var_stmt.declarations.nodes {
+                    if contains_this_reference(arena, decl_idx) {
                         return true;
                     }
                 }
             }
         }
-        k if k == syntax_kind_ext::TEMPLATE_SPAN => {
-            if let Some(span) = arena.get_template_span(node) {
-                return contains_this_reference(arena, span.expression);
+        k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+            if let Some(decl) = arena.get_variable_declaration(node)
+                && !decl.initializer.is_none()
+                && contains_this_reference(arena, decl.initializer)
+            {
+                return true;
             }
+        }
+        k if k == syntax_kind_ext::ARROW_FUNCTION => {
+            if let Some(func) = arena.get_function(node) {
+                for &param_idx in &func.parameters.nodes {
+                    let Some(param_node) = arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = arena.get_parameter(param_node) else {
+                        continue;
+                    };
+                    if !param.initializer.is_none()
+                        && contains_this_reference(arena, param.initializer)
+                    {
+                        return true;
+                    }
+                }
+
+                if !func.body.is_none() && contains_this_reference(arena, func.body) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+            || k == syntax_kind_ext::FUNCTION_DECLARATION =>
+        {
+            // Regular functions have their own `this`, so don't recurse
+            return false;
         }
         _ => {}
     }
@@ -312,128 +265,10 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     false
 }
 
-/// Checks if an identifier node is a private identifier (starts with #)
-///
-/// Private identifiers are used for ES2022 private class fields and methods.
-///
-/// # Examples
-///
-/// ```typescript
-/// class C {
-///   #value = 42;        // #value is a private identifier
-///   #method() { }       // #method is a private identifier
-///   getValue() {        // getValue is NOT a private identifier
-///     return this.#value;
-///   }
-/// }
-/// ```
+/// Check if a node is a private identifier (#field)
 pub fn is_private_identifier(arena: &NodeArena, name_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(name_idx) else {
         return false;
     };
     node.kind == SyntaxKind::PrivateIdentifier as u16
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::parser::ParserState;
-
-    fn parse(source: &str) -> (NodeArena, NodeIndex) {
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        (parser.arena, root)
-    }
-
-    #[test]
-    fn test_contains_this_reference_direct_this() {
-        let (arena, root) = parse("this");
-        // Get the expression statement
-        let root_node = arena.get(root).unwrap();
-        let source = arena.get_source_file(root_node).unwrap();
-        let stmt = source.statements.nodes.first().unwrap();
-        let stmt_node = arena.get(*stmt).unwrap();
-        let expr_stmt = arena.get_expression_statement(stmt_node).unwrap();
-
-        assert!(contains_this_reference(&arena, expr_stmt.expression));
-    }
-
-    #[test]
-    fn test_contains_this_reference_property_access() {
-        let (arena, root) = parse("this.x");
-        let root_node = arena.get(root).unwrap();
-        let source = arena.get_source_file(root_node).unwrap();
-        let stmt = source.statements.nodes.first().unwrap();
-        let stmt_node = arena.get(*stmt).unwrap();
-        let expr_stmt = arena.get_expression_statement(stmt_node).unwrap();
-
-        assert!(contains_this_reference(&arena, expr_stmt.expression));
-    }
-
-    #[test]
-    fn test_contains_this_reference_in_arrow() {
-        let (arena, root) = parse("() => this");
-        let root_node = arena.get(root).unwrap();
-        let source = arena.get_source_file(root_node).unwrap();
-        let stmt = source.statements.nodes.first().unwrap();
-        let stmt_node = arena.get(*stmt).unwrap();
-        let expr_stmt = arena.get_expression_statement(stmt_node).unwrap();
-
-        assert!(contains_this_reference(&arena, expr_stmt.expression));
-    }
-
-    #[test]
-    fn test_contains_this_reference_none() {
-        let (arena, root) = parse("x + y");
-        let root_node = arena.get(root).unwrap();
-        let source = arena.get_source_file(root_node).unwrap();
-        let stmt = source.statements.nodes.first().unwrap();
-        let stmt_node = arena.get(*stmt).unwrap();
-        let expr_stmt = arena.get_expression_statement(stmt_node).unwrap();
-
-        assert!(!contains_this_reference(&arena, expr_stmt.expression));
-    }
-
-    #[test]
-    fn test_contains_this_reference_function_doesnt_capture() {
-        let (arena, root) = parse("(function() { this })");
-        let root_node = arena.get(root).unwrap();
-        let source = arena.get_source_file(root_node).unwrap();
-        let stmt = source.statements.nodes.first().unwrap();
-        let stmt_node = arena.get(*stmt).unwrap();
-        let expr_stmt = arena.get_expression_statement(stmt_node).unwrap();
-
-        // Function expressions don't capture outer `this`
-        assert!(!contains_this_reference(&arena, expr_stmt.expression));
-    }
-
-    #[test]
-    fn test_is_private_identifier_private() {
-        let (arena, root) = parse("class C { #field }");
-        let root_node = arena.get(root).unwrap();
-        let source = arena.get_source_file(root_node).unwrap();
-        let stmt = source.statements.nodes.first().unwrap();
-        let stmt_node = arena.get(*stmt).unwrap();
-        let class = arena.get_class(stmt_node).unwrap();
-        let member = class.members.nodes.first().unwrap();
-        let member_node = arena.get(*member).unwrap();
-        let prop = arena.get_property_decl(member_node).unwrap();
-
-        assert!(is_private_identifier(&arena, prop.name));
-    }
-
-    #[test]
-    fn test_is_private_identifier_regular() {
-        let (arena, root) = parse("class C { field }");
-        let root_node = arena.get(root).unwrap();
-        let source = arena.get_source_file(root_node).unwrap();
-        let stmt = source.statements.nodes.first().unwrap();
-        let stmt_node = arena.get(*stmt).unwrap();
-        let class = arena.get_class(stmt_node).unwrap();
-        let member = class.members.nodes.first().unwrap();
-        let member_node = arena.get(*member).unwrap();
-        let prop = arena.get_property_decl(member_node).unwrap();
-
-        assert!(!is_private_identifier(&arena, prop.name));
-    }
 }

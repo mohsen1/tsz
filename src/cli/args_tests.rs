@@ -499,6 +499,7 @@ fn parses_diagnostic_flags() {
         "--listFiles",
         "--listEmittedFiles",
         "--traceResolution",
+        "--traceDependencies",
         "--generateTrace",
         "/trace",
         "--generateCpuProfile",
@@ -513,6 +514,7 @@ fn parses_diagnostic_flags() {
     assert!(args.list_files);
     assert!(args.list_emitted_files);
     assert!(args.trace_resolution);
+    assert!(args.trace_dependencies);
     assert_eq!(
         args.generate_trace.as_deref(),
         Some(std::path::Path::new("/trace"))
