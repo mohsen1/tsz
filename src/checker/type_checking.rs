@@ -7671,4 +7671,125 @@ impl<'a> CheckerState<'a> {
         let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
         has_type && !has_value
     }
+
+    // Section 49: Index Signature Utilities
+    // -------------------------------------
+
+    /// Check if we should report a "no index signature" error.
+    ///
+    /// This determines whether element access on an object type should emit
+    /// an error when no matching index signature exists.
+    pub(crate) fn should_report_no_index_signature(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> bool {
+        use crate::solver::TypeKey;
+
+        if object_type == TypeId::ANY
+            || object_type == TypeId::UNKNOWN
+            || object_type == TypeId::ERROR
+        {
+            return false;
+        }
+
+        if index_type == TypeId::ANY || index_type == TypeId::UNKNOWN {
+            return false;
+        }
+
+        let index_key_kind = self.get_index_key_kind(index_type);
+        let wants_number = literal_index.is_some()
+            || index_key_kind
+                .as_ref()
+                .is_some_and(|(_, wants_number)| *wants_number);
+        let wants_string = index_key_kind
+            .as_ref()
+            .is_some_and(|(wants_string, _)| *wants_string);
+        if !wants_number && !wants_string {
+            return false;
+        }
+
+        let object_key = match self.ctx.types.lookup(object_type) {
+            Some(TypeKey::ReadonlyType(inner)) => self.ctx.types.lookup(inner),
+            other => other,
+        };
+
+        !self.is_element_indexable_key(&object_key, wants_string, wants_number)
+    }
+
+    /// Get the index key kind (string and/or number) for a type.
+    ///
+    /// Returns Some((wants_string, wants_number)) if the type can be used
+    /// as an index key, or None otherwise.
+    pub(crate) fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
+        use crate::solver::{IntrinsicKind, TypeKey};
+
+        // Use utility methods for literal type checks
+        if self.is_string_literal_type(index_type) {
+            return Some((true, false));
+        }
+        if self.is_number_literal_type(index_type) {
+            return Some((false, true));
+        }
+
+        match self.ctx.types.lookup(index_type)? {
+            TypeKey::Intrinsic(IntrinsicKind::String) => Some((true, false)),
+            TypeKey::Intrinsic(IntrinsicKind::Number) => Some((false, true)),
+            TypeKey::Union(_) => {
+                let members = self.get_union_members(index_type);
+                let mut wants_string = false;
+                let mut wants_number = false;
+                for member in members {
+                    let (member_string, member_number) = self.get_index_key_kind(member)?;
+                    wants_string |= member_string;
+                    wants_number |= member_number;
+                }
+                Some((wants_string, wants_number))
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if a type key is element-indexable with the given constraints.
+    ///
+    /// This checks whether an object type supports element access with
+    /// string and/or number indices.
+    pub(crate) fn is_element_indexable_key(
+        &self,
+        object_key: &Option<crate::solver::TypeKey>,
+        wants_string: bool,
+        wants_number: bool,
+    ) -> bool {
+        use crate::solver::{IntrinsicKind, LiteralValue, TypeKey};
+
+        match object_key {
+            Some(TypeKey::Array(_)) | Some(TypeKey::Tuple(_)) => wants_number,
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(*shape_id);
+                let has_string = shape.string_index.is_some();
+                let has_number = shape.number_index.is_some();
+                (wants_string && has_string) || (wants_number && (has_number || has_string))
+            }
+            Some(TypeKey::Union(members)) => {
+                let members = self.ctx.types.type_list(*members);
+                members.iter().all(|member| {
+                    let key = self.ctx.types.lookup(*member);
+                    self.is_element_indexable_key(&key, wants_string, wants_number)
+                })
+            }
+            Some(TypeKey::Intersection(members)) => {
+                let members = self.ctx.types.type_list(*members);
+                members.iter().any(|member| {
+                    let key = self.ctx.types.lookup(*member);
+                    self.is_element_indexable_key(&key, wants_string, wants_number)
+                })
+            }
+            Some(TypeKey::Literal(LiteralValue::String(_))) => wants_string,
+            Some(TypeKey::Literal(LiteralValue::Number(_))) => wants_number,
+            Some(TypeKey::Intrinsic(IntrinsicKind::String)) => wants_string,
+            Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => wants_number,
+            _ => false,
+        }
+    }
 }
