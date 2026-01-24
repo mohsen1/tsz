@@ -20,6 +20,10 @@ opt-level = 0
 incremental = true
 codegen-units = 256
 
+# Optimize dependencies in dev mode for faster builds
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.orchestrator]
 # Optimized profile for orchestrator workers
 # Faster builds than dev, decent runtime performance
@@ -48,3 +52,10 @@ CARGO_INCREMENTAL = { value = "1", relative = false }
 [net]
 # Faster dependency fetching
 git-fetch-with-cli = true
+
+# Nextest configuration for smarter test execution
+[target.nextest]
+# Show test execution time
+status-level = "all"
+# Disable progress bars for cleaner output
+final-status-level = "flaky"
