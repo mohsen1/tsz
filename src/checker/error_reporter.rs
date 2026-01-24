@@ -150,7 +150,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Internal generic error reporting for type assignability failures.
-    fn error_type_not_assignable_generic_at(
+    pub(crate) fn error_type_not_assignable_generic_at(
         &mut self,
         source: TypeId,
         target: TypeId,
