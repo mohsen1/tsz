@@ -564,6 +564,17 @@ impl BinderState {
         self.resolve_import_with_reexports(module_specifier, export_name)
     }
 
+    /// Resolve an import symbol to its target, following re-export chains.
+    ///
+    /// This is used by the checker to resolve imported symbols to their actual declarations,
+    /// following both named re-exports (`export { foo } from 'bar'`) and wildcard re-exports
+    /// (`export * from 'bar'`).
+    ///
+    /// Returns the resolved SymbolId if found, None otherwise.
+    pub fn resolve_import_symbol(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        self.resolve_import_if_needed(sym_id)
+    }
+
     /// Find the enclosing scope for a given node by walking up the AST.
     /// Returns the ScopeId of the nearest scope-creating ancestor node.
     fn find_enclosing_scope(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<ScopeId> {
