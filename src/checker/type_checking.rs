@@ -9596,4 +9596,256 @@ impl<'a> CheckerState<'a> {
             _ => None,
         }
     }
+
+    // ============================================================================
+    // Section 57: JSDoc Type Annotation Utilities
+    // ============================================================================
+
+    /// Resolve a typeof type reference to its actual type.
+    ///
+    /// This function resolves `typeof X` type queries to the type of symbol X.
+    /// It handles both direct typeof queries and typeof queries applied to
+    /// type applications (generics).
+    ///
+    /// ## Parameters:
+    /// - `type_id`: The type to resolve (may be a TypeQuery or Application)
+    ///
+    /// ## Returns:
+    /// - The resolved type if `type_id` is a typeof query
+    /// - The original `type_id` if it's not a typeof query
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// class C {}
+    /// type T1 = typeof C;  // C (the class type)
+    /// type T2 = typeof<C>;  // Same as above
+    /// ```
+    pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
+        use crate::binder::SymbolId;
+        use crate::solver::{SymbolRef, TypeKey};
+
+        let Some(key) = self.ctx.types.lookup(type_id) else {
+            return type_id;
+        };
+
+        match key {
+            TypeKey::TypeQuery(SymbolRef(sym_id)) => self.get_type_of_symbol(SymbolId(sym_id)),
+            TypeKey::Application(app_id) => {
+                let app = self.ctx.types.type_application(app_id);
+                if let Some(TypeKey::TypeQuery(SymbolRef(sym_id))) = self.ctx.types.lookup(app.base)
+                {
+                    let base = self.get_type_of_symbol(SymbolId(sym_id));
+                    return self.ctx.types.application(base, app.args.clone());
+                }
+                type_id
+            }
+            _ => type_id,
+        }
+    }
+
+    /// Get JSDoc type annotation for a node.
+    ///
+    /// This function extracts and parses JSDoc `@type` annotations for a given node.
+    /// It searches for the enclosing source file, extracts JSDoc comments,
+    /// and parses the type annotation.
+    ///
+    /// ## Parameters:
+    /// - `idx`: The node to get JSDoc type annotation for
+    ///
+    /// ## Returns:
+    /// - `Some(TypeId)`: The parsed type from JSDoc
+    /// - `None`: If no JSDoc type annotation exists
+    ///
+    /// ## Example:
+    /// ```typescript
+    /// /**
+    ///  * @type {string} x - The parameter type
+    ///  */
+    /// function foo(x) {}
+    /// // The JSDoc annotation can be used for type inference
+    /// ```
+    fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let root = self.find_enclosing_source_file(idx)?;
+        let source_text = self
+            .ctx
+            .arena
+            .get(root)
+            .and_then(|node| self.ctx.arena.get_source_file(node))
+            .map(|sf| sf.text.as_ref())?;
+        let jsdoc = crate::lsp::jsdoc::jsdoc_for_node(self.ctx.arena, root, idx, source_text);
+        if jsdoc.is_empty() {
+            return None;
+        }
+        let type_text = self.extract_jsdoc_type(&jsdoc)?;
+        self.parse_jsdoc_type(&type_text)
+    }
+
+    /// Extract type text from JSDoc comment.
+    ///
+    /// This function parses JSDoc comments to find `@type` tags and
+    /// extracts the type annotation from within curly braces.
+    ///
+    /// ## Parameters:
+    /// - `doc`: The JSDoc comment text
+    ///
+    /// ## Returns:
+    /// - `Some(String)`: The extracted type text
+    /// - `None`: If no `@type` tag found or type is empty
+    ///
+    /// ## Example:
+    /// ```javascript
+    /// /**
+    ///  * @type {string | number} The parameter type
+    ///  * @returns {boolean} The result
+    ///  */
+    /// // extract_jsdoc_type returns: "string | number"
+    /// ```
+    fn extract_jsdoc_type(&self, doc: &str) -> Option<String> {
+        let tag_pos = doc.find("@type")?;
+        let rest = &doc[tag_pos + "@type".len()..];
+        let open = rest.find('{')?;
+        let after_open = &rest[open + 1..];
+        let close = after_open.find('}')?;
+        let type_text = after_open[..close].trim();
+        if type_text.is_empty() {
+            None
+        } else {
+            Some(type_text.to_string())
+        }
+    }
+
+    /// Parse JSDoc type annotation text into a TypeId.
+    ///
+    /// This function parses simple type expressions from JSDoc comments.
+    /// It supports:
+    /// - Primitive types: string, number, boolean, void, any, unknown
+    /// - Function types: function(paramType, ...): returnType
+    ///
+    /// ## Parameters:
+    /// - `text`: The type annotation text to parse
+    ///
+    /// ## Returns:
+    /// - `Some(TypeId)`: The parsed type
+    /// - `None`: If parsing fails
+    ///
+    /// ## Examples:
+    /// ```javascript
+    /// /**
+    ///  * @type {string}
+    ///  */
+    /// // Parses to TypeId::STRING
+    ///
+    /// /**
+    ///  * @type {function(string, number): boolean}
+    ///  */
+    /// // Parses to a function type
+    /// ```
+    fn parse_jsdoc_type(&mut self, text: &str) -> Option<TypeId> {
+        use crate::solver::{FunctionShape, ParamInfo};
+
+        fn skip_ws(text: &str, pos: &mut usize) {
+            while *pos < text.len() && text.as_bytes()[*pos].is_ascii_whitespace() {
+                *pos += 1;
+            }
+        }
+
+        fn parse_ident<'a>(text: &'a str, pos: &mut usize) -> Option<&'a str> {
+            let start = *pos;
+            while *pos < text.len() {
+                let ch = text.as_bytes()[*pos] as char;
+                if ch.is_ascii_alphanumeric() || ch == '_' {
+                    *pos += 1;
+                } else {
+                    break;
+                }
+            }
+            if *pos > start {
+                Some(&text[start..*pos])
+            } else {
+                None
+            }
+        }
+
+        fn parse_type(checker: &mut crate::checker::state::CheckerState, text: &str, pos: &mut usize) -> Option<TypeId> {
+            skip_ws(text, pos);
+            if text[*pos..].starts_with("function") {
+                return parse_function_type(checker, text, pos);
+            }
+
+            let ident = parse_ident(text, pos)?;
+            let type_id = match ident {
+                "string" => TypeId::STRING,
+                "number" => TypeId::NUMBER,
+                "boolean" => TypeId::BOOLEAN,
+                "void" => TypeId::VOID,
+                "any" => TypeId::ANY,
+                "unknown" => TypeId::UNKNOWN,
+                _ => TypeId::ANY,
+            };
+            Some(type_id)
+        }
+
+        fn parse_function_type(
+            checker: &mut crate::checker::state::CheckerState,
+            text: &str,
+            pos: &mut usize,
+        ) -> Option<TypeId> {
+            if !text[*pos..].starts_with("function") {
+                return None;
+            }
+            *pos += "function".len();
+            skip_ws(text, pos);
+            if *pos >= text.len() || text.as_bytes()[*pos] != b'(' {
+                return None;
+            }
+            *pos += 1;
+            let mut params = Vec::new();
+            loop {
+                skip_ws(text, pos);
+                if *pos >= text.len() {
+                    return None;
+                }
+                if text.as_bytes()[*pos] == b')' {
+                    *pos += 1;
+                    break;
+                }
+                let param_type = parse_type(checker, text, pos)?;
+                params.push(ParamInfo {
+                    name: None,
+                    type_id: param_type,
+                    optional: false,
+                    rest: false,
+                });
+                skip_ws(text, pos);
+                if *pos < text.len() && text.as_bytes()[*pos] == b',' {
+                    *pos += 1;
+                    continue;
+                }
+                if *pos < text.len() && text.as_bytes()[*pos] == b')' {
+                    *pos += 1;
+                    break;
+                }
+            }
+            skip_ws(text, pos);
+            if *pos >= text.len() || text.as_bytes()[*pos] != b':' {
+                return None;
+            }
+            *pos += 1;
+            let return_type = parse_type(checker, text, pos)?;
+            let shape = FunctionShape {
+                type_params: Vec::new(),
+                params,
+                this_type: None,
+                return_type,
+                type_predicate: None,
+                is_constructor: false,
+                is_method: false,
+            };
+            Some(checker.ctx.types.function(shape))
+        }
+
+        let mut pos = 0;
+        let type_id = parse_type(self, text, &mut pos)?;
+        Some(type_id)
+    }
 }
