@@ -13,6 +13,7 @@ This document defines critical architecture rules for Project Zang. All contribu
 2. **Test-agnostic code** - Source code must never check file names or paths
 3. **Configuration-driven** - Use `CompilerOptions` for all behavior changes
 4. **Fix root causes** - Never suppress errors or add special cases
+5. **Clean code** - Write clean code
 
 ## Code Review Checklist
 
