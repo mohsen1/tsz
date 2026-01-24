@@ -263,7 +263,46 @@ impl<'a> CheckerState<'a> {
     // Symbol Type Caching
     // =========================================================================
 
-    /// Cache a computed symbol type for stateless lookup.
+    /// Cache a computed symbol type for fast lookup and incremental type checking.
+    ///
+    /// This function stores the computed type of a symbol in the symbol_types cache,
+    /// allowing subsequent lookups to avoid recomputing the type.
+    ///
+    /// ## Caching Strategy:
+    /// - Types are cached after first computation
+    /// - Cache key is the SymbolId
+    /// - Cache persists for the lifetime of the type check
+    ///
+    /// ## Incremental Type Checking:
+    /// - When a symbol changes, its cache entry is invalidated
+    /// - Dependent symbols are re-computed on next access
+    /// - Enables efficient re-typechecking of modified files
+    ///
+    /// ## Cache Invalidation:
+    /// - Symbol modifications trigger dependency tracking
+    /// - Dependent symbols are tracked via record_symbol_dependency
+    /// - Cache is cleared for invalidated symbols
+    ///
+    /// ## Performance:
+    /// - Avoids expensive type recomputation
+    /// - Critical for performance in large codebases
+    /// - Most symbol types are looked up multiple times
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// interface User {
+    ///   name: string;
+    ///   age: number;
+    /// }
+    /// let user: User;
+    /// // First lookup: computes User type, caches it
+    /// // Second lookup: returns cached User type (fast)
+    ///
+    /// function process(u: User) {
+    ///   // User type parameter is cached
+    ///   // Multiple uses of u resolve to the same cached type
+    /// }
+    /// ```
     fn cache_symbol_type(&mut self, sym_id: SymbolId, type_id: TypeId) {
         self.ctx.symbol_types.insert(sym_id, type_id);
     }
@@ -1848,6 +1887,58 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Resolve a named type reference to its TypeId.
+    ///
+    /// This is a core function for resolving type names like `User`, `Array`, `Promise`,
+    /// etc. to their actual type representations. It handles multiple resolution strategies.
+    ///
+    /// ## Resolution Strategy (in order):
+    /// 1. **Type Parameters**: Check if name is a type parameter in current scope
+    /// 2. **Global Augmentations**: Check if name is declared in `declare global` blocks
+    /// 3. **Local Symbols**: Resolve to interface/class/type alias in current file
+    /// 4. **Lib Types**: Fall back to lib.d.ts and library contexts
+    ///
+    /// ## Type Parameter Lookup:
+    /// - Checks current type parameter scope first
+    /// - Allows generic type parameters to shadow global types
+    ///
+    /// ## Global Augmentations:
+    /// - Merges user's global declarations with lib.d.ts
+    /// - Ensures augmentation properly extends base types
+    ///
+    /// ## Lib Context Resolution:
+    /// - Searches through loaded library contexts
+    /// - Handles built-in types (Object, Array, Promise, etc.)
+    /// - Merges multiple declarations (interface merging)
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Type parameter lookup
+    /// function identity<T>(value: T): T {
+    ///   // resolve_named_type_reference("T") → type parameter T
+    ///   return value;
+    /// }
+    ///
+    /// // Local interface
+    /// interface User {}
+    /// // resolve_named_type_reference("User") → User interface type
+    ///
+    /// // Global type (from lib.d.ts)
+    /// let arr: Array<string>;
+    /// // resolve_named_type_reference("Array") → Array global type
+    ///
+    /// // Global augmentation
+    /// declare global {
+    ///   interface Window {
+    ///     myCustomProp: string;
+    ///   }
+    /// }
+    /// // resolve_named_type_reference("Window") → merged Window type
+    ///
+    /// // Type alias
+    /// type UserId = number;
+    /// // resolve_named_type_reference("UserId") → number
+    /// ```
     fn resolve_named_type_reference(&mut self, name: &str, name_idx: NodeIndex) -> Option<TypeId> {
         if let Some(type_id) = self.lookup_type_parameter(name) {
             return Some(type_id);
@@ -1872,9 +1963,58 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Resolve a type by name from lib file contexts.
-    /// This is used for global types like Object, Array, Promise, etc. from lib.d.ts.
-    /// Also merges in any global augmentations from the current file.
+    /// Resolve a type by name from library file contexts (lib.d.ts, etc.).
+    ///
+    /// This function resolves global types from library definition files like lib.d.ts,
+    /// which provide built-in JavaScript types and DOM APIs. It also handles merging
+    /// global augmentations from the current file.
+    ///
+    /// ## Library Contexts:
+    /// - Searches through loaded library contexts (lib.d.ts, es2015.d.ts, etc.)
+    /// - Each lib context has its own binder and arena
+    /// - Types are "lowered" from lib arena to main arena
+    ///
+    /// ## Type Lowering:
+    /// - Converts AST nodes from lib file to TypeId in main type arena
+    /// - Handles interface merging (multiple declarations merged into one type)
+    /// - Preserves type structure across context boundaries
+    ///
+    /// ## Declaration Merging:
+    /// - Interfaces can have multiple declarations that are merged
+    /// - All declarations are lowered together to create merged type
+    /// - Essential for types like `Array` which have multiple lib declarations
+    ///
+    /// ## Global Augmentations:
+    /// - User's `declare global` blocks are merged with lib types
+    /// - Allows extending built-in types like `Window`, `String`, etc.
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Built-in types from lib.d.ts
+    /// let arr: Array<number>;  // resolve_lib_type_by_name("Array")
+    /// let obj: Object;         // resolve_lib_type_by_name("Object")
+    /// let prom: Promise<string>; // resolve_lib_type_by_name("Promise")
+    ///
+    /// // DOM types from lib.d.ts
+    /// let elem: HTMLElement;  // resolve_lib_type_by_name("HTMLElement")
+    ///
+    /// // Declaration merging
+    /// interface Array<T> {
+    ///   push(...items: T[]): number;
+    /// }
+    /// interface Array<T> {
+    ///   pop(): T | undefined;
+    /// }
+    /// // Both declarations merged into single Array type
+    ///
+    /// // Global augmentation
+    /// declare global {
+    ///   interface String {
+    ///     customMethod(): string;
+    ///   }
+    /// }
+    /// // "hello".customMethod() - String type includes augmentation
+    /// ```
     fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use crate::solver::TypeLowering;
 
