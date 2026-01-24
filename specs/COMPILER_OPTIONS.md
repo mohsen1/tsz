@@ -21,7 +21,7 @@ Enable all strict type checking options. When set to `true`, it enables:
 Individual options can override the `strict` setting.
 
 #### `noImplicitAny` (boolean, default: false)
-Raise error on expressions and declarations with an implied 'any' type.
+Raise error on expressions and declarations with an implied 'any' type. Implied by `strict: true`.
 
 **Example:**
 ```typescript
@@ -32,7 +32,7 @@ function test(x) {  // Parameter 'x' implicitly has an 'any' type
 ```
 
 #### `strictNullChecks` (boolean, default: false)
-Enable strict null checks. When enabled, `null` and `undefined` are not assignable to other types.
+Enable strict null checks. When enabled, `null` and `undefined` are not assignable to other types. Implied by `strict: true`.
 
 **Example:**
 ```typescript
@@ -42,7 +42,7 @@ let y: string = x;  // Type 'null' is not assignable to type 'string'
 ```
 
 #### `strictFunctionTypes` (boolean, default: false)
-Enable strict checking of function types (contravariant parameter checking).
+Enable strict checking of function types (contravariant parameter checking). Implied by `strict: true`.
 
 **Example:**
 ```typescript
@@ -52,7 +52,7 @@ const handler: Handler = (x: string) => {};  // Types of parameters are incompat
 ```
 
 #### `strictPropertyInitialization` (boolean, default: false)
-Ensure class properties are initialized in the constructor or have a definite assignment.
+Ensure class properties are initialized in the constructor or have a definite assignment. Implied by `strict: true`.
 
 **Example:**
 ```typescript
@@ -63,7 +63,7 @@ class C {
 ```
 
 #### `noImplicitThis` (boolean, default: false)
-Raise error on 'this' expressions with an implied 'any' type.
+Raise error on 'this' expressions with an implied 'any' type. Implied by `strict: true`.
 
 **Example:**
 ```typescript
@@ -72,6 +72,13 @@ function test() {
     this.x = 1;  // 'this' implicitly has type 'any'
 }
 ```
+
+#### `useUnknownInCatchVariables` (boolean, default: false)
+Default catch clause variables to `unknown` instead of `any`. Implied by `strict: true`.
+
+#### `strictBindCallApply` (boolean, default: false)
+Enable strict checking of `bind`, `call`, and `apply` methods on functions. Implied by `strict: true`.
+
 
 ### Other Options
 
@@ -89,33 +96,45 @@ function test(x: number): number {
 }
 ```
 
-#### `target` (number, default: undefined)
-Specify ECMAScript target version. Maps to `ScriptTarget` enum values:
-- 0: ES3
-- 1: ES5
-- 2: ES2015
-- 3: ES2016
-- 4: ES2017
-- 5: ES2018
-- 6: ES2019
-- 7: ES2020
-- 8: ES2021
-- 9: ES2022
-- 99: ESNext
+#### `target` (string, default: "es3")
+Specify ECMAScript target version. Supported values:
+- `"es3"`
+- `"es5"`
+- `"es6"` or `"es2015"`
+- `"es2016"`
+- `"es2017"`
+- `"es2018"`
+- `"es2019"`
+- `"es2020"`
+- `"es2021"`
+- `"es2022"`
+- `"esnext"`
 
-#### `module` (number, default: undefined)
-Specify module code generation. Maps to `ModuleKind` enum values:
-- 0: None
-- 1: CommonJS
-- 2: AMD
-- 3: UMD
-- 4: System
-- 5: ES2015
-- 6: ES2020
-- 7: ES2022
-- 99: ESNext
-- 100: Node16
-- 199: NodeNext
+#### `module` (string, default: "none")
+Specify module code generation. Supported values:
+- `"none"`
+- `"commonjs"`
+- `"amd"`
+- `"umd"`
+- `"system"`
+- `"es6"` or `"es2015"`
+- `"es2020"`
+- `"es2022"`
+- `"esnext"`
+- `"node16"`
+- `"nodenext"`
+
+#### `noLib` (boolean, default: false)
+Do not include the default library file (`lib.d.ts`). When enabled, the compiler will not automatically load standard types like `Array`, `String`, etc., unless provided explicitly.
+
+#### `exactOptionalPropertyTypes` (boolean, default: false)
+Enable stricter checking of optional properties. When enabled, optional properties must either be present with the specified type or be missing entirely; they cannot be explicitly assigned `undefined` unless `undefined` is part of the property's union type.
+
+#### `isolatedModules` (boolean, default: false)
+Ensure that each file can be safely transpiled without relying on other imports.
+
+#### `noUncheckedIndexedAccess` (boolean, default: false)
+Include `undefined` in the type of any property accessed via an index signature.
 
 ## Usage
 
@@ -130,8 +149,8 @@ const parser = new Parser('file.ts', sourceCode);
 parser.setCompilerOptions(JSON.stringify({
     strict: true,
     noImplicitReturns: true,
-    target: 1,  // ES5
-    module: 1   // CommonJS
+    target: "es5",
+    module: "commonjs"
 }));
 
 // Parse and check
@@ -220,6 +239,4 @@ Potential future compiler options to support:
 - `noUnusedLocals`
 - `noUnusedParameters`
 - `noFallthroughCasesInSwitch`
-- `strictBindCallApply`
 - `alwaysStrict`
-- `useUnknownInCatchVariables` (partially implemented)
