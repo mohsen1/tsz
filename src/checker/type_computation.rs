@@ -692,6 +692,335 @@ impl<'a> CheckerState<'a> {
         type_stack.pop().unwrap_or(TypeId::UNKNOWN)
     }
 
+    /// Get the type of an element access expression (e.g., arr[0], obj["prop"]).
+    ///
+    /// Handles element access with optional chaining, index signatures,
+    /// and nullish coalescing.
+    pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::interner::Atom;
+        use crate::solver::{PropertyAccessResult, QueryDatabase};
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return TypeId::ERROR;
+        };
+
+        // Get the type of the object
+        let object_type = self.get_type_of_node(access.expression);
+        let object_type = self.evaluate_application_type(object_type);
+
+        let literal_string = self.get_literal_string_from_node(access.name_or_argument);
+        let numeric_string_index = literal_string
+            .as_deref()
+            .and_then(|name| self.get_numeric_index_from_string(name));
+        let literal_index = self
+            .get_literal_index_from_node(access.name_or_argument)
+            .or(numeric_string_index);
+
+        if let Some(name) = literal_string.as_deref()
+            && self.is_global_this_expression(access.expression)
+        {
+            let property_type =
+                self.resolve_global_this_property_type(name, access.name_or_argument);
+            if property_type == TypeId::ERROR {
+                return TypeId::ERROR;
+            }
+            return self.apply_flow_narrowing(idx, property_type);
+        }
+
+        if let Some(name) = literal_string.as_deref() {
+            if !self.check_property_accessibility(
+                access.expression,
+                name,
+                access.name_or_argument,
+                object_type,
+            ) {
+                return TypeId::ERROR;
+            }
+        } else if let Some(index) = literal_index {
+            let name = index.to_string();
+            if !self.check_property_accessibility(
+                access.expression,
+                &name,
+                access.name_or_argument,
+                object_type,
+            ) {
+                return TypeId::ERROR;
+            }
+        }
+
+        // Don't report errors for any/error types
+        if object_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if object_type == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+
+        let object_type = self.resolve_type_for_property_access(object_type);
+        if object_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if object_type == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+
+        let (object_type_for_access, nullish_cause) = self.split_nullish_type(object_type);
+        let Some(object_type_for_access) = object_type_for_access else {
+            if access.question_dot_token {
+                return TypeId::UNDEFINED;
+            }
+            if let Some(cause) = nullish_cause {
+                self.report_possibly_nullish_object(access.expression, cause);
+            }
+            return TypeId::ERROR;
+        };
+
+        let index_type = self.get_type_of_node(access.name_or_argument);
+        let literal_string_is_none = literal_string.is_none();
+
+        let mut result_type = None;
+        let mut report_no_index = false;
+        let mut use_index_signature_check = true;
+
+        if let Some(name) = literal_string.as_deref() {
+            if let Some(member_type) =
+                self.resolve_namespace_value_member(object_type_for_access, name)
+            {
+                result_type = Some(member_type);
+                use_index_signature_check = false;
+            } else if self.namespace_has_type_only_member(object_type_for_access, name) {
+                self.error_type_only_value_at(name, access.name_or_argument);
+                return TypeId::ERROR;
+            }
+        }
+
+        if result_type.is_none()
+            && literal_index.is_none()
+            && let Some((string_keys, number_keys)) =
+                self.get_literal_key_union_from_type(index_type)
+        {
+            let total_keys = string_keys.len() + number_keys.len();
+            if total_keys > 1 || literal_string_is_none {
+                if !string_keys.is_empty() && number_keys.is_empty() {
+                    use_index_signature_check = false;
+                }
+
+                let mut types = Vec::new();
+                if !string_keys.is_empty() {
+                    match self.get_element_access_type_for_literal_keys(
+                        object_type_for_access,
+                        &string_keys,
+                    ) {
+                        Some(result) => types.push(result),
+                        None => report_no_index = true,
+                    }
+                }
+
+                if !number_keys.is_empty() {
+                    match self.get_element_access_type_for_literal_number_keys(
+                        object_type_for_access,
+                        &number_keys,
+                    ) {
+                        Some(result) => types.push(result),
+                        None => report_no_index = true,
+                    }
+                }
+
+                if report_no_index {
+                    result_type = Some(TypeId::ANY);
+                } else if !types.is_empty() {
+                    result_type = Some(if types.len() == 1 {
+                        types[0]
+                    } else {
+                        self.ctx.types.union(types)
+                    });
+                }
+            }
+        }
+
+        if result_type.is_none()
+            && let Some(property_name) = self.get_literal_string_from_node(access.name_or_argument)
+            && numeric_string_index.is_none()
+        {
+            use_index_signature_check = false;
+            let result = self
+                .ctx
+                .types
+                .property_access_type(object_type_for_access, &property_name);
+            result_type = Some(match result {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    property_type.unwrap_or(TypeId::UNKNOWN)
+                }
+                PropertyAccessResult::IsUnknown => {
+                    // TS2571: Object is of type 'unknown'
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        access.expression,
+                        "Object is of type 'unknown'.",
+                        diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
+                    );
+                    TypeId::ERROR
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    report_no_index = true;
+                    // Generate TS2339 for property not found during element access
+                    self.error_property_not_exist_at(
+                        &property_name.to_string(),
+                        object_type_for_access,
+                        access.name_or_argument,
+                    );
+                    TypeId::ERROR // Return ERROR instead of ANY to expose the error
+                }
+            });
+        }
+
+        let mut result_type = result_type.unwrap_or_else(|| {
+            self.get_element_access_type(object_type_for_access, index_type, literal_index)
+        });
+
+        if use_index_signature_check
+            && self.should_report_no_index_signature(
+                object_type_for_access,
+                index_type,
+                literal_index,
+            )
+        {
+            report_no_index = true;
+        }
+
+        if report_no_index {
+            self.error_no_index_signature_at(index_type, object_type, access.name_or_argument);
+        }
+
+        if let Some(cause) = nullish_cause {
+            if access.question_dot_token {
+                result_type = self.ctx.types.union(vec![result_type, TypeId::UNDEFINED]);
+            } else if !report_no_index {
+                self.report_possibly_nullish_object(access.expression, cause);
+            }
+        }
+
+        self.apply_flow_narrowing(idx, result_type)
+    }
+
+    /// Get the element access type for array/tuple/object with index signatures.
+    ///
+    /// Computes the type when accessing an element using an index.
+    pub(crate) fn get_element_access_type(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        use crate::solver::{LiteralValue, QueryDatabase, TypeKey};
+
+        let object_key = match self.ctx.types.lookup(object_type) {
+            Some(TypeKey::ReadonlyType(inner)) => self.ctx.types.lookup(inner),
+            other => other,
+        };
+
+        let literal_index_type = literal_index
+            .map(|index| self.ctx.types.literal_number(index as f64))
+            .or_else(|| match self.ctx.types.lookup(index_type) {
+                Some(TypeKey::Literal(LiteralValue::Number(num))) => {
+                    Some(self.ctx.types.literal_number(num.0))
+                }
+                _ => None,
+            });
+
+        match object_key {
+            Some(TypeKey::Array(element)) => {
+                if let Some(literal_index_type) = literal_index_type {
+                    let result = self
+                        .ctx
+                        .types
+                        .evaluate_index_access(object_type, literal_index_type);
+                    return if result == TypeId::UNDEFINED {
+                        element
+                    } else {
+                        result
+                    };
+                }
+                element
+            }
+            Some(TypeKey::Tuple(elements)) => {
+                let elements = self.ctx.types.tuple_list(elements);
+                if let Some(literal_index_type) = literal_index_type {
+                    let result = self
+                        .ctx
+                        .types
+                        .evaluate_index_access(object_type, literal_index_type);
+                    return if result == TypeId::UNDEFINED {
+                        TypeId::ANY
+                    } else {
+                        result
+                    };
+                }
+
+                let element_types: Vec<TypeId> =
+                    elements.iter().map(|element| element.type_id).collect();
+                if element_types.is_empty() {
+                    TypeId::NEVER
+                } else if element_types.len() == 1 {
+                    element_types[0]
+                } else {
+                    self.ctx.types.union(element_types)
+                }
+            }
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                if literal_index.is_some() {
+                    if let Some(number_index) = shape.number_index.as_ref() {
+                        return number_index.value_type;
+                    }
+                    if let Some(string_index) = shape.string_index.as_ref() {
+                        return string_index.value_type;
+                    }
+                    return TypeId::ERROR;
+                }
+
+                if index_type == TypeId::NUMBER {
+                    if let Some(number_index) = shape.number_index.as_ref() {
+                        return number_index.value_type;
+                    }
+                    if let Some(string_index) = shape.string_index.as_ref() {
+                        return string_index.value_type;
+                    }
+                    return TypeId::ERROR;
+                }
+
+                if index_type == TypeId::STRING
+                    && let Some(string_index) = shape.string_index.as_ref()
+                {
+                    return string_index.value_type;
+                }
+
+                TypeId::ANY
+            }
+            Some(TypeKey::Union(_)) => {
+                let members = self.get_union_members(object_type);
+                let member_types: Vec<_> = members
+                    .iter()
+                    .map(|&member| self.get_element_access_type(member, index_type, literal_index))
+                    .collect();
+                if member_types.is_empty() {
+                    TypeId::ANY
+                } else {
+                    self.ctx.types.union(member_types)
+                }
+            }
+            _ => {
+                // For unresolved types, return ANY for generic array types
+                TypeId::ANY
+            }
+        }
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
