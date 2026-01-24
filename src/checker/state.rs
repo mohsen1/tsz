@@ -14191,34 +14191,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a variable statement (var/let/const declarations).
-    fn check_variable_statement(&mut self, stmt_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        if let Some(var) = self.ctx.arena.get_variable(node) {
-            // VariableStatement.declarations contains VariableDeclarationList nodes
-            for &list_idx in &var.declarations.nodes {
-                self.check_variable_declaration_list(list_idx);
-            }
-        }
-    }
-
-    /// Check a variable declaration list (var/let/const x, y, z).
-    fn check_variable_declaration_list(&mut self, list_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(list_idx) else {
-            return;
-        };
-
-        // VariableDeclarationList uses the same VariableData structure
-        if let Some(var_list) = self.ctx.arena.get_variable(node) {
-            // Now these are actual VariableDeclaration nodes
-            for &decl_idx in &var_list.declarations.nodes {
-                self.check_variable_declaration(decl_idx);
-            }
-        }
-    }
-
     // ============================================================================
     // Iterable/Iterator Type Checking Methods
     // ============================================================================
@@ -14279,7 +14251,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a single variable declaration.
-    fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
+    pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return;
         };
