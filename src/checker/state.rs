@@ -1330,7 +1330,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+    pub(crate) fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         self.class_instance_type_with_params_from_symbol(sym_id)
             .map(|(instance_type, _)| instance_type)
     }
@@ -1489,13 +1489,11 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
         member_name: &str,
-        lib_binders: &[Arc<crate::binder::BinderState>],
+        lib_binders: &[std::sync::Arc<crate::binder::BinderState>],
     ) -> Option<SymbolId> {
-        use crate::binder::BinderState;
-
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(&sym_id) = module_exports.get(member_name) {
+            if let Some(sym_id) = module_exports.get(member_name) {
                 // Found direct export - but we need to resolve if it's itself a re-export
                 // Get the symbol and check if it's an alias
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -1515,7 +1513,7 @@ impl<'a> CheckerState<'a> {
         if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
             if let Some((source_module, original_name)) = file_reexports.get(member_name) {
                 let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
+                return self.resolve_reexported_member(source_module, &name_to_lookup, lib_binders);
             }
         }
 
@@ -1532,7 +1530,7 @@ impl<'a> CheckerState<'a> {
         for lib_binder in lib_binders {
             // First check lib binder's module_exports
             if let Some(module_exports) = lib_binder.module_exports.get(module_specifier) {
-                if let Some(&sym_id) = module_exports.get(member_name) {
+                if let Some(sym_id) = module_exports.get(member_name) {
                     return Some(sym_id);
                 }
             }
@@ -2585,7 +2583,7 @@ impl<'a> CheckerState<'a> {
             // Check exports table for direct export
             let mut member_sym_id = None;
             if let Some(ref exports) = symbol.exports {
-                member_sym_id = exports.get(&right_name).copied();
+                member_sym_id = exports.get(&right_name);
             }
 
             // If not found in direct exports, check for re-exports
