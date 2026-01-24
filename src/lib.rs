@@ -10,6 +10,10 @@ pub use interner::{Atom, Interner, ShardedInterner};
 #[cfg(test)]
 mod interner_tests;
 
+// Common types - Shared constants to break circular dependencies
+pub mod common;
+pub use common::{ModuleKind, NewLineKind, ScriptTarget};
+
 // Character code constants
 pub mod char_codes;
 
