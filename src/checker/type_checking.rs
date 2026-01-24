@@ -8339,4 +8339,131 @@ impl<'a> CheckerState<'a> {
             _ => None,
         }
     }
+
+    // ============================================================================
+    // Section 52: Parameter Type Utilities
+    // ============================================================================
+
+    /// Cache parameter types for function parameters.
+    ///
+    /// This function extracts and caches the types of function parameters,
+    /// either from provided type annotations or from explicit type nodes.
+    /// For parameters without explicit type annotations, `UNKNOWN` is used
+    /// (not `ANY`) to maintain better type safety.
+    ///
+    /// ## Parameters:
+    /// - `params`: Slice of parameter node indices
+    /// - `param_types`: Optional pre-computed parameter types (e.g., from contextual typing)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Explicit types: cached from type annotation
+    /// function foo(x: string, y: number) {}
+    ///
+    /// // No types: cached as UNKNOWN
+    /// function bar(a, b) {}
+    ///
+    /// // Contextual types: cached from provided types
+    /// const fn = (x: string) => number;
+    /// const cb: typeof fn = (x) => x.length;  // x typed from context
+    /// ```
+    pub(crate) fn cache_parameter_types(
+        &mut self,
+        params: &[NodeIndex],
+        param_types: Option<&[Option<TypeId>]>,
+    ) {
+        for (i, &param_idx) in params.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            let Some(sym_id) = self
+                .ctx
+                .binder
+                .get_node_symbol(param.name)
+                .or_else(|| self.ctx.binder.get_node_symbol(param_idx))
+            else {
+                continue;
+            };
+            self.push_symbol_dependency(sym_id, true);
+            let type_id = if let Some(types) = param_types {
+                types.get(i).and_then(|t| *t)
+            } else if !param.type_annotation.is_none() {
+                Some(self.get_type_from_type_node(param.type_annotation))
+            } else {
+                // Return UNKNOWN instead of ANY for parameter without type annotation
+                Some(TypeId::UNKNOWN)
+            };
+            self.pop_symbol_dependency();
+
+            if let Some(type_id) = type_id {
+                self.cache_symbol_type(sym_id, type_id);
+            }
+        }
+    }
+
+    /// Assign contextual types to destructuring parameters (binding patterns).
+    ///
+    /// When a function has a contextual type (e.g., from a callback position),
+    /// destructuring parameters need to have their bindings inferred from
+    /// the contextual parameter type.
+    ///
+    /// This function only processes parameters without explicit type annotations,
+    /// as TypeScript respects explicit annotations over contextual inference.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// declare function map<T, U>(arr: T[], fn: (item: T) => U): U[];
+    ///
+    /// // x and y types come from contextual type T
+    /// map(arr, ({ x, y }) => x + y);
+    ///
+    /// // Explicit annotation takes precedence
+    /// map(arr, ({ x, y }: { x: string; y: number }) => x + y);
+    /// ```
+    pub(crate) fn assign_contextual_types_to_destructuring_params(
+        &mut self,
+        params: &[NodeIndex],
+        param_types: &[Option<TypeId>],
+    ) {
+        for (i, &param_idx) in params.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Skip if there's an explicit type annotation
+            if !param.type_annotation.is_none() {
+                continue;
+            }
+
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+
+            // Only process binding patterns (destructuring)
+            let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+
+            if !is_binding_pattern {
+                continue;
+            }
+
+            // Get the contextual type for this parameter position
+            let contextual_type = param_types
+                .get(i)
+                .and_then(|t| *t)
+                .filter(|&t| t != TypeId::UNKNOWN && t != TypeId::ERROR);
+
+            if let Some(ctx_type) = contextual_type {
+                // Assign the contextual type to the binding pattern elements
+                self.assign_binding_pattern_symbol_types(param.name, ctx_type);
+            }
+        }
+    }
 }
