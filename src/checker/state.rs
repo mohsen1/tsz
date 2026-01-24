@@ -88,14 +88,14 @@ enum MemberLookup {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-enum PropertyKey {
+pub(crate) enum PropertyKey {
     Ident(String),
     Private(String),
     Computed(ComputedKey),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-enum ComputedKey {
+pub(crate) enum ComputedKey {
     Ident(String),
     String(String),
     Number(String),
@@ -7451,49 +7451,6 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(lit.text.clone());
             }
-        }
-
-        None
-    }
-
-    fn get_symbol_property_name_from_expr(&self, expr_idx: NodeIndex) -> Option<String> {
-        use crate::scanner::SyntaxKind;
-
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
-
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            let paren = self.ctx.arena.get_parenthesized(node)?;
-            return self.get_symbol_property_name_from_expr(paren.expression);
-        }
-
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-
-        let access = self.ctx.arena.get_access_expr(node)?;
-        let base_node = self.ctx.arena.get(access.expression)?;
-        let base_ident = self.ctx.arena.get_identifier(base_node)?;
-        if base_ident.escaped_text != "Symbol" {
-            return None;
-        }
-
-        let name_node = self.ctx.arena.get(access.name_or_argument)?;
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(format!("Symbol.{}", ident.escaped_text));
-        }
-
-        if matches!(
-            name_node.kind,
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-            && !lit.text.is_empty()
-        {
-            return Some(format!("Symbol.{}", lit.text));
         }
 
         None
@@ -15764,19 +15721,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get property name as a string for error messages.
-    fn get_property_name_from_key(&self, key: &PropertyKey) -> String {
-        match key {
-            PropertyKey::Ident(s) => s.clone(),
-            PropertyKey::Computed(ComputedKey::Ident(s)) => format!("[{}]", s),
-            PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{}\"]", s),
-            PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{}]", n),
-            PropertyKey::Computed(ComputedKey::Qualified(q)) => format!("[{}]", q),
-            PropertyKey::Computed(ComputedKey::Symbol(Some(s))) => format!("[Symbol({})]", s),
-            PropertyKey::Computed(ComputedKey::Symbol(None)) => "[Symbol()]".to_string(),
-            PropertyKey::Private(s) => format!("#{}", s),
-        }
-    }
-
     fn analyze_constructor_assignments(
         &self,
         body_idx: NodeIndex,

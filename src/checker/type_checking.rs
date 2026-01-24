@@ -12,7 +12,7 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
-use crate::checker::state::{CheckerState, MemberAccessLevel, MAX_TREE_WALK_ITERATIONS};
+use crate::checker::state::{CheckerState, MemberAccessLevel, MAX_TREE_WALK_ITERATIONS, ComputedKey, PropertyKey};
 use crate::checker::FlowAnalyzer;
 use crate::parser::node::ImportDeclData;
 use crate::parser::NodeIndex;
@@ -3538,6 +3538,93 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(value as usize)
+    }
+
+    // 21. Property Name Utilities (2 functions)
+
+    /// Get the display string for a property key.
+    ///
+    /// Converts a PropertyKey enum into its string representation
+    /// for use in error messages and diagnostics.
+    ///
+    /// ## Parameters
+    /// - `key`: The property key to convert
+    ///
+    /// Returns the string representation of the property key.
+    pub(crate) fn get_property_name_from_key(&self, key: &PropertyKey) -> String {
+        match key {
+            PropertyKey::Ident(s) => s.clone(),
+            PropertyKey::Computed(ComputedKey::Ident(s)) => {
+                format!("[{}]", s)
+            }
+            PropertyKey::Computed(ComputedKey::String(s)) => {
+                format!("[\"{}\"]", s)
+            }
+            PropertyKey::Computed(ComputedKey::Number(n)) => {
+                format!("[{}]", n)
+            }
+            PropertyKey::Computed(ComputedKey::Qualified(q)) => {
+                format!("[{}]", q)
+            }
+            PropertyKey::Computed(ComputedKey::Symbol(Some(s))) => {
+                format!("[Symbol({})]", s)
+            }
+            PropertyKey::Computed(ComputedKey::Symbol(None)) => {
+                "[Symbol()]".to_string()
+            }
+            PropertyKey::Private(s) => format!("#{}", s),
+        }
+    }
+
+    /// Get the Symbol property name from an expression.
+    ///
+    /// Extracts the name from a Symbol() expression, e.g., Symbol("foo") -> "Symbol.foo".
+    ///
+    /// ## Parameters
+    /// - `expr_idx`: The expression node index
+    ///
+    /// Returns the Symbol property name if the expression is a Symbol() call.
+    pub(crate) fn get_symbol_property_name_from_expr(&self, expr_idx: NodeIndex) -> Option<String> {
+        use crate::scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return None;
+        };
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(node)?;
+            return self.get_symbol_property_name_from_expr(paren.expression);
+        }
+
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let base_node = self.ctx.arena.get(access.expression)?;
+        let base_ident = self.ctx.arena.get_identifier(base_node)?;
+        if base_ident.escaped_text != "Symbol" {
+            return None;
+        }
+
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(format!("Symbol.{}", ident.escaped_text));
+        }
+
+        if matches!(
+            name_node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            return Some(format!("Symbol.{}", lit.text));
+        }
+
+        None
     }
 }
 
