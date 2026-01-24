@@ -7,14 +7,15 @@ This document provides a comprehensive index of all TypeScript error codes imple
 ### 1. Type Assignability Errors (2xxx)
 
 #### TS2322 - Type Not Assignable
-**Status:** ✅ WORKING
-**Worker:** 1
+**Status:** ✅ WORKING (ENHANCED)
+**Worker:** 1, 2
 **Description:** Type '{0}' is not assignable to type '{1}'.
 
 **Implementation Locations:**
 - `src/checker/type_checking.rs:50-102` - Assignment expressions
 - `src/checker/type_checking.rs:114-186` - Compound assignment
 - `src/checker/type_checking.rs:1897-1929` - Return statements
+- `src/checker/state.rs:9893-10069` - **NEW: Function expression/arrow function return statements**
 - `src/solver/subtype_rules/unions.rs` - Union assignability rules
 - `src/checker/state.rs:11623-11634` - Array literal elements
 
@@ -25,6 +26,9 @@ This document provides a comprehensive index of all TypeScript error codes imple
 - ✅ Union type assignability
 - ✅ Literal to union optimization
 - ✅ Union to union optimization
+- ✅ **NEW: Arrow function return statements**
+- ✅ **NEW: Function expression return statements**
+- ✅ **NEW: Async function return statements**
 
 **Code:** `TYPE_NOT_ASSIGNABLE_TO_TYPE` (2322)
 
@@ -363,7 +367,7 @@ if let Some(comma_pos) = value.find(',') {
 | Worker | Error Codes | Files Modified | Status |
 |--------|-------------|----------------|--------|
 | 1 | TS2322 | 2 | ✅ Complete |
-| 2 | TS2694 | 0 | ⚠️ Untested |
+| 2 | TS2694, TS2322 (enhanced) | 3 | ✅ Complete |
 | 3 | TS2339 | 2 | ✅ Complete |
 | 4 | TS1005 | 1 | ✅ Complete |
 | 5 | TS2300 | 1 | ⚠️ Untested |
@@ -382,6 +386,9 @@ if let Some(comma_pos) = value.find(',') {
 ### Validation Test Files
 1. `test_stability_fixes.ts` - Stability and error detection tests
 2. `final_validation_tests.ts` - Comprehensive error code validation
+3. `test_return_statement_fix.ts` - **NEW: Return statement type checking for arrow functions and function expressions**
+4. `test_return_types.ts` - **NEW: Additional return statement validation tests**
+5. `test_namespace_resolution.ts` - Namespace member resolution (TS2694)
 
 ### Running Tests
 ```bash
