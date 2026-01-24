@@ -7989,64 +7989,6 @@ impl<'a> CheckerState<'a> {
         self.symbol_is_value_only(target)
     }
 
-    /// Get the type of a property access when we know the property name.
-    /// This is used for private member access when symbols resolution fails
-    /// but the property exists in the object type.
-    fn get_type_of_property_access_by_name(
-        &mut self,
-        idx: NodeIndex,
-        access: &crate::parser::node::AccessExprData,
-        object_type: TypeId,
-        property_name: &str,
-    ) -> TypeId {
-        use crate::solver::{PropertyAccessResult, QueryDatabase};
-
-        let object_type = self.resolve_type_for_property_access(object_type);
-        let result_type = match self
-            .ctx
-            .types
-            .property_access_type(object_type, property_name)
-        {
-            PropertyAccessResult::Success {
-                type_id,
-                from_index_signature,
-            } => {
-                if from_index_signature {
-                    self.error_property_not_exist_at(property_name, object_type, idx);
-                    return TypeId::ERROR;
-                }
-                type_id
-            }
-            PropertyAccessResult::PropertyNotFound { .. } => {
-                // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
-                if !property_name.starts_with('#') {
-                    self.error_property_not_exist_at(property_name, object_type, idx);
-                }
-                TypeId::ERROR
-            }
-            PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                property_type.unwrap_or(TypeId::UNKNOWN)
-            }
-            PropertyAccessResult::IsUnknown => {
-                // TS2571: Object is of type 'unknown'
-                use crate::checker::types::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    access.expression,
-                    "Object is of type 'unknown'.",
-                    diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN,
-                );
-                TypeId::ERROR
-            }
-        };
-
-        // Handle nullish coercion
-        if access.question_dot_token {
-            self.ctx.types.union(vec![result_type, TypeId::UNDEFINED])
-        } else {
-            result_type
-        }
-    }
-
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
