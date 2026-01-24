@@ -4433,15 +4433,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
-        let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => return false, // No flow info means variable is not definitely assigned
-        };
-        let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
-        analyzer.is_definitely_assigned(idx, flow_node)
-    }
-
     fn symbol_is_parameter(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
@@ -4499,57 +4490,6 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             current = ext.parent;
-        }
-    }
-
-    /// Check if a node is within a parameter's default value initializer.
-    /// This is used to detect `await` used in default parameter values (TS2524).
-    pub(crate) fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            let ext = match self.ctx.arena.get_extended(current) {
-                Some(ext) => ext,
-                None => return false,
-            };
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                return false;
-            }
-
-            // Check if parent is a parameter and we're in its initializer
-            if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
-                if parent_node.kind == syntax_kind_ext::PARAMETER
-                    && let Some(param) = self.ctx.arena.get_parameter(parent_node)
-                {
-                    // Check if current node is within the initializer
-                    if !param.initializer.is_none() {
-                        let init_idx = param.initializer;
-                        // Check if idx is within the initializer subtree
-                        if self.is_node_within(idx, init_idx) {
-                            return true;
-                        }
-                    }
-                }
-                // Stop at function/arrow boundaries - parameters are only at the top level
-                if matches!(parent_node.kind,
-                    k if k == syntax_kind_ext::FUNCTION_DECLARATION ||
-                         k == syntax_kind_ext::FUNCTION_EXPRESSION ||
-                         k == syntax_kind_ext::ARROW_FUNCTION ||
-                         k == syntax_kind_ext::METHOD_DECLARATION ||
-                         k == syntax_kind_ext::CONSTRUCTOR ||
-                         k == syntax_kind_ext::GET_ACCESSOR ||
-                         k == syntax_kind_ext::SET_ACCESSOR
-                ) {
-                    return false;
-                }
-            }
-
-            current = parent_idx;
         }
     }
 
