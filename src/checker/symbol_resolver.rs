@@ -23,8 +23,8 @@
 
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
-use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
+use crate::parser::NodeIndex;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 use std::sync::Arc;
@@ -324,35 +324,6 @@ impl<'a> CheckerState<'a> {
                                 || symbol.is_exported
                                 || (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
                             let is_class_member = Self::is_class_member_symbol(symbol.flags);
-
-                            // For block scopes (let/const), check if we're before the declaration (TDZ)
-                            // This fixes MISSING TS2304 for block-scoped variables before declaration
-                            if scope.kind == ContainerKind::Block
-                                && export_ok
-                                && !is_class_member
-                            {
-                                let is_block_scoped = (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
-                                if is_block_scoped {
-                                    // Check if the reference node is before the declaration node
-                                    if let Some(decl_node) = symbol.declarations.first() {
-                                        if self.is_node_before_decl(idx, *decl_node) {
-                                            // This is a reference before declaration - should emit TS2304
-                                            // Skip this symbol and continue to parent scopes
-                                            if debug {
-                                                trace!(
-                                                    name = %name,
-                                                    "[BIND_RESOLVE] Reference before declaration (TDZ) - skipping, continuing to parent scope"
-                                                );
-                                            }
-                                            // Don't return here - continue to parent scopes to find
-                                            // shadowed declarations in outer scopes
-                                            scope_id = scope.parent;
-                                            continue;
-                                        }
-                                    }
-                                }
-                            }
-
                             if debug {
                                 trace!(
                                     flags = format_args!("0x{:x}", symbol.flags),
@@ -924,27 +895,11 @@ impl<'a> CheckerState<'a> {
     // Global Symbol Resolution
     // =========================================================================
 
-    /// Resolve a global value symbol by name from file_locals and lib binders.
+    /// Resolve a global value symbol by name from file_locals.
     ///
     /// This is used for looking up global values like `console`, `Math`, etc.
-    /// It checks:
-    /// 1. Local file_locals (for user-defined globals and merged lib symbols)
-    /// 2. Lib binders' file_locals (for symbols from lib.d.ts that haven't been merged)
     pub(crate) fn resolve_global_value_symbol(&self, name: &str) -> Option<SymbolId> {
-        // First check local file_locals
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-            return Some(sym_id);
-        }
-
-        // Then check lib binders for global symbols
-        let lib_binders = self.get_lib_binders();
-        for lib_binder in &lib_binders {
-            if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                return Some(sym_id);
-            }
-        }
-
-        None
+        self.ctx.binder.file_locals.get(name)
     }
 
     // =========================================================================
@@ -1197,7 +1152,6 @@ impl<'a> CheckerState<'a> {
     /// Parse a boolean option from test file comments.
     ///
     /// Looks for patterns like `// @key: true` or `// @key: false` in the first 32 lines.
-    /// Also handles comma-separated values like `// @strict: true, false` by taking the first value.
     pub(crate) fn parse_test_option_bool(text: &str, key: &str) -> Option<bool> {
         for line in text.lines().take(32) {
             let trimmed = line.trim();
@@ -1218,20 +1172,22 @@ impl<'a> CheckerState<'a> {
             let Some(colon_pos) = after_key.find(':') else {
                 continue;
             };
-            let mut value = after_key[colon_pos + 1..].trim();
+            let value = after_key[colon_pos + 1..].trim();
 
-            // Handle comma-separated values (e.g., "true, false")
-            // Take only the first value before any comma
-            if let Some(comma_pos) = value.find(',') {
-                value = value[..comma_pos].trim();
-            }
+            // Parse boolean value, handling comma-separated values like "true, false"
+            // Also handle trailing commas, semicolons, and other delimiters
+            let value_clean = if let Some(comma_pos) = value.find(',') {
+                &value[..comma_pos]
+            } else if let Some(semicolon_pos) = value.find(';') {
+                &value[..semicolon_pos]
+            } else {
+                value
+            }.trim();
 
-            // Now check the cleaned value
-            if value == "true" {
-                return Some(true);
-            }
-            if value == "false" {
-                return Some(false);
+            match value_clean {
+                "true" => return Some(true),
+                "false" => return Some(false),
+                _ => continue,
             }
         }
         None
@@ -1289,8 +1245,6 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::ENUM_DECLARATION
                 | syntax_kind_ext::GET_ACCESSOR
                 | syntax_kind_ext::SET_ACCESSOR
-                | syntax_kind_ext::METHOD_DECLARATION
-                | syntax_kind_ext::PROPERTY_DECLARATION
                 | syntax_kind_ext::CONSTRUCTOR => {
                     return Some(current);
                 }
@@ -1378,38 +1332,5 @@ impl<'a> CheckerState<'a> {
         }
 
         None
-    }
-
-    /// Check if a reference node is before a declaration node (for TDZ checking).
-    ///
-    /// This is used to detect block-scoped variable references before their declaration,
-    /// which should emit TS2304 (Temporal Dead Zone).
-    fn is_node_before_decl(&self, ref_idx: NodeIndex, decl_idx: NodeIndex) -> bool {
-        // Get the reference node
-        let ref_node = match self.ctx.arena.get(ref_idx) {
-            Some(node) => node,
-            None => return false,
-        };
-
-        // Get the declaration node
-        let decl_node = match self.ctx.arena.get(decl_idx) {
-            Some(node) => node,
-            None => return false,
-        };
-
-        // Compare positions: reference is before declaration if ref.end <= decl.pos
-        // This means the reference completes before the declaration starts
-        ref_node.pos <= decl_node.pos
-    }
-
-    /// Check if we're currently in a type position (vs value position).
-    ///
-    /// This is used to allow type-only imports in type positions while preventing
-    /// their use in value positions.
-    pub(crate) fn in_type_position(&self, _idx: NodeIndex) -> bool {
-        // TODO: Implement context tracking to determine if we're in a type position
-        // This requires tracking the parent context during traversal
-        // For now, return false to maintain existing behavior
-        false
     }
 }
