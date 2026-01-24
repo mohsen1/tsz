@@ -365,10 +365,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 // Check write type compatibility
                 if !t_prop.readonly
-                    && (union_prop.write_type != union_prop.type_id || t_prop.write_type != t_prop.type_id)
+                    && (union_prop.write_type != union_prop.type_id
+                        || t_prop.write_type != t_prop.type_id)
                 {
-                    let source_write = if union_prop.optional && !self.exact_optional_property_types {
-                        self.interner.union2(union_prop.write_type, TypeId::UNDEFINED)
+                    let source_write = if union_prop.optional && !self.exact_optional_property_types
+                    {
+                        self.interner
+                            .union2(union_prop.write_type, TypeId::UNDEFINED)
                     } else {
                         union_prop.write_type
                     };
@@ -380,7 +383,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     };
 
                     if !self
-                        .check_subtype_with_method_variance(target_write, source_write, allow_bivariant)
+                        .check_subtype_with_method_variance(
+                            target_write,
+                            source_write,
+                            allow_bivariant,
+                        )
                         .is_true()
                     {
                         return SubtypeResult::False;

@@ -53,10 +53,7 @@ identity<string>(42); // Should error: TS2322
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2322_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .collect();
+    let ts2322_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
 
     println!("Found {} TS2322 errors:", ts2322_errors.len());
     for err in &ts2322_errors {
@@ -65,5 +62,9 @@ identity<string>(42); // Should error: TS2322
 
     // We expect at least 10 TS2322 errors for the test cases above
     // If we don't find them, it means we're missing assignability checks
-    assert!(ts2322_errors.len() >= 5, "Expected at least 5 TS2322 errors, found {}", ts2322_errors.len());
+    assert!(
+        ts2322_errors.len() >= 5,
+        "Expected at least 5 TS2322 errors, found {}",
+        ts2322_errors.len()
+    );
 }
