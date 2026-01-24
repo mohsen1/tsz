@@ -2133,6 +2133,232 @@ impl<'a> CheckerState<'a> {
             .map(|class_idx| self.get_class_name_from_decl(class_idx))
     }
 
+    /// Get the type of a call expression (e.g., `foo()`, `obj.method()`).
+    ///
+    /// Computes the return type of function/method calls.
+    /// Handles:
+    /// - Dynamic imports (returns `Promise<any>`)
+    /// - Super calls (returns `void`)
+    /// - Optional chaining (`obj?.method()`)
+    /// - Overload resolution
+    /// - Argument type checking
+    /// - Type argument validation (TS2344)
+    pub(crate) fn get_type_of_call_expression(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::parser::node_flags;
+        use crate::solver::{CallEvaluator, CallResult, CompatChecker, TypeKey};
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return TypeId::ERROR; // Missing call expression data - propagate error
+        };
+
+        // Get the type of the callee
+        let mut callee_type = self.get_type_of_node(call.expression);
+
+        // Check for dynamic import module resolution (TS2307)
+        if self.is_dynamic_import(call) {
+            self.check_dynamic_import_module_specifier(call);
+            // Dynamic imports return Promise<typeof module>
+            // For unresolved modules, return any to allow type flow to continue
+            return TypeId::ANY;
+        }
+
+        // Special handling for super() calls - treat as construct call
+        let is_super_call = self.is_super_expression(call.expression);
+
+        // Get arguments list (may be None for calls without arguments)
+        // IMPORTANT: We must check arguments even if callee is ANY/ERROR to catch definite assignment errors
+        let args = call
+            .arguments
+            .as_ref()
+            .map(|a| &a.nodes)
+            .map(|n| n.as_slice())
+            .unwrap_or(&[]);
+
+        // Check if callee is any/error (don't report for those)
+        if callee_type == TypeId::ANY {
+            // Still need to check arguments for definite assignment (TS2454) and other errors
+            // Create a dummy context helper that returns None for all parameter types
+            let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| None, // No parameter type info for ANY callee
+                check_excess_properties,
+            );
+            return TypeId::ANY;
+        }
+        if callee_type == TypeId::ERROR {
+            // Still need to check arguments for definite assignment (TS2454) and other errors
+            let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| None, // No parameter type info for ERROR callee
+                check_excess_properties,
+            );
+            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+        }
+
+        let mut nullish_cause = None;
+        if (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0 {
+            let (non_nullish, cause) = self.split_nullish_type(callee_type);
+            nullish_cause = cause;
+            let Some(non_nullish) = non_nullish else {
+                return TypeId::UNDEFINED;
+            };
+            callee_type = non_nullish;
+            if callee_type == TypeId::ANY {
+                return TypeId::ANY;
+            }
+            if callee_type == TypeId::ERROR {
+                return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
+            }
+        }
+
+        // args is already defined above before the ANY/ERROR check
+
+        // Validate explicit type arguments against constraints (TS2344)
+        if let Some(ref type_args_list) = call.type_arguments
+            && !type_args_list.nodes.is_empty()
+        {
+            self.validate_call_type_arguments(callee_type, type_args_list, idx);
+        }
+
+        let overload_signatures = match self.ctx.types.lookup(callee_type) {
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                if shape.call_signatures.len() > 1 {
+                    Some(shape.call_signatures.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        // Overload candidates need signature-specific contextual typing.
+        if let Some(signatures) = overload_signatures.as_deref()
+            && let Some(return_type) =
+                self.resolve_overloaded_call_with_signatures(args, signatures)
+        {
+            let return_type =
+                self.apply_this_substitution_to_call_return(return_type, call.expression);
+            return if nullish_cause.is_some() {
+                self.ctx.types.union(vec![return_type, TypeId::UNDEFINED])
+            } else {
+                return_type
+            };
+        }
+
+        // Create contextual context from callee type
+        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, callee_type);
+        let check_excess_properties = overload_signatures.is_none();
+        let arg_types = self.collect_call_argument_types_with_context(
+            args,
+            |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+            check_excess_properties,
+        );
+
+        // Use CallEvaluator to resolve the call
+        self.ensure_application_symbols_resolved(callee_type);
+        for &arg_type in &arg_types {
+            self.ensure_application_symbols_resolved(arg_type);
+        }
+        let result = {
+            let env = self.ctx.type_env.borrow();
+            let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+            checker.set_strict_function_types(self.ctx.strict_function_types());
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
+            evaluator.resolve_call(callee_type, &arg_types)
+        };
+
+        match result {
+            CallResult::Success(return_type) => {
+                let return_type =
+                    self.apply_this_substitution_to_call_return(return_type, call.expression);
+                let return_type =
+                    self.refine_mixin_call_return_type(call.expression, &arg_types, return_type);
+                if nullish_cause.is_some() {
+                    self.ctx.types.union(vec![return_type, TypeId::UNDEFINED])
+                } else {
+                    return_type
+                }
+            }
+
+            CallResult::NotCallable { .. } => {
+                // Special case: super() calls are valid in constructors and return void
+                if is_super_call {
+                    return TypeId::VOID;
+                }
+                // Check if it's specifically a class constructor called without 'new' (TS2348)
+                // Only emit TS2348 for types that have construct signatures but zero call signatures
+                if self.is_class_constructor_type(callee_type) {
+                    self.error_class_constructor_without_new_at(callee_type, call.expression);
+                } else {
+                    // For other non-callable types, emit the generic not-callable error
+                    self.error_not_callable_at(callee_type, call.expression);
+                }
+                TypeId::ERROR
+            }
+
+            CallResult::ArgumentCountMismatch {
+                expected_min,
+                expected_max,
+                actual,
+            } => {
+                // Determine which error to emit:
+                // - TS2555: "Expected at least N arguments" when got < min and there's a range
+                // - TS2554: "Expected N arguments" otherwise
+                if actual < expected_min && expected_max.is_some_and(|max| max != expected_min) {
+                    // Too few arguments with optional parameters - use TS2555
+                    self.error_expected_at_least_arguments_at(expected_min, actual, idx);
+                } else {
+                    // Either too many, or exact count expected - use TS2554
+                    let expected = expected_max.unwrap_or(expected_min);
+                    self.error_argument_count_mismatch_at(expected, actual, idx);
+                }
+                TypeId::ERROR
+            }
+
+            CallResult::ArgumentTypeMismatch {
+                index,
+                expected,
+                actual,
+            } => {
+                // Report error at the specific argument
+                // Map the expanded index back to the original argument node
+                // When spread arguments are expanded, the index may exceed args.len()
+                let arg_idx = self.map_expanded_arg_index_to_original(args, index);
+                if let Some(arg_idx) = arg_idx {
+                    if !(check_excess_properties
+                        && self.should_skip_weak_union_error(actual, expected, arg_idx))
+                    {
+                        self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                    }
+                } else if !args.is_empty() {
+                    // Fall back to the last argument (typically the spread) if mapping fails
+                    let last_arg = args[args.len() - 1];
+                    if !(check_excess_properties
+                        && self.should_skip_weak_union_error(actual, expected, last_arg))
+                    {
+                        self.error_argument_not_assignable_at(actual, expected, last_arg);
+                    }
+                }
+                TypeId::ERROR
+            }
+
+            CallResult::NoOverloadMatch { failures, .. } => {
+                self.error_no_overload_matches_at(idx, &failures);
+                TypeId::ERROR
+            }
+        }
+    }
+
     // =========================================================================
     // Type Relationship Queries
     // =========================================================================
