@@ -8,6 +8,7 @@ This document defines critical architecture rules for Project Zang. All contribu
 
 ## Core Principles
 
+0. **Real work should be done** - Do not make documentation only commits. 
 1. **No shortcuts** - Implement correct logic, not quick fixes
 2. **Test-agnostic code** - Source code must never check file names or paths
 3. **Configuration-driven** - Use `CompilerOptions` for all behavior changes
