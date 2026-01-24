@@ -303,7 +303,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [ ] `get_type_of_element_access` (~200 lines)
 - [ ] `get_type_of_assignment_target` (~80 lines)
 
-**Progress**: state.rs 26,217 → 24,439 lines (**-1,778 lines, 24 functions extracted**)
+**Progress**: state.rs 26,217 → 24,290 lines (**-1,927 lines, 28 functions extracted**)
 - `get_type_of_conditional_expression` (~18 lines) → type_computation.rs ✅
 - `get_type_of_array_literal` (~131 lines) → type_computation.rs ✅
 - `get_type_of_prefix_unary` (~37 lines) → type_computation.rs ✅
@@ -328,6 +328,10 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - `get_type_from_type_operator` (~32 lines) → type_computation.rs ✅
 - `get_keyof_type` (~26 lines) → type_computation.rs ✅
 - `extract_string_literal_keys` (~26 lines) → type_computation.rs ✅
+- `get_symbol_constructor_type` (~59 lines) → type_computation.rs ✅
+- `get_call_receiver_type` (~7 lines) → type_computation.rs ✅
+- `get_class_decl_from_type` (~71 lines) → type_computation.rs ✅
+- `get_class_name_from_type` (~3 lines) → type_computation.rs ✅
 
 **Helper methods made pub(crate)**:
 - `literal_type_from_initializer`
@@ -360,6 +364,9 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - `collect_call_argument_types_with_context`
 - `ensure_application_symbols_resolved`
 - `should_skip_weak_union_error`
+- `is_class_derived_from`
+- `get_class_declaration_from_symbol`
+- `get_class_name_from_decl`
 
 #### 7.2 Extract Basic Type Computation
 - [ ] Extract `get_type_of_literal` family (~200-300 lines)
