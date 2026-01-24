@@ -36,6 +36,41 @@ pub struct CheckerOptions {
     /// This corresponds to the --noLib compiler flag.
     /// TS2318 errors are emitted when referencing global types with this option enabled.
     pub no_lib: bool,
+    /// Target ECMAScript version (ES3, ES5, ES2015, ES2016, etc.)
+    /// Controls which built-in types are available (e.g., Promise requires ES2015)
+    /// Defaults to ES3 for maximum compatibility
+    pub target: ScriptTarget,
+}
+
+/// ECMAScript target version
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScriptTarget {
+    /// ECMAScript 3 (earliest version, minimal built-ins)
+    ES3,
+    /// ECMAScript 5 (adds strict mode, JSON, Date, RegExp, etc.)
+    ES5,
+    /// ECMAScript 2015 (ES6) - adds Promise, Map, Set, Symbol, etc.
+    ES2015,
+    /// ECMAScript 2016 - adds Array.prototype.includes, ** operator
+    ES2016,
+    /// ECMAScript 2017 - adds async/await, Object.values, etc.
+    ES2017,
+    /// ECMAScript 2018 - adds spread properties, rest properties, etc.
+    ES2018,
+    /// ECMAScript 2019 - adds Array.prototype.flat, etc.
+    ES2019,
+    /// ECMAScript 2020 - adds optional chaining, nullish coalescing, etc.
+    ES2020,
+    /// Latest supported ECMAScript features
+    #[default]
+    ESNext,
+}
+
+impl ScriptTarget {
+    /// Check if this target supports ES2015+ features (Promise, Map, Set, Symbol, etc.)
+    pub fn supports_es2015(&self) -> bool {
+        matches!(self, Self::ES2015 | Self::ES2016 | Self::ES2017 | Self::ES2018 | Self::ES2019 | Self::ES2020 | Self::ESNext)
+    }
 }
 
 impl CheckerOptions {
