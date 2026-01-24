@@ -6486,58 +6486,6 @@ impl<'a> CheckerState<'a> {
         self.error_at_node(idx, message, code);
     }
 
-    pub(crate) fn get_literal_index_from_node(&self, idx: NodeIndex) -> Option<usize> {
-        use crate::scanner::SyntaxKind;
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
-
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-        {
-            return self.get_literal_index_from_node(paren.expression);
-        }
-
-        if node.kind == SyntaxKind::NumericLiteral as u16
-            && let Some(lit) = self.ctx.arena.get_literal(node)
-            && let Some(value) = lit.value
-            && value.is_finite()
-            && value.fract() == 0.0
-            && value >= 0.0
-        {
-            return Some(value as usize);
-        }
-
-        None
-    }
-
-    pub(crate) fn get_literal_string_from_node(&self, idx: NodeIndex) -> Option<String> {
-        use crate::scanner::SyntaxKind;
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
-
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-        {
-            return self.get_literal_string_from_node(paren.expression);
-        }
-
-        if let Some(symbol_name) = self.get_symbol_property_name_from_expr(idx) {
-            return Some(symbol_name);
-        }
-
-        if node.kind == SyntaxKind::StringLiteral as u16
-            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        {
-            return self.ctx.arena.get_literal(node).map(|lit| lit.text.clone());
-        }
-
-        None
-    }
-
     pub(crate) fn merge_index_signature(
         target: &mut Option<crate::solver::IndexSignature>,
         incoming: crate::solver::IndexSignature,
@@ -6551,17 +6499,6 @@ impl<'a> CheckerState<'a> {
         } else {
             *target = Some(incoming);
         }
-    }
-
-    pub(crate) fn get_numeric_index_from_string(&self, value: &str) -> Option<usize> {
-        let parsed: f64 = value.parse().ok()?;
-        if !parsed.is_finite() || parsed.fract() != 0.0 || parsed < 0.0 {
-            return None;
-        }
-        if parsed > (usize::MAX as f64) {
-            return None;
-        }
-        Some(parsed as usize)
     }
 
     pub(crate) fn get_literal_key_union_from_type(
