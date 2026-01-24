@@ -6816,4 +6816,65 @@ impl<'a> CheckerState<'a> {
             _ => {}
         }
     }
+
+    // Section 40: Node and Name Utilities
+    // ------------------------------------
+
+    /// Get the text content of a node from the source file.
+    pub(crate) fn node_text(&self, node_idx: NodeIndex) -> Option<String> {
+        let (start, end) = self.get_node_span(node_idx)?;
+        let source = self.ctx.arena.source_files.first()?.text.as_ref();
+        let start = start as usize;
+        let end = end as usize;
+        if start >= end || end > source.len() {
+            return None;
+        }
+        Some(source[start..end].to_string())
+    }
+
+    /// Get the name of a parameter for error messages.
+    pub(crate) fn parameter_name_for_error(&self, name_idx: NodeIndex) -> String {
+        if let Some(name_node) = self.ctx.arena.get(name_idx) {
+            if name_node.kind == SyntaxKind::ThisKeyword as u16 {
+                return "this".to_string();
+            }
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                return ident.escaped_text.clone();
+            }
+            if let Some(lit) = self.ctx.arena.get_literal(name_node) {
+                return lit.text.clone();
+            }
+        }
+
+        self.node_text(name_idx)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| "parameter".to_string())
+    }
+
+    /// Get the name of a property for error messages.
+    pub(crate) fn property_name_for_error(&self, name_idx: NodeIndex) -> Option<String> {
+        self.get_property_name(name_idx).or_else(|| {
+            self.node_text(name_idx)
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+        })
+    }
+
+    /// Check if an initializer expression directly references a name.
+    /// Used for TS2372: parameter cannot reference itself.
+    pub(crate) fn initializer_references_name(&self, init_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+
+        // Check if this is a direct identifier reference
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return ident.escaped_text == name;
+        }
+
+        // For more complex cases, we'd need to recursively check
+        // but for the simple case of `function f(x = x)`, this suffices
+        false
+    }
 }
