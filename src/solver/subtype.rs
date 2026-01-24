@@ -930,6 +930,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// Note: Most intrinsic type checking is done via direct equality in check_subtype_inner.
     /// This function handles special cases and the void/undefined relationship.
+    /// Check if an intrinsic type is a subtype of another intrinsic type.
+    ///
+    /// Intrinsic types are the built-in primitive types of TypeScript:
+    /// - `string`, `number`, `bigint`, `boolean`, `symbol`
+    /// - `null`, `undefined`, `void`
+    /// - `never`, `unknown`, `any`, `error`
+    ///
+    /// ## TypeScript Soundness:
+    /// Intrinsic types have strict subtyping rules:
+    /// - Same type is always a subtype of itself (identity)
+    /// - `undefined` is a subtype of `void` (void functions can return undefined)
+    /// - All other intrinsic type combinations are not subtypes
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Same intrinsic types
+    /// let x: string = "hello";  // ✅ string <: string
+    ///
+    /// // undefined to void (void function return)
+    /// function foo(): void { return; }  // ✅ undefined <: void
+    /// function bar(): void { return undefined; }  // ✅ undefined <: void
+    ///
+    /// // Different intrinsic types
+    /// let a: number = "hello";  // ❌ number is not <: string
+    /// let b: string = 42;  // ❌ string is not <: number
+    /// ```
+    ///
+    /// ## Note:
+    /// The `object` keyword type has special handling in `check_subtype_inner`
+    /// because it involves complex structural subtyping rules.
     fn check_intrinsic_subtype(
         &self,
         source: IntrinsicKind,
@@ -1062,7 +1092,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check TypeQuery to structural type subtype.
+    /// Check TypeQuery (typeof) to structural type subtype.
+    ///
+    /// TypeQuery represents `typeof T` expressions in TypeScript, which capture
+    /// the type of a value rather than a type declaration.
+    ///
+    /// ## Resolution Process:
+    /// 1. Resolve the TypeQuery symbol to get the actual type
+    /// 2. Check if the resolved type is a subtype of the target
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// let x = 42;
+    /// type T = typeof x;  // T is number
+    ///
+    /// let y: T = 42;  // ✅ number <: number
+    /// let z: string = x as T;  // ❌ number is not <: string
+    /// ```
     fn check_typequery_subtype(
         &mut self,
         _source: TypeId,
@@ -1075,7 +1121,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check structural type to TypeQuery subtype.
+    /// Check structural type to TypeQuery (typeof) subtype.
+    ///
+    /// When the target is a TypeQuery (`typeof T`), we resolve it to its actual
+    /// type and then check if the source is compatible with that type.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// let value = 42;
+    /// type ValueType = typeof value;  // number
+    ///
+    /// let x: ValueType = 42;  // ✅ number <: number
+    /// let y: ValueType = "hello";  // ❌ string is not <: number
+    /// ```
     fn check_to_typequery_subtype(
         &mut self,
         source: TypeId,
@@ -1088,7 +1146,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check Application to Application subtype.
+    /// Check if a generic type application is a subtype of another application.
+    ///
+    /// Generic type applications (e.g., `Map<string, number>`, `Array<string>`)
+    /// must have:
+    /// 1. The same base type (e.g., both are `Map`)
+    /// 2. The same number of type arguments
+    /// 3. Covariant type arguments (each source arg must be a subtype of target arg)
+    ///
+    /// ## TypeScript Soundness:
+    /// Generic types are typically covariant in their type arguments for read operations:
+    /// - `Array<string>` <: `Array<string>` ✅ (identical)
+    /// - `Array<"literal">` <: `Array<string>` ✅ (literal is subtype of string)
+    /// - `Array<string>` is not <: `Array<number>` ❌ (different types)
+    /// - `Array<string, number>` is not <: `Array<string>` ❌ (different arity)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Same base and arguments
+    /// let a: Map<string, number> = new Map();  // ✅
+    ///
+    /// // Covariant arguments
+    /// let b: Map<string, number> = new Map<string, 42>();  // ✅ (42 <: number)
+    ///
+    /// // Different base types
+    /// let c: Map<string, number> = new Set<string>();  // ❌
+    ///
+    /// // Different argument counts
+    /// let d: Map<string, number> = new Map<string>();  // ❌
+    /// ```
+    ///
+    /// ## Note:
+    /// This is a simplified check. Full generic variance (covariance, contravariance,
+    /// invariance) depends on how the type parameter is used in the base type definition.
     fn check_application_to_application_subtype(
         &mut self,
         s_app_id: TypeApplicationId,
@@ -1111,6 +1201,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check Application expansion to target (one-sided Application case).
+    ///
+    /// When the target is an Application type that can be expanded (e.g., conditional
+    /// types, mapped types), we first expand it and then check subtyping.
+    ///
+    /// ## Expansion Process:
+    /// 1. Try to expand the Application type (evaluate conditional/mapped type)
+    /// 2. If expansion succeeds, check if source is a subtype of the expanded type
+    /// 3. If expansion fails, the types are incompatible
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// type Mapped<T> = { [K in keyof T]: T[K] };
+    /// type Source = { a: string; b: number };
+    /// type Target = Mapped<Source>;  // Expands to { a: string; b: number }
+    ///
+    /// let x: Target = { a: "hello", b: 42 };  // ✅ Source <: Mapped<Source>
+    /// ```
     fn check_application_expansion_target(
         &mut self,
         _source: TypeId,
@@ -1124,6 +1231,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check source to Application expansion (one-sided Application case).
+    ///
+    /// When the source is an Application type that can be expanded (e.g., conditional
+    /// types, mapped types), we first expand it and then check subtyping.
+    ///
+    /// ## Expansion Process:
+    /// 1. Try to expand the Application type (evaluate conditional/mapped type)
+    /// 2. If expansion succeeds, check if the expanded type is a subtype of target
+    /// 3. If expansion fails, the types are incompatible
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// type NonNullable<T> = T extends null | undefined ? never : T;
+    /// type Source = NonNullable<string | null>;  // Expands to string
+    /// type Target = string;
+    ///
+    /// let x: Target = null as Source;  // ✅ string <: string
+    /// ```
     fn check_source_to_application_expansion(
         &mut self,
         source: TypeId,
@@ -1137,6 +1261,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check Mapped expansion to target (one-sided Mapped case).
+    ///
+    /// When the target is a Mapped type that can be expanded (e.g., `{ [K in keyof T]: T[K] }`),
+    /// we first expand it and then check subtyping.
+    ///
+    /// ## Expansion Process:
+    /// 1. Try to expand the Mapped type (evaluate the mapping)
+    /// 2. If expansion succeeds, check if source is a subtype of the expanded type
+    /// 3. If expansion fails, the types are incompatible
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// type Readonly<T> = { readonly [K in keyof T]: T[K] };
+    /// type Source = { a: string; b: number };
+    /// type Target = Readonly<Source>;  // Expands to { readonly a: string; readonly b: number }
+    ///
+    /// let x: Target = { a: "hello", b: 42 };  // ✅ Source <: Readonly<Source>
+    /// ```
     fn check_mapped_expansion_target(
         &mut self,
         _source: TypeId,
@@ -1150,6 +1291,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check source to Mapped expansion (one-sided Mapped case).
+    ///
+    /// When the source is a Mapped type that can be expanded, we first expand it
+    /// and then check subtyping.
+    ///
+    /// ## Expansion Process:
+    /// 1. Try to expand the Mapped type (evaluate the mapping)
+    /// 2. If expansion succeeds, check if the expanded type is a subtype of target
+    /// 3. If expansion fails, the types are incompatible
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// type Partial<T> = { [K in keyof T]?: T[K] };
+    /// type Source = Partial<{ a: string }>;  // Expands to { a?: string }
+    /// type Target = { a?: string };
+    ///
+    /// let x: Target = { a: "hello" };  // ✅ Partial<{ a: string }> <: { a?: string }
+    /// ```
     fn check_source_to_mapped_expansion(
         &mut self,
         source: TypeId,

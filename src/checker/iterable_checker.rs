@@ -13,9 +13,7 @@
 //! checking, providing cleaner APIs for iteration-related type operations.
 
 use crate::checker::state::CheckerState;
-use crate::checker::types::diagnostics::{
-    diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::parser::NodeIndex;
 use crate::solver::TypeId;
 
