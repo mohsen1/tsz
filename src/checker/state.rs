@@ -6085,7 +6085,7 @@ impl<'a> CheckerState<'a> {
         (parent_node.flags as u32) & node_flags::CONST != 0
     }
 
-    fn is_catch_clause_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
+    pub(crate) fn is_catch_clause_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
         let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
             return false;
         };
@@ -6644,37 +6644,6 @@ impl<'a> CheckerState<'a> {
         }
 
         type_stack.pop().unwrap_or(TypeId::UNKNOWN)
-    }
-
-    /// Get type of variable declaration.
-    fn get_type_of_variable_declaration(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
-            return TypeId::ERROR; // Missing variable declaration data - propagate error
-        };
-
-        // First check type annotation - this takes precedence
-        if !var_decl.type_annotation.is_none() {
-            return self.get_type_from_type_node(var_decl.type_annotation);
-        }
-
-        if self.is_catch_clause_variable_declaration(idx)
-            && self.ctx.use_unknown_in_catch_variables()
-        {
-            return TypeId::UNKNOWN;
-        }
-
-        // Infer from initializer
-        if !var_decl.initializer.is_none() {
-            return self.get_type_of_node(var_decl.initializer);
-        }
-
-        // No initializer - use UNKNOWN to enforce strict checking
-        // This requires explicit type annotation or prevents unsafe usage
-        TypeId::UNKNOWN
     }
 
     fn apply_this_substitution_to_call_return(
