@@ -18560,60 +18560,6 @@ impl<'a> CheckerState<'a> {
 
     /// Recursively check a type node for parameter properties in function types.
     /// Function types (like `(x: T) => R` or `new (x: T) => R`) cannot have parameter properties.
-    pub(crate) fn check_type_for_parameter_properties(&mut self, type_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(type_idx) else {
-            return;
-        };
-
-        // Check if this is a function type or constructor type
-        if node.kind == syntax_kind_ext::FUNCTION_TYPE
-            || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-        {
-            if let Some(func_type) = self.ctx.arena.get_function_type(node) {
-                // Check each parameter for parameter property modifiers
-                self.check_parameter_properties(&func_type.parameters.nodes);
-                for &param_idx in &func_type.parameters.nodes {
-                    if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                    {
-                        if !param.type_annotation.is_none() {
-                            self.check_type_for_parameter_properties(param.type_annotation);
-                        }
-                        self.maybe_report_implicit_any_parameter(param, false);
-                    }
-                }
-                // Recursively check the return type
-                self.check_type_for_parameter_properties(func_type.type_annotation);
-            }
-        }
-        // Check type literals (object types) for call/construct signatures
-        else if node.kind == syntax_kind_ext::TYPE_LITERAL {
-            if let Some(type_lit) = self.ctx.arena.get_type_literal(node) {
-                for &member_idx in &type_lit.members.nodes {
-                    self.check_type_member_for_parameter_properties(member_idx);
-                }
-            }
-        }
-        // Recursively check array types, union types, intersection types, etc.
-        else if node.kind == syntax_kind_ext::ARRAY_TYPE {
-            if let Some(arr) = self.ctx.arena.get_array_type(node) {
-                self.check_type_for_parameter_properties(arr.element_type);
-            }
-        } else if node.kind == syntax_kind_ext::UNION_TYPE
-            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
-        {
-            if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-                for &type_idx in &composite.types.nodes {
-                    self.check_type_for_parameter_properties(type_idx);
-                }
-            }
-        } else if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
-            && let Some(paren) = self.ctx.arena.get_wrapped_type(node)
-        {
-            self.check_type_for_parameter_properties(paren.type_node);
-        }
-    }
-
     /// Walk a type node and emit TS2304 for unresolved type names inside complex types.
     pub(crate) fn check_type_for_missing_names(&mut self, type_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
@@ -18866,7 +18812,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a type literal member for parameter properties (call/construct signatures).
-    fn check_type_member_for_parameter_properties(&mut self, member_idx: NodeIndex) {
+    pub(crate) fn check_type_member_for_parameter_properties(&mut self, member_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
         };
