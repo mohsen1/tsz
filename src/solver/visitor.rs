@@ -325,7 +325,7 @@ impl TypeKindVisitor {
                 TypeKind::Other
             }
             TypeKey::UniqueSymbol(_) => TypeKind::Primitive, // unique symbol is a primitive
-            TypeKey::ThisType => TypeKind::TypeParameter, // this is type-parameter-like
+            TypeKey::ThisType => TypeKind::TypeParameter,    // this is type-parameter-like
             TypeKey::StringIntrinsic { .. } => TypeKind::Primitive, // string intrinsics produce strings
             TypeKey::Error => TypeKind::Error,
         }
@@ -560,7 +560,9 @@ fn is_function_type_impl(types: &TypeInterner, type_id: TypeId) -> bool {
         Some(TypeKey::Function(_) | TypeKey::Callable(_)) => true,
         Some(TypeKey::Intersection(members)) => {
             let members = types.type_list(members);
-            members.iter().any(|&member| is_function_type_impl(types, member))
+            members
+                .iter()
+                .any(|&member| is_function_type_impl(types, member))
         }
         _ => false,
     }
@@ -583,7 +585,9 @@ fn is_object_like_type_impl(types: &TypeInterner, type_id: TypeId) -> bool {
         Some(TypeKey::ReadonlyType(inner)) => is_object_like_type_impl(types, inner),
         Some(TypeKey::Intersection(members)) => {
             let members = types.type_list(members);
-            members.iter().all(|&member| is_object_like_type_impl(types, member))
+            members
+                .iter()
+                .all(|&member| is_object_like_type_impl(types, member))
         }
         Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => info
             .constraint
@@ -1053,7 +1057,9 @@ fn is_function_type_db_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         Some(TypeKey::Function(_) | TypeKey::Callable(_)) => true,
         Some(TypeKey::Intersection(members)) => {
             let members = types.type_list(members);
-            members.iter().any(|&member| is_function_type_db_impl(types, member))
+            members
+                .iter()
+                .any(|&member| is_function_type_db_impl(types, member))
         }
         _ => false,
     }
@@ -1074,7 +1080,9 @@ fn is_object_like_type_db_impl(types: &dyn TypeDatabase, type_id: TypeId) -> boo
         Some(TypeKey::ReadonlyType(inner)) => is_object_like_type_db_impl(types, inner),
         Some(TypeKey::Intersection(members)) => {
             let members = types.type_list(members);
-            members.iter().all(|&member| is_object_like_type_db_impl(types, member))
+            members
+                .iter()
+                .all(|&member| is_object_like_type_db_impl(types, member))
         }
         Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) => info
             .constraint

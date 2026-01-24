@@ -3882,7 +3882,8 @@ impl<'a> CheckerState<'a> {
         if type_args.len() > base_type_params.len() {
             type_args.truncate(base_type_params.len());
         }
-        let substitution = TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+        let substitution =
+            TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
         // Get the derived class name for the error message
         let derived_class_name = if !class_data.name.is_none() {
@@ -4219,7 +4220,8 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                let substitution = TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+                let substitution =
+                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
                 for (member_name, member_type) in &derived_members {
                     let mut found = false;

@@ -1699,8 +1699,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         (node.pos, node.end - node.pos)
                     }
-                } else if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
-                {
+                } else if node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
                     // For import specifiers, try to find the parent import declaration
                     if let Some(ext) = self.ctx.arena.get_extended(decl_node) {
                         let parent = ext.parent;
@@ -1959,9 +1958,7 @@ impl<'a> CheckerState<'a> {
         sig: &crate::solver::CallSignature,
         type_args: &[TypeId],
     ) -> crate::solver::CallSignature {
-        use crate::solver::{
-            ParamInfo, TypePredicate, TypeSubstitution, instantiate_type,
-        };
+        use crate::solver::{ParamInfo, TypePredicate, TypeSubstitution, instantiate_type};
 
         let substitution = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
         let params: Vec<ParamInfo> = sig
@@ -1979,13 +1976,16 @@ impl<'a> CheckerState<'a> {
             .this_type
             .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution));
         let return_type = instantiate_type(self.ctx.types, sig.return_type, &substitution);
-        let type_predicate = sig.type_predicate.as_ref().map(|predicate| crate::solver::TypePredicate {
-            asserts: predicate.asserts,
-            target: predicate.target.clone(),
-            type_id: predicate
-                .type_id
-                .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
-        });
+        let type_predicate =
+            sig.type_predicate
+                .as_ref()
+                .map(|predicate| crate::solver::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target.clone(),
+                    type_id: predicate
+                        .type_id
+                        .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
+                });
 
         crate::solver::CallSignature {
             type_params: Vec::new(),
@@ -3863,7 +3863,6 @@ impl<'a> CheckerState<'a> {
     // Type Resolution - Specific Node Types
     // =========================================================================
 
-
     /// Check if a type can be narrowed through control flow analysis.
     ///
     /// This function determines whether a type is eligible for type narrowing
@@ -5661,7 +5660,11 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get enum member type by property name.
-    pub(crate) fn enum_member_type_for_name(&self, sym_id: SymbolId, property_name: &str) -> Option<TypeId> {
+    pub(crate) fn enum_member_type_for_name(
+        &self,
+        sym_id: SymbolId,
+        property_name: &str,
+    ) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::ENUM == 0 {
             return None;
@@ -7043,7 +7046,9 @@ impl<'a> CheckerState<'a> {
 
                 // For optional target properties, undefined should be assignable
                 let effective_target_type = if target_prop.optional {
-                    self.ctx.types.union(vec![target_prop_type, TypeId::UNDEFINED])
+                    self.ctx
+                        .types
+                        .union(vec![target_prop_type, TypeId::UNDEFINED])
                 } else {
                     target_prop_type
                 };
@@ -7737,20 +7742,32 @@ impl<'a> CheckerState<'a> {
                     // Handle aliases to namespaces/modules (e.g., export { Namespace } from './file')
                     // When accessing Namespace.member, we need to resolve through the alias
                     if symbol.flags & symbol_flags::ALIAS != 0
-                        && symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE | symbol_flags::MODULE) != 0
+                        && symbol.flags
+                            & (symbol_flags::NAMESPACE_MODULE
+                                | symbol_flags::VALUE_MODULE
+                                | symbol_flags::MODULE)
+                            != 0
                     {
                         let mut visited_aliases = Vec::new();
-                        if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
+                        if let Some(target_sym_id) =
+                            self.resolve_alias_symbol(sym_id, &mut visited_aliases)
+                        {
                             // Get the type of the target namespace/module
                             let target_type = self.get_type_of_symbol(target_sym_id);
                             if target_type != type_id {
-                                return self.resolve_type_for_property_access_inner(target_type, visited);
+                                return self
+                                    .resolve_type_for_property_access_inner(target_type, visited);
                             }
                         }
                     }
 
                     // Handle plain namespace/module references
-                    if symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE | symbol_flags::MODULE) != 0 {
+                    if symbol.flags
+                        & (symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE
+                            | symbol_flags::MODULE)
+                        != 0
+                    {
                         // For namespace references, we want to allow accessing its members
                         // so we return the type as-is (it will be resolved in resolve_namespace_value_member)
                         return type_id;
@@ -9347,7 +9364,9 @@ impl<'a> CheckerState<'a> {
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
                     checker.set_strict_null_checks(self.ctx.strict_null_checks());
-                    checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
+                    checker.set_exact_optional_property_types(
+                        self.ctx.exact_optional_property_types(),
+                    );
                     checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
                     checker.is_assignable_to(type_arg, instantiated_constraint)
                 };
@@ -9421,7 +9440,9 @@ impl<'a> CheckerState<'a> {
                     let mut checker =
                         crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
                     checker.set_strict_null_checks(self.ctx.strict_null_checks());
-                    checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
+                    checker.set_exact_optional_property_types(
+                        self.ctx.exact_optional_property_types(),
+                    );
                     checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
                     checker.is_assignable_to(type_arg, instantiated_constraint)
                 };
@@ -9626,7 +9647,10 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some(symbol_flags::TYPE_ALIAS),
             syntax_kind_ext::ENUM_DECLARATION => {
                 // Check if this is a const enum
-                let is_const_enum = self.ctx.arena.get_enum_decl(node)
+                let is_const_enum = self
+                    .ctx
+                    .arena
+                    .get_enum_decl(node)
                     .map(|enum_decl| enum_decl.const_enum)
                     .unwrap_or(false);
                 if is_const_enum {
