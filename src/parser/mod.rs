@@ -25,6 +25,9 @@ mod tests;
 #[cfg(test)]
 mod parser_improvement_tests;
 
+#[cfg(test)]
+mod trailing_comma_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
