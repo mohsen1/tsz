@@ -14507,86 +14507,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// This function traverses a binding pattern (object or array destructuring) and verifies
     /// that any default values provided in binding elements are assignable to their expected types.
-    fn check_binding_pattern(&mut self, pattern_idx: NodeIndex, pattern_type: TypeId) {
-        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return;
-        };
-
-        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
-            return;
-        };
-
-        // Traverse binding elements
-        let pattern_kind = pattern_node.kind;
-
-        // TS2461: Check if array destructuring is applied to a non-array type
-        if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            self.check_array_destructuring_target_type(pattern_idx, pattern_type);
-        }
-
-        for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
-            self.check_binding_element(element_idx, pattern_kind, i, pattern_type);
-        }
-    }
-
-    /// Check a single binding element for default value assignability.
-    fn check_binding_element(
-        &mut self,
-        element_idx: NodeIndex,
-        pattern_kind: u16,
-        element_index: usize,
-        parent_type: TypeId,
-    ) {
-        let Some(element_node) = self.ctx.arena.get(element_idx) else {
-            return;
-        };
-
-        // Handle holes in array destructuring: [a, , b]
-        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-            return;
-        }
-
-        let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-            return;
-        };
-
-        // Check computed property name expression for unresolved identifiers (TS2304)
-        // e.g., in `{[z]: x}` where `z` is undefined
-        if !element_data.property_name.is_none() {
-            self.check_computed_property_name(element_data.property_name);
-        }
-
-        // Get the expected type for this binding element from the parent type
-        let element_type = if parent_type != TypeId::ANY {
-            // For object binding patterns, look up the property type
-            // For array binding patterns, look up the tuple element type
-            self.get_binding_element_type(pattern_kind, element_index, parent_type, element_data)
-        } else {
-            TypeId::ANY
-        };
-
-        // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none() && element_type != TypeId::ANY {
-            let default_value_type = self.get_type_of_node(element_data.initializer);
-
-            if !self.is_assignable_to(default_value_type, element_type) {
-                self.error_type_not_assignable_with_reason_at(
-                    default_value_type,
-                    element_type,
-                    element_data.initializer,
-                );
-            }
-        }
-
-        // If the name is a nested binding pattern, recursively check it
-        if let Some(name_node) = self.ctx.arena.get(element_data.name)
-            && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-        {
-            self.check_binding_pattern(element_data.name, element_type);
-        }
-    }
-
     /// Assign inferred types to binding element symbols (destructuring).
     ///
     /// The binder creates symbols for identifiers inside binding patterns (e.g., `const [x] = arr;`),
@@ -14645,42 +14565,9 @@ impl<'a> CheckerState<'a> {
 
     /// Check if the target type is valid for array destructuring.
     /// Emits TS2461 if the type is not array-like, iterable, or a string.
-    fn check_array_destructuring_target_type(
-        &mut self,
-        pattern_idx: NodeIndex,
-        source_type: TypeId,
-    ) {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages, format_message,
-        };
-
-        // Skip check for any, unknown, error, or never types
-        if source_type == TypeId::ANY
-            || source_type == TypeId::UNKNOWN
-            || source_type == TypeId::ERROR
-            || source_type == TypeId::NEVER
-        {
-            return;
-        }
-
-        // Check if the type is array-like (array, tuple, string, or has iterator)
-        let is_array_like = self.is_array_destructurable_type(source_type);
-
-        if !is_array_like {
-            let type_str = self.format_type(source_type);
-            let message =
-                format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
-            self.error_at_node(
-                pattern_idx,
-                &message,
-                diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
-            );
-        }
-    }
-
     /// Check if a type can be array-destructured.
     /// Returns true for arrays, tuples, strings, and types with [Symbol.iterator].
-    fn is_array_destructurable_type(&self, type_id: TypeId) -> bool {
+    pub(crate) fn is_array_destructurable_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
 
         // Handle primitive types
@@ -14822,7 +14709,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the expected type for a binding element from its parent type.
-    fn get_binding_element_type(
+    pub(crate) fn get_binding_element_type(
         &mut self,
         pattern_kind: u16,
         element_index: usize,
