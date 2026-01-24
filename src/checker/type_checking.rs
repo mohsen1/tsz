@@ -700,4 +700,53 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
+    // =========================================================================
+    // Accessor and Constructor Validation
+    // =========================================================================
+
+    /// Check setter parameter constraints (TS1052, TS1053, TS7006).
+    ///
+    /// This function validates that setter parameters comply with TypeScript rules:
+    /// - TS1052: Setter parameters cannot have initializers
+    /// - TS1053: Setter cannot have rest parameters
+    /// - TS7006: Parameters without type annotations are implicitly 'any'
+    ///
+    /// ## Error Messages:
+    /// - TS1052: "A 'set' accessor parameter cannot have an initializer."
+    /// - TS1053: "A 'set' accessor cannot have rest parameter."
+    pub(crate) fn check_setter_parameter(&mut self, parameters: &[NodeIndex]) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        for &param_idx in parameters {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // Check for initializer (error 1052)
+            if !param.initializer.is_none() {
+                self.error_at_node(
+                    param.name,
+                    "A 'set' accessor parameter cannot have an initializer.",
+                    diagnostic_codes::SETTER_PARAMETER_CANNOT_HAVE_INITIALIZER,
+                );
+            }
+
+            // Check for rest parameter (error 1053)
+            if param.dot_dot_dot_token {
+                self.error_at_node(
+                    param_idx,
+                    "A 'set' accessor cannot have rest parameter.",
+                    diagnostic_codes::SETTER_CANNOT_HAVE_REST_PARAMETER,
+                );
+            }
+
+            // Check for implicit any (error 7006)
+            // Setter parameters without type annotation implicitly have 'any' type
+            self.maybe_report_implicit_any_parameter(param, false);
+        }
+    }
 }
