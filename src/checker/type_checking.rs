@@ -71,7 +71,9 @@ impl<'a> CheckerState<'a> {
 
         self.check_readonly_assignment(left_idx, expr_idx);
 
-        if left_type != TypeId::ANY {
+        // Perform assignability check for all non-ANY types
+        // This includes null/undefined in strict mode - they should NOT be assignable to non-nullable types
+        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
@@ -147,7 +149,8 @@ impl<'a> CheckerState<'a> {
             result_type
         };
 
-        if left_type != TypeId::ANY {
+        // Perform assignability check for all non-ANY types (including strict null checks)
+        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
