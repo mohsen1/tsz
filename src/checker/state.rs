@@ -22,7 +22,7 @@ use crate::checker::types::diagnostics::{
 };
 use crate::checker::{CheckerContext, EnclosingClassInfo, FlowAnalyzer};
 use crate::interner::Atom;
-use crate::parser::node::{ImportDeclData, NodeArena};
+use crate::parser::node::NodeArena;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
@@ -1674,35 +1674,6 @@ impl<'a> CheckerState<'a> {
     /// a string literal (for import equals declarations where the parser
     /// stores only the string literal, not the full require() call).
     /// Returns the module path string (e.g., './util' from require('./util')).
-    fn get_require_module_specifier(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-
-        // For import equals declarations, the parser stores just the string literal
-        // e.g., `import x = require('./util')` has module_specifier = StringLiteral('./util')
-        if node.kind == SyntaxKind::StringLiteral as u16 {
-            let literal = self.ctx.arena.get_literal(node)?;
-            return Some(literal.text.clone());
-        }
-
-        // Handle full require() call expression (for other contexts)
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-
-        let call = self.ctx.arena.get_call_expr(node)?;
-        let callee_node = self.ctx.arena.get(call.expression)?;
-        let callee_ident = self.ctx.arena.get_identifier(callee_node)?;
-        if callee_ident.escaped_text != "require" {
-            return None;
-        }
-
-        let args = call.arguments.as_ref()?;
-        let first_arg = args.nodes.first().copied()?;
-        let arg_node = self.ctx.arena.get(first_arg)?;
-        let literal = self.ctx.arena.get_literal(arg_node)?;
-        Some(literal.text.clone())
-    }
-
     fn resolve_require_call_symbol(
         &self,
         idx: NodeIndex,
@@ -1715,37 +1686,6 @@ impl<'a> CheckerState<'a> {
         // Module resolution for require() is handled in compute_type_of_symbol
         // by creating an object type from module_exports.
         None
-    }
-
-    /// Check if a node is a `require()` call expression.
-    /// This is used to detect import equals declarations like `import x = require('./module')`
-    /// where we want to return ANY type instead of the literal string type.
-    #[allow(dead_code)] // Infrastructure for module resolution
-    fn is_require_call(&self, idx: NodeIndex) -> bool {
-        let node = match self.ctx.arena.get(idx) {
-            Some(n) => n,
-            None => return false,
-        };
-        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return false;
-        }
-
-        let call = match self.ctx.arena.get_call_expr(node) {
-            Some(c) => c,
-            None => return false,
-        };
-
-        let callee_node = match self.ctx.arena.get(call.expression) {
-            Some(n) => n,
-            None => return false,
-        };
-
-        let callee_ident = match self.ctx.arena.get_identifier(callee_node) {
-            Some(ident) => ident,
-            None => return false,
-        };
-
-        callee_ident.escaped_text == "require"
     }
 
     fn missing_type_query_left(&self, idx: NodeIndex) -> Option<NodeIndex> {
@@ -1924,38 +1864,6 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an expression is a property access on an unresolved import.
     /// Used to suppress TS2304 errors when TS2307 was already emitted for the module.
-    fn is_property_access_on_unresolved_import(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-
-        // Handle property access expressions (e.g., B.B in extends B.B)
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let Some(access) = self.ctx.arena.get_access_expr(node) else {
-                return false;
-            };
-            // Check if the left side is an unresolved import or a property access on one
-            return self.is_unresolved_import_symbol(access.expression)
-                || self.is_property_access_on_unresolved_import(access.expression);
-        }
-
-        // Handle qualified names (e.g., A.B in type position)
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
-                return false;
-            };
-            return self.is_unresolved_import_symbol(qn.left)
-                || self.is_property_access_on_unresolved_import(qn.left);
-        }
-
-        // Direct identifier - check if it's an unresolved import
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self.is_unresolved_import_symbol(idx);
-        }
-
-        false
-    }
-
     /// Check if an identifier refers to an import from an unresolved module.
     pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
         let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
@@ -19544,95 +19452,6 @@ impl<'a> CheckerState<'a> {
 
     /// Extract the private brand property name from a type if it has one.
     /// Returns `Some(brand_name)` if the type has a private brand, `None` otherwise.
-    fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
-        use crate::solver::TypeKey;
-
-        let key = self.ctx.types.lookup(type_id)?;
-        match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                for prop in &shape.properties {
-                    let name = self.ctx.types.resolve_atom(prop.name);
-                    if name.starts_with("__private_brand_") {
-                        return Some(name);
-                    }
-                }
-                None
-            }
-            TypeKey::Callable(callable_id) => {
-                // Constructor types (Callable) can also have private brands for static members
-                let callable = self.ctx.types.callable_shape(callable_id);
-                for prop in &callable.properties {
-                    let name = self.ctx.types.resolve_atom(prop.name);
-                    if name.starts_with("__private_brand_") {
-                        return Some(name);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// Check if two types have the same private brand (i.e., are from the same class declaration).
-    /// This is used for nominal typing of private member access.
-    fn types_have_same_private_brand(&self, type1: TypeId, type2: TypeId) -> bool {
-        match (self.get_private_brand(type1), self.get_private_brand(type2)) {
-            (Some(brand1), Some(brand2)) => brand1 == brand2,
-            _ => false,
-        }
-    }
-
-    /// Extract the name of the private field from a brand string.
-    /// Returns the private field name (e.g., "#foo") if found, None otherwise.
-    fn get_private_field_name_from_brand(&self, type_id: TypeId) -> Option<String> {
-        use crate::solver::TypeKey;
-
-        let key = self.ctx.types.lookup(type_id)?;
-        let properties = match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                &self.ctx.types.object_shape(shape_id).properties
-            }
-            TypeKey::Callable(callable_id) => {
-                &self.ctx.types.callable_shape(callable_id).properties
-            }
-            _ => return None,
-        };
-
-        // Find the first non-brand private property (starts with #)
-        for prop in properties {
-            let name = self.ctx.types.resolve_atom(prop.name);
-            if name.starts_with('#') && !name.starts_with("__private_brand_") {
-                return Some(name);
-            }
-        }
-        None
-    }
-
-    /// Check if there's a private brand mismatch between two types and return an appropriate error message.
-    /// Returns Some(error_message) if there's a private brand mismatch, None otherwise.
-    fn private_brand_mismatch_error(&self, source: TypeId, target: TypeId) -> Option<String> {
-        let source_brand = self.get_private_brand(source)?;
-        let target_brand = self.get_private_brand(target)?;
-
-        // Only report if both have brands but they're different
-        if source_brand == target_brand {
-            return None;
-        }
-
-        // Try to get the private field name from the source type
-        let field_name = self
-            .get_private_field_name_from_brand(source)
-            .unwrap_or_else(|| "[private field]".to_string());
-
-        Some(format!(
-            "Property '{}' in type '{}' refers to a different member that cannot be accessed from within type '{}'.",
-            field_name,
-            self.format_type(source),
-            self.format_type(target)
-        ))
-    }
-
     pub(crate) fn private_member_declaring_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
