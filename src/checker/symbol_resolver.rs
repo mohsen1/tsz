@@ -23,8 +23,8 @@
 
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
-use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 use std::sync::Arc;
