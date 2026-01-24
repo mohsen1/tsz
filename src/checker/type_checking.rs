@@ -6329,4 +6329,73 @@ impl<'a> CheckerState<'a> {
         };
         node.kind == SyntaxKind::ImportKeyword as u16
     }
+
+    // =========================================================================
+    // Section 33: Literal Extraction Utilities
+    // =========================================================================
+
+    /// Get a numeric literal index from a node.
+    /// Returns None if the node is not a non-negative integer literal.
+    pub(crate) fn get_literal_index_from_node(&self, idx: NodeIndex) -> Option<usize> {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return None;
+        };
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_literal_index_from_node(paren.expression);
+        }
+
+        if node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(node)
+            && let Some(value) = lit.value
+            && value.is_finite()
+            && value.fract() == 0.0
+            && value >= 0.0
+        {
+            return Some(value as usize);
+        }
+
+        None
+    }
+
+    /// Get a string literal from a node.
+    /// Returns None if the node is not a string literal or template literal.
+    pub(crate) fn get_literal_string_from_node(&self, idx: NodeIndex) -> Option<String> {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return None;
+        };
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.get_literal_string_from_node(paren.expression);
+        }
+
+        if let Some(symbol_name) = self.get_symbol_property_name_from_expr(idx) {
+            return Some(symbol_name);
+        }
+
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return self.ctx.arena.get_literal(node).map(|lit| lit.text.clone());
+        }
+
+        None
+    }
+
+    /// Parse a numeric index from a string.
+    /// Returns None if the string is not a valid non-negative integer.
+    pub(crate) fn get_numeric_index_from_string(&self, value: &str) -> Option<usize> {
+        let parsed: f64 = value.parse().ok()?;
+        if !parsed.is_finite() || parsed.fract() != 0.0 || parsed < 0.0 {
+            return None;
+        }
+        if parsed > (usize::MAX as f64) {
+            return None;
+        }
+        Some(parsed as usize)
+    }
 }
