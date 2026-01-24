@@ -37,8 +37,8 @@
 //! The lowering pass creates a `TransformDirective::CommonJSExport` that
 //! chains with any other transforms (like ES5Class).
 
+use crate::common::ModuleKind;
 use crate::emit_context::EmitContext;
-use crate::emitter::ModuleKind;
 use crate::parser::node::{Node, NodeArena};
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, NodeList};
