@@ -12,7 +12,8 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
-use crate::checker::state::{CheckerState, MemberAccessLevel};
+use crate::checker::state::{CheckerState, MemberAccessLevel, MAX_TREE_WALK_ITERATIONS};
+use crate::checker::FlowAnalyzer;
 use crate::parser::node::ImportDeclData;
 use crate::parser::NodeIndex;
 use crate::parser::syntax_kind_ext;
@@ -3381,6 +3382,162 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    // 20. Declaration and Node Checking Utilities (6 functions)
+
+    /// Check if a variable declaration is in a const declaration list.
+    ///
+    /// ## Parameters
+    /// - `var_decl_idx`: The variable declaration node index
+    ///
+    /// Returns true if the variable is declared with `const`.
+    pub(crate) fn is_const_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
+        use crate::parser::node_flags;
+
+        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+        (parent_node.flags as u32) & node_flags::CONST != 0
+    }
+
+    /// Check if a class declaration has the declare modifier (is ambient).
+    ///
+    /// ## Parameters
+    /// - `decl_idx`: The declaration node index
+    ///
+    /// Returns true if the class is an ambient declaration.
+    pub(crate) fn is_ambient_class_declaration(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+            return false;
+        }
+        let Some(class) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        self.has_declare_modifier(&class.modifiers)
+    }
+
+    /// Check if a method declaration has a body (is an implementation, not just a signature).
+    ///
+    /// ## Parameters
+    /// - `decl_idx`: The method declaration node index
+    ///
+    /// Returns true if the method has a body.
+    pub(crate) fn method_has_body(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+            return false;
+        }
+        let Some(method) = self.ctx.arena.get_method_decl(node) else {
+            return false;
+        };
+        !method.body.is_none()
+    }
+
+    /// Get the name node of a declaration for error reporting.
+    ///
+    /// ## Parameters
+    /// - `decl_idx`: The declaration node index
+    ///
+    /// Returns the name node if the declaration has one.
+    pub(crate) fn get_declaration_name_node(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(decl_idx)?;
+
+        match node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let var_decl = self.ctx.arena.get_variable_declaration(node)?;
+                Some(var_decl.name)
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                let func = self.ctx.arena.get_function(node)?;
+                Some(func.name)
+            }
+            syntax_kind_ext::CLASS_DECLARATION => {
+                let class = self.ctx.arena.get_class(node)?;
+                Some(class.name)
+            }
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                let interface = self.ctx.arena.get_interface(node)?;
+                Some(interface.name)
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                let type_alias = self.ctx.arena.get_type_alias(node)?;
+                Some(type_alias.name)
+            }
+            syntax_kind_ext::ENUM_DECLARATION => {
+                let enum_decl = self.ctx.arena.get_enum(node)?;
+                Some(enum_decl.name)
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if a node is an assignment target in a for-in or for-of loop.
+    ///
+    /// ## Parameters
+    /// - `idx`: The node index to check
+    ///
+    /// Returns true if the node is the variable being assigned in a for-in/of loop.
+    pub(crate) fn is_for_in_of_assignment_target(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) => ext,
+                None => return false,
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent = ext.parent;
+            let parent_node = match self.ctx.arena.get(parent) {
+                Some(node) => node,
+                None => return false,
+            };
+            if (parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+                && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
+            {
+                let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
+                return analyzer.assignment_targets_reference(for_data.initializer, idx);
+            }
+            current = parent;
+        }
+    }
+
+    /// Convert a floating-point number to a numeric index.
+    ///
+    /// ## Parameters
+    /// - `value`: The floating-point value to convert
+    ///
+    /// Returns Some(index) if the value is a valid non-negative integer, None otherwise.
+    pub(crate) fn get_numeric_index_from_number(&self, value: f64) -> Option<usize> {
+        if !value.is_finite() || value.fract() != 0.0 || value < 0.0 {
+            return None;
+        }
+        if value > (usize::MAX as f64) {
+            return None;
+        }
+        Some(value as usize)
     }
 }
 
