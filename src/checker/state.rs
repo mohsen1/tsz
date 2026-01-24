@@ -9971,53 +9971,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn excluded_symbol_flags(flags: u32) -> u32 {
-        if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0 {
-            return symbol_flags::FUNCTION_SCOPED_VARIABLE_EXCLUDES;
-        }
-        if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0 {
-            return symbol_flags::BLOCK_SCOPED_VARIABLE_EXCLUDES;
-        }
-        if (flags & symbol_flags::FUNCTION) != 0 {
-            return symbol_flags::FUNCTION_EXCLUDES;
-        }
-        if (flags & symbol_flags::CLASS) != 0 {
-            return symbol_flags::CLASS_EXCLUDES;
-        }
-        if (flags & symbol_flags::INTERFACE) != 0 {
-            return symbol_flags::INTERFACE_EXCLUDES;
-        }
-        if (flags & symbol_flags::TYPE_ALIAS) != 0 {
-            return symbol_flags::TYPE_ALIAS_EXCLUDES;
-        }
-        if (flags & symbol_flags::REGULAR_ENUM) != 0 {
-            return symbol_flags::REGULAR_ENUM_EXCLUDES;
-        }
-        if (flags & symbol_flags::GET_ACCESSOR) != 0 {
-            return symbol_flags::GET_ACCESSOR_EXCLUDES;
-        }
-        if (flags & symbol_flags::SET_ACCESSOR) != 0 {
-            return symbol_flags::SET_ACCESSOR_EXCLUDES;
-        }
-        if (flags & symbol_flags::METHOD) != 0 {
-            return symbol_flags::METHOD_EXCLUDES;
-        }
-        symbol_flags::NONE
-    }
-
-    pub(crate) fn declarations_conflict(flags_a: u32, flags_b: u32) -> bool {
-        // Static and instance members with the same name don't conflict
-        let a_is_static = (flags_a & symbol_flags::STATIC) != 0;
-        let b_is_static = (flags_b & symbol_flags::STATIC) != 0;
-        if a_is_static != b_is_static {
-            return false;
-        }
-
-        let excludes_a = Self::excluded_symbol_flags(flags_a);
-        let excludes_b = Self::excluded_symbol_flags(flags_b);
-        (flags_a & excludes_b) != 0 || (flags_b & excludes_a) != 0
-    }
-
     /// Check for duplicate parameter names in a parameter list (TS2300).
     /// Check a statement and produce type errors.
     pub(crate) fn check_statement(&mut self, stmt_idx: NodeIndex) {
@@ -12200,28 +12153,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // Flow analysis functions moved to checker/flow_analysis.rs
-
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
-        matches!(
-            operator,
-            k if k == SyntaxKind::EqualsToken as u16
-                || k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-        )
-    }
 
     /// Check an interface declaration.
     fn check_interface_declaration(&mut self, stmt_idx: NodeIndex) {

@@ -8101,4 +8101,149 @@ impl<'a> CheckerState<'a> {
             None => 0,
         }
     }
+
+    // Section 50: Symbol Flags Utilities
+    // ----------------------------------
+
+    /// Check if an operator token is an assignment operator.
+    ///
+    /// This function determines whether a given operator token represents
+    /// an assignment operation, including compound assignments.
+    ///
+    /// ## Assignment Operators:
+    /// - **Simple assignment**: `=`
+    /// - **Compound assignments**: `+=`, `-=`, `*=`, `/=`, `%=`, etc.
+    /// - **Bitwise assignments**: `&=`, `|=`, `^=`, `<<=`, `>>=`, `>>>=`
+    /// - **Logical assignments**: `&&=`, `||=`, `??=`
+    /// - **Exponentiation**: `**=`
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// x = 5;        // is_assignment_operator(EqualsToken) → true
+    /// x += 5;       // is_assignment_operator(PlusEqualsToken) → true
+    /// x **= 2;      // is_assignment_operator(AsteriskAsteriskEqualsToken) → true
+    /// x + 5;        // is_assignment_operator(PlusToken) → false
+    /// x === y;      // is_assignment_operator(EqualsEqualsToken) → false
+    /// ```
+    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
+        matches!(
+            operator,
+            k if k == SyntaxKind::EqualsToken as u16
+                || k == SyntaxKind::PlusEqualsToken as u16
+                || k == SyntaxKind::MinusEqualsToken as u16
+                || k == SyntaxKind::AsteriskEqualsToken as u16
+                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                || k == SyntaxKind::SlashEqualsToken as u16
+                || k == SyntaxKind::PercentEqualsToken as u16
+                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::AmpersandEqualsToken as u16
+                || k == SyntaxKind::BarEqualsToken as u16
+                || k == SyntaxKind::BarBarEqualsToken as u16
+                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
+                || k == SyntaxKind::CaretEqualsToken as u16
+        )
+    }
+
+    /// Get the excluded symbol flags for a given symbol.
+    ///
+    /// Each symbol type (function, class, interface, etc.) has specific
+    /// flags that represent incompatible symbols that cannot share the same name.
+    /// This function returns those exclusion flags.
+    ///
+    /// ## Symbol Exclusion Rules:
+    /// - Functions exclude other functions with the same name
+    /// - Classes exclude interfaces with the same name (unless merging)
+    /// - Variables exclude other variables with the same name in the same scope
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Function exclusions
+    /// function foo() {}
+    /// function foo() {} // ERROR: Duplicate function declaration
+    ///
+    /// // Class/Interface merging (allowed)
+    /// interface Foo {}
+    /// class Foo {} // Allowed: interface and class can merge
+    ///
+    /// // Variable exclusions
+    /// let x = 1;
+    /// let x = 2; // ERROR: Duplicate variable declaration
+    /// ```
+    fn excluded_symbol_flags(flags: u32) -> u32 {
+        if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0 {
+            return symbol_flags::FUNCTION_SCOPED_VARIABLE_EXCLUDES;
+        }
+        if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0 {
+            return symbol_flags::BLOCK_SCOPED_VARIABLE_EXCLUDES;
+        }
+        if (flags & symbol_flags::FUNCTION) != 0 {
+            return symbol_flags::FUNCTION_EXCLUDES;
+        }
+        if (flags & symbol_flags::CLASS) != 0 {
+            return symbol_flags::CLASS_EXCLUDES;
+        }
+        if (flags & symbol_flags::INTERFACE) != 0 {
+            return symbol_flags::INTERFACE_EXCLUDES;
+        }
+        if (flags & symbol_flags::TYPE_ALIAS) != 0 {
+            return symbol_flags::TYPE_ALIAS_EXCLUDES;
+        }
+        if (flags & symbol_flags::REGULAR_ENUM) != 0 {
+            return symbol_flags::REGULAR_ENUM_EXCLUDES;
+        }
+        if (flags & symbol_flags::GET_ACCESSOR) != 0 {
+            return symbol_flags::GET_ACCESSOR_EXCLUDES;
+        }
+        if (flags & symbol_flags::SET_ACCESSOR) != 0 {
+            return symbol_flags::SET_ACCESSOR_EXCLUDES;
+        }
+        if (flags & symbol_flags::METHOD) != 0 {
+            return symbol_flags::METHOD_EXCLUDES;
+        }
+        symbol_flags::NONE
+    }
+
+    /// Check if two declarations conflict based on their symbol flags.
+    ///
+    /// This function determines whether two symbols with the given flags
+    /// can coexist in the same scope without conflict.
+    ///
+    /// ## Conflict Rules:
+    /// - **Static vs Instance**: Static and instance members with the same name don't conflict
+    /// - **Exclusion Flags**: If either declaration excludes the other's flags, they conflict
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// class Example {
+    ///   static x = 1;  // Static member
+    ///   x = 2;         // Instance member - no conflict
+    /// }
+    ///
+    /// class Conflict {
+    ///   foo() {}      // Method
+    ///   foo: number;  // Property - CONFLICT!
+    /// }
+    ///
+    /// interface Merge {
+    ///   foo(): void;
+    /// }
+    /// interface Merge {
+    ///   bar(): void;  // No conflict - different members
+    /// }
+    /// ```
+    pub(crate) fn declarations_conflict(flags_a: u32, flags_b: u32) -> bool {
+        // Static and instance members with the same name don't conflict
+        let a_is_static = (flags_a & symbol_flags::STATIC) != 0;
+        let b_is_static = (flags_b & symbol_flags::STATIC) != 0;
+        if a_is_static != b_is_static {
+            return false;
+        }
+
+        let excludes_a = Self::excluded_symbol_flags(flags_a);
+        let excludes_b = Self::excluded_symbol_flags(flags_b);
+        (flags_a & excludes_b) != 0 || (flags_b & excludes_a) != 0
+    }
 }
