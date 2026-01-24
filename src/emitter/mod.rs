@@ -22,6 +22,7 @@
 //!
 //! Note: pub(super) fields and methods allow future submodules to access Printer internals.
 
+use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
 use crate::emit_context::EmitContext;
 use crate::parser::NodeIndex;
 use crate::parser::node::{Node, NodeArena};
@@ -53,51 +54,12 @@ pub use comments::{
     CommentKind, CommentRange, get_leading_comment_ranges, get_trailing_comment_ranges,
 };
 
+// Re-export common types for backward compatibility
+pub use crate::common::{ModuleKind, NewLineKind, ScriptTarget};
+
 // =============================================================================
 // Emitter Options
 // =============================================================================
-
-/// ECMAScript target version.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ScriptTarget {
-    ES3 = 0,
-    ES5 = 1,
-    ES2015 = 2,
-    ES2016 = 3,
-    ES2017 = 4,
-    ES2018 = 5,
-    ES2019 = 6,
-    ES2020 = 7,
-    ES2021 = 8,
-    ES2022 = 9,
-    #[default]
-    ESNext = 99,
-}
-
-/// Module system kind.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ModuleKind {
-    #[default]
-    None = 0,
-    CommonJS = 1,
-    AMD = 2,
-    UMD = 3,
-    System = 4,
-    ES2015 = 5,
-    ES2020 = 6,
-    ES2022 = 7,
-    ESNext = 99,
-    Node16 = 100,
-    NodeNext = 199,
-}
-
-/// New line kind.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum NewLineKind {
-    #[default]
-    LineFeed = 0,
-    CarriageReturnLineFeed = 1,
-}
 
 /// Printer configuration options.
 #[derive(Clone, Debug)]
