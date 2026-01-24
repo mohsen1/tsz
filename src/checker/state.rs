@@ -13500,8 +13500,58 @@ impl<'a> CheckerState<'a> {
         prev_type
     }
 
-    /// Check if a type is assignable to a union of types.
-    /// Uses the context's TypeEnvironment for resolving type references and expanding Applications.
+    /// Check if source type is assignable to ANY member of a target union.
+    ///
+    /// This function implements the union assignability rule: a type is assignable
+    /// to a union if it's assignable to at least one member of the union.
+    ///
+    /// ## Union Assignability Rule:
+    /// - `source` is assignable to `T1 | T2 | T3` if:
+    ///   - `source` assignable to `T1` **OR**
+    ///   - `source` assignable to `T2` **OR**
+    ///   - `source` assignable to `T3`
+    /// - Returns true as soon as any match is found (short-circuit evaluation)
+    /// - Returns false if no match found
+    ///
+    /// ## Type Environment:
+    /// - Uses the context's TypeEnvironment for resolving type references
+    /// - Expands generic Applications
+    /// - Resolves type parameters
+    ///
+    /// ## Compiler Options:
+    /// - Respects strict_null_checks option
+    /// - Affects null/undefined assignability
+    ///
+    /// ## Use Cases:
+    /// - Checking if a value matches a union type annotation
+    /// - Overload resolution for union-returning functions
+    /// - Type narrowing validation
+    /// - Union type compatibility checks
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Basic union assignability
+    /// type StringOrNumber = string | number;
+    /// let x: StringOrNumber = "hello";  // ✅ string assignable to string | number
+    /// let y: StringOrNumber = 42;       // ✅ number assignable to string | number
+    /// let z: StringOrNumber = true;     // ❌ boolean not assignable to string | number
+    ///
+    /// // Literal types in unions
+    /// type Direction = "up" | "down" | "left" | "right";
+    /// let d: Direction = "up";          // ✅ "up" in union
+    /// let e: Direction = "diagonal";    // ❌ "diagonal" not in union
+    ///
+    /// // Object literals with excess properties
+    /// type Shape = { kind: "circle" } | { kind: "square" };
+    /// let s: Shape = { kind: "circle", radius: 5 };  // ✅ excess property allowed (weak type)
+    ///
+    /// // Union with interface
+    /// interface Animal { speak(): void }
+    /// interface Robot { beep(): void }
+    /// type Pet = Animal | Robot;
+    /// class Dog implements Animal { speak() {} }
+    /// let pet: Pet = new Dog();  // ✅ Dog assignable to Animal (in Pet union)
+    /// ```
     pub fn is_assignable_to_union(&self, source: TypeId, targets: &[TypeId]) -> bool {
         use crate::solver::CompatChecker;
         let env = self.ctx.type_env.borrow();
