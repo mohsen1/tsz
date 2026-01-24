@@ -361,4 +361,180 @@ impl<'a> CheckerState<'a> {
         let ctx = NarrowingContext::new(self.ctx.types);
         ctx.narrow_excluding_type(source, excluded)
     }
+
+    // =========================================================================
+    // Type Manipulation Utilities
+    // =========================================================================
+
+    /// Create a readonly wrapper type.
+    ///
+    /// Wraps a type as readonly, used for type checking of readonly properties.
+    pub fn make_readonly(&self, ty: TypeId) -> TypeId {
+        self.ctx.types.readonly(ty)
+    }
+
+    /// Create an array type from an element type.
+    ///
+    /// Creates a type representing T[] for the given element type T.
+    pub fn make_array_type(&self, elem_type: TypeId) -> TypeId {
+        self.ctx.types.array(elem_type)
+    }
+
+    /// Create a tuple type from element types.
+    ///
+    /// Creates a type representing a tuple with the given elements.
+    pub fn make_tuple_type(&self, elem_types: Vec<TypeId>) -> TypeId {
+        self.ctx.types.tuple(elem_types)
+    }
+
+    /// Create a function type with parameters and return type.
+    ///
+    /// Creates a callable type representing a function signature.
+    pub fn make_function_type(
+        &self,
+        params: Vec<crate::solver::ParamInfo>,
+        return_type: TypeId,
+    ) -> TypeId {
+        use crate::solver::{CallSignature, CallableShape, FunctionShape};
+        let sig = CallSignature {
+            params,
+            return_type,
+            this_type: None,
+            type_params: vec![],
+        };
+        let func_shape = FunctionShape {
+            signature: sig,
+            is_constructor: false,
+            is_method: false,
+        };
+        self.ctx.types.function(func_shape)
+    }
+
+    /// Get the base type of a generic application.
+    ///
+    /// For a type like Map<string, number>, returns the Map base type.
+    pub fn get_generic_base(&self, ty: TypeId) -> Option<TypeId> {
+        match self.ctx.types.lookup(ty) {
+            Some(crate::solver::TypeKey::Application(app)) => {
+                let app_info = self.ctx.types.type_application(app);
+                Some(app_info.base)
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the type arguments from a generic application.
+    ///
+    /// For a type like Map<string, number>, returns [string, number].
+    pub fn get_generic_args(&self, ty: TypeId) -> Option<Vec<TypeId>> {
+        match self.ctx.types.lookup(ty) {
+            Some(crate::solver::TypeKey::Application(app)) => {
+                let app_info = self.ctx.types.type_application(app);
+                Some(app_info.args.clone())
+            }
+            _ => None,
+        }
+    }
+
+    // =========================================================================
+    // Type Analysis Utilities
+    // =========================================================================
+
+    /// Check if a type contains a type parameter.
+    ///
+    /// Recursively checks if the type (or any nested type) is a type parameter.
+    pub fn contains_type_parameter(&self, ty: TypeId) -> bool {
+        use crate::solver::TypeKey;
+        let mut visited = std::collections::HashSet::new();
+        self.contains_type_parameter_inner(ty, &mut visited)
+    }
+
+    fn contains_type_parameter_inner(
+        &self,
+        ty: TypeId,
+        visited: &mut std::collections::HashSet<TypeId>,
+    ) -> bool {
+        if !visited.insert(ty) {
+            return false;
+        }
+
+        match self.ctx.types.lookup(ty) {
+            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_)) => true,
+            Some(TypeKey::Array(elem)) => self.contains_type_parameter_inner(elem, visited),
+            Some(TypeKey::Tuple(list_id)) => {
+                let elems = self.ctx.types.tuple_list(list_id);
+                elems.iter().any(|e| self.contains_type_parameter_inner(e.type_id, visited))
+            }
+            Some(TypeKey::Union(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                members.iter().any(|m| self.contains_type_parameter_inner(*m, visited))
+            }
+            Some(TypeKey::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                members.iter().any(|m| self.contains_type_parameter_inner(*m, visited))
+            }
+            Some(TypeKey::Application(app)) => {
+                let app = self.ctx.types.type_application(app);
+                if self.contains_type_parameter_inner(app.base, visited) {
+                    return true;
+                }
+                app.args.iter().any(|a| self.contains_type_parameter_inner(*a, visited))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type is concrete (no type parameters).
+    ///
+    /// A concrete type has no type parameters and can be instantiated directly.
+    pub fn is_concrete_type(&self, ty: TypeId) -> bool {
+        !self.contains_type_parameter(ty)
+    }
+
+    /// Get the depth of type nesting.
+    ///
+    /// Returns how deeply nested the type structure is (useful for complexity analysis).
+    pub fn type_depth(&self, ty: TypeId) -> usize {
+        use crate::solver::TypeKey;
+        let mut visited = std::collections::HashSet::new();
+        self.type_depth_inner(ty, &mut visited)
+    }
+
+    fn type_depth_inner(&self, ty: TypeId, visited: &mut std::collections::HashSet<TypeId>) -> usize {
+        if !visited.insert(ty) {
+            return 0;
+        }
+
+        match self.ctx.types.lookup(ty) {
+            Some(TypeKey::Array(elem)) => 1 + self.type_depth_inner(elem, visited),
+            Some(TypeKey::Tuple(list_id)) => {
+                let elems = self.ctx.types.tuple_list(list_id);
+                1 + elems
+                    .iter()
+                    .map(|e| self.type_depth_inner(e.type_id, visited))
+                    .max()
+                    .unwrap_or(0)
+            }
+            Some(TypeKey::Union(list_id) | Some(TypeKey::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                1 + members
+                    .iter()
+                    .map(|m| self.type_depth_inner(*m, visited))
+                    .max()
+                    .unwrap_or(0)
+            }
+            Some(TypeKey::Application(app)) => {
+                let app = self.ctx.types.type_application(app);
+                1 + std::cmp::max(
+                    self.type_depth_inner(app.base, visited),
+                    app.args
+                        .iter()
+                        .map(|a| self.type_depth_inner(*a, visited))
+                        .max()
+                        .unwrap_or(0),
+                )
+            }
+            _ => 1,
+        }
+    }
 }
