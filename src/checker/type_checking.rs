@@ -9065,4 +9065,417 @@ impl<'a> CheckerState<'a> {
             _ => false,
         }
     }
+
+    // ============================================================================
+    // Section 55: Return Type Inference Utilities
+    // ============================================================================
+
+    /// Check if a function body falls through (doesn't always return).
+    ///
+    /// This function determines whether a function body might fall through
+    /// without an explicit return statement. This is important for return type
+    /// inference and validating function return annotations.
+    ///
+    /// ## Returns:
+    /// - `true`: The function might fall through (no guaranteed return)
+    /// - `false`: The function always returns (has return in all code paths)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Falls through:
+    /// function foo() {  // No return statement
+    /// }
+    ///
+    /// function bar() {
+    ///     if (cond) { return 1; }  // Might not return
+    /// }
+    ///
+    /// // Doesn't fall through:
+    /// function baz() {
+    ///     return 1;
+    /// }
+    /// ```
+    pub(crate) fn function_body_falls_through(&mut self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return true;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.ctx.arena.get_block(body_node)
+        {
+            return self.block_falls_through(&block.statements.nodes);
+        }
+        false
+    }
+
+    /// Infer the return type of a function body by collecting return expressions.
+    ///
+    /// This function walks through all statements in a function body, collecting
+    /// the types of all return expressions. It then infers the return type as:
+    /// - `void`: If there are no return expressions
+    /// - `union` of all return types: If there are multiple return expressions
+    /// - The single return type: If there's only one return expression
+    ///
+    /// ## Parameters:
+    /// - `body_idx`: The function body node index
+    /// - `return_context`: Optional contextual type for return expressions
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // No returns → void
+    /// function foo() {}
+    ///
+    /// // Single return → string
+    /// function bar() { return "hello"; }
+    ///
+    /// // Multiple returns → string | number
+    /// function baz() {
+    ///     if (cond) return "hello";
+    ///     return 42;
+    /// }
+    ///
+    /// // Empty return included → string | number | void
+    /// function qux() {
+    ///     if (cond) return;
+    ///     return "hello";
+    /// }
+    /// ```
+    pub(crate) fn infer_return_type_from_body(
+        &mut self,
+        body_idx: NodeIndex,
+        return_context: Option<TypeId>,
+    ) -> TypeId {
+        if body_idx.is_none() {
+            return TypeId::VOID; // No body - function returns void
+        }
+
+        let Some(node) = self.ctx.arena.get(body_idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        if node.kind != syntax_kind_ext::BLOCK {
+            return self.return_expression_type(body_idx, return_context);
+        }
+
+        let mut return_types = Vec::new();
+        let mut saw_empty = false;
+
+        if let Some(block) = self.ctx.arena.get_block(node) {
+            for &stmt_idx in &block.statements.nodes {
+                self.collect_return_types_in_statement(
+                    stmt_idx,
+                    &mut return_types,
+                    &mut saw_empty,
+                    return_context,
+                );
+            }
+        }
+
+        if return_types.is_empty() {
+            return TypeId::VOID;
+        }
+
+        if saw_empty {
+            return_types.push(TypeId::VOID);
+        }
+
+        self.ctx.types.union(return_types)
+    }
+
+    /// Get the type of a return expression with optional contextual typing.
+    ///
+    /// This function temporarily sets the contextual type (if provided) before
+    /// computing the type of the return expression, then restores the previous
+    /// contextual type. This enables contextual typing for return expressions.
+    ///
+    /// ## Parameters:
+    /// - `expr_idx`: The return expression node index
+    /// - `return_context`: Optional contextual type for the return
+    fn return_expression_type(
+        &mut self,
+        expr_idx: NodeIndex,
+        return_context: Option<TypeId>,
+    ) -> TypeId {
+        let prev_context = self.ctx.contextual_type;
+        if let Some(ctx_type) = return_context {
+            self.ctx.contextual_type = Some(ctx_type);
+        }
+        let return_type = self.get_type_of_node(expr_idx);
+        self.ctx.contextual_type = prev_context;
+        return_type
+    }
+
+    /// Collect return types from a statement and its nested statements.
+    ///
+    /// This function recursively walks through statements, collecting the types
+    /// of all return expressions. It handles:
+    /// - Direct return statements
+    /// - Nested blocks
+    /// - If/else statements (both branches)
+    /// - Switch statements (all cases)
+    /// - Try/catch/finally statements (all blocks)
+    /// - Loops (nested statements)
+    fn collect_return_types_in_statement(
+        &mut self,
+        stmt_idx: NodeIndex,
+        return_types: &mut Vec<TypeId>,
+        saw_empty: &mut bool,
+        return_context: Option<TypeId>,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(return_data) = self.ctx.arena.get_return_statement(node) {
+                    if return_data.expression.is_none() {
+                        *saw_empty = true;
+                    } else {
+                        let return_type =
+                            self.return_expression_type(return_data.expression, return_context);
+                        return_types.push(return_type);
+                    }
+                }
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.collect_return_types_in_statement(
+                            stmt,
+                            return_types,
+                            saw_empty,
+                            return_context,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    self.collect_return_types_in_statement(
+                        if_data.then_statement,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                    if !if_data.else_statement.is_none() {
+                        self.collect_return_types_in_statement(
+                            if_data.else_statement,
+                            return_types,
+                            saw_empty,
+                            return_context,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
+                {
+                    for &clause_idx in &case_block.statements.nodes {
+                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                        {
+                            for &stmt_idx in &clause.statements.nodes {
+                                self.collect_return_types_in_statement(
+                                    stmt_idx,
+                                    return_types,
+                                    saw_empty,
+                                    return_context,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    self.collect_return_types_in_statement(
+                        try_data.try_block,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                    if !try_data.catch_clause.is_none() {
+                        self.collect_return_types_in_statement(
+                            try_data.catch_clause,
+                            return_types,
+                            saw_empty,
+                            return_context,
+                        );
+                    }
+                    if !try_data.finally_block.is_none() {
+                        self.collect_return_types_in_statement(
+                            try_data.finally_block,
+                            return_types,
+                            saw_empty,
+                            return_context,
+                        );
+                    }
+                }
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    self.collect_return_types_in_statement(
+                        catch_data.block,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                }
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT
+            | syntax_kind_ext::FOR_IN_STATEMENT
+            | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    self.collect_return_types_in_statement(
+                        loop_data.statement,
+                        return_types,
+                        saw_empty,
+                        return_context,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if a function body has at least one return statement with a value.
+    ///
+    /// This is a simplified check that doesn't do full control flow analysis.
+    /// It's used to determine if a function needs an explicit return type
+    /// annotation or if implicit any should be inferred.
+    ///
+    /// ## Returns:
+    /// - `true`: At least one return statement with a value exists
+    /// - `false`: No return statements or only empty returns
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Returns true:
+    /// function foo() { return 42; }
+    /// function bar() { if (x) return "hello"; else return 42; }
+    ///
+    /// // Returns false:
+    /// function baz() {}  // No returns
+    /// function qux() { return; }  // Only empty return
+    /// ```
+    pub(crate) fn body_has_return_with_value(&self, body_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+
+        // For block bodies, check all statements
+        if node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.ctx.arena.get_block(node)
+        {
+            return self.statements_have_return_with_value(&block.statements.nodes);
+        }
+
+        false
+    }
+
+    /// Check if any statement in the list contains a return with a value.
+    fn statements_have_return_with_value(&self, statements: &[NodeIndex]) -> bool {
+        for &stmt_idx in statements {
+            if self.statement_has_return_with_value(stmt_idx) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a statement contains a return with a value.
+    ///
+    /// This function recursively checks a statement (and its nested statements)
+    /// for any return statement with a value. It handles all statement types
+    /// including blocks, conditionals, loops, and try/catch.
+    fn statement_has_return_with_value(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            syntax_kind_ext::RETURN_STATEMENT => {
+                if let Some(return_data) = self.ctx.arena.get_return_statement(node) {
+                    // Return with expression
+                    return !return_data.expression.is_none();
+                }
+                false
+            }
+            syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    return self.statements_have_return_with_value(&block.statements.nodes);
+                }
+                false
+            }
+            syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
+                    // Check both then and else branches
+                    let then_has = self.statement_has_return_with_value(if_data.then_statement);
+                    let else_has = if !if_data.else_statement.is_none() {
+                        self.statement_has_return_with_value(if_data.else_statement)
+                    } else {
+                        false
+                    };
+                    return then_has || else_has;
+                }
+                false
+            }
+            syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(switch_data) = self.ctx.arena.get_switch(node)
+                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
+                {
+                    // Case block is stored as a Block containing case clauses
+                    if let Some(case_block) = self.ctx.arena.get_block(case_block_node) {
+                        for &clause_idx in &case_block.statements.nodes {
+                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                                && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
+                                && self.statements_have_return_with_value(&clause.statements.nodes)
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_data) = self.ctx.arena.get_try(node) {
+                    let try_has = self.statement_has_return_with_value(try_data.try_block);
+                    let catch_has = if !try_data.catch_clause.is_none() {
+                        self.statement_has_return_with_value(try_data.catch_clause)
+                    } else {
+                        false
+                    };
+                    let finally_has = if !try_data.finally_block.is_none() {
+                        self.statement_has_return_with_value(try_data.finally_block)
+                    } else {
+                        false
+                    };
+                    return try_has || catch_has || finally_has;
+                }
+                false
+            }
+            syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
+                    return self.statement_has_return_with_value(catch_data.block);
+                }
+                false
+            }
+            syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT
+            | syntax_kind_ext::FOR_IN_STATEMENT
+            | syntax_kind_ext::FOR_OF_STATEMENT => {
+                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
+                    return self.statement_has_return_with_value(loop_data.statement);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
 }
