@@ -5636,4 +5636,205 @@ impl<'a> CheckerState<'a> {
 
         (false, None)
     }
+
+    // =========================================================================
+    // Section 27: Modifier and Member Access Utilities
+    // =========================================================================
+
+    /// Check if a node has the `declare` modifier.
+    pub(crate) fn has_declare_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a node has the `async` modifier.
+    pub(crate) fn has_async_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a node has the `abstract` modifier.
+    pub(crate) fn has_abstract_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if modifiers include the 'static' keyword.
+    pub(crate) fn has_static_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if modifiers include the 'private' keyword.
+    pub(crate) fn has_private_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::PrivateKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if modifiers include the 'protected' keyword.
+    pub(crate) fn has_protected_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ProtectedKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if modifiers include the 'readonly' keyword.
+    pub(crate) fn has_readonly_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if modifiers include a parameter property keyword.
+    pub(crate) fn has_parameter_property_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && (mod_node.kind == SyntaxKind::PublicKeyword as u16
+                        || mod_node.kind == SyntaxKind::PrivateKeyword as u16
+                        || mod_node.kind == SyntaxKind::ProtectedKeyword as u16
+                        || mod_node.kind == SyntaxKind::ReadonlyKeyword as u16)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a node is a private identifier.
+    pub(crate) fn is_private_identifier_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::PrivateIdentifier as u16
+    }
+
+    /// Check if a member requires nominal typing (private/protected/private identifier).
+    pub(crate) fn member_requires_nominal(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+        name_idx: NodeIndex,
+    ) -> bool {
+        self.has_private_modifier(modifiers)
+            || self.has_protected_modifier(modifiers)
+            || self.is_private_identifier_name(name_idx)
+    }
+
+    /// Get the access level from modifiers (private/protected).
+    pub(crate) fn member_access_level_from_modifiers(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> Option<MemberAccessLevel> {
+        if self.has_private_modifier(modifiers) {
+            return Some(MemberAccessLevel::Private);
+        }
+        if self.has_protected_modifier(modifiers) {
+            return Some(MemberAccessLevel::Protected);
+        }
+        None
+    }
+
+    /// Check if a member with the given name is static by looking up its symbol flags.
+    /// Uses the binder's symbol information for efficient O(1) flag checks.
+    pub(crate) fn is_static_member(&self, member_nodes: &[NodeIndex], name: &str) -> bool {
+        for &member_idx in member_nodes {
+            // Get symbol for this member
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                // Check if name matches and symbol has STATIC flag
+                if symbol.escaped_name == name && (symbol.flags & symbol_flags::STATIC != 0) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a member with the given name is an abstract property by looking up its symbol flags.
+    /// Only checks properties (not methods) because accessing this.abstractMethod() in constructor is allowed.
+    pub(crate) fn is_abstract_member(&self, member_nodes: &[NodeIndex], name: &str) -> bool {
+        for &member_idx in member_nodes {
+            // Get symbol for this member
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                // Check if name matches and symbol has ABSTRACT flag (property only)
+                if symbol.escaped_name == name
+                    && (symbol.flags & symbol_flags::ABSTRACT != 0)
+                    && (symbol.flags & symbol_flags::PROPERTY != 0)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
