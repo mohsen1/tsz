@@ -4414,7 +4414,11 @@ impl<'a> CheckerState<'a> {
     /// }
     /// console.log(b);  // ❌ TS2454: Not assigned on else path
     /// ```
-    pub(crate) fn should_check_definite_assignment(&mut self, sym_id: SymbolId, idx: NodeIndex) -> bool {
+    pub(crate) fn should_check_definite_assignment(
+        &mut self,
+        sym_id: SymbolId,
+        idx: NodeIndex,
+    ) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
@@ -7049,7 +7053,11 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
-    pub(crate) fn check_private_identifier_in_expression(&mut self, name_idx: NodeIndex, rhs_type: TypeId) {
+    pub(crate) fn check_private_identifier_in_expression(
+        &mut self,
+        name_idx: NodeIndex,
+        rhs_type: TypeId,
+    ) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
         };
@@ -7096,7 +7104,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Split a type into its non-nullable part and its nullable cause.
-    pub(crate) fn split_nullish_type(&mut self, type_id: TypeId) -> (Option<TypeId>, Option<TypeId>) {
+    pub(crate) fn split_nullish_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> (Option<TypeId>, Option<TypeId>) {
         use crate::solver::{IntrinsicKind, TypeKey};
 
         let Some(key) = self.ctx.types.lookup(type_id) else {
@@ -7260,7 +7271,10 @@ impl<'a> CheckerState<'a> {
         Some(value as usize)
     }
 
-    pub(crate) fn get_literal_key_union_from_type(&self, index_type: TypeId) -> Option<(Vec<Atom>, Vec<f64>)> {
+    pub(crate) fn get_literal_key_union_from_type(
+        &self,
+        index_type: TypeId,
+    ) -> Option<(Vec<Atom>, Vec<f64>)> {
         use crate::solver::{LiteralValue, TypeKey};
 
         match self.ctx.types.lookup(index_type)? {
@@ -12225,73 +12239,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a dynamic import call for unresolved module specifier (TS2307).
-    /// Dynamic imports: `import('./module')` or `import("./module")`
-    pub(crate) fn check_dynamic_import_module_specifier(&mut self, call: &crate::parser::node::CallExprData) {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages, format_message,
-        };
-
-        if !self.ctx.report_unresolved_imports {
-            return;
-        }
-
-        // Get the first argument (module specifier)
-        let args = call
-            .arguments
-            .as_ref()
-            .map(|a| &a.nodes)
-            .map(|n| n.as_slice())
-            .unwrap_or(&[]);
-
-        if args.is_empty() {
-            return; // No argument - will be caught by argument count check
-        }
-
-        let arg_idx = args[0];
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return;
-        };
-
-        // Only check string literal module specifiers
-        // Dynamic specifiers (variables, template literals) cannot be statically checked
-        let Some(literal) = self.ctx.arena.get_literal(arg_node) else {
-            return;
-        };
-
-        let module_name = &literal.text;
-
-        // Check if the module was resolved by the CLI driver (multi-file mode)
-        if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name)
-        {
-            return; // Module exists
-        }
-
-        // Check if the module exists in the module_exports map (cross-file module resolution)
-        if self.ctx.binder.module_exports.contains_key(module_name) {
-            return; // Module exists
-        }
-
-        // Check if this is a shorthand ambient module (declare module "foo")
-        if self
-            .ctx
-            .binder
-            .shorthand_ambient_modules
-            .contains(module_name)
-        {
-            return; // Ambient module exists
-        }
-
-        // Check declared modules (regular ambient modules with body)
-        if self.ctx.binder.declared_modules.contains(module_name) {
-            return; // Declared module exists
-        }
-
-        // Module not found - emit TS2307
-        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-        self.error_at_node(arg_idx, &message, diagnostic_codes::CANNOT_FIND_MODULE);
-    }
-
     /// Get the type of a `super` keyword expression.
     ///
     /// When used in a constructor call (e.g., `super()`), this returns the
@@ -15141,7 +15088,11 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an assignment target is a readonly property.
     /// Reports error TS2540 if trying to assign to a readonly property.
-    pub(crate) fn check_readonly_assignment(&mut self, target_idx: NodeIndex, _expr_idx: NodeIndex) {
+    pub(crate) fn check_readonly_assignment(
+        &mut self,
+        target_idx: NodeIndex,
+        _expr_idx: NodeIndex,
+    ) {
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
             return;
         };
@@ -15371,7 +15322,11 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(crate) fn is_class_derived_from(&self, derived_idx: NodeIndex, base_idx: NodeIndex) -> bool {
+    pub(crate) fn is_class_derived_from(
+        &self,
+        derived_idx: NodeIndex,
+        base_idx: NodeIndex,
+    ) -> bool {
         use rustc_hash::FxHashSet;
 
         if derived_idx == base_idx {
@@ -15873,69 +15828,6 @@ impl<'a> CheckerState<'a> {
     /// Check an export declaration's module specifier for unresolved modules.
     /// Emits TS2792 when the module cannot be resolved.
     /// Handles cases like: export * as ns from './nonexistent';
-    fn check_export_module_specifier(&mut self, stmt_idx: NodeIndex) {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages, format_message,
-        };
-
-        if !self.ctx.report_unresolved_imports {
-            return;
-        }
-
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        let Some(export_decl) = self.ctx.arena.get_export_decl(node) else {
-            return;
-        };
-
-        // Get module specifier string
-        let Some(spec_node) = self.ctx.arena.get(export_decl.module_specifier) else {
-            return;
-        };
-
-        let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
-            return;
-        };
-
-        let module_name = &literal.text;
-
-        // Check if the module was resolved by the CLI driver (multi-file mode)
-        if let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name)
-        {
-            return;
-        }
-
-        // Check if the module exists in the module_exports map (cross-file module resolution)
-        if self.ctx.binder.module_exports.contains_key(module_name) {
-            return;
-        }
-
-        // Skip TS2307 for ambient module declarations
-        if self
-            .ctx
-            .binder
-            .shorthand_ambient_modules
-            .contains(module_name)
-        {
-            return;
-        }
-
-        if self.ctx.binder.declared_modules.contains(module_name) {
-            return;
-        }
-
-        // Emit TS2307 for unresolved export module specifiers
-        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
-        self.error_at_node(
-            export_decl.module_specifier,
-            &message,
-            diagnostic_codes::CANNOT_FIND_MODULE,
-        );
-    }
-
     /// Check heritage clauses (extends/implements) for unresolved names.
     /// Emits TS2304 when a referenced name cannot be resolved.
     fn check_heritage_clauses_for_unresolved_names(
@@ -18020,7 +17912,12 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    pub(crate) fn is_indirect_call(&self, comma_idx: NodeIndex, left: NodeIndex, right: NodeIndex) -> bool {
+    pub(crate) fn is_indirect_call(
+        &self,
+        comma_idx: NodeIndex,
+        left: NodeIndex,
+        right: NodeIndex,
+    ) -> bool {
         use crate::scanner::SyntaxKind;
 
         let parent = self

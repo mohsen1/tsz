@@ -13,8 +13,8 @@
 
 use crate::checker::state::CheckerState;
 use crate::checker::types::{Diagnostic, DiagnosticCategory};
-use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::solver::{ContextualTypeContext, TupleElement, TypeId, TypeKey};
 
 // =============================================================================
@@ -477,7 +477,7 @@ impl<'a> CheckerState<'a> {
     /// Returns an object type containing the member. For method signatures,
     /// creates a callable type. For property signatures, creates a property type.
     pub(crate) fn get_type_of_interface_member(&mut self, member_idx: NodeIndex) -> TypeId {
-        use crate::interner::Atom;
+        
         use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
         use crate::solver::{FunctionShape, PropertyInfo};
 
@@ -698,7 +698,7 @@ impl<'a> CheckerState<'a> {
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::interner::Atom;
+        
         use crate::solver::{PropertyAccessResult, QueryDatabase};
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1880,7 +1880,7 @@ impl<'a> CheckerState<'a> {
     /// // never
     /// ```
     pub(crate) fn get_keyof_type(&self, operand: TypeId) -> TypeId {
-        use crate::interner::Atom;
+        
         use crate::solver::{LiteralValue, TypeKey};
 
         let Some(key) = self.ctx.types.lookup(operand) else {
@@ -1929,7 +1929,10 @@ impl<'a> CheckerState<'a> {
     /// // Non-literal
     /// extractKeys<string>() // []
     /// ```
-    pub(crate) fn extract_string_literal_keys(&self, type_id: TypeId) -> Vec<crate::interner::Atom> {
+    pub(crate) fn extract_string_literal_keys(
+        &self,
+        type_id: TypeId,
+    ) -> Vec<crate::interner::Atom> {
         use crate::solver::{LiteralValue, TypeKey};
 
         let Some(key) = self.ctx.types.lookup(type_id) else {
