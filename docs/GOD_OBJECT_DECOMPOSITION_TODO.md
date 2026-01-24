@@ -19,7 +19,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 | `parser/state.rs` | 10,762 | 10,762 | 0% | ⏳ Pending | P3 (low priority) |
 | `solver/evaluate.rs` | 5,784 | 5,784 | 0% | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 5,000+ | 1,778 | 64% | ✅ **COMPLETE** | P1 (DONE) |
-| `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (after checker) |
+| `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (Step 14.2/14.3 planned) |
 | `emitter/mod.rs` | 2,040 | 2,040 | 0% | ⏳ Pending | P3 (acceptable) |
 
 **Overall Progress**: 12,749 lines extracted from checker/state.rs, reducing it by 48.6%
@@ -832,62 +832,306 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 ---
 
-## Priority 4: solver/operations.rs
+## Priority 2: solver/operations.rs
 
-**Goal**: Reduce from 3,538 lines to ~200 lines (coordinator)
-**Status**: 🚧 In Progress (Step 14.1 complete)
+**Goal**: Reduce from 3,228 lines to ~200 lines (coordinator)
+**Status**: 🚧 In Progress (Step 14.1 complete, Step 14.2 & 14.3 planned)
 
 ### Step 14: solver/operations.rs Decomposition
 
-#### 14.1 Analysis ✅ COMPLETE
+#### Current Status Summary
 
 **File**: `src/solver/operations.rs`
-**Current Lines**: 3,538
+**Current Lines**: 3,228 (down from 3,538 after Step 14.1)
 **Target Lines**: ~200 (coordinator) + extracted modules
+**Progress**: Step 14.1 COMPLETE (-310 lines, 9% reduction)
 
-**Major Sections Identified**:
+**Major Sections Identified** (current state after Step 14.1):
 
 | Section | Lines | Purpose | Dependencies |
 |---------|-------|---------|--------------|
-| **CallEvaluator** | ~1,700 | Function call resolution and generic instantiation | `infer`, `instantiate`, `subtype` |
-| **PropertyAccessEvaluator** | ~1,300 | Property access and index signature handling | `types`, `utils`, `subtype` |
-| **BinaryOpEvaluator** | ~350 | Binary operations (+, -, *, /, etc.) | `types` only |
-| **Utilities** | ~288 | Helper functions and type definitions | Varies |
+| **Header & Imports** | 56 | Module documentation and imports | - |
+| **CallResult enum** | 41 | Result type for function calls | - |
+| **CallEvaluator struct + impl** | 1,732 | Function call resolution and generic instantiation | `infer`, `instantiate`, `subtype` |
+| **GenericInstantiationResult enum** | 67 | Generic constraint validation | - |
+| **PropertyAccessResult enum** | 31 | Result type for property access | - |
+| **PropertyAccessEvaluator struct + impl** | 1,274 | Property access and index signature handling | `types`, `utils`, `subtype` |
+| **Binary Ops extraction note** | 16 | Documentation of extraction | - |
+| **Tests module** | ~10 | Test imports | - |
 
-**Extraction Candidates** (in dependency order):
-1. **BinaryOpEvaluator** → `solver/binary_ops.rs` (~380 lines)
-2. **PropertyAccessEvaluator** → `solver/property_access.rs` (~1,400 lines)
-3. **CallEvaluator** → `solver/call_resolution.rs` (~1,800 lines)
+#### 14.1 Binary Operations Extraction ✅ COMPLETE
 
-#### 14.2 Extraction Plan ✅ COMPLETE
+**Commit**: `c0fa9cd8f` - "refactor(solver): Extract binary_ops.rs from operations.rs (Step 14.1)"
 
-**Priority Order** (lowest to highest dependency):
-1. Step 14.1: Extract `BinaryOpEvaluator` → `solver/binary_ops.rs`
-2. Step 14.2: Extract `PropertyAccessEvaluator` → `solver/property_access.rs`
-3. Step 14.3: Extract `CallEvaluator` → `solver/call_resolution.rs`
+**Achievements**:
+- Created `src/solver/binary_ops.rs` (304 lines)
+- Extracted `BinaryOpEvaluator` struct and implementation
+- Extracted `BinaryOpResult` enum
+- Extracted `PrimitiveClass` enum
+- Re-exported types in `operations.rs`
 
-**Final Module Structure**:
+**Functions Extracted**:
+- `evaluate()` - Main binary operation evaluation
+- `evaluate_plus()` - String concatenation and addition
+- `evaluate_arithmetic()` -, *, /, %, ** operations
+- `evaluate_comparison()` - Comparison operators
+- `evaluate_logical()` - && and || operators
+- `is_arithmetic_operand()` - Arithmetic operand validation (public)
+- `is_number_like()` - Number type predicate
+- `is_string_like()` - String type predicate
+- `is_bigint_like()` - BigInt type predicate
+- `has_overlap()` - Type overlap detection (public)
+- `primitive_classes_disjoint()` - Disjoint primitive check
+- `primitive_class()` - Primitive class getter
+
+**Impact**:
+- operations.rs: 3,538 → 3,228 lines (-310 lines, -9%)
+- Binary operation logic is independently testable
+- Reduced god object size by ~9%
+
+---
+
+#### 14.2 Property Access Extraction 🚧 NEXT STEP
+
+**Target**: Extract `PropertyAccessEvaluator` → `solver/property_access.rs`
+
+**Estimated Lines**: ~1,300 lines (1,274 lines measured)
+**Estimated Effort**: 2-3 hours (MEDIUM complexity)
+**Dependencies**: `types`, `utils`, `subtype` (lower than CallEvaluator)
+
+**Module Structure**:
 ```
 solver/
-├── operations.rs          (~200 lines - coordinator/re-exports)
-├── binary_ops.rs          (~380 lines - NEW)
-├── property_access.rs     (~1,400 lines - NEW)
-└── call_resolution.rs     (~1,800 lines - NEW)
+├── property_access.rs     (~1,300 lines)
+│   ├── PropertyAccessResult enum (31 lines)
+│   ├── PropertyAccessEvaluator struct (23 lines)
+│   └── PropertyAccessEvaluator impl (1,220+ lines)
 ```
 
-**Estimated Effort**:
-- Step 14.1: 1-2 hours (LOW dependency)
-- Step 14.2: 2-3 hours (MEDIUM dependency)
-- Step 14.3: 3-4 hours (HIGH dependency)
-- **Total**: 7-10 hours
+**Key Functions to Extract** (34 methods total):
+
+**Public API** (extract to new module):
+- `new()` - Constructor
+- `resolve_property_access()` - Main entry point (public)
+- `set_no_unchecked_indexed_access()` - Configuration setter
+
+**Core Resolution** (453 lines - largest method):
+- `resolve_property_access_inner()` - Main dispatcher (453 lines!)
+  - Handles intrinsic types (ANY, ERROR, UNKNOWN, NULL, etc.)
+  - Handles Symbol primitive properties
+  - Delegates to specialized resolvers:
+    - `resolve_object_member()`
+    - `resolve_string_property()`
+    - `resolve_number_property()`
+    - `resolve_boolean_property()`
+    - `resolve_bigint_property()`
+    - `resolve_primitive_property()`
+    - `resolve_symbol_primitive_property()`
+    - `resolve_array_property()`
+
+**Object Property Resolution** (~300 lines):
+- `lookup_object_property()` - Look up property on object type
+- `resolve_object_member()` - Resolve member on object types
+- `resolve_apparent_property()` - Handle apparent properties
+- `enter_mapped_access_guard()` - Mapped type access guard (21 lines)
+
+**Array/TypedArray Methods** (~500 lines total):
+- `resolve_array_property()` - Array-specific properties (267 lines!)
+  - Array methods: map, filter, reduce, forEach, etc.
+  - TypedArray methods: every, some, find, etc.
+  - Length property handling
+- `tuple_element_union()` - Union of tuple element types
+- `element_type_with_undefined()` - Add undefined for non-readonly
+- `flatten_once_type()` - Flatten one level for flat()
+- `array_callback_type()` - Type for array callbacks
+- `array_compare_callback_type()` - Type for sort/every/some
+- `array_reduce_callable()` - Callable shape for reduce
+- `array_reduce_callback_type()` - Callback type for reduce
+
+**Utility Functions** (~200 lines):
+- `any_args_function()` - Create (...args: any[]) => T type
+- `method_result()` - Wrap return type in PropertyAccessResult
+- `add_undefined_if_unchecked()` - Add undefined based on flag
+- `optional_property_type()` - Handle optional properties
+
+**Type Builder Helpers** (~150 lines):
+- `type_param()` - Create type parameter
+- `type_param_type()` - Get type from type parameter
+- `param()` - Create parameter info
+- `function_type()` - Create function type
+- `function_result()` - Wrap function in PropertyAccessResult
+- `callable_result()` - Wrap callable in PropertyAccessResult
+- `resolve_function_property()` - Resolve function-type properties
+
+**Helper Methods Made pub(crate)**:
+- `is_private_field()` - Check if property name is private (# prefix)
+- All array property resolvers need access to TypeDatabase
+- Optional property utilities need cross-module access
+
+**Extraction Checklist**:
+- [ ] 14.2.1 Create `solver/property_access.rs` module
+- [ ] 14.2.2 Extract `PropertyAccessResult` enum (31 lines)
+- [ ] 14.2.3 Extract `PropertyAccessEvaluator` struct (23 lines)
+- [ ] 14.2.4 Extract `resolve_property_access_inner()` core logic (453 lines)
+- [ ] 14.2.5 Extract object property resolution methods (~300 lines)
+- [ ] 14.2.6 Extract array/typedArray methods (~500 lines)
+- [ ] 14.2.7 Extract utility functions (~200 lines)
+- [ ] 14.2.8 Extract type builder helpers (~150 lines)
+- [ ] 14.2.9 Update imports in `operations.rs`
+- [ ] 14.2.10 Add `pub use` re-exports in `operations.rs`
+- [ ] 14.2.11 Run tests: `cargo test --lib`
+- [ ] 14.2.12 Run clippy: `cargo clippy -- -D warnings`
+- [ ] 14.2.13 Update documentation
+- [ ] 14.2.14 Commit: `refactor(solver): Extract property_access.rs from operations.rs (Step 14.2)`
+
+**Expected Reduction**:
+- operations.rs: 3,228 → ~1,900 lines (-1,300 lines, -40% from current)
+- property_access.rs: 1,300 lines (new module)
+
+---
+
+#### 14.3 Call Resolution Extraction ⏳ PLANNED
+
+**Target**: Extract `CallEvaluator` → `solver/call_resolution.rs`
+
+**Estimated Lines**: ~1,750 lines
+**Estimated Effort**: 3-4 hours (HIGH complexity)
+**Dependencies**: `infer`, `instantiate`, `subtype`, `types`, `utils`
+
+**Module Structure**:
+```
+solver/
+├── call_resolution.rs     (~1,750 lines)
+│   ├── CallResult enum (41 lines)
+│   ├── TupleRestExpansion struct (9 lines)
+│   ├── CallEvaluator struct (8 lines)
+│   └── CallEvaluator impl (1,700+ lines)
+```
+
+**Key Functions to Extract** (35 methods total):
+
+**Public API**:
+- `new()` - Constructor
+- `resolve_call()` - Main entry point for call resolution
+- `infer_call_signature()` - Infer return type from call signature
+- `infer_generic_function()` - Infer return type from generic function
+
+**Core Resolution** (~600 lines):
+- `resolve_function_call()` - Resolve non-generic function call (32 lines)
+- `resolve_generic_call()` - Entry point for generic calls (7 lines)
+- `resolve_generic_call_inner()` - Generic type inference (243 lines!)
+  - Type argument inference from arguments
+  - Type argument inference from return type
+  - Constraint checking for type parameters
+- `resolve_union_call()` - Handle union type calls (47 lines)
+- `resolve_callable_call()` - Handle overloaded callable (120+ lines)
+
+**Argument Type Checking** (~400 lines):
+- `check_argument_types()` - Check arguments match parameters (8 lines)
+- `check_argument_types_with()` - Check with specific inference (43 lines)
+- `arg_count_bounds()` - Get min/max argument count (18 lines)
+- `param_type_for_arg_index()` - Get parameter type for position (32 lines)
+- `tuple_length_bounds()` - Get tuple length bounds (33 lines)
+- `tuple_rest_element_type()` - Get rest element type (61 lines)
+- `rest_element_type()` - Generic rest type extraction (10 lines)
+
+**Tuple Rest Handling** (~200 lines):
+- `expand_tuple_rest()` - Expand tuple rest elements (37 lines)
+  - Handles prefix, variadic, and suffix elements
+  - Used for spread argument inference
+- `rest_tuple_inference_target()` - Inference target for rest (87 lines)
+- `unwrap_readonly()` - Remove readonly wrapper (15 lines)
+
+**Type Constraint Logic** (~600 lines):
+- `constrain_types()` - Entry point with recursion guard (25 lines)
+- `constrain_types_impl()` - Core constraint logic (396 lines!)
+  - Matches source and target types
+  - Handles unions, intersections, tuples
+  - Handles function types and call signatures
+  - Handles index signatures
+- `constrain_properties()` - Constrain object properties (36 lines)
+- `constrain_function_to_call_signature()` - Function to signature (14 lines)
+- `constrain_call_signature_to_function()` - Signature to function (14 lines)
+- `constrain_call_signature_to_call_signature()` - Signature to signature (16 lines)
+- `constrain_matching_signatures()` - Overload resolution (38 lines)
+- `constrain_properties_against_index_signatures()` - Property to index (32 lines)
+- `constrain_index_signatures_to_properties()` - Index to property (29 lines)
+- `constrain_tuple_types()` - Tuple element constraints (67 lines)
+
+**Utility Functions** (~100 lines):
+- `expand_type_param()` - Expand type parameter to bound (8 lines)
+- `type_contains_placeholder()` - Check for inference placeholders (44 lines)
+- `function_type_from_signature()` - Create type from signature (10 lines)
+- `erase_placeholders_for_inference()` - Replace placeholders (25 lines)
+- `select_signature_for_target()` - Select best overload (19 lines)
+- `optional_property_type()` - Handle optional properties (8 lines)
+
+**Helper Methods Made pub(crate)**:
+- `defaulted_placeholders: FxHashSet<TypeId>` - Tracked placeholders
+- `constraint_recursion_depth: RefCell<usize>` - Recursion guard
+- All type constraint helpers need cross-module access
+
+**Extraction Checklist**:
+- [ ] 14.3.1 Create `solver/call_resolution.rs` module
+- [ ] 14.3.2 Extract `CallResult` enum (41 lines)
+- [ ] 14.3.3 Extract `TupleRestExpansion` struct (9 lines)
+- [ ] 14.3.4 Extract `CallEvaluator` struct (8 lines)
+- [ ] 14.3.5 Extract core resolution methods (~600 lines)
+- [ ] 14.3.6 Extract argument type checking (~400 lines)
+- [ ] 14.3.7 Extract tuple rest handling (~200 lines)
+- [ ] 14.3.8 Extract type constraint logic (~600 lines)
+- [ ] 14.3.9 Extract utility functions (~100 lines)
+- [ ] 14.3.10 Update imports in `operations.rs`
+- [ ] 14.3.11 Add `pub use` re-exports in `operations.rs`
+- [ ] 14.3.12 Run tests: `cargo test --lib`
+- [ ] 14.3.13 Run clippy: `cargo clippy -- -D warnings`
+- [ ] 14.3.14 Update documentation
+- [ ] 14.3.15 Commit: `refactor(solver): Extract call_resolution.rs from operations.rs (Step 14.3)`
+
+**Expected Reduction**:
+- operations.rs: ~1,900 → ~200 lines (-1,700 lines, ~90% from current)
+- call_resolution.rs: 1,750 lines (new module)
+
+---
+
+#### 14.4 Final Module Structure ✅ PLANNED
+
+**After all extractions complete**:
+
+```
+solver/
+├── operations.rs          (~200 lines - coordinator + re-exports)
+├── binary_ops.rs          (304 lines - Step 14.1 COMPLETE)
+├── property_access.rs     (~1,300 lines - Step 14.2)
+└── call_resolution.rs     (~1,750 lines - Step 14.3)
+```
+
+**operations.rs (coordinator only)**:
+- Module documentation
+- `AssignabilityChecker` trait definition
+- Re-exports from extracted modules:
+  ```rust
+  pub use crate::solver::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
+  pub use crate::solver::property_access::{PropertyAccessEvaluator, PropertyAccessResult};
+  pub use crate::solver::call_resolution::{CallEvaluator, CallResult};
+  ```
+- Note about binary operations extraction
+- Test module imports
 
 **Success Metrics**:
-| Metric | Current | Target |
-|--------|---------|--------|
-| operations.rs lines | 3,538 | ~200 |
-| Total lines (all modules) | 3,538 | 3,580 (same) |
-| Module count | 1 | 4 |
-| Test pass rate | 100% | 100% |
+| Metric | Original | After 14.1 | After 14.2 | After 14.3 | Target |
+|--------|----------|-----------|-----------|-----------|--------|
+| operations.rs lines | 3,538 | 3,228 | ~1,900 | ~200 | ~200 |
+| Total extracted lines | 0 | 304 | 1,604 | 3,354 | ~3,350 |
+| Module count | 1 | 2 | 3 | 4 | 4 |
+| Test pass rate | 100% | 100% | 100% | 100% | 100% |
+| Largest impl method | 453 lines | 453 lines | 453 lines | N/A | <50 lines |
+
+**Total Effort**:
+- Step 14.1: 1-2 hours ✅ COMPLETE
+- Step 14.2: 2-3 hours 🚧 NEXT
+- Step 14.3: 3-4 hours ⏳ PLANNED
+- **Total**: 6-9 hours (1-2 days of focused work)
 
 ---
 
