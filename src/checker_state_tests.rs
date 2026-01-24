@@ -29013,6 +29013,354 @@ for (const x of tuple) {
 }
 
 // =============================================================================
+// Array Destructuring Iterability Tests (TS2488)
+// =============================================================================
+
+/// Test that array destructuring of a non-iterable number type emits TS2488
+#[test]
+fn test_array_destructuring_number_emits_ts2488() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const num: number = 42;
+const [a, b] = num;  // TS2488: number is not iterable
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 1,
+        "Expected 1 TS2488 error for array destructuring of number. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring of a non-iterable boolean type emits TS2488
+#[test]
+fn test_array_destructuring_boolean_emits_ts2488() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const flag: boolean = true;
+const [x] = flag;  // TS2488: boolean is not iterable
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 1,
+        "Expected 1 TS2488 error for array destructuring of boolean. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring of a non-iterable object type emits TS2488
+#[test]
+fn test_array_destructuring_object_emits_ts2488() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const obj = { a: 1, b: 2 };
+const [x, y] = obj;  // TS2488: object is not iterable
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 1,
+        "Expected 1 TS2488 error for array destructuring of object. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring of an array type does not emit TS2488
+#[test]
+fn test_array_destructuring_array_no_error() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const arr: number[] = [1, 2, 3];
+const [a, b, c] = arr;  // OK: array is iterable
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 0,
+        "Expected 0 TS2488 errors for array destructuring of array. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring of a string type does not emit TS2488
+#[test]
+fn test_array_destructuring_string_no_error() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const str: string = "hello";
+const [a, b, c] = str;  // OK: string is iterable
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 0,
+        "Expected 0 TS2488 errors for array destructuring of string. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring of a union with non-iterable members emits TS2488
+#[test]
+fn test_array_destructuring_union_non_iterable_emits_ts2488() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const val: string | number = "hello";
+const [a] = val;  // TS2488: union with non-iterable member is not iterable
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 1,
+        "Expected 1 TS2488 error for array destructuring of union with non-iterable member. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring of a tuple type does not emit TS2488
+#[test]
+fn test_array_destructuring_tuple_no_error() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const tuple: [number, string] = [1, "hello"];
+const [a, b] = tuple;  // OK: tuple is iterable
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 0,
+        "Expected 0 TS2488 errors for array destructuring of tuple. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring with nested patterns also checks iterability
+#[test]
+fn test_array_destructuring_nested_pattern_iterability() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const num: number = 42;
+const [[a]] = [num];  // TS2488: inner array contains non-iterable number
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 1,
+        "Expected 1 TS2488 error for nested array destructuring of non-iterable. All codes: {:?}",
+        codes
+    );
+}
+
+// =============================================================================
 // Async Iterator Protocol Tests (TS2504)
 // =============================================================================
 
