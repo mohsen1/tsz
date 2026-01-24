@@ -307,10 +307,34 @@ impl<'a> CheckerState<'a> {
             }
             // ~ returns number
             k if k == SyntaxKind::TildeToken as u16 => TypeId::NUMBER,
-            // ++ and -- return number
+            // ++ and -- require numeric operand
             k if k == SyntaxKind::PlusPlusToken as u16
                 || k == SyntaxKind::MinusMinusToken as u16 =>
             {
+                // Get operand type for validation
+                let operand_type = self.get_type_of_node(unary.operand);
+
+                // Check if operand is valid for increment/decrement (number, bigint, any, or enum)
+                use crate::solver::BinaryOpEvaluator;
+                let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                let is_valid = evaluator.is_arithmetic_operand(operand_type);
+
+                if !is_valid {
+                    // Emit TS2362 for invalid increment/decrement operand
+                    if let Some(loc) = self.get_source_location(unary.operand) {
+                        use crate::checker::types::diagnostics::diagnostic_codes;
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            category: DiagnosticCategory::Error,
+                            message_text: "The operand of an increment or decrement operator must be a variable or a property access.".to_string(),
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+
                 TypeId::NUMBER
             }
             _ => TypeId::ANY,
@@ -754,7 +778,27 @@ impl<'a> CheckerState<'a> {
                     || k == SyntaxKind::GreaterThanGreaterThanToken as u16
                     || k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 =>
                 {
-                    type_stack.push(TypeId::NUMBER);
+                    // Bitwise operators require integer operands (number, bigint, any, or enum)
+                    // Emit TS2362/TS2363 if operands are not valid
+                    let op_str = match op_kind {
+                        k if k == SyntaxKind::AmpersandToken as u16 => "&",
+                        k if k == SyntaxKind::BarToken as u16 => "|",
+                        k if k == SyntaxKind::CaretToken as u16 => "^",
+                        k if k == SyntaxKind::LessThanLessThanToken as u16 => "<<",
+                        k if k == SyntaxKind::GreaterThanGreaterThanToken as u16 => ">>",
+                        k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => ">>>",
+                        _ => "?",
+                    };
+                    let result = evaluator.evaluate(left_type, right_type, op_str);
+                    let result_type = match result {
+                        BinaryOpResult::Success(result_type) => result_type,
+                        BinaryOpResult::TypeError { .. } => {
+                            // Emit appropriate error for arithmetic type mismatch
+                            self.emit_binary_operator_error(node_idx, left_idx, right_idx, left_type, right_type, op_str);
+                            TypeId::UNKNOWN
+                        }
+                    };
+                    type_stack.push(result_type);
                     continue;
                 }
                 _ => {
