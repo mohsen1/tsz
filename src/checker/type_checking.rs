@@ -1056,4 +1056,92 @@ impl<'a> CheckerState<'a> {
             self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
         }
     }
+
+    // =========================================================================
+    // Type Name Validation
+    // =========================================================================
+
+    /// Check a parameter's type annotation for missing type names.
+    ///
+    /// Validates that type references within a parameter's type annotation
+    /// can be resolved. This helps catch typos and undefined types.
+    ///
+    /// ## Parameters:
+    /// - `param_idx`: The parameter node index to check
+    pub(crate) fn check_parameter_type_for_missing_names(&mut self, param_idx: NodeIndex) {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return;
+        };
+        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+            return;
+        };
+        if !param.type_annotation.is_none() {
+            self.check_type_for_missing_names(param.type_annotation);
+        }
+    }
+
+    /// Check a tuple element for missing type names.
+    ///
+    /// Validates that type references within a tuple element can be resolved.
+    /// Handles both named tuple members and regular tuple elements.
+    ///
+    /// ## Parameters:
+    /// - `elem_idx`: The tuple element node index to check
+    pub(crate) fn check_tuple_element_for_missing_names(&mut self, elem_idx: NodeIndex) {
+        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+            return;
+        };
+        if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+            if let Some(member) = self.ctx.arena.get_named_tuple_member(elem_node) {
+                self.check_type_for_missing_names(member.type_node);
+            }
+            return;
+        }
+        self.check_type_for_missing_names(elem_idx);
+    }
+
+    /// Check type parameters for missing type names.
+    ///
+    /// Iterates through a list of type parameters and validates that
+    /// their constraints and defaults reference valid types.
+    ///
+    /// ## Parameters:
+    /// - `type_parameters`: The type parameter list to check
+    pub(crate) fn check_type_parameters_for_missing_names(
+        &mut self,
+        type_parameters: &Option<crate::parser::NodeList>,
+    ) {
+        let Some(list) = type_parameters else {
+            return;
+        };
+        for &param_idx in &list.nodes {
+            self.check_type_parameter_node_for_missing_names(param_idx);
+        }
+    }
+
+    /// Check a single type parameter node for missing type names.
+    ///
+    /// Validates that the constraint and default type of a type parameter
+    /// reference valid types.
+    ///
+    /// ## Parameters:
+    /// - `param_idx`: The type parameter node index to check
+    pub(crate) fn check_type_parameter_node_for_missing_names(&mut self, param_idx: NodeIndex) {
+        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+            return;
+        };
+        let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+            return;
+        };
+
+        // Check constraint type
+        if !param.constraint.is_none() {
+            self.check_type_for_missing_names(param.constraint);
+        }
+
+        // Check default type
+        if !param.default.is_none() {
+            self.check_type_for_missing_names(param.default);
+        }
+    }
 }
