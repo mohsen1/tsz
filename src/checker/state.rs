@@ -8376,6 +8376,27 @@ impl<'a> CheckerState<'a> {
         catch.variable_declaration == var_decl_idx
     }
 
+    /// Infer a literal type from an initializer expression.
+    ///
+    /// This function attempts to infer the most specific literal type from an
+    /// expression, enabling const declarations to have literal types.
+    ///
+    /// **Literal Type Inference:**
+    /// - **String literals**: `"hello"` → `"hello"` (string literal type)
+    /// - **Numeric literals**: `42` → `42` (numeric literal type)
+    /// - **Boolean literals**: `true` → `true`, `false` → `false`
+    /// - **Null literal**: `null` → null type
+    /// - **Unary expressions**: `-42` → `-42`, `+42` → `42`
+    ///
+    /// **Non-Literal Expressions:**
+    /// - Complex expressions return None (not a literal)
+    /// - Function calls, object literals, etc. return None
+    ///
+    /// **Const Declarations:**
+    /// - `const x = "hello"` infers type `"hello"` (not `string`)
+    /// - `let y = "hello"` infers type `string` (widened)
+    /// - This function enables the const behavior
+    ///
     fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
         use crate::scanner::SyntaxKind;
 
@@ -8526,9 +8547,21 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve a TypeQuery type to its structural type.
-    /// If the type is `typeof x`, this returns the actual type of `x`.
-    /// If the type is not a TypeQuery, it returns the type unchanged.
+    /// Resolve a typeof type reference to its structural type.
+    ///
+    /// This function resolves `typeof X` type queries to the actual type of `X`.
+    /// This is useful for type operations where we need the structural type rather
+    /// than the type query itself.
+    ///
+    /// **TypeQuery Resolution:**
+    /// - **TypeQuery**: `typeof X` → get the type of symbol X
+    /// - **Other types**: Return unchanged (not a typeof query)
+    ///
+    /// **Use Cases:**
+    /// - Assignability checking (need actual type, not typeof reference)
+    /// - Type comparison (typeof X should be compared to X's type)
+    /// - Generic constraint evaluation
+    ///
     fn resolve_type_query_to_structural(&mut self, type_id: TypeId) -> TypeId {
         use crate::binder::SymbolId;
         use crate::solver::{SymbolRef, TypeKey};
