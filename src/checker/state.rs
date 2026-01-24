@@ -1406,6 +1406,72 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Merge namespace exports into a function type for function+namespace merging.
+    ///
+    /// This is similar to merge_namespace_exports_into_constructor but for functions.
+    /// When a function and namespace are merged (same name), the namespace's exports
+    /// become accessible as static properties on the function type.
+    ///
+    /// ## TypeScript Example:
+    /// ```typescript
+    /// function Model() {}
+    /// namespace Model {
+    ///   export interface Options {}
+    /// }
+    /// let opts: Model.Options;  // Works because Options is merged into Model
+    /// ```
+    fn merge_namespace_exports_into_function(
+        &mut self,
+        sym_id: SymbolId,
+        function_type: TypeId,
+    ) -> (TypeId, Vec<crate::solver::TypeParamInfo>) {
+        use crate::solver::{CallableShape, PropertyInfo, TypeKey};
+        use rustc_hash::FxHashMap;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return (function_type, Vec::new());
+        };
+        let Some(exports) = symbol.exports.as_ref() else {
+            return (function_type, Vec::new());
+        };
+        let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(function_type) else {
+            return (function_type, Vec::new());
+        };
+        let shape = self.ctx.types.callable_shape(shape_id);
+
+        let mut props: FxHashMap<Atom, PropertyInfo> = shape
+            .properties
+            .iter()
+            .map(|prop| (prop.name, prop.clone()))
+            .collect();
+
+        // Merge ALL exports from the namespace into the function type.
+        // This allows accessing namespace members via FunctionName.Member.
+        for (name, member_id) in exports.iter() {
+            let type_id = self.get_type_of_symbol(*member_id);
+            let name_atom = self.ctx.types.intern_string(name);
+            props.entry(name_atom).or_insert(PropertyInfo {
+                name: name_atom,
+                type_id,
+                write_type: type_id,
+                optional: false,
+                readonly: false,
+                is_method: false,
+            });
+        }
+
+        let properties: Vec<PropertyInfo> = props.into_values().collect();
+        let merged_type = self.ctx.types.callable(CallableShape {
+            call_signatures: shape.call_signatures.clone(),
+            construct_signatures: shape.construct_signatures.clone(),
+            properties,
+            string_index: shape.string_index.clone(),
+            number_index: shape.number_index.clone(),
+        });
+
+        (merged_type, Vec::new())
+    }
+
     /// Resolve a re-exported member from a module by following re-export chains.
     ///
     /// This function handles cases where a namespace member is re-exported from
@@ -4589,7 +4655,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !overloads.is_empty() {
+            let function_type = if !overloads.is_empty() {
                 let shape = CallableShape {
                     call_signatures: overloads,
                     construct_signatures: Vec::new(),
@@ -4597,17 +4663,22 @@ impl<'a> CheckerState<'a> {
                     string_index: None,
                     number_index: None,
                 };
-                return (self.ctx.types.callable(shape), Vec::new());
+                self.ctx.types.callable(shape)
+            } else if !value_decl.is_none() {
+                self.get_type_of_function(value_decl)
+            } else if !implementation_decl.is_none() {
+                self.get_type_of_function(implementation_decl)
+            } else {
+                TypeId::UNKNOWN
+            };
+
+            // If function is merged with namespace, merge namespace exports into function type
+            // This allows accessing namespace members through the function name: Model.Options
+            if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0 {
+                return self.merge_namespace_exports_into_function(sym_id, function_type);
             }
 
-            if !value_decl.is_none() {
-                return (self.get_type_of_function(value_decl), Vec::new());
-            }
-            if !implementation_decl.is_none() {
-                return (self.get_type_of_function(implementation_decl), Vec::new());
-            }
-
-            return (TypeId::UNKNOWN, Vec::new());
+            return (function_type, Vec::new());
         }
 
         // Interface - return interface type with call signatures
