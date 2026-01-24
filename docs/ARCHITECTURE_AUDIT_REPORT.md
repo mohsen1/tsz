@@ -5,40 +5,28 @@
 **Codebase Version**: Branch `main`
 **Last Updated**: 2026-01-24 (Strategic pivot to accelerated extraction)
 
-## 🎯 Current Strategy: Solver/Subtype.rs Decomposition
+## 🎯 Current Strategy: Checker/State.rs Decomposition
 
-**CURRENT FOCUS** (2026-01-24): Focus on breaking up `check_subtype_inner` function in `solver/subtype.rs`.
+**CURRENT FOCUS** (2026-01-24): Focus on breaking up `checker/state.rs` - the largest god object at 26,217 lines.
 
-### Extraction Targets (Commits 80+)
+### Solver/Subtype.rs Status ✅ COMPLETE
 
-1. **Incremental Extraction**: Target **200-400 lines per commit** from `check_subtype_inner`
-2. **Focus: Type-Specific Subtyping Logic** - Extract cohesive type checking logic
-3. **Documentation**: Doc comments on public APIs only - NOT the primary goal
+The `solver/subtype.rs` decomposition is **COMPLETE**:
+- `check_subtype_inner`: **~317 lines** (down from ~2,214 lines - 86% reduction!)
+- Module structure: **9 focused modules** in `solver/subtype_rules/` (~3,781 lines total)
+- All type-specific subtyping logic extracted and organized by category:
+  - `intrinsics.rs` - Primitive/intrinsic types (338 lines)
+  - `literals.rs` - Literal types and template literals (587 lines)
+  - `unions.rs` - Union/intersection logic (361 lines)
+  - `tuples.rs` - Array/tuple checking (379 lines)
+  - `objects.rs` - Object property matching (544 lines)
+  - `functions.rs` - Function/callable compatibility (992 lines)
+  - `generics.rs` - Type parameters, applications (425 lines)
+  - `conditionals.rs` - Conditional type checking (133 lines)
 
-### Why Solver/Subtype.rs?
+### Why Checker/State.rs?
 
-The `check_subtype_inner` function is still ~2,214 lines (reduced from 2,437, 9% progress). Breaking it up will:
-- Improve testability (each helper can be unit tested)
-- Reduce cognitive load (clearer function names document intent)
-- Enable parallel work (different type categories can be worked on independently)
-- Establish patterns for future refactoring
-
-**Extractable Areas**:
-- **Object subtyping**: ~400-600 lines (property matching, index signatures, excess properties)
-- **Template literal types**: ~200-300 lines (pattern matching, backtracking)
-- **Mapped/conditional types**: ~300-400 lines (type evaluation, distribution)
-- **Primitive/intrinsic types**: ~200-300 lines (hierarchy, conversions)
-
-**Total extractable**: ~1,100-1,600 lines in focused, cohesive domains
-
-### Success Criteria
-
-Each extraction commit should:
-- Extract **200-400 lines** into focused helper methods
-- Reduce `check_subtype_inner` complexity
-- Maintain 100% test pass rate
-- Include minimal documentation (doc comments only)
-- Use descriptive function names that document intent
+The `checker/state.rs` is currently **26,217 lines** and needs to be reduced to ~2,000 lines. Breaking it up will:
 
 --- 
 ---
