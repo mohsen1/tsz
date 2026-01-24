@@ -7328,11 +7328,8 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // Also check if the resolved type is a union containing undefined
-            if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(resolved) {
-                let member_ids = self.ctx.types.type_list(members);
-                if member_ids.contains(&TypeId::UNDEFINED) {
-                    return true;
-                }
+            if self.union_contains(resolved, TypeId::UNDEFINED) {
+                return true;
             }
         }
 
@@ -11267,16 +11264,12 @@ impl<'a> CheckerState<'a> {
 
                 TypeId::ANY
             }
-            Some(TypeKey::Union(members)) => {
-                let members = self.ctx.types.type_list(members);
-                let mut member_types = Vec::with_capacity(members.len());
-                for &member in members.iter() {
-                    member_types.push(self.get_element_access_type(
-                        member,
-                        index_type,
-                        literal_index,
-                    ));
-                }
+            Some(TypeKey::Union(_)) => {
+                let members = self.get_union_members(object_type);
+                let member_types: Vec<_> = members
+                    .iter()
+                    .map(|&member| self.get_element_access_type(member, index_type, literal_index))
+                    .collect();
                 if member_types.is_empty() {
                     TypeId::ANY
                 } else {
@@ -11558,14 +11551,17 @@ impl<'a> CheckerState<'a> {
     fn is_array_like_type(&self, object_type: TypeId) -> bool {
         use crate::solver::TypeKey;
 
+        // Check for array/tuple types directly
+        if self.is_mutable_array_type(object_type) {
+            return true;
+        }
+
         match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::Array(_) | TypeKey::Tuple(_)) => true,
+            Some(TypeKey::Tuple(_)) => true,
             Some(TypeKey::ReadonlyType(inner)) => self.is_array_like_type(inner),
-            Some(TypeKey::Union(members)) => {
-                let members = self.ctx.types.type_list(members);
-                members
-                    .iter()
-                    .all(|member| self.is_array_like_type(*member))
+            Some(TypeKey::Union(_)) => {
+                let members = self.get_union_members(object_type);
+                members.iter().all(|&member| self.is_array_like_type(member))
             }
             Some(TypeKey::Intersection(members)) => {
                 let members = self.ctx.types.type_list(members);
@@ -11617,18 +11613,24 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
-        use crate::solver::{IntrinsicKind, LiteralValue, TypeKey};
+        use crate::solver::{IntrinsicKind, TypeKey};
+
+        // Use utility methods for literal type checks
+        if self.is_string_literal_type(index_type) {
+            return Some((true, false));
+        }
+        if self.is_number_literal_type(index_type) {
+            return Some((false, true));
+        }
 
         match self.ctx.types.lookup(index_type)? {
             TypeKey::Intrinsic(IntrinsicKind::String) => Some((true, false)),
             TypeKey::Intrinsic(IntrinsicKind::Number) => Some((false, true)),
-            TypeKey::Literal(LiteralValue::String(_)) => Some((true, false)),
-            TypeKey::Literal(LiteralValue::Number(_)) => Some((false, true)),
-            TypeKey::Union(members) => {
-                let members = self.ctx.types.type_list(members);
+            TypeKey::Union(_) => {
+                let members = self.get_union_members(index_type);
                 let mut wants_string = false;
                 let mut wants_number = false;
-                for &member in members.iter() {
+                for member in members {
                     let (member_string, member_number) = self.get_index_key_kind(member)?;
                     wants_string |= member_string;
                     wants_number |= member_number;
@@ -12967,8 +12969,6 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<bool> {
-        use crate::solver::TypeKey;
-
         // Check if source is an abstract constructor
         let source_is_abstract = self.is_abstract_constructor_type(source, env);
 
@@ -13023,13 +13023,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if target is a constructor type (has construct signatures)
-        let target_is_constructor = match self.ctx.types.lookup(target) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                !shape.construct_signatures.is_empty()
-            }
-            _ => false,
-        };
+        let target_is_constructor = self.has_construct_sig(target);
 
         // If target is a constructor type but not abstract, reject the assignment
         if target_is_constructor {
@@ -13067,10 +13061,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if self.ctx.private_constructor_types.contains(&type_id) {
+        if self.is_private_ctor(type_id) {
             return Some(MemberAccessLevel::Private);
         }
-        if self.ctx.protected_constructor_types.contains(&type_id) {
+        if self.is_protected_ctor(type_id) {
             return Some(MemberAccessLevel::Protected);
         }
 
@@ -13484,7 +13478,7 @@ impl<'a> CheckerState<'a> {
         use crate::solver::TypeKey;
 
         // First check the cached set
-        if self.ctx.abstract_constructor_types.contains(&type_id) {
+        if self.is_abstract_ctor(type_id) {
             return true;
         }
 
@@ -13533,7 +13527,7 @@ impl<'a> CheckerState<'a> {
             TypeKey::Callable(_shape_id) => {
                 // For Callable types (constructor types), check if they're in the abstract set
                 // This handles `typeof AbstractClass` which returns a Callable type
-                if self.ctx.abstract_constructor_types.contains(&type_id) {
+                if self.is_abstract_ctor(type_id) {
                     return true;
                 }
                 // Additional check: iterate through symbol_types to find matching class symbols
@@ -13590,17 +13584,10 @@ impl<'a> CheckerState<'a> {
 
         match key {
             TypeKey::Function(func_id) => self.ctx.types.function_shape(func_id).is_constructor,
-            TypeKey::Callable(shape_id) => {
+            TypeKey::Callable(_) => {
                 // A Callable is a concrete constructor target if it has construct signatures
                 // AND it's not an abstract constructor
-                let has_construct = !self
-                    .ctx
-                    .types
-                    .callable_shape(shape_id)
-                    .construct_signatures
-                    .is_empty();
-                let is_abstract = self.ctx.abstract_constructor_types.contains(&type_id);
-                has_construct && !is_abstract
+                self.has_construct_sig(type_id) && !self.is_abstract_ctor(type_id)
             }
             TypeKey::TypeQuery(symbol) | TypeKey::Ref(symbol) => {
                 // First try to resolve via TypeEnvironment
@@ -17085,12 +17072,15 @@ impl<'a> CheckerState<'a> {
 
     fn is_constructor_type(&self, type_id: TypeId) -> bool {
         use crate::solver::TypeKey;
+
+        // First check if it directly has construct signatures
+        if self.has_construct_sig(type_id) {
+            return true;
+        }
+
+        // For type parameters, check if the constraint is a constructor type
+        // For intersection types, check if any member is a constructor type
         match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                !shape.construct_signatures.is_empty()
-            }
-            // For type parameters, check if the constraint is a constructor type
             Some(TypeKey::TypeParameter(info)) => {
                 if let Some(constraint) = info.constraint {
                     self.is_constructor_type(constraint)
@@ -17098,7 +17088,6 @@ impl<'a> CheckerState<'a> {
                     false
                 }
             }
-            // For intersection types, check if any member is a constructor type
             Some(TypeKey::Intersection(members)) => {
                 let member_types = self.ctx.types.type_list(members);
                 member_types.iter().any(|&m| self.is_constructor_type(m))
@@ -17612,19 +17601,8 @@ impl<'a> CheckerState<'a> {
     /// Check if a type is a class constructor (typeof Class).
     /// Returns true for Callable types with only construct signatures (no call signatures).
     fn is_class_constructor_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
         // A class constructor is a Callable with construct signatures but no call signatures
-        if let TypeKey::Callable(shape_id) = type_key {
-            let shape = self.ctx.types.callable_shape(shape_id);
-            return !shape.construct_signatures.is_empty() && shape.call_signatures.is_empty();
-        }
-
-        false
+        self.has_construct_sig(type_id) && !self.has_call_signature(type_id)
     }
 
     /// Report TS2348: "Cannot invoke an expression whose type lacks a call signature"
@@ -21749,18 +21727,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn type_includes_undefined(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
         if type_id == TypeId::UNDEFINED {
             return true;
         }
 
-        let Some(TypeKey::Union(members)) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        let members = self.ctx.types.type_list(members);
-        members.contains(&TypeId::UNDEFINED)
+        // Check if the type is a union containing undefined
+        self.union_contains(type_id, TypeId::UNDEFINED)
     }
 
     fn find_constructor_body(&self, members: &crate::parser::NodeList) -> Option<NodeIndex> {
