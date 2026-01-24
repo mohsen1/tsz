@@ -645,6 +645,58 @@ This deep analysis covers commits 31-40, representing a **mixed approach** with 
 
 ---
 
+---
+
+## Deep Analysis: Commit Batches 41-79 (2026-01-23)
+
+### Summary of Refactoring Work
+
+This analysis covers the progression from batches 41 through 79, which shifted focus from primarily code extraction to a **documentation-first stabilization phase** and core infrastructure refinement.
+
+#### Batch 41-50: Stabilizing and Profiling
+**Goal**: Prepare codebase for major god object decomposition.
+- Verified all Phase 1 completion metrics.
+- Performed deep analysis of recursion depth limits.
+- Identified `MAX_CALL_DEPTH` enforcement gap.
+
+#### Batch 51-60: Utility Expansion & Bug Fixes
+**Goal**: Grow utility modules to provide clean APIs for future refactoring.
+- **Achievements**:
+  - Expanded `type_computation.rs` (211 → 540 lines) with 28 new utility methods.
+  - Expanded `symbol_resolver.rs` (128 → 260 lines) with 13 new utility methods.
+  - Fixed a critical **readonly index signature bug** in `get_readonly_element_access_name`.
+- **Impact**: Centralized metadata access patterns, reducing the logic needed inside the main state machine.
+
+#### Batch 61-70: Comprehensive Documentation Phase
+**Goal**: Enhance documentation for core type checking functions in `checker/state.rs`.
+- **Achievements**:
+  - 50+ functions now have comprehensive documentation with TypeScript examples.
+  - Documented core infrastructure: `get_type_of_symbol`, `is_subtype_of`, `is_assignable_to`, `check_flow_usage`.
+  - Clarified type narrowing and type parameter handling logic.
+- **Impact**: Significantly improved the maintainability and onboarding potential of the "monster" god objects.
+
+#### Batch 71-79: Core Infrastructure Documentation
+**Goal**: Focus on symbol resolution, type evaluation, and internal diagnostics.
+- **Achievements**:
+  - 60+ functions now fully documented.
+  - Documented `resolve_qualified_name`, `evaluate_type_for_assignability`, and `cache_symbol_type`.
+  - Enhanced diagnostic and span lookup documentation.
+- **Impact**: Completed the documentation phase for core infrastructure, making it ready for large-scale module extraction.
+
+### Line Count Analysis (Post-Batch 79)
+
+| File | Original | Batch 40 | Batch 79 | Total Change | Status |
+|------|----------|----------|----------|--------------|--------|
+| `solver/subtype.rs` | 4,734 | 5,073 | 5,073 | +339 | ✅ Stabilized (docs) |
+| `checker/state.rs` | 27,525 | 27,424 | 28,500+ | +975 | 🚨 Growing (documentation) |
+| `checker/promise_checker.rs` | N/A | 521 | 521 | +521 | ✅ Solidified |
+| `type_computation.rs` | 211 | 211 | 540 | +329 | ✅ Expanding |
+| `symbol_resolver.rs` | 128 | 128 | 260 | +132 | ✅ Expanding |
+
+**Key Insight**: While `checker/state.rs` has grown due to extensive documentation (averaging 25-30 lines per function), the code is now **primed for extraction**. The next major phase will focus on moving these well-documented functions into the newly expanded utility modules.
+
+---
+
 ### ✅ Completed - Phase 1: Critical Stabilization
 
 | Task | Status | Notes |
