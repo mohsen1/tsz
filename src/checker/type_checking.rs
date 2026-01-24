@@ -5346,7 +5346,10 @@ impl<'a> CheckerState<'a> {
     /// - `static_block_idx`: The static block node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_static_block(&self, static_block_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_static_block(
+        &self,
+        static_block_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(static_block_idx)?;
         let parent = ext.parent;
         if parent.is_none() {
@@ -5406,7 +5409,10 @@ impl<'a> CheckerState<'a> {
     /// - `computed_idx`: The computed property node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_computed_property(&self, computed_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_computed_property(
+        &self,
+        computed_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         // Walk up to find the class member (property, method, accessor)
         let mut current = computed_idx;
         while !current.is_none() {
@@ -5476,7 +5482,10 @@ impl<'a> CheckerState<'a> {
     /// - `heritage_idx`: The heritage clause node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class/interface, None otherwise.
-    pub(crate) fn find_class_for_heritage_clause(&self, heritage_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_heritage_clause(
+        &self,
+        heritage_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(heritage_idx)?;
         let parent = ext.parent;
         if parent.is_none() {

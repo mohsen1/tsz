@@ -157,18 +157,31 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.tuple(tuple_elements);
         }
 
+        // Use contextual element type when available for better inference
         if let Some(ref helper) = ctx_helper
             && let Some(context_element_type) = helper.get_array_element_type()
-            && element_types
+        {
+            // Check if all elements are assignable to the contextual type
+            // If so, use the contextual type for the array
+            if element_types
                 .iter()
                 .all(|&elem_type| self.is_assignable_to(elem_type, context_element_type))
-        {
-            return self.ctx.types.array(context_element_type);
+            {
+                return self.ctx.types.array(context_element_type);
+            }
         }
 
         // Choose a best common type if any element is a supertype of all others.
         let element_type = if element_types.len() == 1 {
-            element_types[0]
+            // For single element, prefer contextual type if available
+            if let Some(ref helper) = ctx_helper
+                && let Some(context_element_type) = helper.get_array_element_type()
+                && self.is_assignable_to(element_types[0], context_element_type)
+            {
+                context_element_type
+            } else {
+                element_types[0]
+            }
         } else if element_types.is_empty() {
             TypeId::NEVER
         } else {
@@ -1130,14 +1143,28 @@ impl<'a> CheckerState<'a> {
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
                 if let Some(name) = self.get_property_name(prop.name) {
+                    // Get contextual type for this property
+                    let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                        self.ctx.types.contextual_property_type(ctx_type, &name)
+                    } else {
+                        None
+                    };
+
                     // Set contextual type for property value
                     let prev_context = self.ctx.contextual_type;
-                    if let Some(ctx_type) = prev_context {
-                        self.ctx.contextual_type =
-                            self.ctx.types.contextual_property_type(ctx_type, &name);
-                    }
+                    self.ctx.contextual_type = property_context_type;
 
                     let value_type = self.get_type_of_node(prop.initializer);
+
+                    // Restore context
+                    self.ctx.contextual_type = prev_context;
+
+                    // Apply bidirectional type inference - use contextual type to narrow the value type
+                    let value_type = crate::solver::apply_contextual_type(
+                        self.ctx.types,
+                        value_type,
+                        property_context_type,
+                    );
 
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
@@ -1156,9 +1183,6 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::IMPLICIT_ANY_MEMBER,
                         );
                     }
-
-                    // Restore context
-                    self.ctx.contextual_type = prev_context;
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
@@ -1193,17 +1217,28 @@ impl<'a> CheckerState<'a> {
                 if let Some(ident) = self.ctx.arena.get_identifier(elem_node) {
                     let name = ident.escaped_text.clone();
 
+                    // Get contextual type for this property
+                    let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                        self.ctx.types.contextual_property_type(ctx_type, &name)
+                    } else {
+                        None
+                    };
+
                     // Set contextual type for shorthand property value
                     let prev_context = self.ctx.contextual_type;
-                    if let Some(ctx_type) = prev_context {
-                        self.ctx.contextual_type =
-                            self.ctx.types.contextual_property_type(ctx_type, &name);
-                    }
+                    self.ctx.contextual_type = property_context_type;
 
                     let value_type = self.get_type_of_node(elem_idx);
 
                     // Restore context
                     self.ctx.contextual_type = prev_context;
+
+                    // Apply bidirectional type inference - use contextual type to narrow the value type
+                    let value_type = crate::solver::apply_contextual_type(
+                        self.ctx.types,
+                        value_type,
+                        property_context_type,
+                    );
 
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
