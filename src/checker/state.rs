@@ -10572,7 +10572,11 @@ impl<'a> CheckerState<'a> {
     /// The binder creates symbols for identifiers inside binding patterns (e.g., `const [x] = arr;`),
     /// but their `value_declaration` is the identifier node, not the enclosing variable declaration.
     /// We infer the binding element type from the destructured value type and cache it on the symbol.
-    pub(crate) fn assign_binding_pattern_symbol_types(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) {
+    pub(crate) fn assign_binding_pattern_symbol_types(
+        &mut self,
+        pattern_idx: NodeIndex,
+        parent_type: TypeId,
+    ) {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
