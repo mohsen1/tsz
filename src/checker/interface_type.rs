@@ -428,7 +428,8 @@ impl<'a> CheckerState<'a> {
                         type_args.truncate(base_type_params.len());
                     }
 
-                    let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+                    let substitution =
+                        TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                     base_type = instantiate_type(self.ctx.types, base_type, &substitution);
 
                     self.pop_type_parameters(base_param_updates);

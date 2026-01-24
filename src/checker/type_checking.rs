@@ -3804,7 +3804,8 @@ impl<'a> CheckerState<'a> {
         if type_args.len() > base_type_params.len() {
             type_args.truncate(base_type_params.len());
         }
-        let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+        let substitution =
+            TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
         // Get the derived class name for the error message
         let derived_class_name = if !class_data.name.is_none() {
@@ -4141,7 +4142,8 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+                let substitution =
+                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
                 for (member_name, member_type) in &derived_members {
                     let mut found = false;
@@ -5346,7 +5348,10 @@ impl<'a> CheckerState<'a> {
     /// - `static_block_idx`: The static block node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_static_block(&self, static_block_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_static_block(
+        &self,
+        static_block_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(static_block_idx)?;
         let parent = ext.parent;
         if parent.is_none() {
@@ -5406,7 +5411,10 @@ impl<'a> CheckerState<'a> {
     /// - `computed_idx`: The computed property node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_computed_property(&self, computed_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_computed_property(
+        &self,
+        computed_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         // Walk up to find the class member (property, method, accessor)
         let mut current = computed_idx;
         while !current.is_none() {
@@ -5476,7 +5484,10 @@ impl<'a> CheckerState<'a> {
     /// - `heritage_idx`: The heritage clause node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class/interface, None otherwise.
-    pub(crate) fn find_class_for_heritage_clause(&self, heritage_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_heritage_clause(
+        &self,
+        heritage_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(heritage_idx)?;
         let parent = ext.parent;
         if parent.is_none() {

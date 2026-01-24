@@ -39,7 +39,7 @@ fn test_substitution_from_args() {
     ];
     let type_args = vec![TypeId::STRING, TypeId::NUMBER];
 
-    let subst = TypeSubstitution::from_args(&type_params, &type_args);
+    let subst = TypeSubstitution::from_args(&interner, &type_params, &type_args);
 
     assert_eq!(subst.get(t_name), Some(TypeId::STRING));
     assert_eq!(subst.get(u_name), Some(TypeId::NUMBER));
@@ -535,6 +535,71 @@ fn test_instantiation_depth_limit_returns_error() {
     let result = instantiate_type(&interner, deep_type, &subst);
 
     assert_eq!(result, TypeId::ERROR);
+}
+
+#[test]
+fn test_substitution_from_args_with_defaults() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    // Create type params where U's default is T
+    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+    }));
+
+    let type_params = vec![
+        TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+        },
+        TypeParamInfo {
+            name: u_name,
+            constraint: None,
+            default: Some(t_type), // U defaults to T
+        },
+    ];
+
+    // Provide only T = number, U should default to T (which resolves to number)
+    let type_args = vec![TypeId::NUMBER];
+
+    let subst = TypeSubstitution::from_args(&interner, &type_params, &type_args);
+
+    assert_eq!(subst.get(t_name), Some(TypeId::NUMBER));
+    // U should be substituted with the instantiated value of T (which is number)
+    // The default T gets instantiated with the substitution {T: number}, resulting in number
+    assert_eq!(subst.get(u_name), Some(TypeId::NUMBER));
+}
+
+#[test]
+fn test_substitution_from_args_with_concrete_defaults() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let type_params = vec![
+        TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+        },
+        TypeParamInfo {
+            name: u_name,
+            constraint: None,
+            default: Some(TypeId::STRING), // U defaults to string
+        },
+    ];
+
+    // Provide only T = number, U should default to string
+    let type_args = vec![TypeId::NUMBER];
+
+    let subst = TypeSubstitution::from_args(&interner, &type_params, &type_args);
+
+    assert_eq!(subst.get(t_name), Some(TypeId::NUMBER));
+    assert_eq!(subst.get(u_name), Some(TypeId::STRING));
 }
 
 // ============================================

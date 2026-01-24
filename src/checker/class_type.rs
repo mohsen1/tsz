@@ -502,7 +502,8 @@ impl<'a> CheckerState<'a> {
 
                 let base_instance_type =
                     self.get_class_instance_type_inner(base_class_idx, base_class, visited);
-                let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+                let substitution =
+                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                 let base_instance_type =
                     instantiate_type(self.ctx.types, base_instance_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
@@ -586,8 +587,11 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if !interface_type_params.is_empty() {
-                        let substitution =
-                            TypeSubstitution::from_args(&interface_type_params, &type_args);
+                        let substitution = TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &interface_type_params,
+                            &type_args,
+                        );
                         interface_type =
                             instantiate_type(self.ctx.types, interface_type, &substitution);
                     }
@@ -1118,7 +1122,8 @@ impl<'a> CheckerState<'a> {
 
                 let base_constructor_type =
                     self.get_class_constructor_type(base_class_idx, base_class);
-                let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+                let substitution =
+                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                 let base_constructor_type =
                     instantiate_type(self.ctx.types, base_constructor_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
