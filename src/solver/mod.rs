@@ -29,6 +29,7 @@ mod lawyer;
 mod lower;
 mod narrowing;
 mod operations;
+pub mod binary_ops;
 mod subtype;
 mod subtype_rules;
 mod types;
@@ -37,6 +38,7 @@ mod utils;
 pub mod visitor;
 
 pub(crate) use apparent::*;
+pub use binary_ops::*;
 pub use compat::*;
 pub use contextual::*;
 pub use db::*;
