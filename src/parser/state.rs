@@ -2132,12 +2132,9 @@ impl ParserState {
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
-                // Check if there's another parameter without comma - this is a TS1005 error
-                // But suppress if there's a line break (user might have intentionally split lines)
-                if !self.is_token(SyntaxKind::CloseParenToken)
-                    && self.is_parameter_start()
-                    && !self.scanner.has_preceding_line_break()
-                {
+                // Trailing commas are allowed in parameter lists
+                // Only emit an error if we have another parameter without a comma
+                if !self.is_token(SyntaxKind::CloseParenToken) && self.is_parameter_start() {
                     // Emit TS1005 for missing comma between parameters: f(a b)
                     self.error_comma_expected();
                 }
@@ -6317,14 +6314,9 @@ impl ParserState {
 
         // Recovery: Handle missing fat arrow - common typo: (a, b) { return a; }
         // If we see { immediately after parameters/return type, the user forgot =>
-        // However, if there's a line break, this might be intentional ASI (e.g., type parameter on next line)
         if self.is_token(SyntaxKind::OpenBraceToken) {
-            // Only emit error if there's no line break - with line break, this might be valid syntax
-            // like a type annotation on the next line or some other construct
-            if !self.scanner.has_preceding_line_break() {
-                use crate::checker::types::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::TOKEN_EXPECTED);
-            }
+            use crate::checker::types::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::TOKEN_EXPECTED);
             // Don't consume the {, just continue to body parsing
             // The arrow is logically present but missing
         } else {
