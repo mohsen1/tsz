@@ -12,6 +12,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::checker::state::CheckerState;
+use crate::checker::types::{Diagnostic, DiagnosticCategory};
 use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
 use crate::solver::{ContextualTypeContext, TupleElement, TypeId, TypeKey};
@@ -2787,6 +2788,205 @@ impl<'a> CheckerState<'a> {
                 )
             }
             _ => 1,
+        }
+    }
+
+    /// Get the type of an identifier expression.
+    ///
+    /// This function resolves the type of an identifier by:
+    /// 1. Looking up the symbol through the binder
+    /// 2. Getting the declared type of the symbol
+    /// 3. Checking for TDZ (temporal dead zone) violations
+    /// 4. Checking definite assignment for block-scoped variables
+    /// 5. Applying flow-based type narrowing
+    ///
+    /// ## Symbol Resolution:
+    /// - Uses `resolve_identifier_symbol` to find the symbol
+    /// - Checks for type-only aliases (error if used as value)
+    /// - Validates that symbol has a value declaration
+    ///
+    /// ## TDZ Checking:
+    /// - Static block TDZ: variable used in static block before declaration
+    /// - Computed property TDZ: variable in computed property before declaration
+    /// - Heritage clause TDZ: variable in extends/implements before declaration
+    ///
+    /// ## Definite Assignment:
+    /// - Checks if variable is definitely assigned before use
+    /// - Only applies to block-scoped variables without initializers
+    /// - Skipped for parameters, ambient contexts, and captured variables
+    ///
+    /// ## Flow Narrowing:
+    /// - If definitely assigned, applies type narrowing based on control flow
+    /// - Refines union types based on typeof guards, null checks, etc.
+    ///
+    /// ## Intrinsic Names:
+    /// - `undefined` → UNDEFINED type
+    /// - `NaN` / `Infinity` → NUMBER type
+    /// - `Symbol` → Symbol constructor type (if available in lib)
+    ///
+    /// ## Global Value Names:
+    /// - Returns ANY for available globals (Array, Object, etc.)
+    /// - Emits error for unavailable ES2015+ types
+    ///
+    /// ## Error Handling:
+    /// - Returns ERROR for:
+    ///   - Type-only aliases used as values
+    ///   - Variables used before declaration (TDZ)
+    ///   - Variables not definitely assigned
+    ///   - Static members accessed without `this`
+    ///   - `await` in default parameters
+    ///   - Unresolved names (with "cannot find name" error)
+    /// - Returns ANY for unresolved imports (TS2307 already emitted)
+    pub(crate) fn get_type_of_identifier(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return TypeId::ERROR; // Missing identifier data - propagate error
+        };
+
+        let name = &ident.escaped_text;
+
+        // Resolve via binder persistent scopes for stateless lookup.
+        if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
+            if self.alias_resolves_to_type_only(sym_id) {
+                self.error_type_only_value_at(name, idx);
+                return TypeId::ERROR;
+            }
+            let flags = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .map(|symbol| symbol.flags)
+                .unwrap_or(0);
+            let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
+            let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
+            if has_type && !has_value {
+                self.error_type_only_value_at(name, idx);
+                return TypeId::ERROR;
+            }
+            let declared_type = self.get_type_of_symbol(sym_id);
+            // Check for TDZ violations (variable used before declaration in source order)
+            // 1. Static block TDZ - variable used in static block before its declaration
+            // 2. Computed property TDZ - variable used in computed property name before its declaration
+            // 3. Heritage clause TDZ - variable used in extends/implements before its declaration
+            // Return TypeId::ERROR after emitting TS2454 to prevent cascading errors (e.g., TS2571)
+            if self.is_variable_used_before_declaration_in_static_block(sym_id, idx) {
+                self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
+            } else if self.is_variable_used_before_declaration_in_computed_property(sym_id, idx) {
+                self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
+            } else if self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx) {
+                self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
+            } else if self.should_check_definite_assignment(sym_id, idx)
+                && !self.is_definitely_assigned_at(idx)
+            {
+                self.error_variable_used_before_assigned_at(name, idx);
+                return TypeId::ERROR;
+            }
+            return self.apply_flow_narrowing(idx, declared_type);
+        }
+
+        // Intrinsic names - use constant TypeIds
+        match name.as_str() {
+            "undefined" => TypeId::UNDEFINED,
+            "NaN" | "Infinity" => TypeId::NUMBER,
+            // Symbol constructor - only synthesize if available in lib contexts or merged into binder
+            "Symbol" => {
+                // Check if Symbol is available from lib contexts or merged lib symbols
+                // This uses has_symbol_in_lib which checks lib_contexts, current_scope, and file_locals
+                let symbol_available = self.ctx.has_symbol_in_lib();
+
+                if !symbol_available {
+                    // Symbol is not available via lib, check if it resolves to a symbol in scope
+                    // If resolve_identifier_symbol already failed (we're here), then Symbol is not in scope
+                    // Emit TS2585: Symbol only refers to a type, suggest changing lib
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    if let Some(loc) = self.get_source_location(idx) {
+                        let message = format_message(
+                            diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                            &[name],
+                        );
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            start: loc.start,
+                            length: loc.length(),
+                            file: self.ctx.file_name.clone(),
+                            related_information: Vec::new(),
+                        });
+                    }
+                    return TypeId::ERROR;
+                }
+                self.get_symbol_constructor_type()
+            }
+            _ if self.is_known_global_value_name(name) => {
+                // Node.js runtime globals are always available (injected by runtime)
+                // We return ANY without emitting an error for these
+                if self.is_nodejs_runtime_global(name) {
+                    return TypeId::ANY;
+                }
+
+                // Check if the global is actually available in lib contexts
+                // First use get_global_type for accurate lookup
+                let lib_binders = self.get_lib_binders();
+                let has_global_type = self
+                    .ctx
+                    .binder
+                    .get_global_type_with_libs(name, &lib_binders)
+                    .is_some();
+                if has_global_type || self.ctx.has_name_in_lib(name) {
+                    // Global is available - return ANY to allow property access
+                    TypeId::ANY
+                } else {
+                    // Global is not available - emit appropriate error
+                    // Use TS2583 for ES2015+ types, TS2304 for other globals
+                    use crate::lib_loader;
+                    if lib_loader::is_es2015_plus_type(name) {
+                        // ES2015+ type not available - suggest changing lib
+                        self.error_cannot_find_global_type(name, idx);
+                    } else {
+                        // Standard global not available
+                        self.error_cannot_find_name_at(name, idx);
+                    }
+                    TypeId::ERROR
+                }
+            }
+            _ => {
+                // Check if we're inside a class and the name matches a static member (error 2662)
+                // Clone values to avoid borrow issues
+                if let Some(ref class_info) = self.ctx.enclosing_class.clone()
+                    && self.is_static_member(&class_info.member_nodes, name)
+                {
+                    self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
+                    return TypeId::ERROR;
+                }
+                // TS2524: 'await' in default parameter - emit specific error
+                if name == "await" && self.is_in_default_parameter(idx) {
+                    use crate::checker::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages,
+                    };
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::AWAIT_IN_PARAMETER_DEFAULT,
+                        diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
+                    );
+                    return TypeId::ERROR;
+                }
+                // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                if self.is_unresolved_import_symbol(idx) {
+                    return TypeId::ANY;
+                }
+                // Report "cannot find name" error
+                self.error_cannot_find_name_at(name, idx);
+                TypeId::ERROR
+            }
         }
     }
 }

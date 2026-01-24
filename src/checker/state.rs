@@ -1957,7 +1957,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an identifier refers to an import from an unresolved module.
-    fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
         let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
             return false;
         };
@@ -4123,159 +4123,6 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Get type of identifier, with control flow analysis for narrowing.
-    fn get_type_of_identifier(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        let Some(ident) = self.ctx.arena.get_identifier(node) else {
-            return TypeId::ERROR; // Missing identifier data - propagate error
-        };
-
-        let name = &ident.escaped_text;
-
-        // Resolve via binder persistent scopes for stateless lookup.
-        if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
-            if self.alias_resolves_to_type_only(sym_id) {
-                self.error_type_only_value_at(name, idx);
-                return TypeId::ERROR;
-            }
-            let flags = self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .map(|symbol| symbol.flags)
-                .unwrap_or(0);
-            let has_type = (flags & symbol_flags::TYPE) != 0;
-            let has_value = (flags & symbol_flags::VALUE) != 0;
-            if has_type && !has_value {
-                self.error_type_only_value_at(name, idx);
-                return TypeId::ERROR;
-            }
-            let declared_type = self.get_type_of_symbol(sym_id);
-            // Check for TDZ violations (variable used before declaration in source order)
-            // 1. Static block TDZ - variable used in static block before its declaration
-            // 2. Computed property TDZ - variable used in computed property name before its declaration
-            // 3. Heritage clause TDZ - variable used in extends/implements before its declaration
-            // Return TypeId::ERROR after emitting TS2454 to prevent cascading errors (e.g., TS2571)
-            if self.is_variable_used_before_declaration_in_static_block(sym_id, idx) {
-                self.error_variable_used_before_assigned_at(name, idx);
-                return TypeId::ERROR;
-            } else if self.is_variable_used_before_declaration_in_computed_property(sym_id, idx) {
-                self.error_variable_used_before_assigned_at(name, idx);
-                return TypeId::ERROR;
-            } else if self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx) {
-                self.error_variable_used_before_assigned_at(name, idx);
-                return TypeId::ERROR;
-            } else if self.should_check_definite_assignment(sym_id, idx)
-                && !self.is_definitely_assigned_at(idx)
-            {
-                self.error_variable_used_before_assigned_at(name, idx);
-                return TypeId::ERROR;
-            }
-            return self.apply_flow_narrowing(idx, declared_type);
-        }
-
-        // Intrinsic names - use constant TypeIds
-        match name.as_str() {
-            "undefined" => TypeId::UNDEFINED,
-            "NaN" | "Infinity" => TypeId::NUMBER,
-            // Symbol constructor - only synthesize if available in lib contexts or merged into binder
-            "Symbol" => {
-                // Check if Symbol is available from lib contexts or merged lib symbols
-                // This uses has_symbol_in_lib which checks lib_contexts, current_scope, and file_locals
-                let symbol_available = self.ctx.has_symbol_in_lib();
-
-                if !symbol_available {
-                    // Symbol is not available via lib, check if it resolves to a symbol in scope
-                    // If resolve_identifier_symbol already failed (we're here), then Symbol is not in scope
-                    // Emit TS2585: Symbol only refers to a type, suggest changing lib
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
-                    if let Some(loc) = self.get_source_location(idx) {
-                        let message = format_message(
-                            diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
-                            &[name],
-                        );
-                        self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_WITH_LIB,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            start: loc.start,
-                            length: loc.length(),
-                            file: self.ctx.file_name.clone(),
-                            related_information: Vec::new(),
-                        });
-                    }
-                    return TypeId::ERROR;
-                }
-                self.get_symbol_constructor_type()
-            }
-            _ if self.is_known_global_value_name(name) => {
-                // Node.js runtime globals are always available (injected by runtime)
-                // We return ANY without emitting an error for these
-                if self.is_nodejs_runtime_global(name) {
-                    return TypeId::ANY;
-                }
-
-                // Check if the global is actually available in lib contexts
-                // First use get_global_type for accurate lookup
-                let lib_binders = self.get_lib_binders();
-                let has_global_type = self
-                    .ctx
-                    .binder
-                    .get_global_type_with_libs(name, &lib_binders)
-                    .is_some();
-                if has_global_type || self.ctx.has_name_in_lib(name) {
-                    // Global is available - return ANY to allow property access
-                    TypeId::ANY
-                } else {
-                    // Global is not available - emit appropriate error
-                    // Use TS2583 for ES2015+ types, TS2304 for other globals
-                    use crate::lib_loader;
-                    if lib_loader::is_es2015_plus_type(name) {
-                        // ES2015+ type not available - suggest changing lib
-                        self.error_cannot_find_global_type(name, idx);
-                    } else {
-                        // Standard global not available
-                        self.error_cannot_find_name_at(name, idx);
-                    }
-                    TypeId::ERROR
-                }
-            }
-            _ => {
-                // Check if we're inside a class and the name matches a static member (error 2662)
-                // Clone values to avoid borrow issues
-                if let Some(ref class_info) = self.ctx.enclosing_class.clone()
-                    && self.is_static_member(&class_info.member_nodes, name)
-                {
-                    self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
-                    return TypeId::ERROR;
-                }
-                // TS2524: 'await' in default parameter - emit specific error
-                if name == "await" && self.is_in_default_parameter(idx) {
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages,
-                    };
-                    self.error_at_node(
-                        idx,
-                        diagnostic_messages::AWAIT_IN_PARAMETER_DEFAULT,
-                        diagnostic_codes::AWAIT_IN_PARAMETER_DEFAULT,
-                    );
-                    return TypeId::ERROR;
-                }
-                // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
-                if self.is_unresolved_import_symbol(idx) {
-                    return TypeId::ANY;
-                }
-                // Report "cannot find name" error
-                self.error_cannot_find_name_at(name, idx);
-                TypeId::ERROR
-            }
-        }
-    }
-
     /// Synthesize the Symbol constructor type.
     ///
     /// Returns a callable type with signature: `Symbol(description?: string | number): symbol`
@@ -4567,7 +4414,7 @@ impl<'a> CheckerState<'a> {
     /// }
     /// console.log(b);  // ❌ TS2454: Not assigned on else path
     /// ```
-    fn should_check_definite_assignment(&mut self, sym_id: SymbolId, idx: NodeIndex) -> bool {
+    pub(crate) fn should_check_definite_assignment(&mut self, sym_id: SymbolId, idx: NodeIndex) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
@@ -4865,7 +4712,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
         let flow_node = match self.ctx.binder.get_node_flow(idx) {
             Some(flow) => flow,
             None => return false, // No flow info means variable is not definitely assigned
@@ -4956,7 +4803,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node is within a parameter's default value initializer.
     /// This is used to detect `await` used in default parameter values (TS2524).
-    fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut iterations = 0;
         loop {
@@ -5130,7 +4977,7 @@ impl<'a> CheckerState<'a> {
     /// }
     /// const FOO = "FOO";  // Declared after the class
     /// ```
-    fn is_variable_used_before_declaration_in_static_block(
+    pub(crate) fn is_variable_used_before_declaration_in_static_block(
         &self,
         sym_id: SymbolId,
         usage_idx: NodeIndex,
@@ -5247,7 +5094,7 @@ impl<'a> CheckerState<'a> {
     /// }
     /// const FOO = "foo";  // Declared after the class
     /// ```
-    fn is_variable_used_before_declaration_in_computed_property(
+    pub(crate) fn is_variable_used_before_declaration_in_computed_property(
         &self,
         sym_id: SymbolId,
         usage_idx: NodeIndex,
@@ -5356,7 +5203,7 @@ impl<'a> CheckerState<'a> {
     /// class C extends Base {}  // Error if Base declared after
     /// const Base = class {};
     /// ```
-    fn is_variable_used_before_declaration_in_heritage_clause(
+    pub(crate) fn is_variable_used_before_declaration_in_heritage_clause(
         &self,
         sym_id: SymbolId,
         usage_idx: NodeIndex,
@@ -12207,7 +12054,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.binder.file_locals.get(name)
     }
 
-    fn is_known_global_value_name(&self, name: &str) -> bool {
+    pub(crate) fn is_known_global_value_name(&self, name: &str) -> bool {
         matches!(
             name,
             "console"
@@ -12297,7 +12144,7 @@ impl<'a> CheckerState<'a> {
     /// These globals are injected by the Node.js runtime and don't require lib.d.ts.
     /// Note: console, globalThis, and process are NOT included here because they
     /// require proper lib definitions (lib.dom.d.ts, lib.es2020.d.ts, @types/node).
-    fn is_nodejs_runtime_global(&self, name: &str) -> bool {
+    pub(crate) fn is_nodejs_runtime_global(&self, name: &str) -> bool {
         matches!(
             name,
             "exports" | "module" | "require" | "__dirname" | "__filename"
@@ -19262,7 +19109,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a member with the given name is static by looking up its symbol flags.
     /// Uses the binder's symbol information for efficient O(1) flag checks.
-    fn is_static_member(&self, member_nodes: &[NodeIndex], name: &str) -> bool {
+    pub(crate) fn is_static_member(&self, member_nodes: &[NodeIndex], name: &str) -> bool {
         use crate::binder::symbol_flags;
 
         for &member_idx in member_nodes {
