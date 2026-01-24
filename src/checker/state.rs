@@ -11947,161 +11947,6 @@ impl<'a> CheckerState<'a> {
     /// Check if a type name is a built-in mapped type utility.
     /// These are standard TypeScript utility types that transform other types.
     /// When used with type arguments, they should not cause "cannot find type" errors.
-    fn is_mapped_type_utility(&self, name: &str) -> bool {
-        matches!(
-            name,
-            "Partial"
-                | "Required"
-                | "Readonly"
-                | "Record"
-                | "Pick"
-                | "Omit"
-                | "Extract"
-                | "Exclude"
-                | "NonNullable"
-                | "ThisType"
-                | "Infer"
-        )
-    }
-
-    fn is_known_global_type_name(&self, name: &str) -> bool {
-        matches!(
-            name,
-            // Core built-in objects
-            "Object"
-                | "String"
-                | "Number"
-                | "Boolean"
-                | "Symbol"
-                | "Function"
-                | "Date"
-                | "RegExp"
-                | "RegExpExecArray"
-                | "RegExpMatchArray"
-                // Arrays and collections
-                | "Array"
-                | "ReadonlyArray"
-                | "ArrayLike"
-                | "ArrayBuffer"
-                | "SharedArrayBuffer"
-                | "DataView"
-                | "TypedArray"
-                | "Int8Array"
-                | "Uint8Array"
-                | "Uint8ClampedArray"
-                | "Int16Array"
-                | "Uint16Array"
-                | "Int32Array"
-                | "Uint32Array"
-                | "Float32Array"
-                | "Float64Array"
-                | "BigInt64Array"
-                | "BigUint64Array"
-                // ES2015+ collection types
-                | "Map"
-                | "Set"
-                | "WeakMap"
-                | "WeakSet"
-                | "WeakRef"
-                | "ReadonlyMap"
-                | "ReadonlySet"
-                // Promise types
-                | "Promise"
-                | "PromiseLike"
-                | "PromiseConstructor"
-                | "PromiseConstructorLike"
-                | "Awaited"
-                // Iterator/Generator types
-                | "Iterator"
-                | "IteratorResult"
-                | "IteratorYieldResult"
-                | "IteratorReturnResult"
-                | "Iterable"
-                | "IterableIterator"
-                | "AsyncIterator"
-                | "AsyncIterable"
-                | "AsyncIterableIterator"
-                | "Generator"
-                | "GeneratorFunction"
-                | "AsyncGenerator"
-                | "AsyncGeneratorFunction"
-                // Utility types
-                | "Partial"
-                | "Required"
-                | "Readonly"
-                | "Record"
-                | "Pick"
-                | "Omit"
-                | "NonNullable"
-                | "Extract"
-                | "Exclude"
-                | "ReturnType"
-                | "Parameters"
-                | "ConstructorParameters"
-                | "InstanceType"
-                | "ThisParameterType"
-                | "OmitThisParameter"
-                | "ThisType"
-                | "Uppercase"
-                | "Lowercase"
-                | "Capitalize"
-                | "Uncapitalize"
-                | "NoInfer"
-                // Object types
-                | "PropertyKey"
-                | "PropertyDescriptor"
-                | "PropertyDescriptorMap"
-                | "ObjectConstructor"
-                | "FunctionConstructor"
-                // Error types
-                | "Error"
-                | "ErrorConstructor"
-                | "TypeError"
-                | "RangeError"
-                | "EvalError"
-                | "URIError"
-                | "ReferenceError"
-                | "SyntaxError"
-                | "AggregateError"
-                // Math and JSON
-                | "Math"
-                | "JSON"
-                // Proxy and Reflect
-                | "Proxy"
-                | "ProxyHandler"
-                | "Reflect"
-                // BigInt
-                | "BigInt"
-                | "BigIntConstructor"
-                // ES2021+
-                | "FinalizationRegistry"
-                // DOM types (commonly used)
-                | "Element"
-                | "HTMLElement"
-                | "Document"
-                | "Window"
-                | "Event"
-                | "EventTarget"
-                | "NodeList"
-                | "NodeListOf"
-                | "Console"
-                | "Atomics"
-                // Primitive types (lowercase)
-                | "number"
-                | "string"
-                | "boolean"
-                | "void"
-                | "null"
-                | "undefined"
-                | "never"
-                | "unknown"
-                | "any"
-                | "object"
-                | "bigint"
-                | "symbol"
-        )
-    }
-
     pub(crate) fn resolve_global_this_property_type(
         &mut self,
         name: &str,
@@ -12131,41 +11976,6 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn current_this_type(&self) -> Option<TypeId> {
         self.ctx.this_type_stack.last().copied()
-    }
-
-    fn is_constructor_type(&self, type_id: TypeId) -> bool {
-        use crate::solver::TypeKey;
-
-        // First check if it directly has construct signatures
-        if self.has_construct_sig(type_id) {
-            return true;
-        }
-
-        // For type parameters, check if the constraint is a constructor type
-        // For intersection types, check if any member is a constructor type
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::TypeParameter(info)) => {
-                if let Some(constraint) = info.constraint {
-                    self.is_constructor_type(constraint)
-                } else {
-                    false
-                }
-            }
-            Some(TypeKey::Intersection(members)) => {
-                let member_types = self.ctx.types.type_list(members);
-                member_types.iter().any(|&m| self.is_constructor_type(m))
-            }
-            _ => false,
-        }
-    }
-
-    fn is_class_symbol(&self, symbol_id: SymbolId) -> bool {
-        use crate::binder::symbol_flags;
-        if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-            (symbol.flags & symbol_flags::CLASS) != 0
-        } else {
-            false
-        }
     }
 
     /// Check if a node is a `super` expression.
@@ -16151,31 +15961,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn is_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return false;
-        }
-        let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) else {
-            return false;
-        };
-        let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression) else {
-            return false;
-        };
-        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return false;
-        };
-        let Some(call) = self.ctx.arena.get_call_expr(expr_node) else {
-            return false;
-        };
-        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
-            return false;
-        };
-        callee_node.kind == SyntaxKind::SuperKeyword as u16
-    }
-
     fn flow_result_to_assigned(&self, result: FlowResult) -> FxHashSet<PropertyKey> {
         let mut assigned = None;
         if let Some(normal) = result.normal {
@@ -17155,32 +16940,6 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
-    }
-
-    fn is_numeric_literal_zero(&self, expr_idx: NodeIndex) -> bool {
-        use crate::scanner::SyntaxKind;
-
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        if node.kind != SyntaxKind::NumericLiteral as u16 {
-            return false;
-        }
-        let Some(lit) = self.ctx.arena.get_literal(node) else {
-            return false;
-        };
-        lit.text == "0"
-    }
-
-    fn is_access_expression(&self, expr_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        matches!(
-            node.kind,
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        )
     }
 
     pub(crate) fn is_indirect_call(
@@ -19748,18 +19507,6 @@ impl<'a> CheckerState<'a> {
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty())
         })
-    }
-
-    fn is_this_parameter_name(&self, name_idx: NodeIndex) -> bool {
-        if let Some(name_node) = self.ctx.arena.get(name_idx) {
-            if name_node.kind == SyntaxKind::ThisKeyword as u16 {
-                return true;
-            }
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return ident.escaped_text == "this";
-            }
-        }
-        false
     }
 
     pub(crate) fn maybe_report_implicit_any_parameter(
