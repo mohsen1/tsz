@@ -4921,20 +4921,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn widen_literal_type(&self, type_id: TypeId) -> TypeId {
-        use crate::solver::{LiteralValue, TypeKey};
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(literal)) => match literal {
-                LiteralValue::String(_) => TypeId::STRING,
-                LiteralValue::Number(_) => TypeId::NUMBER,
-                LiteralValue::BigInt(_) => TypeId::BIGINT,
-                LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-            },
-            _ => type_id,
-        }
-    }
-
     /// Resolve a typeof type reference to its structural type.
     ///
     /// This function resolves `typeof X` type queries to the actual type of `X`.
@@ -5518,70 +5504,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Map an expanded argument index back to the original argument node index.
-    /// This handles spread arguments that expand to multiple elements.
-    /// Returns None if the index doesn't map to a valid argument.
-    pub(crate) fn map_expanded_arg_index_to_original(
-        &self,
-        args: &[NodeIndex],
-        expanded_index: usize,
-    ) -> Option<NodeIndex> {
-        use crate::solver::TypeKey;
-
-        let mut current_expanded_index = 0;
-
-        for &arg_idx in args.iter() {
-            if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
-                // Check if this is a spread element
-                if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
-                {
-                    // Try to get the cached type, fall back to looking up directly
-                    let spread_type = self
-                        .ctx
-                        .node_types
-                        .get(&spread_data.expression.0)
-                        .copied()
-                        .unwrap_or(TypeId::ANY);
-                    let spread_type = self.resolve_type_for_property_access_simple(spread_type);
-
-                    // If it's a tuple type, it expands to multiple elements
-                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
-                        let elems = self.ctx.types.tuple_list(elems_id);
-                        let end_index = current_expanded_index + elems.len();
-                        if expanded_index >= current_expanded_index && expanded_index < end_index {
-                            // The error is within this spread - report at the spread node
-                            return Some(arg_idx);
-                        }
-                        current_expanded_index = end_index;
-                        continue;
-                    }
-                }
-            }
-
-            // Non-spread or non-tuple spread: takes one slot
-            if expanded_index == current_expanded_index {
-                return Some(arg_idx);
-            }
-            current_expanded_index += 1;
-        }
-
-        None
-    }
-
-    /// Simple type resolution for property access - doesn't trigger new type computation.
-    fn resolve_type_for_property_access_simple(&self, type_id: TypeId) -> TypeId {
-        use crate::solver::TypeKey;
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Application(app_id)) => {
-                let app = self.ctx.types.type_application(app_id);
-                app.base
-            }
-            _ => type_id,
-        }
-    }
-
     pub(crate) fn resolve_overloaded_call_with_signatures(
         &mut self,
         args: &[NodeIndex],
@@ -5679,47 +5601,6 @@ impl<'a> CheckerState<'a> {
         }
 
         None
-    }
-
-    fn symbol_is_value_only(&self, sym_id: SymbolId) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol,
-            None => return false,
-        };
-
-        // If the symbol is type-only (from `import type`), it's not value-only
-        // In type positions, type-only imports should be allowed
-        if symbol.is_type_only {
-            return false;
-        }
-
-        let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-        let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
-        has_value && !has_type
-    }
-
-    fn alias_resolves_to_value_only(&self, sym_id: SymbolId) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol,
-            None => return false,
-        };
-
-        if symbol.flags & symbol_flags::ALIAS == 0 {
-            return false;
-        }
-
-        // If the alias symbol itself is type-only, it doesn't resolve to value-only
-        if symbol.is_type_only {
-            return false;
-        }
-
-        let mut visited = Vec::new();
-        let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
-            Some(target) => target,
-            None => return false,
-        };
-
-        self.symbol_is_value_only(target)
     }
 
     pub(crate) fn get_type_of_private_property_access(
