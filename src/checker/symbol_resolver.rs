@@ -198,14 +198,35 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a symbol represents a class member (property, method, accessor, or constructor).
+    ///
+    /// This filters out instance members that cannot be accessed as standalone values.
+    /// However, static members and constructors should still be accessible.
     pub(crate) fn is_class_member_symbol(flags: u32) -> bool {
-        (flags
+        // Check if it's any kind of class member
+        let is_member = (flags
             & (symbol_flags::PROPERTY
                 | symbol_flags::METHOD
                 | symbol_flags::GET_ACCESSOR
                 | symbol_flags::SET_ACCESSOR
                 | symbol_flags::CONSTRUCTOR))
-            != 0
+            != 0;
+
+        if !is_member {
+            return false;
+        }
+
+        // Allow constructors - they represent the class itself
+        if (flags & symbol_flags::CONSTRUCTOR) != 0 {
+            return false;
+        }
+
+        // Allow static members - they're accessible via the class name
+        if (flags & symbol_flags::STATIC) != 0 {
+            return false;
+        }
+
+        // Filter out instance members (properties, methods, accessors without STATIC)
+        true
     }
 
     /// Find the enclosing scope for a node by walking up the parent chain.
