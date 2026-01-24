@@ -9618,7 +9618,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-<<<<<<< Updated upstream
     pub(crate) fn declaration_symbol_flags(&self, decl_idx: NodeIndex) -> Option<u32> {
         use crate::parser::node_flags;
 
@@ -9705,8 +9704,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-=======
->>>>>>> Stashed changes
     /// Check for duplicate parameter names in a parameter list (TS2300).
     /// Check a statement and produce type errors.
     pub(crate) fn check_statement(&mut self, stmt_idx: NodeIndex) {
