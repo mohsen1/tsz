@@ -2306,8 +2306,15 @@ fn load_lib_files_for_contexts(lib_files: &[PathBuf]) -> Vec<LibContext> {
 
     // If no lib files are specified, try to load the default lib.d.ts
     let files_to_load = if lib_files.is_empty() {
-        // Try to load default lib.d.ts from tests/lib directory
+        // Try multiple default locations for lib.d.ts files
+        // Priority order:
+        // 1) TypeScript/tests/lib (git submodule - test fixtures)
+        // 2) TypeScript/node_modules/typescript/lib (compiler dependencies)
+        // 3) tests/lib (standalone setup)
         let default_lib_paths = vec![
+            PathBuf::from("TypeScript/tests/lib/lib.d.ts"),
+            PathBuf::from("TypeScript/node_modules/typescript/lib/lib.d.ts"),
+            PathBuf::from("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
             PathBuf::from("tests/lib/lib.d.ts"),
             PathBuf::from("tests/lib/lib.dom.d.ts"),
         ];
