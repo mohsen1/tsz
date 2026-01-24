@@ -31960,7 +31960,10 @@ class MyClass {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
 
     // Filter to only TS2300 errors for the "method" identifier
-    let ts2300_method_errors: Vec<_> = checker.ctx.diagnostics.iter()
+    let ts2300_method_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
         .filter(|d| d.code == 2300 && d.message_text.contains("method"))
         .collect();
 

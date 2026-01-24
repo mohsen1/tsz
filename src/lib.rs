@@ -102,13 +102,13 @@ pub mod comments;
 mod comments_tests;
 
 // Source Map generation (Phase 6.2)
+#[cfg(test)]
+mod parser_error_tests;
 pub mod source_map;
 #[cfg(test)]
 mod source_map_test_utils;
 #[cfg(test)]
 mod source_map_tests_1;
-#[cfg(test)]
-mod parser_error_tests;
 #[cfg(test)]
 mod source_map_tests_2;
 #[cfg(test)]

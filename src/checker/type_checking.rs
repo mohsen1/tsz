@@ -12,16 +12,17 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
-use crate::binder::symbol_flags;
+use crate::binder::{symbol_flags, SymbolId};
 use crate::checker::FlowAnalyzer;
 use crate::checker::state::{
-    CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, PropertyKey,
+    CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, ParamTypeResolutionMode, PropertyKey,
 };
+use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::node::ImportDeclData;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
-use crate::solver::TypeId;
+use crate::solver::{CallSignature, ParamInfo, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -5364,7 +5365,10 @@ impl<'a> CheckerState<'a> {
     /// - `static_block_idx`: The static block node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_static_block(&self, static_block_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_static_block(
+        &self,
+        static_block_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(static_block_idx)?;
         let parent = ext.parent;
         if parent.is_none() {
@@ -5424,7 +5428,10 @@ impl<'a> CheckerState<'a> {
     /// - `computed_idx`: The computed property node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_computed_property(&self, computed_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_computed_property(
+        &self,
+        computed_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         // Walk up to find the class member (property, method, accessor)
         let mut current = computed_idx;
         while !current.is_none() {
@@ -5494,7 +5501,10 @@ impl<'a> CheckerState<'a> {
     /// - `heritage_idx`: The heritage clause node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class/interface, None otherwise.
-    pub(crate) fn find_class_for_heritage_clause(&self, heritage_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_heritage_clause(
+        &self,
+        heritage_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(heritage_idx)?;
         let parent = ext.parent;
         if parent.is_none() {
@@ -7024,7 +7034,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the declaring type for a private member.
-    pub(crate) fn private_member_declaring_type(&mut self, sym_id: crate::binder::SymbolId) -> Option<TypeId> {
+    pub(crate) fn private_member_declaring_type(
+        &mut self,
+        sym_id: crate::binder::SymbolId,
+    ) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         for &decl_idx in &symbol.declarations {
@@ -7708,5 +7721,225 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    // Section 46: Namespace Type Utilities
+    // -------------------------------------
+
+    /// Resolve a namespace value member by name.
+    ///
+    /// This function resolves value members of namespace/enum types.
+    /// It handles both namespace exports and enum members.
+    ///
+    /// ## Namespace Members:
+    /// - Resolves exported members of namespace types
+    /// - Filters out type-only members (no value flag)
+    /// - Returns the type of the member symbol
+    ///
+    /// ## Enum Members:
+    /// - Resolves enum members by name
+    /// - Returns the member's literal type
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// namespace Utils {
+    ///   export function helper(): void {}
+    ///   export type Helper = number;
+    /// }
+    /// const x = Utils.helper; // resolve_namespace_value_member(Utils, "helper")
+    /// // x has type () => void
+    ///
+    /// enum Color {
+    ///   Red,
+    ///   Green,
+    /// }
+    /// const c = Color.Red; // resolve_namespace_value_member(Color, "Red")
+    /// // c has type Color.Red
+    /// ```
+    pub(crate) fn resolve_namespace_value_member(
+        &mut self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        use crate::solver::{SymbolRef, TypeKey};
+
+        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) else {
+            return None;
+        };
+
+        let symbol = self.ctx.binder.get_symbol(SymbolId(sym_id))?;
+        if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+            return None;
+        }
+
+        if let Some(exports) = symbol.exports.as_ref()
+            && let Some(member_id) = exports.get(property_name)
+        {
+            if let Some(member_symbol) = self.ctx.binder.get_symbol(member_id)
+                && member_symbol.flags & symbol_flags::VALUE == 0
+                && member_symbol.flags & symbol_flags::ALIAS == 0
+            {
+                return None;
+            }
+            return Some(self.get_type_of_symbol(member_id));
+        }
+
+        if symbol.flags & symbol_flags::ENUM != 0
+            && let Some(member_type) =
+                self.enum_member_type_for_name(SymbolId(sym_id), property_name)
+        {
+            return Some(member_type);
+        }
+
+        None
+    }
+
+    /// Check if a namespace has a type-only member.
+    ///
+    /// This function determines if a specific property of a namespace
+    /// is type-only (has TYPE flag but not VALUE flag).
+    ///
+    /// ## Type-Only Members:
+    /// - Interface declarations: `export interface Foo {}`
+    /// - Type alias declarations: `export type Bar = number;`
+    /// - Class declarations (when used as types): `export class Baz {}`
+    ///
+    /// ## Value Members:
+    /// - Function declarations: `export function foo() {}`
+    /// - Variable declarations: `export const x = 1;`
+    /// - Enum declarations: `export enum E {}`
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// namespace Types {
+    ///   export interface Foo {} // type-only
+    ///   export type Bar = number; // type-only
+    ///   export function helper() {} // value member
+    /// }
+    /// // namespace_has_type_only_member(Types, "Foo") → true
+    /// // namespace_has_type_only_member(Types, "helper") → false
+    /// ```
+    pub(crate) fn namespace_has_type_only_member(
+        &self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> bool {
+        use crate::solver::{SymbolRef, TypeKey};
+
+        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) else {
+            return false;
+        };
+
+        let symbol = match self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        if symbol.flags & symbol_flags::MODULE == 0 {
+            return false;
+        }
+
+        let exports = match symbol.exports.as_ref() {
+            Some(exports) => exports,
+            None => return false,
+        };
+
+        let member_id = match exports.get(property_name) {
+            Some(member_id) => member_id,
+            None => return false,
+        };
+
+        let member_symbol = match self.ctx.binder.get_symbol(member_id) {
+            Some(member_symbol) => member_symbol,
+            None => return false,
+        };
+
+        let has_value = (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
+        let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+        has_type && !has_value
+    }
+
+    /// Check if an alias symbol resolves to a type-only symbol.
+    ///
+    /// This function follows alias chains to determine if the ultimate
+    /// target is type-only (has TYPE flag but not VALUE flag).
+    ///
+    /// ## Type-Only Imports:
+    /// - `import type { Foo } from 'module'` - Foo is type-only
+    /// - `import type { Bar } from './types'` - Bar is type-only
+    ///
+    /// ## Alias Resolution:
+    /// - Follows re-export chains
+    /// - Checks the ultimate target's flags
+    /// - Respects `is_type_only` flag on alias symbols
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // types.ts
+    /// export interface Foo {}
+    /// export const bar: number = 42;
+    ///
+    /// // main.ts
+    /// import type { Foo } from './types'; // type-only import
+    /// import { bar } from './types'; // value import
+    ///
+    /// // alias_resolves_to_type_only(Foo) → true
+    /// // alias_resolves_to_type_only(bar) → false
+    /// ```
+    pub(crate) fn alias_resolves_to_type_only(&self, sym_id: SymbolId) -> bool {
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+        if symbol.is_type_only {
+            return true;
+        }
+
+        let mut visited = Vec::new();
+        let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
+            Some(target) => target,
+            None => return false,
+        };
+
+        let target_symbol = match self.ctx.binder.get_symbol(target) {
+            Some(target_symbol) => target_symbol,
+            None => return false,
+        };
+
+        let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
+        let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
+        has_type && !has_value
+    }
+
+    /// Check if a symbol is type-only (from `import type`).
+    ///
+    /// This is used to allow type-only imports in type positions while
+    /// preventing their use in value positions.
+    ///
+    /// ## Import Type Statement:
+    /// - `import type { Foo } from 'module'` - Foo.is_type_only = true
+    /// - Type-only imports can only be used in type annotations
+    /// - Cannot be used as values (variables, function arguments, etc.)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// import type { Foo } from './types'; // type-only import
+    /// import { Bar } from './types'; // regular import
+    ///
+    /// const x: Foo = ...; // OK - Foo used in type position
+    /// const y = Foo; // ERROR - Foo cannot be used as value
+    ///
+    /// const z: Bar = ...; // OK - Bar has both type and value
+    /// const w = Bar; // OK - Bar can be used as value
+    /// ```
+    pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId) -> bool {
+        match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol.is_type_only,
+            None => false,
+        }
     }
 }

@@ -41,10 +41,7 @@ const [...i] = 123;
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2488_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2488)
-        .collect();
+    let ts2488_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2488).collect();
 
     println!("Found {} TS2488 errors:", ts2488_errors.len());
     for err in &ts2488_errors {
@@ -52,7 +49,11 @@ const [...i] = 123;
     }
 
     // We expect at least 9 TS2488 errors for the test cases above
-    assert!(ts2488_errors.len() >= 9, "Expected at least 9 TS2488 errors, found {}", ts2488_errors.len());
+    assert!(
+        ts2488_errors.len() >= 9,
+        "Expected at least 9 TS2488 errors, found {}",
+        ts2488_errors.len()
+    );
 }
 
 #[test]
@@ -90,18 +91,23 @@ const [e] = iterable;
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2488_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2488)
-        .collect();
+    let ts2488_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2488).collect();
 
-    println!("Found {} TS2488 errors for valid iterables:", ts2488_errors.len());
+    println!(
+        "Found {} TS2488 errors for valid iterables:",
+        ts2488_errors.len()
+    );
     for err in &ts2488_errors {
         println!("  - {}", err.message);
     }
 
     // We expect NO TS2488 errors for these valid iterable types
-    assert_eq!(ts2488_errors.len(), 0, "Expected 0 TS2488 errors for valid iterables, found {}", ts2488_errors.len());
+    assert_eq!(
+        ts2488_errors.len(),
+        0,
+        "Expected 0 TS2488 errors for valid iterables, found {}",
+        ts2488_errors.len()
+    );
 }
 
 #[test]
@@ -124,10 +130,7 @@ for (const x of {}) {}
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2488_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2488)
-        .collect();
+    let ts2488_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2488).collect();
 
     println!("Found {} TS2488 errors in for-of:", ts2488_errors.len());
     for err in &ts2488_errors {
@@ -135,7 +138,11 @@ for (const x of {}) {}
     }
 
     // We expect at least 3 TS2488 errors for the test cases above
-    assert!(ts2488_errors.len() >= 3, "Expected at least 3 TS2488 errors, found {}", ts2488_errors.len());
+    assert!(
+        ts2488_errors.len() >= 3,
+        "Expected at least 3 TS2488 errors, found {}",
+        ts2488_errors.len()
+    );
 }
 
 #[test]
@@ -162,10 +169,7 @@ foo(123);
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2488_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2488)
-        .collect();
+    let ts2488_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2488).collect();
 
     println!("Found {} TS2488 errors for spread:", ts2488_errors.len());
     for err in &ts2488_errors {
@@ -173,7 +177,11 @@ foo(123);
     }
 
     // We expect at least 4 TS2488 errors for the test cases above
-    assert!(ts2488_errors.len() >= 4, "Expected at least 4 TS2488 errors, found {}", ts2488_errors.len());
+    assert!(
+        ts2488_errors.len() >= 4,
+        "Expected at least 4 TS2488 errors, found {}",
+        ts2488_errors.len()
+    );
 }
 
 #[test]
@@ -196,10 +204,7 @@ const [c] = Math.random() < 0.5 ? 123 : true;
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2488_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2488)
-        .collect();
+    let ts2488_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2488).collect();
 
     println!("Found {} TS2488 errors for unions:", ts2488_errors.len());
     for err in &ts2488_errors {
@@ -207,5 +212,9 @@ const [c] = Math.random() < 0.5 ? 123 : true;
     }
 
     // We expect at least 2 TS2488 errors for unions with non-iterable members
-    assert!(ts2488_errors.len() >= 2, "Expected at least 2 TS2488 errors, found {}", ts2488_errors.len());
+    assert!(
+        ts2488_errors.len() >= 2,
+        "Expected at least 2 TS2488 errors, found {}",
+        ts2488_errors.len()
+    );
 }

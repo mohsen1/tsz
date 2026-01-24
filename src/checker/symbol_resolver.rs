@@ -23,8 +23,8 @@
 
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
-use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 use std::sync::Arc;
@@ -757,11 +757,9 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = left_symbol.import_module {
-            if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
-                module_specifier,
-                right_name,
-                visited_aliases
-            ) {
+            if let Some(reexported_sym) =
+                self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
+            {
                 return Some(reexported_sym);
             }
         }
@@ -790,14 +788,22 @@ impl<'a> CheckerState<'a> {
         if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
             if let Some((source_module, original_name)) = file_reexports.get(member_name) {
                 let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                return self.resolve_reexported_member_symbol(source_module, name_to_lookup, visited_aliases);
+                return self.resolve_reexported_member_symbol(
+                    source_module,
+                    name_to_lookup,
+                    visited_aliases,
+                );
             }
         }
 
         // Check for wildcard re-exports: `export * from 'bar'`
         if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
             for source_module in source_modules {
-                if let Some(sym_id) = self.resolve_reexported_member_symbol(source_module, member_name, visited_aliases) {
+                if let Some(sym_id) = self.resolve_reexported_member_symbol(
+                    source_module,
+                    member_name,
+                    visited_aliases,
+                ) {
                     return Some(sym_id);
                 }
             }
@@ -1182,7 +1188,8 @@ impl<'a> CheckerState<'a> {
                 &value[..semicolon_pos]
             } else {
                 value
-            }.trim();
+            }
+            .trim();
 
             match value_clean {
                 "true" => return Some(true),

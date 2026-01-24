@@ -1,7 +1,7 @@
 //! Parser error tests for TS1005 and TS2300 false positive reduction
 
-use crate::parser::Parser;
 use crate::checker::state::CheckerState;
+use crate::parser::Parser;
 
 /// Test ASI (Automatic Semicolon Insertion) edge cases
 #[test]
@@ -39,18 +39,23 @@ function foo4() {
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts1005_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 1005)
-        .collect();
+    let ts1005_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
 
-    println!("Found {} TS1005 errors for ASI return statements:", ts1005_errors.len());
+    println!(
+        "Found {} TS1005 errors for ASI return statements:",
+        ts1005_errors.len()
+    );
     for err in &ts1005_errors {
         println!("  - {} at line {}", err.message, err.span.start);
     }
 
     // We expect NO TS1005 errors for these valid ASI patterns
-    assert_eq!(ts1005_errors.len(), 0, "Expected 0 TS1005 errors for valid ASI return statements, found {}", ts1005_errors.len());
+    assert_eq!(
+        ts1005_errors.len(),
+        0,
+        "Expected 0 TS1005 errors for valid ASI return statements, found {}",
+        ts1005_errors.len()
+    );
 }
 
 /// Test trailing commas in various contexts
@@ -90,18 +95,23 @@ enum E {
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts1005_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 1005)
-        .collect();
+    let ts1005_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
 
-    println!("Found {} TS1005 errors for trailing commas:", ts1005_errors.len());
+    println!(
+        "Found {} TS1005 errors for trailing commas:",
+        ts1005_errors.len()
+    );
     for err in &ts1005_errors {
         println!("  - {} at line {}", err.message, err.span.start);
     }
 
     // We expect NO TS1005 errors for valid trailing commas
-    assert_eq!(ts1005_errors.len(), 0, "Expected 0 TS1005 errors for valid trailing commas, found {}", ts1005_errors.len());
+    assert_eq!(
+        ts1005_errors.len(),
+        0,
+        "Expected 0 TS1005 errors for valid trailing commas, found {}",
+        ts1005_errors.len()
+    );
 }
 
 /// Test function overloads are NOT duplicates (TS2300)
@@ -132,18 +142,23 @@ class MyClass {
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2300_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2300)
-        .collect();
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
 
-    println!("Found {} TS2300 errors for function overloads:", ts2300_errors.len());
+    println!(
+        "Found {} TS2300 errors for function overloads:",
+        ts2300_errors.len()
+    );
     for err in &ts2300_errors {
         println!("  - {} at line {}", err.message, err.span.start);
     }
 
     // We expect NO TS2300 errors for valid function overloads
-    assert_eq!(ts2300_errors.len(), 0, "Expected 0 TS2300 errors for valid function overloads, found {}", ts2300_errors.len());
+    assert_eq!(
+        ts2300_errors.len(),
+        0,
+        "Expected 0 TS2300 errors for valid function overloads, found {}",
+        ts2300_errors.len()
+    );
 }
 
 /// Test interface merging is NOT duplicate (TS2300)
@@ -182,18 +197,23 @@ interface Greeter {
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2300_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2300)
-        .collect();
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
 
-    println!("Found {} TS2300 errors for interface merging:", ts2300_errors.len());
+    println!(
+        "Found {} TS2300 errors for interface merging:",
+        ts2300_errors.len()
+    );
     for err in &ts2300_errors {
         println!("  - {} at line {}", err.message, err.span.start);
     }
 
     // We expect NO TS2300 errors for valid interface merging
-    assert_eq!(ts2300_errors.len(), 0, "Expected 0 TS2300 errors for valid interface merging, found {}", ts2300_errors.len());
+    assert_eq!(
+        ts2300_errors.len(),
+        0,
+        "Expected 0 TS2300 errors for valid interface merging, found {}",
+        ts2300_errors.len()
+    );
 }
 
 /// Test namespace + function/class merging is allowed (TS2300)
@@ -226,18 +246,23 @@ function Model() {}
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts2300_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 2300)
-        .collect();
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
 
-    println!("Found {} TS2300 errors for namespace merging:", ts2300_errors.len());
+    println!(
+        "Found {} TS2300 errors for namespace merging:",
+        ts2300_errors.len()
+    );
     for err in &ts2300_errors {
         println!("  - {} at line {}", err.message, err.span.start);
     }
 
     // We expect NO TS2300 errors for valid namespace merging
-    assert_eq!(ts2300_errors.len(), 0, "Expected 0 TS2300 errors for valid namespace merging, found {}", ts2300_errors.len());
+    assert_eq!(
+        ts2300_errors.len(),
+        0,
+        "Expected 0 TS2300 errors for valid namespace merging, found {}",
+        ts2300_errors.len()
+    );
 }
 
 /// Test brace-less control structures with ASI
@@ -264,16 +289,21 @@ for (let i = 0; i < 10; i++)
     checker.check();
 
     let diagnostics = checker.diagnostics();
-    let ts1005_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d.code == 1005)
-        .collect();
+    let ts1005_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
 
-    println!("Found {} TS1005 errors for brace-less structures:", ts1005_errors.len());
+    println!(
+        "Found {} TS1005 errors for brace-less structures:",
+        ts1005_errors.len()
+    );
     for err in &ts1005_errors {
         println!("  - {} at line {}", err.message, err.span.start);
     }
 
     // We expect NO TS1005 errors for valid brace-less control structures
-    assert_eq!(ts1005_errors.len(), 0, "Expected 0 TS1005 errors for valid brace-less structures, found {}", ts1005_errors.len());
+    assert_eq!(
+        ts1005_errors.len(),
+        0,
+        "Expected 0 TS1005 errors for valid brace-less structures, found {}",
+        ts1005_errors.len()
+    );
 }

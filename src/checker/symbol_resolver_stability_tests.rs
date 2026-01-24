@@ -14,7 +14,11 @@ fn test_parse_test_option_bool_comma_separated() {
     assert_eq!(result, Some(true), "Should parse 'true' from 'true, false'");
 
     let result = SymbolResolver::parse_test_option_bool(text, "@noimplicitany");
-    assert_eq!(result, Some(false), "Should parse 'false' from 'false, true'");
+    assert_eq!(
+        result,
+        Some(false),
+        "Should parse 'false' from 'false, true'"
+    );
 }
 
 #[test]
@@ -34,7 +38,11 @@ fn test_parse_test_option_bool_with_comma_and_space() {
     "#;
 
     let result = SymbolResolver::parse_test_option_bool(text, "@noimplicitany");
-    assert_eq!(result, Some(true), "Should parse 'true' from 'true , false'");
+    assert_eq!(
+        result,
+        Some(true),
+        "Should parse 'true' from 'true , false'"
+    );
 }
 
 #[test]
