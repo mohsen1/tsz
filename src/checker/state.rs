@@ -12780,28 +12780,6 @@ impl<'a> CheckerState<'a> {
 
     // Flow analysis functions moved to checker/flow_analysis.rs
 
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
-        matches!(
-            operator,
-            k if k == SyntaxKind::EqualsToken as u16
-                || k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-        )
-    }
-
     /// Check an interface declaration.
     fn check_interface_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::checker::types::diagnostics::diagnostic_codes;
