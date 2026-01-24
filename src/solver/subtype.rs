@@ -10,10 +10,10 @@
 //! - TypeResolver trait for lazy symbol resolution
 
 use crate::interner::Atom;
-use crate::solver::types::*;
-use crate::solver::utils;
 use crate::solver::AssignabilityChecker;
 use crate::solver::TypeDatabase;
+use crate::solver::types::*;
+use crate::solver::utils;
 use std::collections::HashSet;
 
 #[cfg(test)]
@@ -695,7 +695,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 }
-
 
 // =============================================================================
 // Error Explanation API
