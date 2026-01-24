@@ -55,6 +55,8 @@ pub use types::*;
 pub use unsoundness_audit::*;
 
 #[cfg(test)]
+mod bidirectional_tests;
+#[cfg(test)]
 mod callable_tests;
 #[cfg(test)]
 mod compat_tests;
