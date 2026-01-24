@@ -5538,17 +5538,6 @@ impl<'a> CheckerState<'a> {
         self.symbol_is_value_only(target)
     }
 
-    /// Check if a symbol is type-only (from `import type`).
-    ///
-    /// This is used to allow type-only imports in type positions while
-    /// preventing their use in value positions.
-    pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId) -> bool {
-        match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol.is_type_only,
-            None => false,
-        }
-    }
-
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,
