@@ -1,6 +1,6 @@
 //! Tests for parse_test_option_bool stability fixes
 
-use crate::checker::symbol_resolver::SymbolResolver;
+use crate::checker::CheckerState;
 
 #[test]
 fn test_parse_test_option_bool_comma_separated() {
@@ -10,10 +10,10 @@ fn test_parse_test_option_bool_comma_separated() {
     "#;
 
     // Should handle comma-separated values correctly
-    let result = SymbolResolver::parse_test_option_bool(text, "@strict");
+    let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true), "Should parse 'true' from 'true, false'");
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@noimplicitany");
+    let result = CheckerState::parse_test_option_bool(text, "@noimplicitany");
     assert_eq!(
         result,
         Some(false),
@@ -27,7 +27,7 @@ fn test_parse_test_option_bool_with_semicolon() {
         /* @strict: true; */
     "#;
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@strict");
+    let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true), "Should parse 'true' from 'true;'");
 }
 
@@ -37,7 +37,7 @@ fn test_parse_test_option_bool_with_comma_and_space() {
         // @noimplicitany: true , false
     "#;
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@noimplicitany");
+    let result = CheckerState::parse_test_option_bool(text, "@noimplicitany");
     assert_eq!(
         result,
         Some(true),
@@ -52,10 +52,10 @@ fn test_parse_test_option_bool_simple() {
         // @noimplicitany: false
     "#;
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@strict");
+    let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true));
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@noimplicitany");
+    let result = CheckerState::parse_test_option_bool(text, "@noimplicitany");
     assert_eq!(result, Some(false));
 }
 
@@ -65,7 +65,7 @@ fn test_parse_test_option_bool_not_found() {
         // @strict: true
     "#;
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@noimplicitany");
+    let result = CheckerState::parse_test_option_bool(text, "@noimplicitany");
     assert_eq!(result, None, "Should return None when key not found");
 }
 
@@ -75,7 +75,7 @@ fn test_parse_test_option_bool_invalid_value() {
         // @strict: maybe
     "#;
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@strict");
+    let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, None, "Should return None for invalid boolean value");
 }
 
@@ -85,7 +85,7 @@ fn test_parse_test_option_bool_empty_value() {
         // @strict:
     "#;
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@strict");
+    let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, None, "Should return None for empty value");
 }
 
@@ -95,6 +95,6 @@ fn test_parse_test_option_bool_trailing_comma() {
         // @strict: true,
     "#;
 
-    let result = SymbolResolver::parse_test_option_bool(text, "@strict");
+    let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true), "Should parse 'true' from 'true,'");
 }
