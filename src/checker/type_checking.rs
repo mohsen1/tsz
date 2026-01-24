@@ -1634,4 +1634,184 @@ impl<'a> CheckerState<'a> {
 
         false
     }
+
+    // =========================================================================
+    // Import Declaration Validation
+    // =========================================================================
+
+    /// Check an import equals declaration for ESM compatibility and unresolved modules.
+    ///
+    /// Validates `import x = require()` style imports, emitting TS1202 when used
+    /// in ES modules and TS2307 when the module cannot be found.
+    ///
+    /// ## Parameters:
+    /// - `stmt_idx`: The import equals declaration statement node
+    ///
+    /// ## Validation:
+    /// - Emits TS1202 for import assignments in ES modules
+    /// - Emits TS2307 for unresolved module specifiers
+    pub(crate) fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(import) = self.ctx.arena.get_import_decl(node) else {
+            return;
+        };
+
+        // Get the module reference node
+        let Some(ref_node) = self.ctx.arena.get(import.module_specifier) else {
+            return;
+        };
+
+        // Check if this is an external module reference (require with string literal)
+        // Internal namespace imports (identifiers/qualified names) don't need module resolution
+        if ref_node.kind != SyntaxKind::StringLiteral as u16 {
+            return;
+        }
+
+        // TS1202: Import assignment cannot be used when targeting ECMAScript modules.
+        // This error is emitted when using `import x = require("y")` in a file that
+        // has other ES module syntax (import/export).
+        if self.ctx.binder.is_external_module() {
+            self.error_at_node(
+                stmt_idx,
+                "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
+                diagnostic_codes::IMPORT_ASSIGNMENT_CANNOT_BE_USED_WITH_ESM,
+            );
+        }
+
+        // TS2307: Cannot find module - check if the module can be resolved
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        let Some(literal) = self.ctx.arena.get_literal(ref_node) else {
+            return;
+        };
+        let module_name = &literal.text;
+
+        // Check if the module was resolved by the CLI driver (multi-file mode)
+        if let Some(ref resolved) = self.ctx.resolved_modules
+            && resolved.contains(module_name)
+        {
+            return; // Module exists
+        }
+
+        // Check if the module exists in the module_exports map (cross-file module resolution)
+        if self.ctx.binder.module_exports.contains_key(module_name) {
+            return; // Module exists
+        }
+
+        // Check if this is a shorthand ambient module (declare module "foo")
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return; // Ambient module exists
+        }
+
+        // Check declared modules (regular ambient modules with body)
+        if self.ctx.binder.declared_modules.contains(module_name) {
+            return; // Declared module exists
+        }
+
+        // Module not found - emit TS2307
+        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
+        self.error_at_node(
+            import.module_specifier,
+            &message,
+            diagnostic_codes::CANNOT_FIND_MODULE,
+        );
+    }
+
+    /// Check an import declaration for unresolved modules and missing exports.
+    ///
+    /// Validates import declarations (e.g., `import { x } from "mod"`), emitting:
+    /// - TS2307 when the module cannot be resolved
+    /// - TS2305 when a module exists but doesn't export a specific member
+    ///
+    /// ## Parameters:
+    /// - `stmt_idx`: The import declaration statement node
+    ///
+    /// ## Validation:
+    /// - Checks if module specifier can be resolved
+    /// - Validates that imported members exist in module exports
+    pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        let Some(import) = self.ctx.arena.get_import_decl(node) else {
+            return;
+        };
+
+        // Get module specifier string
+        let Some(spec_node) = self.ctx.arena.get(import.module_specifier) else {
+            return;
+        };
+
+        let Some(literal) = self.ctx.arena.get_literal(spec_node) else {
+            return;
+        };
+
+        let module_name = &literal.text;
+
+        // Check if the module was resolved by the CLI driver (multi-file mode)
+        if let Some(ref resolved) = self.ctx.resolved_modules
+            && resolved.contains(module_name)
+        {
+            // Module exists, check if individual imports are exported
+            self.check_imported_members(import, module_name);
+            return;
+        }
+
+        // Check if the module exists in the module_exports map (cross-file module resolution)
+        // This enables resolving imports from other files in the same compilation
+        if self.ctx.binder.module_exports.contains_key(module_name) {
+            // Module exists, check if individual imports are exported
+            self.check_imported_members(import, module_name);
+            return;
+        }
+
+        // Skip TS2307 for ambient module declarations.
+        // Both shorthand ambient modules (`declare module "foo"`) and regular ambient modules
+        // with body (`declare module "foo" { ... }`) provide type information for imports.
+        if self
+            .ctx
+            .binder
+            .shorthand_ambient_modules
+            .contains(module_name)
+        {
+            return; // Shorthand ambient module - imports typed as `any`
+        }
+
+        if self.ctx.binder.declared_modules.contains(module_name) {
+            return; // Regular ambient module declaration
+        }
+
+        // In single-file mode, any external import is considered unresolved.
+        // This is correct because WASM checker operates on individual files
+        // without access to the module graph (aside from ambient module declarations).
+        let message = format_message(diagnostic_messages::CANNOT_FIND_MODULE, &[module_name]);
+        self.error_at_node(
+            import.module_specifier,
+            &message,
+            diagnostic_codes::CANNOT_FIND_MODULE,
+        );
+    }
 }
+
