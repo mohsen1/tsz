@@ -1021,6 +1021,69 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the type of the `super` keyword.
+    ///
+    /// Computes the type of `super` expressions:
+    /// - `super()` calls: returns the base class constructor type
+    /// - `super.property` access: returns the base class instance type
+    /// - Static context: returns constructor type
+    /// - Instance context: returns instance type
+    pub(crate) fn get_type_of_super_keyword(&mut self, idx: NodeIndex) -> TypeId {
+        // Check super expression validity and emit any errors
+        self.check_super_expression(idx);
+
+        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+            return TypeId::ERROR;
+        };
+
+        let Some(base_class_idx) = self.get_base_class_idx(class_info.class_idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(base_node) = self.ctx.arena.get(base_class_idx) else {
+            return TypeId::ERROR;
+        };
+        let Some(base_class) = self.ctx.arena.get_class(base_node) else {
+            return TypeId::ERROR;
+        };
+
+        // Detect `super(...)` usage by checking if the parent is a CallExpression whose callee is `super`.
+        let is_super_call = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n)))
+            .and_then(|(parent_idx, parent_node)| {
+                if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                    return None;
+                }
+                let call = self.ctx.arena.get_call_expr(parent_node)?;
+                Some(call.expression == idx && parent_idx.is_some())
+            })
+            .unwrap_or(false);
+
+        // Static context: the current `this` type is the current class constructor type.
+        let is_static_context = self.current_this_type().is_some_and(|this_ty| {
+            if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_info.class_idx) {
+                this_ty == self.get_type_of_symbol(sym_id)
+            } else if let Some(class_node) = self.ctx.arena.get(class_info.class_idx) {
+                if let Some(class) = self.ctx.arena.get_class(class_node) {
+                    this_ty == self.get_class_constructor_type(class_info.class_idx, class)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        });
+
+        if is_super_call || is_static_context {
+            return self.get_class_constructor_type(base_class_idx, base_class);
+        }
+
+        self.get_class_instance_type(base_class_idx, base_class)
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
