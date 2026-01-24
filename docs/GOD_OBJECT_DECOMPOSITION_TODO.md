@@ -303,7 +303,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [ ] `get_type_of_element_access` (~200 lines)
 - [ ] `get_type_of_assignment_target` (~80 lines)
 
-**Progress**: state.rs 26,217 → 25,253 lines (**-964 lines, 13 functions extracted**)
+**Progress**: state.rs 26,217 → 25,197 lines (**-1,020 lines, 14 functions extracted**)
 - `get_type_of_conditional_expression` (~18 lines) → type_computation.rs ✅
 - `get_type_of_array_literal` (~131 lines) → type_computation.rs ✅
 - `get_type_of_prefix_unary` (~37 lines) → type_computation.rs ✅
@@ -317,6 +317,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - `get_type_of_binary_expression` (~148 lines) → type_computation.rs ✅
 - `get_type_of_element_access` (~209 lines) → type_computation.rs ✅
 - `get_element_access_type` (~115 lines) → type_computation.rs ✅
+- `get_type_of_super_keyword` (~55 lines) → type_computation.rs ✅
 
 **Helper methods made pub(crate)**:
 - `literal_type_from_initializer`
@@ -340,6 +341,8 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - `get_element_access_type_for_literal_number_keys`
 - `should_report_no_index_signature`
 - `error_no_index_signature_at`
+- `get_base_class_idx`
+- `check_super_expression`
 
 #### 7.2 Extract Basic Type Computation
 - [ ] Extract `get_type_of_literal` family (~200-300 lines)
