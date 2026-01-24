@@ -246,7 +246,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             // Create substitution and instantiate
-            let substitution = TypeSubstitution::from_args(&type_params, &app.args);
+            let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
             let instantiated = instantiate_type(self.interner, resolved, &substitution);
 
             // Return the instantiated type for recursive checking

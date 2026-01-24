@@ -1893,7 +1893,7 @@ impl<'a> CheckerState<'a> {
             CallSignature, ParamInfo, TypePredicate, TypeSubstitution, instantiate_type,
         };
 
-        let substitution = TypeSubstitution::from_args(&sig.type_params, type_args);
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
         let params: Vec<ParamInfo> = sig
             .params
             .iter()
@@ -8265,7 +8265,8 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         // Create substitution and instantiate
-        let substitution = TypeSubstitution::from_args(&type_params, &evaluated_args);
+        let substitution =
+            TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
         let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
 
         // Recursively evaluate in case the result contains more applications
