@@ -6445,4 +6445,35 @@ impl<'a> CheckerState<'a> {
             _ => false,
         }
     }
+
+    // =========================================================================
+    // Section 35: Symbol and Declaration Utilities
+    // =========================================================================
+
+    /// Get the class declaration node from a symbol.
+    /// Returns None if the symbol doesn't represent a class.
+    pub(crate) fn get_class_declaration_from_symbol(
+        &self,
+        sym_id: crate::binder::SymbolId,
+    ) -> Option<NodeIndex> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.value_declaration.is_none() {
+            let decl_idx = symbol.value_declaration;
+            if let Some(node) = self.ctx.arena.get(decl_idx)
+                && self.ctx.arena.get_class(node).is_some()
+            {
+                return Some(decl_idx);
+            }
+        }
+
+        for &decl_idx in &symbol.declarations {
+            if let Some(node) = self.ctx.arena.get(decl_idx)
+                && self.ctx.arena.get_class(node).is_some()
+            {
+                return Some(decl_idx);
+            }
+        }
+
+        None
+    }
 }
