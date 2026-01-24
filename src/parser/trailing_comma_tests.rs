@@ -5,15 +5,12 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::ScannerState;
     use crate::parser::ParserState;
 
     fn parse_code(code: &str) -> Vec<crate::parser::ParseDiagnostic> {
-        let mut scanner = ScannerState::new("test.ts".to_string(), code.to_string());
-        scanner.scan();
-        let mut parser = ParserState::new("test.ts".to_string(), scanner);
+        let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
         parser.parse_source_file();
-        parser.get_diagnostics()
+        parser.get_diagnostics().to_vec()
     }
 
     #[test]

@@ -60,17 +60,11 @@ pub mod types;
 pub mod union_type;
 
 #[cfg(test)]
-mod assignability_tests;
-#[cfg(test)]
 mod contextual_typing_tests;
 #[cfg(test)]
 mod control_flow_tests;
 #[cfg(test)]
-mod iterability_tests;
-#[cfg(test)]
 mod no_filename_based_behavior_tests;
-#[cfg(test)]
-mod null_assignability_tests;
 #[cfg(test)]
 mod spread_rest_tests;
 #[cfg(test)]

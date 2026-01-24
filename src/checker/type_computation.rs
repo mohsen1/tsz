@@ -2304,8 +2304,6 @@ impl<'a> CheckerState<'a> {
     /// - Type argument validation (TS2344)
     pub(crate) fn get_type_of_call_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::checker::state::MAX_CALL_DEPTH;
-        use crate::parser::node_flags;
-        use crate::solver::{CallEvaluator, CallResult, CompatChecker, TypeKey};
 
         // Check call depth limit to prevent infinite recursion
         let mut call_depth = self.ctx.call_depth.borrow_mut();
