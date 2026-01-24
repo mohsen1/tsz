@@ -7375,59 +7375,6 @@ impl<'a> CheckerState<'a> {
         analyzer.is_definitely_assigned(idx, flow_node)
     }
 
-    /// Check if a node is within a parameter's default value initializer.
-    /// This is used to detect `await` used in default parameter values (TS2524).
-    pub(crate) fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            let ext = match self.ctx.arena.get_extended(current) {
-                Some(ext) => ext,
-                None => return false,
-            };
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                return false;
-            }
-
-            // Check if parent is a parameter and we're in its initializer
-            if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
-                if parent_node.kind == syntax_kind_ext::PARAMETER
-                    && let Some(param) = self.ctx.arena.get_parameter(parent_node)
-                {
-                    // Check if current node is within the initializer
-                    if !param.initializer.is_none() {
-                        let init_idx = param.initializer;
-                        // Check if idx is within the initializer subtree
-                        if self.is_node_within(idx, init_idx) {
-                            return true;
-                        }
-                    }
-                }
-                // If we've reached a function/class body, stop searching
-                // (we're no longer in a parameter initializer)
-                if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
-                    || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
-                {
-                    return false;
-                }
-            }
-
-            current = parent_idx;
-        }
-    }
-
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
