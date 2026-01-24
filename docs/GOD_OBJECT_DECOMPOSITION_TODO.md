@@ -3,7 +3,7 @@
 **Date**: 2026-01-24
 **Status**: Active
 **Current Phase**: Phase 2 - Break Up God Objects
-**Last Updated**: 2026-01-24 (Step 10: Flow analysis extraction complete)
+**Last Updated**: 2026-01-24 (Sections 49-54: Additional utilities extracted to type_checking.rs)
 
 ---
 
@@ -13,14 +13,16 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 ### The "Big 6" God Objects
 
-| File | Lines | Status | Priority |
-|------|-------|--------|----------|
-| `checker/state.rs` | 14,024 | 🚧 In Progress (46.4% reduced) | **P1 (CURRENT)** |
-| `parser/state.rs` | 10,762 | ⏳ Pending | P3 (low priority) |
-| `solver/evaluate.rs` | 5,784 | ⏳ Pending | P2 (after checker) |
-| `solver/subtype.rs` | 1,778 | ✅ **COMPLETE** | P1 (DONE) |
-| `solver/operations.rs` | 3,416 | ⏳ Pending | P2 (after checker) |
-| `emitter/mod.rs` | 2,040 | ⏳ Pending | P3 (acceptable) |
+| File | Original Lines | Current Lines | Reduction | Status | Priority |
+|------|---------------|---------------|-----------|--------|----------|
+| `checker/state.rs` | 26,217 | **13,468** | **48.6%** | 🚧 In Progress | **P1 (CURRENT)** |
+| `parser/state.rs` | 10,762 | 10,762 | 0% | ⏳ Pending | P3 (low priority) |
+| `solver/evaluate.rs` | 5,784 | 5,784 | 0% | ⏳ Pending | P2 (after checker) |
+| `solver/subtype.rs` | 5,000+ | 1,778 | 64% | ✅ **COMPLETE** | P1 (DONE) |
+| `solver/operations.rs` | 3,416 | 3,416 | 0% | ⏳ Pending | P2 (after checker) |
+| `emitter/mod.rs` | 2,040 | 2,040 | 0% | ⏳ Pending | P3 (acceptable) |
+
+**Overall Progress**: 12,749 lines extracted from checker/state.rs, reducing it by 48.6%
 
 ---
 
@@ -278,20 +280,49 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 ## Priority 1: checker/state.rs 🚧 CURRENT FOCUS
 
-**Goal**: Reduce from ~28,000 lines to ~2,000 lines (coordinator)
-**Progress**: ~10,159 lines extracted (38.7% reduction from original 26,217 lines)
-**Current Line Count**: 16,058 lines
-**Status**: 🚧 In Progress (PRIORITY #1)
+**Goal**: Reduce from 26,217 lines to ~2,000 lines (coordinator)
+**Progress**: 12,749 lines extracted (48.6% reduction from original 26,217 lines)
+**Current Line Count**: 13,468 lines
+**Status**: 🚧 In Progress (PRIORITY #1) - Sections 49-54 complete
 
 ### Extracted Modules
 
 | Module | Lines | Purpose | Status |
 |--------|-------|---------|--------|
-| `type_computation.rs` | 2,992 | Type computation logic (get_type_of_*) | ✅ Complete |
-| `type_checking.rs` | 5,636 | Type checking validation (26 sections) | ✅ Complete |
-| `symbol_resolver.rs` | 1,272 | Symbol resolution (resolve_*) | ✅ Complete |
-| `error_reporter.rs` | ~2,000 | Error reporting and diagnostics | ✅ Complete |
-| **Total Extracted** | **11,900** | **Focused, maintainable code** | |
+| `type_computation.rs` | 3,077 | Type computation logic (get_type_of_*) | ✅ Complete |
+| `type_checking.rs` | 8,095 | Type checking validation (54 sections) | ✅ Complete |
+| `symbol_resolver.rs` | 1,417 | Symbol resolution (resolve_*) | ✅ Complete |
+| `error_reporter.rs` | 1,916 | Error reporting and diagnostics | ✅ Complete |
+| `flow_analysis.rs` | 1,957 | Flow analysis and narrowing | ✅ Complete |
+| **Total Extracted** | **16,462** | **Focused, maintainable code** | |
+
+### Recent Progress: Sections 49-54 ✅ COMPLETE
+
+**Section 49: Index Signature Utilities** (3 functions, ~140 lines)
+- ✅ `should_report_no_index_signature` - Check if we should report "no index signature" error
+- ✅ `get_index_key_kind` - Get the index key kind (string/number) for a type
+- ✅ `is_element_indexable_key` - Check if a type key is element-indexable
+
+**Section 50: Symbol Checking Utilities** (1 function, ~8 lines)
+- ✅ `symbol_is_type_only` - Check if a symbol is type-only (from `import type`)
+
+**Section 51: Literal Type Utilities** (2 functions, ~110 lines)
+- ✅ `literal_type_from_initializer` - Infer literal types from initializer expressions
+- ✅ `contextual_literal_type` - Apply contextual typing to literal types
+
+**Section 52: Node Predicate Utilities** (1 function, ~25 lines)
+- ✅ `is_catch_clause_variable_declaration` - Check if a variable declaration is a catch clause variable
+
+**Section 53: Heritage Clause Utilities** (1 function, ~50 lines)
+- ✅ `heritage_name_text` - Get the name text from a heritage clause node
+
+**Section 54: Type Query and This Substitution Utilities** (2 functions, ~80 lines)
+- ✅ `resolve_type_query_to_structural` - Resolve a type query to its structural type
+- ✅ `apply_this_substitution_to_call_return` - Apply `this` type substitution to a call return type
+
+**Helper Methods Made pub(crate)**:
+- ✅ `contextual_type_allows_literal`
+- ✅ `substitute_this_type`
 
 ### Step 7: Extract Type Computation Logic (~3,000-4,000 lines)
 
@@ -434,7 +465,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 **Target**: Create `checker/type_checking.rs`
 **Result**: 5,636 lines with 26 organized sections
 
-#### 8.1 Section Organization ✅
+#### 8.1 Complete Section Organization ✅
 **✅ Sections 1-15**: Previous work (before this session)
 **✅ Section 16**: Unreachable Code Detection (8 functions)
 **✅ Section 17**: Property Initialization Checking (5 functions)
@@ -447,6 +478,36 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 **✅ Section 24**: Module Detection Utilities (3 functions)
 **✅ Section 25**: AST Traversal Utilities (5 functions + 6 from earlier work)
 **✅ Section 26**: Class and Member Finding Utilities (10 functions)
+**✅ Section 27**: Interface and Enum Utilities (3 functions)
+**✅ Section 28**: Decorator and Metadata Utilities (5 functions)
+**✅ Section 29**: Function Signature Utilities (10 functions)
+**✅ Section 30**: Statement and Declaration Checking (6 functions)
+**✅ Section 31**: Type Checking Entry Points (3 functions)
+**✅ Section 32**: Binary Operation Utilities (2 functions)
+**✅ Section 33**: Object Literal Utilities (4 functions)
+**✅ Section 34**: Type Validation Utilities (3 functions)
+**✅ Section 35**: Symbol and Declaration Utilities (2 functions)
+**✅ Section 36**: Type Query Utilities (2 functions)
+**✅ Section 37**: Nullish Type Utilities (2 functions)
+**✅ Section 38**: Index Signature Utilities (3 functions)
+**✅ Section 39**: Type Parameter Scope Utilities (3 functions)
+**✅ Section 40**: Node and Name Utilities (2 functions)
+**✅ Section 41**: Function Implementation Checking (4 functions)
+**✅ Section 42**: Class Member Utilities (4 functions)
+**✅ Section 43**: Accessor Type Checking (2 functions)
+**✅ Section 44**: Private Property Access (1 large function, ~250 lines)
+**✅ Section 45**: Element Access Utilities (3 functions)
+**✅ Section 46**: Constructor Accessibility Utilities (3 functions)
+**✅ Section 47**: Node Checking Utilities (1 function)
+**✅ Section 48**: Namespace and Alias Utilities (2 functions)
+**✅ Section 49**: Index Signature Checking (3 functions) - **NEW**
+**✅ Section 50**: Symbol Checking Utilities (1 function) - **NEW**
+**✅ Section 51**: Literal Type Utilities (2 functions) - **NEW**
+**✅ Section 52**: Node Predicate Utilities (1 function) - **NEW**
+**✅ Section 53**: Heritage Clause Utilities (1 function) - **NEW**
+**✅ Section 54**: Type Query and This Substitution Utilities (2 functions) - **NEW**
+
+**Total**: 54 sections with ~8,095 lines of organized, documented code
 
 #### 8.2 Key Functions Extracted ✅
 **Assignment and Expression Checking**:
@@ -492,12 +553,12 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - get_private_field_name_from_brand, private_brand_mismatch_error
 
 #### 8.3 Module Structure ✅
-- ✅ 26 sections with clear organization
+- ✅ 54 sections with clear organization
 - ✅ All functions properly documented
 - ✅ Helper methods made pub(crate) where needed
 - ✅ All functions compile successfully
 
-**State.rs reduction**: 26,217 → 16,058 lines (~10,159 lines extracted, 38.7% reduction)
+**State.rs reduction**: 26,217 → 13,468 lines (~12,749 lines extracted, 48.6% reduction)
 
 ### Step 9: Extract Symbol Resolution Logic ✅ COMPLETE
 
@@ -850,6 +911,174 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - Update ARCHITECTURE_WORK_SUMMARY.md with progress
 - Update line count metrics regularly
 - Create deep analysis reports for commit batches
+
+---
+
+## Recent Work: Sections 49-54 (2026-01-24)
+
+### Overview
+Six additional sections extracted to `type_checking.rs`, further reducing `state.rs` from 13,624 to 13,468 lines.
+
+### Sections Completed
+
+#### Section 49: Index Signature Utilities (~140 lines)
+**Purpose**: Handle index signature checking and element access validation
+
+**Functions Extracted**:
+1. `should_report_no_index_signature` - Determines whether to report "no index signature" error
+   - Checks object_type, index_type, and literal_index parameters
+   - Validates element indexability with string/number indices
+   - Uses `get_index_key_kind` and `is_element_indexable_key` helpers
+
+2. `get_index_key_kind` - Determines index key type (string/number)
+   - Returns `Option<(bool, bool)>` for (wants_string, wants_number)
+   - Handles literal types (string/number literals)
+   - Handles intrinsic types (String/Number)
+   - Handles union types (combines member types)
+
+3. `is_element_indexable_key` - Checks if type supports element access
+   - Validates against Array, Tuple, ObjectWithIndex types
+   - Handles union/intersection types
+   - Checks for string/number index signatures
+
+**Dependencies Made pub(crate)**:
+- All three functions made pub(crate) for cross-module access
+
+#### Section 50: Symbol Checking Utilities (~8 lines)
+**Purpose**: Simple symbol property checks
+
+**Functions Extracted**:
+1. `symbol_is_type_only` - Checks if symbol is from `import type`
+   - Returns `symbol.is_type_only` flag
+   - Used to validate type-only imports in type positions
+
+#### Section 51: Literal Type Utilities (~110 lines)
+**Purpose**: Infer and validate literal types from initializers
+
+**Functions Extracted**:
+1. `literal_type_from_initializer` - Infer most specific literal type
+   - Handles string literals (including template literals)
+   - Handles numeric literals (including unary +/-)
+   - Handles boolean literals (true/false)
+   - Handles null literal
+   - Returns None for non-literal expressions
+
+2. `contextual_literal_type` - Apply contextual typing
+   - Checks if literal type is allowed by contextual type
+   - Returns Some(literal_type) if preserved
+   - Returns None if literal should be widened
+
+**Dependencies Made pub(crate)**:
+- `contextual_type_allows_literal` - Made pub(crate) in state.rs
+
+#### Section 52: Node Predicate Utilities (~25 lines)
+**Purpose**: AST node type checking utilities
+
+**Functions Extracted**:
+1. `is_catch_clause_variable_declaration` - Check catch clause variables
+   - Validates parent node is CATCH_CLAUSE
+   - Compares with catch.variable_declaration
+   - Used for special scoping rules
+
+#### Section 53: Heritage Clause Utilities (~50 lines)
+**Purpose**: Extract names from heritage clauses (extends/implements)
+
+**Functions Extracted**:
+1. `heritage_name_text` - Get name from heritage clause node
+   - Handles simple identifiers: `Foo` → "Foo"
+   - Handles qualified names: `ns.Foo` → "ns.Foo"
+   - Handles property access: `Foo.Bar` → "Foo.Bar"
+   - Handles keyword literals: `null`, `true`, `false`, etc.
+   - Returns None for unsupported node types
+
+**Dependencies**:
+- Uses `entity_name_text` from symbol_resolver.rs
+
+#### Section 54: Type Query and This Substitution Utilities (~80 lines)
+**Purpose**: Resolve type queries and handle this type substitution
+
+**Functions Extracted**:
+1. `resolve_type_query_to_structural` - Resolve typeof queries
+   - Converts TypeQuery types to actual symbol types
+   - Returns original type_id if not a TypeQuery
+   - Used in `type T = typeof someExpression`
+
+2. `apply_this_substitution_to_call_return` - Substitute this type
+   - Replaces `this` return type with receiver type
+   - Enables fluent API patterns
+   - Returns substituted type or original return_type
+
+**Dependencies Made pub(crate)**:
+- `substitute_this_type` - Made pub(crate) in state.rs
+
+### Statistics
+
+**Lines Extracted**: ~156 lines (including documentation)
+**state.rs Reduction**: 13,624 → 13,468 lines (156 lines removed)
+**type_checking.rs Growth**: 7,795 → 8,095 lines (300 lines added, including docs)
+**Cumulative Reduction**: 12,749 lines (48.6% from original 26,217)
+
+### Compilation Status
+- ✅ All code compiles successfully
+- ✅ No new clippy warnings introduced
+- ✅ All pub(crate) dependencies correctly identified
+- ✅ All sections properly documented with examples
+
+### Next Steps for state.rs Decomposition
+
+**Remaining Target**: Reduce from 13,468 to ~2,000 lines (~11,500 more lines to extract)
+
+**Candidates for Future Extraction**:
+1. **Constructor checking** (~300-400 lines)
+   - `constructor_access_level_for_type`
+   - `class_symbol_from_expression`
+   - `assignment_target_class_symbol`
+   - `class_constructor_access_level`
+
+2. **Type validation helpers** (~500-600 lines)
+   - `should_skip_weak_union_error`
+   - `validate_call_type_arguments`
+   - `validate_new_expression_type_arguments`
+   - `declaration_symbol_flags`
+   - `declarations_conflict`
+
+3. **Property access helpers** (~200-300 lines)
+   - `get_type_of_private_property_access` (already large, ~250 lines)
+   - `resolve_type_for_property_access`
+   - `evaluate_application_type`
+
+4. **Statement checking** (~1,000-1,500 lines)
+   - `check_statement` (large dispatcher)
+   - `check_variable_declaration`
+   - `check_object_literal_excess_properties`
+   - `check_object_literal_missing_properties`
+   - `check_array_literal_tuple_assignability`
+   - `check_property_exists_before_assignment`
+   - `check_readonly_assignment`
+
+5. **Call expression utilities** (~500-700 lines)
+   - `resolve_overloaded_call_with_signatures`
+   - `collect_call_argument_types_with_context`
+   - `map_expanded_arg_index_to_original`
+   - `refine_mixin_call_return_type`
+
+6. **Module/export utilities** (~200-300 lines)
+   - `is_unresolved_import_symbol`
+   - `resolve_namespace_value_member`
+   - `resolve_global_this_property_type`
+
+7. **Type parameter handling** (~150-200 lines)
+   - `get_type_params_for_symbol`
+   - `push_type_parameters`
+   - `extract_params_from_signature`
+   - `extract_params_from_parameter_list`
+
+**Orchestration Layer** (final step, ~2,000 lines):
+- Keep main entry points: `check_source_file`, `check_program`
+- Keep coordination logic for calling extracted modules
+- Keep shared state (ctx, arena, binder references)
+- Keep struct definition and core field accessors
+- Delegate all validation/computation to extracted modules
 
 ---
 
