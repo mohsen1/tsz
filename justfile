@@ -48,6 +48,20 @@ clean:
 update:
     cargo update
 
+# Run tests for changed files since last commit (similar to pre-commit hook)
+test-changed:
+    #!/usr/bin/env bash
+    CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.rs$' || true)
+    if [ -n "$CHANGED_FILES" ]; then
+        echo "Testing changed files:"
+        echo "$CHANGED_FILES" | sed 's/^/  - /'
+        echo ""
+        cargo nextest run
+    else
+        echo "No Rust files staged, running all tests..."
+        cargo nextest run
+    fi
+
 # Install development tools
 install-tools:
     cargo install cargo-nextest
