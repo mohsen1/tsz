@@ -28,6 +28,7 @@ pub mod error_reporter;
 pub mod expr;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
+pub mod flow_narrowing;
 pub mod iterable_checker;
 pub mod jsx;
 pub mod nullish;
