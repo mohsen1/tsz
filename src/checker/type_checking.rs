@@ -57,6 +57,329 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // AST Traversal Helper Methods (Consolidate Duplication)
+    // =========================================================================
+
+    /// Get modifiers from a declaration node, consolidating duplicated match statements.
+    ///
+    /// This helper eliminates the repeated pattern of matching declaration kinds
+    /// and extracting their modifiers. Used in has_export_modifier and similar functions.
+    pub(crate) fn get_declaration_modifiers(&self, node: &crate::parser::node::Node) -> Option<&crate::parser::NodeList> {
+        use crate::parser::syntax_kind_ext;
+        match node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .and_then(|f| f.modifiers.as_ref()),
+            syntax_kind_ext::CLASS_DECLARATION => self
+                .ctx
+                .arena
+                .get_class(node)
+                .and_then(|c| c.modifiers.as_ref()),
+            syntax_kind_ext::VARIABLE_STATEMENT => self
+                .ctx
+                .arena
+                .get_variable(node)
+                .and_then(|v| v.modifiers.as_ref()),
+            syntax_kind_ext::INTERFACE_DECLARATION => self
+                .ctx
+                .arena
+                .get_interface(node)
+                .and_then(|i| i.modifiers.as_ref()),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                .ctx
+                .arena
+                .get_type_alias(node)
+                .and_then(|t| t.modifiers.as_ref()),
+            syntax_kind_ext::ENUM_DECLARATION => self
+                .ctx
+                .arena
+                .get_enum(node)
+                .and_then(|e| e.modifiers.as_ref()),
+            syntax_kind_ext::MODULE_DECLARATION => self
+                .ctx
+                .arena
+                .get_module(node)
+                .and_then(|m| m.modifiers.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Get modifiers from a class member node (property, method, accessor).
+    ///
+    /// This helper eliminates the repeated pattern of matching member kinds
+    /// and extracting their modifiers.
+    pub(crate) fn get_member_modifiers(&self, node: &crate::parser::node::Node) -> Option<&crate::parser::NodeList> {
+        use crate::parser::syntax_kind_ext;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(node)
+                .and_then(|p| p.modifiers.as_ref()),
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .and_then(|m| m.modifiers.as_ref()),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .and_then(|a| a.modifiers.as_ref()),
+            _ => None,
+        }
+    }
+
+    /// Get the name node from a class member node.
+    ///
+    /// This helper eliminates the repeated pattern of matching member kinds
+    /// and extracting their name nodes.
+    pub(crate) fn get_member_name_node(&self, node: &crate::parser::node::Node) -> Option<NodeIndex> {
+        use crate::parser::syntax_kind_ext;
+        match node.kind {
+            syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(node)
+                .map(|p| p.name),
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .map(|m| m.name),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .map(|a| a.name),
+            _ => None,
+        }
+    }
+
+    /// Get the name node from a declaration node.
+    ///
+    /// This helper eliminates the repeated pattern of matching declaration kinds
+    /// and extracting their name nodes.
+    pub(crate) fn get_declaration_name(&self, node: &crate::parser::node::Node) -> Option<NodeIndex> {
+        use crate::parser::syntax_kind_ext;
+        match node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => self
+                .ctx
+                .arena
+                .get_variable_declaration(node)
+                .map(|v| v.name),
+            syntax_kind_ext::FUNCTION_DECLARATION => self
+                .ctx
+                .arena
+                .get_function(node)
+                .map(|f| f.name),
+            syntax_kind_ext::CLASS_DECLARATION => self
+                .ctx
+                .arena
+                .get_class(node)
+                .map(|c| c.name),
+            syntax_kind_ext::INTERFACE_DECLARATION => self
+                .ctx
+                .arena
+                .get_interface(node)
+                .map(|i| i.name),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                .ctx
+                .arena
+                .get_type_alias(node)
+                .map(|t| t.name),
+            syntax_kind_ext::ENUM_DECLARATION => self
+                .ctx
+                .arena
+                .get_enum(node)
+                .map(|e| e.name),
+            _ => None,
+        }
+    }
+
+    /// Check if a node kind is a literal kind (string, number, boolean, null, undefined).
+    ///
+    /// This helper eliminates the repeated pattern of matching multiple literal kinds.
+    pub(crate) fn is_literal_kind(kind: u16) -> bool {
+        matches!(kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::UndefinedKeyword as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::RegularExpressionLiteral as u16
+        )
+    }
+
+    /// Check if a node kind is a terminal statement (return, throw).
+    ///
+    /// Terminal statements are statements that always terminate execution.
+    pub(crate) fn is_terminal_statement(kind: u16) -> bool {
+        use crate::parser::syntax_kind_ext;
+        matches!(kind,
+            k if k == syntax_kind_ext::RETURN_STATEMENT || k == syntax_kind_ext::THROW_STATEMENT
+        )
+    }
+
+    /// Get identifier text from a node, if it's an identifier.
+    ///
+    /// This helper eliminates the repeated pattern of checking for identifier
+    /// and extracting escaped_text.
+    pub(crate) fn get_identifier_text(&self, node: &crate::parser::node::Node) -> Option<String> {
+        self.ctx.arena.get_identifier(node)
+            .map(|ident| ident.escaped_text.clone())
+    }
+
+    /// Get identifier text from a node index, if it's an identifier.
+    pub(crate) fn get_identifier_text_from_idx(&self, idx: NodeIndex) -> Option<String> {
+        self.ctx.arena.get(idx)
+            .and_then(|node| self.get_identifier_text(&node))
+    }
+
+    /// Generic helper to check if modifiers include a specific keyword.
+    ///
+    /// This eliminates the duplicated pattern of checking for specific modifier keywords.
+    pub(crate) fn has_modifier_kind(&self, modifiers: &Option<crate::parser::NodeList>, kind: SyntaxKind) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == kind as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Generic helper to traverse both sides of a binary expression.
+    ///
+    /// This eliminates the repeated pattern of:
+    /// ```rust
+    /// if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
+    ///     self.some_check(bin_expr.left);
+    ///     self.some_check(bin_expr.right);
+    /// }
+    /// ```
+    pub(crate) fn for_each_binary_child<F>(
+        &self,
+        node: &crate::parser::node::Node,
+        mut f: F,
+    ) -> bool
+    where
+        F: FnMut(NodeIndex),
+    {
+        use crate::parser::syntax_kind_ext;
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
+                f(bin_expr.left);
+                f(bin_expr.right);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Generic helper to traverse conditional expression branches.
+    ///
+    /// This eliminates the repeated pattern of:
+    /// ```rust
+    /// if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+    ///     self.some_check(cond.condition);
+    ///     self.some_check(cond.when_true);
+    ///     self.some_check(cond.when_false);
+    /// }
+    /// ```
+    pub(crate) fn for_each_conditional_child<F>(
+        &self,
+        node: &crate::parser::node::Node,
+        mut f: F,
+    ) -> bool
+    where
+        F: FnMut(NodeIndex),
+    {
+        use crate::parser::syntax_kind_ext;
+        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                f(cond.condition);
+                f(cond.when_true);
+                if !cond.when_false.is_none() {
+                    f(cond.when_false);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Generic helper to traverse call expression with arguments.
+    ///
+    /// This eliminates the repeated pattern of:
+    /// ```rust
+    /// if let Some(call) = self.ctx.arena.get_call_expr(node) {
+    ///     self.some_check(call.expression);
+    ///     if let Some(args) = &call.arguments {
+    ///         for &arg in &args.nodes {
+    ///             self.some_check(arg);
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub(crate) fn for_each_call_child<F>(
+        &self,
+        node: &crate::parser::node::Node,
+        mut f: F,
+    ) -> bool
+    where
+        F: FnMut(NodeIndex),
+    {
+        use crate::parser::syntax_kind_ext;
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                f(call.expression);
+                if let Some(args) = &call.arguments {
+                    for &arg in &args.nodes {
+                        f(arg);
+                    }
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Generic helper to skip parenthesized expressions.
+    ///
+    /// This eliminates the repeated pattern of:
+    /// ```rust
+    /// if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+    ///     self.some_check(paren.expression);
+    /// }
+    /// ```
+    pub(crate) fn for_each_parenthesized_child<F>(
+        &self,
+        node: &crate::parser::node::Node,
+        mut f: F,
+    ) -> bool
+    where
+        F: FnMut(NodeIndex),
+    {
+        use crate::parser::syntax_kind_ext;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                f(paren.expression);
+                return true;
+            }
+        }
+        false
+    }
+
+    // =========================================================================
     // Assignment and Expression Checking
     // =========================================================================
 
@@ -373,25 +696,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        match node.kind {
-            k if k == crate::parser::syntax_kind_ext::PROPERTY_DECLARATION => {
-                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-                    self.check_computed_property_name(prop.name);
-                }
-            }
-            k if k == crate::parser::syntax_kind_ext::METHOD_DECLARATION => {
-                if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                    self.check_computed_property_name(method.name);
-                }
-            }
-            k if k == crate::parser::syntax_kind_ext::GET_ACCESSOR
-                || k == crate::parser::syntax_kind_ext::SET_ACCESSOR =>
-            {
-                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                    self.check_computed_property_name(accessor.name);
-                }
-            }
-            _ => {}
+        // Use helper to get member name node
+        if let Some(name_idx) = self.get_member_name_node(node) {
+            self.check_computed_property_name(name_idx);
         }
     }
 
@@ -1721,52 +2028,16 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check different declaration types for export modifier
-        let modifiers = match node.kind {
-            syntax_kind_ext::FUNCTION_DECLARATION => self
-                .ctx
-                .arena
-                .get_function(node)
-                .and_then(|f| f.modifiers.as_ref()),
-            syntax_kind_ext::CLASS_DECLARATION => self
-                .ctx
-                .arena
-                .get_class(node)
-                .and_then(|c| c.modifiers.as_ref()),
-            syntax_kind_ext::VARIABLE_STATEMENT => self
-                .ctx
-                .arena
-                .get_variable(node)
-                .and_then(|v| v.modifiers.as_ref()),
-            syntax_kind_ext::INTERFACE_DECLARATION => self
-                .ctx
-                .arena
-                .get_interface(node)
-                .and_then(|i| i.modifiers.as_ref()),
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                .ctx
-                .arena
-                .get_type_alias(node)
-                .and_then(|t| t.modifiers.as_ref()),
-            syntax_kind_ext::ENUM_DECLARATION => self
-                .ctx
-                .arena
-                .get_enum(node)
-                .and_then(|e| e.modifiers.as_ref()),
-            _ => None,
+        // Use helper to get modifiers from declaration
+        let Some(mods) = self.get_declaration_modifiers(node) else {
+            return false;
         };
 
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
+        // Check if export modifier is present
+        mods.nodes.iter().any(|&mod_idx| {
+            self.ctx.arena.get(mod_idx)
+                .map_or(false, |mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
+        })
     }
 
     // =========================================================================
@@ -5275,55 +5546,18 @@ impl<'a> CheckerState<'a> {
         &self,
         node: &crate::parser::node::Node,
     ) -> bool {
-        let modifiers = match node.kind {
-            syntax_kind_ext::FUNCTION_DECLARATION => self
-                .ctx
-                .arena
-                .get_function(node)
-                .and_then(|f| f.modifiers.as_ref()),
-            syntax_kind_ext::CLASS_DECLARATION => self
-                .ctx
-                .arena
-                .get_class(node)
-                .and_then(|c| c.modifiers.as_ref()),
-            syntax_kind_ext::VARIABLE_STATEMENT => self
-                .ctx
-                .arena
-                .get_variable(node)
-                .and_then(|v| v.modifiers.as_ref()),
-            syntax_kind_ext::INTERFACE_DECLARATION => self
-                .ctx
-                .arena
-                .get_interface(node)
-                .and_then(|i| i.modifiers.as_ref()),
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                .ctx
-                .arena
-                .get_type_alias(node)
-                .and_then(|t| t.modifiers.as_ref()),
-            syntax_kind_ext::ENUM_DECLARATION => self
-                .ctx
-                .arena
-                .get_enum(node)
-                .and_then(|e| e.modifiers.as_ref()),
-            syntax_kind_ext::MODULE_DECLARATION => self
-                .ctx
-                .arena
-                .get_module(node)
-                .and_then(|m| m.modifiers.as_ref()),
-            _ => None,
+        use crate::scanner::SyntaxKind;
+
+        // Use helper to get modifiers from declaration
+        let Some(mods) = self.get_declaration_modifiers(node) else {
+            return false;
         };
 
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        // Check if export modifier is present
+        mods.nodes.iter().any(|&mod_idx| {
+            self.ctx.arena.get(mod_idx)
+                .map_or(false, |mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
+        })
     }
 
     // 25. AST Traversal Utilities (11 functions)
@@ -5876,44 +6110,17 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<crate::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::AbstractKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.has_modifier_kind(modifiers, SyntaxKind::AbstractKeyword)
     }
 
     /// Check if modifiers include the 'static' keyword.
     pub(crate) fn has_static_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::StaticKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.has_modifier_kind(modifiers, SyntaxKind::StaticKeyword)
     }
 
     /// Check if modifiers include the 'private' keyword.
     pub(crate) fn has_private_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::PrivateKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.has_modifier_kind(modifiers, SyntaxKind::PrivateKeyword)
     }
 
     /// Check if modifiers include the 'protected' keyword.
@@ -5921,16 +6128,7 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<crate::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ProtectedKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.has_modifier_kind(modifiers, SyntaxKind::ProtectedKeyword)
     }
 
     /// Check if modifiers include the 'readonly' keyword.
@@ -5938,16 +6136,7 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<crate::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.has_modifier_kind(modifiers, SyntaxKind::ReadonlyKeyword)
     }
 
     /// Check if modifiers include a parameter property keyword.
@@ -6399,19 +6588,8 @@ impl<'a> CheckerState<'a> {
             return None;
         };
 
-        let name_idx = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                self.ctx.arena.get_property_decl(node).map(|p| p.name)
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.ctx.arena.get_method_decl(node).map(|m| m.name)
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                self.ctx.arena.get_accessor(node).map(|a| a.name)
-            }
-            _ => None,
-        }?;
-
+        // Use helper to get name node, then get property name text
+        let name_idx = self.get_member_name_node(node)?;
         self.get_property_name(name_idx)
     }
 
