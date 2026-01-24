@@ -303,7 +303,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [ ] `get_type_of_element_access` (~200 lines)
 - [ ] `get_type_of_assignment_target` (~80 lines)
 
-**Progress**: state.rs 26,217 → 24,290 lines (**-1,927 lines, 28 functions extracted**)
+**Progress**: state.rs 26,217 → 23,921 lines (**-2,296 lines, 30 functions extracted**)
 - `get_type_of_conditional_expression` (~18 lines) → type_computation.rs ✅
 - `get_type_of_array_literal` (~131 lines) → type_computation.rs ✅
 - `get_type_of_prefix_unary` (~37 lines) → type_computation.rs ✅
@@ -332,6 +332,8 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - `get_call_receiver_type` (~7 lines) → type_computation.rs ✅
 - `get_class_decl_from_type` (~71 lines) → type_computation.rs ✅
 - `get_class_name_from_type` (~3 lines) → type_computation.rs ✅
+- `get_type_of_call_expression` (~214 lines) → type_computation.rs ✅
+- `get_type_of_identifier` (~152 lines) → type_computation.rs ✅
 
 **Helper methods made pub(crate)**:
 - `literal_type_from_initializer`
@@ -367,6 +369,24 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - `is_class_derived_from`
 - `get_class_declaration_from_symbol`
 - `get_class_name_from_decl`
+- `apply_this_substitution_to_call_return`
+- `refine_mixin_call_return_type`
+- `map_expanded_arg_index_to_original`
+- `is_super_expression`
+- `is_dynamic_import`
+- `check_dynamic_import_module_specifier`
+- `is_class_constructor_type`
+- `validate_call_type_arguments`
+- `is_variable_used_before_declaration_in_static_block`
+- `is_variable_used_before_declaration_in_computed_property`
+- `is_variable_used_before_declaration_in_heritage_clause`
+- `should_check_definite_assignment`
+- `is_definitely_assigned_at`
+- `is_in_default_parameter`
+- `is_unresolved_import_symbol`
+- `is_known_global_value_name`
+- `is_nodejs_runtime_global`
+- `is_static_member`
 
 #### 7.2 Extract Basic Type Computation
 - [ ] Extract `get_type_of_literal` family (~200-300 lines)
