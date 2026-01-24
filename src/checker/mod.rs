@@ -35,6 +35,7 @@ pub mod flow_graph_builder;
 pub mod flow_narrowing;
 pub mod iterable_checker;
 pub mod jsx;
+pub mod literal_type;
 pub mod nullish;
 pub mod optional_chain;
 pub mod promise_checker;
