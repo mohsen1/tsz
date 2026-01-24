@@ -6000,4 +6000,126 @@ impl<'a> CheckerState<'a> {
         };
         ident.escaped_text == "eval"
     }
+
+    // =========================================================================
+    // Section 29: Expression Kind Detection Utilities
+    // =========================================================================
+
+    /// Check if a node is a `this` expression.
+    pub(crate) fn is_this_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::ThisKeyword as u16
+    }
+
+    /// Check if a node is a `globalThis` identifier expression.
+    pub(crate) fn is_global_this_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return false;
+        };
+        ident.escaped_text == "globalThis"
+    }
+
+    /// Check if a name is a known global value (e.g., console, Math, JSON).
+    /// These are globals that should be available in most JavaScript environments.
+    pub(crate) fn is_known_global_value_name(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "console"
+                | "Math"
+                | "JSON"
+                | "Object"
+                | "Array"
+                | "String"
+                | "Number"
+                | "Boolean"
+                | "Function"
+                | "Date"
+                | "RegExp"
+                | "Error"
+                | "Promise"
+                | "Map"
+                | "Set"
+                | "WeakMap"
+                | "WeakSet"
+                | "WeakRef"
+                | "Proxy"
+                | "Reflect"
+                | "globalThis"
+                | "window"
+                | "document"
+                | "exports"
+                | "module"
+                | "require"
+                | "__dirname"
+                | "__filename"
+                | "FinalizationRegistry"
+                | "BigInt"
+                | "ArrayBuffer"
+                | "SharedArrayBuffer"
+                | "DataView"
+                | "Int8Array"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Int16Array"
+                | "Uint16Array"
+                | "Int32Array"
+                | "Uint32Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "BigInt64Array"
+                | "BigUint64Array"
+                | "Intl"
+                | "Atomics"
+                | "WebAssembly"
+                | "Iterator"
+                | "AsyncIterator"
+                | "Generator"
+                | "AsyncGenerator"
+                | "URL"
+                | "URLSearchParams"
+                | "Headers"
+                | "Request"
+                | "Response"
+                | "FormData"
+                | "Blob"
+                | "File"
+                | "ReadableStream"
+                | "WritableStream"
+                | "TransformStream"
+                | "TextEncoder"
+                | "TextDecoder"
+                | "AbortController"
+                | "AbortSignal"
+                | "fetch"
+                | "setTimeout"
+                | "setInterval"
+                | "clearTimeout"
+                | "clearInterval"
+                | "queueMicrotask"
+                | "structuredClone"
+                | "atob"
+                | "btoa"
+                | "performance"
+                | "crypto"
+                | "navigator"
+                | "location"
+                | "history"
+        )
+    }
+
+    /// Check if a name is a Node.js runtime global that is always available.
+    /// These globals are injected by the Node.js runtime and don't require lib.d.ts.
+    /// Note: console, globalThis, and process are NOT included here because they
+    /// require proper lib definitions (lib.dom.d.ts, lib.es2020.d.ts, @types/node).
+    pub(crate) fn is_nodejs_runtime_global(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "exports" | "module" | "require" | "__dirname" | "__filename"
+        )
+    }
 }
