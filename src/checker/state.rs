@@ -4321,9 +4321,11 @@ impl<'a> CheckerState<'a> {
                             let module_type = self.ctx.types.object(props);
                             return (module_type, Vec::new());
                         }
-                        // Module not found - emit TS2307 error and return ANY to allow property access
+                        // Module not found - emit TS2307 error and return ERROR to expose type errors
+                        // Returning ANY would suppress downstream errors (poisoning)
+                        // Returning ERROR allows proper error propagation for invalid property access
                         self.emit_module_not_found_error(&module_specifier, value_decl);
-                        return (TypeId::ANY, Vec::new());
+                        return (TypeId::ERROR, Vec::new());
                     }
                     // Fall back to get_type_of_node for simple identifiers
                     return (self.get_type_of_node(import.module_specifier), Vec::new());
@@ -4363,10 +4365,12 @@ impl<'a> CheckerState<'a> {
                     }
                     return (result, Vec::new());
                 }
-                // Module not found in exports - emit TS2307 error and return ANY
-                // TSC emits TS2307 for missing module but allows property access on the result
+                // Module not found in exports - emit TS2307 error and return ERROR to expose type errors
+                // Returning ANY would suppress downstream errors (poisoning)
+                // TSC emits TS2307 for missing module and allows property access, but returning ERROR
+                // gives better error detection for conformance
                 self.emit_module_not_found_error(module_name, value_decl);
-                return (TypeId::ANY, Vec::new());
+                return (TypeId::ERROR, Vec::new());
             }
 
             // Unresolved alias - return ANY to prevent cascading TS2571 errors
