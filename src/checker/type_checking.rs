@@ -12,12 +12,11 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
-use crate::binder::{SymbolId, symbol_flags};
+use crate::binder::symbol_flags;
 use crate::checker::FlowAnalyzer;
 use crate::checker::state::{
     CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, PropertyKey,
 };
-use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::node::ImportDeclData;
 use crate::parser::syntax_kind_ext;
@@ -70,14 +69,9 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
-        // Check if the left-hand side property exists (for property access assignments)
-        self.check_property_exists_before_assignment(left_idx, left_type);
-
         self.check_readonly_assignment(left_idx, expr_idx);
 
-        // Perform assignability check for all non-ANY types
-        // This includes null/undefined in strict mode - they should NOT be assignable to non-nullable types
-        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
+        if left_type != TypeId::ANY {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
@@ -99,15 +93,6 @@ impl<'a> CheckerState<'a> {
                 && right_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
-                self.check_object_literal_missing_properties(right_type, left_type, right_idx);
-            }
-
-            // Check array literal elements when assigned to a tuple type
-            if left_type != TypeId::UNKNOWN
-                && let Some(right_node) = self.ctx.arena.get(right_idx)
-                && right_node.kind == crate::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-            {
-                self.check_array_literal_tuple_assignability(right_type, left_type, right_idx);
             }
         }
 
@@ -147,9 +132,6 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
-        // Check if the left-hand side property exists (for property access assignments)
-        self.check_property_exists_before_assignment(left_idx, left_type);
-
         self.check_readonly_assignment(left_idx, expr_idx);
 
         let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
@@ -165,8 +147,7 @@ impl<'a> CheckerState<'a> {
             result_type
         };
 
-        // Perform assignability check for all non-ANY types (including strict null checks)
-        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
+        if left_type != TypeId::ANY {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
@@ -188,15 +169,6 @@ impl<'a> CheckerState<'a> {
                 && right_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
-                self.check_object_literal_missing_properties(right_type, left_type, right_idx);
-            }
-
-            // Check array literal elements when assigned to a tuple type
-            if left_type != TypeId::UNKNOWN
-                && let Some(right_node) = self.ctx.arena.get(right_idx)
-                && right_node.kind == crate::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-            {
-                self.check_array_literal_tuple_assignability(right_type, left_type, right_idx);
             }
         }
 
@@ -614,7 +586,6 @@ impl<'a> CheckerState<'a> {
             let declared_type = self.get_type_from_type_node(param.type_annotation);
 
             // Check if the initializer type is assignable to the declared type
-            // This includes strict null checks - null/undefined should NOT be assignable to non-nullable types
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
                 && !self.is_assignable_to(init_type, declared_type)
@@ -1281,11 +1252,8 @@ impl<'a> CheckerState<'a> {
         let pattern_kind = pattern_node.kind;
 
         // TS2461: Check if array destructuring is applied to a non-array type
-        // TS2488: Check if array destructuring is applied to a non-iterable type
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             self.check_array_destructuring_target_type(pattern_idx, pattern_type);
-            // Also check for TS2488 - type must have Symbol.iterator
-            self.check_array_destructuring_iterability(pattern_type, pattern_idx);
         }
 
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
@@ -1344,10 +1312,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none()
-            && element_type != TypeId::ANY
-            && !self.type_contains_error(element_type)
-        {
+        // Note: We check default values even when element_type is ANY to catch type errors
+        // This matches TSC behavior where default values must be valid even in loose contexts
+        if !element_data.initializer.is_none() && !self.type_contains_error(element_type) {
             let default_value_type = self.get_type_of_node(element_data.initializer);
 
             if !self.is_assignable_to(default_value_type, element_type) {
@@ -1372,7 +1339,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// Validates that the type is array-like (has iterator, is tuple, or is string).
     /// Emits TS2461 if the type is not array-like.
-    /// Emits TS2488 if the type is not iterable.
     ///
     /// ## Parameters:
     /// - `pattern_idx`: The array binding pattern node index
@@ -1380,8 +1346,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Validation:
     /// - Checks if the type is array, tuple, string, or has iterator
-    /// - Emits TS2488 for non-iterable types (number, boolean, undefined, etc.)
-    /// - Emits TS2461 for other non-array-like types (plain objects)
+    /// - Emits TS2461 for non-array-like types
     fn check_array_destructuring_target_type(
         &mut self,
         pattern_idx: NodeIndex,
@@ -1400,30 +1365,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // First check iterability - emit TS2488 for non-iterable types
-        // This covers primitives like number, boolean, undefined, null, void
-        if !self.is_iterable_type(source_type) {
-            let type_str = self.format_type(source_type);
-            let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
-                &[&type_str],
-            );
-            self.error_at_node(
-                pattern_idx,
-                &message,
-                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
-            );
-            return;
-        }
-
-        // For iterable types that are not array/tuple/string, also check if they're structurally array-like
-        // This emits TS2461 for plain objects that happen to be iterable but aren't array destructurable
+        // Check if the type is array-like (array, tuple, string, or has iterator)
         let is_array_like = self.is_array_destructurable_type(source_type);
 
         if !is_array_like {
-            // Type is iterable but not array destructurable (e.g., custom iterable that's not array-like)
-            // This is a case where we might still want to emit an error for non-standard destructuring
-            // For now, we allow iterable types to be destructured
+            let type_str = self.format_type(source_type);
+            let message =
+                format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
+            self.error_at_node(
+                pattern_idx,
+                &message,
+                diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+            );
         }
     }
 
@@ -1927,7 +1880,6 @@ impl<'a> CheckerState<'a> {
 
         // Check if the return type is assignable to the expected type
         // Exception: Constructors allow `return;` without an expression (no assignability check)
-        // This includes strict null checks - returning null/undefined from non-nullable return type should error
         let is_constructor_return_without_expr = self
             .ctx
             .enclosing_class
@@ -1937,7 +1889,6 @@ impl<'a> CheckerState<'a> {
             && return_data.expression.is_none();
 
         if expected_type != TypeId::ANY
-            && !self.type_contains_error(expected_type)
             && !is_constructor_return_without_expr
             && !self.is_assignable_to(return_type, expected_type)
         {
@@ -1963,25 +1914,6 @@ impl<'a> CheckerState<'a> {
             && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
             self.check_object_literal_excess_properties(
-                return_type,
-                expected_type,
-                return_data.expression,
-            );
-            self.check_object_literal_missing_properties(
-                return_type,
-                expected_type,
-                return_data.expression,
-            );
-        }
-
-        // Check array literal elements when returned as a tuple type
-        if expected_type != TypeId::ANY
-            && expected_type != TypeId::UNKNOWN
-            && !return_data.expression.is_none()
-            && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
-            && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-        {
-            self.check_array_literal_tuple_assignability(
                 return_type,
                 expected_type,
                 return_data.expression,
@@ -3010,7 +2942,6 @@ impl<'a> CheckerState<'a> {
     /// - `func_idx`: The function node index
     ///
     /// Returns true if the function is inside a class declaration.
-    #[allow(dead_code)]
     pub(crate) fn is_class_method(&self, func_idx: NodeIndex) -> bool {
         // Walk up the parent chain looking for ClassDeclaration nodes
         let mut current = func_idx;
@@ -3076,7 +3007,6 @@ impl<'a> CheckerState<'a> {
     /// - `var_idx`: The variable declaration node index
     ///
     /// Returns true if the declaration is in an ambient context.
-    #[allow(dead_code)]
     pub(crate) fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
         use crate::parser::node_flags;
 
@@ -3905,8 +3835,7 @@ impl<'a> CheckerState<'a> {
         if type_args.len() > base_type_params.len() {
             type_args.truncate(base_type_params.len());
         }
-        let substitution =
-            TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+        let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
 
         // Get the derived class name for the error message
         let derived_class_name = if !class_data.name.is_none() {
@@ -4243,8 +4172,7 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                let substitution =
-                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
+                let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
 
                 for (member_name, member_type) in &derived_members {
                     let mut found = false;
@@ -5070,7 +4998,6 @@ impl<'a> CheckerState<'a> {
     /// - `func_idx`: The function node to check
     ///
     /// Returns true if async validation should be performed.
-    #[allow(dead_code)]
     pub(crate) fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
         // Enhanced validation to catch more TS2705 cases (we have 34 missing)
         // Need to be more liberal while maintaining precision
@@ -5123,7 +5050,6 @@ impl<'a> CheckerState<'a> {
     /// considered a module if it contains any import or export declarations.
     ///
     /// Returns true if the file is a module.
-    #[allow(dead_code)]
     pub(crate) fn is_file_module(&self) -> bool {
         // Get the root source file node
         let Some(root_node) = self.ctx.arena.nodes.last() else {
@@ -5183,7 +5109,6 @@ impl<'a> CheckerState<'a> {
     /// - `node`: The node to check (must be a declaration with modifiers)
     ///
     /// Returns true if the node has an export modifier.
-    #[allow(dead_code)]
     pub(crate) fn has_export_modifier_on_modifiers(
         &self,
         node: &crate::parser::node::Node,
@@ -6587,1439 +6512,6 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(decl_idx);
             }
-        }
-
-        None
-    }
-
-    // =========================================================================
-    // Section 36: Type Query Utilities
-    // =========================================================================
-
-    /// Check if a type contains ERROR anywhere in its structure.
-    /// Recursively checks all type components for error types.
-    pub(crate) fn type_contains_error(&self, type_id: TypeId) -> bool {
-        let mut visited = Vec::new();
-        self.type_contains_error_inner(type_id, &mut visited)
-    }
-
-    /// Inner implementation of type_contains_error with cycle detection.
-    fn type_contains_error_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
-        use crate::solver::{TemplateSpan, TypeKey};
-
-        if type_id == TypeId::ERROR {
-            return true;
-        }
-        if visited.contains(&type_id) {
-            return false;
-        }
-        visited.push(type_id);
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(elem)) => self.type_contains_error_inner(elem, visited),
-            Some(TypeKey::Tuple(list_id)) => self
-                .ctx
-                .types
-                .tuple_list(list_id)
-                .iter()
-                .any(|elem| self.type_contains_error_inner(elem.type_id, visited)),
-            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => self
-                .ctx
-                .types
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.type_contains_error_inner(member, visited)),
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                if shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_error_inner(prop.type_id, visited))
-                {
-                    return true;
-                }
-                if let Some(ref index) = shape.string_index
-                    && self.type_contains_error_inner(index.value_type, visited)
-                {
-                    return true;
-                }
-                if let Some(ref index) = shape.number_index
-                    && self.type_contains_error_inner(index.value_type, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Function(shape_id)) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                self.type_contains_error_inner(shape.return_type, visited)
-            }
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape
-                    .call_signatures
-                    .iter()
-                    .any(|sig| self.type_contains_error_inner(sig.return_type, visited))
-                {
-                    return true;
-                }
-                if shape
-                    .construct_signatures
-                    .iter()
-                    .any(|sig| self.type_contains_error_inner(sig.return_type, visited))
-                {
-                    return true;
-                }
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_error_inner(prop.type_id, visited))
-            }
-            Some(TypeKey::Application(app_id)) => {
-                let app = self.ctx.types.type_application(app_id);
-                if self.type_contains_error_inner(app.base, visited) {
-                    return true;
-                }
-                app.args
-                    .iter()
-                    .any(|&arg| self.type_contains_error_inner(arg, visited))
-            }
-            Some(TypeKey::Conditional(cond_id)) => {
-                let cond = self.ctx.types.conditional_type(cond_id);
-                self.type_contains_error_inner(cond.check_type, visited)
-                    || self.type_contains_error_inner(cond.extends_type, visited)
-                    || self.type_contains_error_inner(cond.true_type, visited)
-                    || self.type_contains_error_inner(cond.false_type, visited)
-            }
-            Some(TypeKey::Mapped(mapped_id)) => {
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                if self.type_contains_error_inner(mapped.constraint, visited) {
-                    return true;
-                }
-                if let Some(name_type) = mapped.name_type
-                    && self.type_contains_error_inner(name_type, visited)
-                {
-                    return true;
-                }
-                self.type_contains_error_inner(mapped.template, visited)
-            }
-            Some(TypeKey::IndexAccess(base, index)) => {
-                self.type_contains_error_inner(base, visited)
-                    || self.type_contains_error_inner(index, visited)
-            }
-            Some(TypeKey::TemplateLiteral(template_id)) => self
-                .ctx
-                .types
-                .template_list(template_id)
-                .iter()
-                .any(|span| match span {
-                    TemplateSpan::Type(span_type) => {
-                        self.type_contains_error_inner(*span_type, visited)
-                    }
-                    _ => false,
-                }),
-            Some(TypeKey::KeyOf(inner)) | Some(TypeKey::ReadonlyType(inner)) => {
-                self.type_contains_error_inner(inner, visited)
-            }
-            Some(TypeKey::TypeParameter(info)) => {
-                if let Some(constraint) = info.constraint
-                    && self.type_contains_error_inner(constraint, visited)
-                {
-                    return true;
-                }
-                if let Some(default) = info.default
-                    && self.type_contains_error_inner(default, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Infer(info)) => {
-                if let Some(constraint) = info.constraint
-                    && self.type_contains_error_inner(constraint, visited)
-                {
-                    return true;
-                }
-                if let Some(default) = info.default
-                    && self.type_contains_error_inner(default, visited)
-                {
-                    return true;
-                }
-                false
-            }
-            Some(TypeKey::Error) => true,
-            Some(TypeKey::TypeQuery(_))
-            | Some(TypeKey::UniqueSymbol(_))
-            | Some(TypeKey::ThisType)
-            | Some(TypeKey::Ref(_))
-            | Some(TypeKey::Literal(_))
-            | Some(TypeKey::Intrinsic(_))
-            | Some(TypeKey::StringIntrinsic { .. })
-            | None => false,
-        }
-    }
-
-    // =========================================================================
-    // Section 37: Nullish Type Utilities
-    // =========================================================================
-
-    /// Split a type into its non-nullable part and its nullable cause.
-    /// Returns (non_null_type, nullable_cause) where nullable_cause is the type that makes it nullable.
-    pub(crate) fn split_nullish_type(
-        &mut self,
-        type_id: TypeId,
-    ) -> (Option<TypeId>, Option<TypeId>) {
-        use crate::solver::{IntrinsicKind, TypeKey};
-
-        let Some(key) = self.ctx.types.lookup(type_id) else {
-            return (Some(type_id), None);
-        };
-
-        match key {
-            TypeKey::Intrinsic(IntrinsicKind::Null) => (None, Some(TypeId::NULL)),
-            TypeKey::Intrinsic(IntrinsicKind::Undefined | IntrinsicKind::Void) => {
-                (None, Some(TypeId::UNDEFINED))
-            }
-            TypeKey::Union(members) => {
-                let members = self.ctx.types.type_list(members);
-                let mut non_null = Vec::with_capacity(members.len());
-                let mut nullish = Vec::new();
-
-                for &member in members.iter() {
-                    match self.ctx.types.lookup(member) {
-                        Some(TypeKey::Intrinsic(IntrinsicKind::Null)) => nullish.push(TypeId::NULL),
-                        Some(TypeKey::Intrinsic(
-                            IntrinsicKind::Undefined | IntrinsicKind::Void,
-                        )) => {
-                            nullish.push(TypeId::UNDEFINED);
-                        }
-                        _ => non_null.push(member),
-                    }
-                }
-
-                if nullish.is_empty() {
-                    return (Some(type_id), None);
-                }
-
-                let non_null_type = if non_null.is_empty() {
-                    None
-                } else if non_null.len() == 1 {
-                    Some(non_null[0])
-                } else {
-                    Some(self.ctx.types.union(non_null))
-                };
-
-                let cause = if nullish.len() == 1 {
-                    Some(nullish[0])
-                } else {
-                    Some(self.ctx.types.union(nullish))
-                };
-
-                (non_null_type, cause)
-            }
-            _ => (Some(type_id), None),
-        }
-    }
-
-    /// Report an error for possibly nullish object access.
-    /// Reports the appropriate error code based on the nullable cause type.
-    pub(crate) fn report_possibly_nullish_object(&mut self, idx: NodeIndex, cause: TypeId) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-
-        let (code, message) = if cause == TypeId::NULL {
-            (
-                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL,
-                "Object is possibly 'null'.",
-            )
-        } else if cause == TypeId::UNDEFINED {
-            (
-                diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED,
-                "Object is possibly 'undefined'.",
-            )
-        } else {
-            (
-                diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED,
-                "Object is possibly 'null' or 'undefined'.",
-            )
-        };
-
-        self.error_at_node(idx, message, code);
-    }
-
-    // =========================================================================
-    // Section 38: Index Signature Utilities
-    // =========================================================================
-
-    /// Merge an incoming index signature into a target.
-    /// If the signatures conflict, sets the target to ERROR.
-    pub(crate) fn merge_index_signature(
-        target: &mut Option<crate::solver::IndexSignature>,
-        incoming: crate::solver::IndexSignature,
-    ) {
-        if let Some(existing) = target.as_mut() {
-            if existing.value_type != incoming.value_type || existing.readonly != incoming.readonly
-            {
-                existing.value_type = TypeId::ERROR;
-                existing.readonly = false;
-            }
-        } else {
-            *target = Some(incoming);
-        }
-    }
-
-    // =========================================================================
-    // Section 39: Type Parameter Scope Utilities
-    // =========================================================================
-
-    /// Pop type parameters from scope, restoring previous values.
-    /// Used to restore the type parameter scope after exiting a generic context.
-    pub(crate) fn pop_type_parameters(&mut self, updates: Vec<(String, Option<TypeId>)>) {
-        for (name, previous) in updates.into_iter().rev() {
-            if let Some(prev_type) = previous {
-                self.ctx.type_parameter_scope.insert(name, prev_type);
-            } else {
-                self.ctx.type_parameter_scope.remove(&name);
-            }
-        }
-    }
-
-    /// Collect all `infer` type parameter names from a type node.
-    /// This is used to add inferred type parameters to the scope when checking conditional types.
-    pub(crate) fn collect_infer_type_parameters(&self, type_idx: NodeIndex) -> Vec<String> {
-        let mut params = Vec::new();
-        self.collect_infer_type_parameters_inner(type_idx, &mut params);
-        params
-    }
-
-    /// Inner implementation for collecting infer type parameters.
-    /// Recursively walks the type node to find all infer type parameter names.
-    fn collect_infer_type_parameters_inner(&self, type_idx: NodeIndex, params: &mut Vec<String>) {
-        let Some(node) = self.ctx.arena.get(type_idx) else {
-            return;
-        };
-
-        match node.kind {
-            k if k == syntax_kind_ext::INFER_TYPE => {
-                if let Some(infer) = self.ctx.arena.get_infer_type(node)
-                    && let Some(param_node) = self.ctx.arena.get(infer.type_parameter)
-                    && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
-                    && let Some(name_node) = self.ctx.arena.get(param.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    let name = ident.escaped_text.clone();
-                    if !params.contains(&name) {
-                        params.push(name);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(ref args) = type_ref.type_arguments
-                {
-                    for &arg_idx in &args.nodes {
-                        self.collect_infer_type_parameters_inner(arg_idx, params);
-                    }
-                }
-            }
-            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
-                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
-                    for &member_idx in &composite.types.nodes {
-                        self.collect_infer_type_parameters_inner(member_idx, params);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Section 40: Node and Name Utilities
-    // ------------------------------------
-
-    /// Get the text content of a node from the source file.
-    pub(crate) fn node_text(&self, node_idx: NodeIndex) -> Option<String> {
-        let (start, end) = self.get_node_span(node_idx)?;
-        let source = self.ctx.arena.source_files.first()?.text.as_ref();
-        let start = start as usize;
-        let end = end as usize;
-        if start >= end || end > source.len() {
-            return None;
-        }
-        Some(source[start..end].to_string())
-    }
-
-    /// Get the name of a parameter for error messages.
-    pub(crate) fn parameter_name_for_error(&self, name_idx: NodeIndex) -> String {
-        if let Some(name_node) = self.ctx.arena.get(name_idx) {
-            if name_node.kind == SyntaxKind::ThisKeyword as u16 {
-                return "this".to_string();
-            }
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return ident.escaped_text.clone();
-            }
-            if let Some(lit) = self.ctx.arena.get_literal(name_node) {
-                return lit.text.clone();
-            }
-        }
-
-        self.node_text(name_idx)
-            .map(|text| text.trim().to_string())
-            .filter(|text| !text.is_empty())
-            .unwrap_or_else(|| "parameter".to_string())
-    }
-
-    /// Get the name of a property for error messages.
-    pub(crate) fn property_name_for_error(&self, name_idx: NodeIndex) -> Option<String> {
-        self.get_property_name(name_idx).or_else(|| {
-            self.node_text(name_idx)
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
-        })
-    }
-
-    /// Check if an initializer expression directly references a name.
-    /// Used for TS2372: parameter cannot reference itself.
-    pub(crate) fn initializer_references_name(&self, init_idx: NodeIndex, name: &str) -> bool {
-        let Some(node) = self.ctx.arena.get(init_idx) else {
-            return false;
-        };
-
-        // Check if this is a direct identifier reference
-        if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return ident.escaped_text == name;
-        }
-
-        // For more complex cases, we'd need to recursively check
-        // but for the simple case of `function f(x = x)`, this suffices
-        false
-    }
-
-    // Section 41: Function Implementation Checking
-    // --------------------------------------------
-
-    /// Infer the return type of a getter from its body.
-    pub(crate) fn infer_getter_return_type(&mut self, body_idx: NodeIndex) -> TypeId {
-        if body_idx.is_none() {
-            return TypeId::VOID;
-        }
-
-        let Some(body_node) = self.ctx.arena.get(body_idx) else {
-            return TypeId::VOID;
-        };
-
-        // If it's a block, look for return statements
-        if body_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(body_node)
-        {
-            for &stmt_idx in &block.statements.nodes {
-                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
-                    && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
-                    && !ret.expression.is_none()
-                {
-                    return self.get_type_of_node(ret.expression);
-                }
-            }
-        }
-
-        // No return statements with values found - return void (not any)
-        // This prevents false positive TS7010 errors for getters without return statements
-        TypeId::VOID
-    }
-
-    /// Check that all top-level function overload signatures have implementations.
-    /// Reports errors 2389, 2391.
-    pub(crate) fn check_function_implementations(&mut self, statements: &[NodeIndex]) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-
-        let mut i = 0;
-        while i < statements.len() {
-            let stmt_idx = statements[i];
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                i += 1;
-                continue;
-            };
-
-            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                && let Some(func) = self.ctx.arena.get_function(node)
-                && func.body.is_none()
-            {
-                let is_declared = self.has_declare_modifier(&func.modifiers);
-                // Use func.is_async as the parser stores async as a flag, not a modifier
-                let is_async = func.is_async;
-
-                // TS1040: 'async' modifier cannot be used in an ambient context
-                if is_declared && is_async {
-                    self.error_at_node(
-                        stmt_idx,
-                        "'async' modifier cannot be used in an ambient context.",
-                        diagnostic_codes::ASYNC_MODIFIER_IN_AMBIENT_CONTEXT,
-                    );
-                    i += 1;
-                    continue;
-                }
-
-                if is_declared {
-                    i += 1;
-                    continue;
-                }
-                // Function overload signature - check for implementation
-                let func_name = self.get_function_name_from_node(stmt_idx);
-                if let Some(name) = func_name {
-                    let (has_impl, impl_name) = self.find_function_impl(statements, i + 1, &name);
-                    if !has_impl {
-                        self.error_at_node(
-                                    stmt_idx,
-                                    "Function implementation is missing or not immediately following the declaration.",
-                                    diagnostic_codes::FUNCTION_IMPLEMENTATION_MISSING
-                                );
-                    } else if let Some(actual_name) = impl_name
-                        && actual_name != name
-                    {
-                        // Implementation has wrong name
-                        self.error_at_node(
-                            statements[i + 1],
-                            &format!("Function implementation name must be '{}'.", name),
-                            diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
-                        );
-                    }
-                }
-            }
-            i += 1;
-        }
-    }
-
-    // Section 42: Class Member Utilities
-    // ------------------------------------
-
-    /// Check if a class member is static.
-    pub(crate) fn class_member_is_static(&self, member_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return false;
-        };
-
-        match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                .ctx
-                .arena
-                .get_property_decl(node)
-                .map(|prop| self.has_static_modifier(&prop.modifiers))
-                .unwrap_or(false),
-            k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .map(|method| self.has_static_modifier(&method.modifiers))
-                .unwrap_or(false),
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .map(|accessor| self.has_static_modifier(&accessor.modifiers))
-                .unwrap_or(false),
-            _ => false,
-        }
-    }
-
-    /// Get the declaring type for a private member.
-    pub(crate) fn private_member_declaring_type(
-        &mut self,
-        sym_id: crate::binder::SymbolId,
-    ) -> Option<TypeId> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-
-        for &decl_idx in &symbol.declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            if !matches!(
-                node.kind,
-                k if k == syntax_kind_ext::PROPERTY_DECLARATION
-                    || k == syntax_kind_ext::METHOD_DECLARATION
-                    || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR
-            ) {
-                continue;
-            }
-
-            let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
-                continue;
-            };
-            if ext.parent.is_none() {
-                continue;
-            }
-            let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
-                continue;
-            };
-            if parent_node.kind != syntax_kind_ext::CLASS_DECLARATION
-                && parent_node.kind != syntax_kind_ext::CLASS_EXPRESSION
-            {
-                continue;
-            }
-            let Some(class) = self.ctx.arena.get_class(parent_node) else {
-                continue;
-            };
-            let is_static = self.class_member_is_static(decl_idx);
-            return Some(if is_static {
-                self.get_class_constructor_type(ext.parent, class)
-            } else {
-                self.get_class_instance_type(ext.parent, class)
-            });
-        }
-
-        None
-    }
-
-    /// Get the this type for a class member.
-    pub(crate) fn class_member_this_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
-        let class_info = self.ctx.enclosing_class.as_ref()?;
-        let class_idx = class_info.class_idx;
-        let is_static = self.class_member_is_static(member_idx);
-
-        if !is_static {
-            // Use the current class type parameters in scope for instance `this`.
-            if let Some(node) = self.ctx.arena.get(class_idx)
-                && let Some(class) = self.ctx.arena.get_class(node)
-            {
-                return Some(self.get_class_instance_type(class_idx, class));
-            }
-        }
-
-        if let Some(sym_id) = self.ctx.binder.get_node_symbol(class_idx) {
-            if is_static {
-                return Some(self.get_type_of_symbol(sym_id));
-            }
-            return self.class_instance_type_from_symbol(sym_id);
-        }
-
-        let node = self.ctx.arena.get(class_idx)?;
-        let class = self.ctx.arena.get_class(node)?;
-        Some(if is_static {
-            self.get_class_constructor_type(class_idx, class)
-        } else {
-            self.get_class_instance_type(class_idx, class)
-        })
-    }
-
-    // Section 43: Accessor Type Checking
-    // -----------------------------------
-
-    /// Check that accessor pairs (get/set) have compatible types.
-    /// The getter return type must be assignable to the setter parameter type.
-    pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-        use std::collections::HashMap;
-
-        // Collect getter return types and setter parameter types
-        struct AccessorTypeInfo {
-            getter: Option<(NodeIndex, TypeId, NodeIndex, bool, bool)>, // (accessor_idx, return_type, body_or_return_pos, is_abstract, is_declared)
-            setter: Option<(NodeIndex, TypeId, bool, bool)>, // (accessor_idx, param_type, is_abstract, is_declared)
-        }
-
-        let mut accessors: HashMap<String, AccessorTypeInfo> = HashMap::new();
-
-        for &member_idx in members {
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-
-            if node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && let Some(name) = self.get_property_name(accessor.name)
-                {
-                    // Check if this accessor is abstract or declared
-                    let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
-                    let is_declared = self.has_declare_modifier(&accessor.modifiers);
-
-                    // Get the return type - check explicit annotation first
-                    let return_type = if !accessor.type_annotation.is_none() {
-                        self.get_type_of_node(accessor.type_annotation)
-                    } else {
-                        // Infer from return statements in body
-                        self.infer_getter_return_type(accessor.body)
-                    };
-
-                    // Find the position of the return statement for error reporting
-                    let error_pos = self
-                        .find_return_statement_pos(accessor.body)
-                        .unwrap_or(member_idx);
-
-                    let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
-                        getter: None,
-                        setter: None,
-                    });
-                    info.getter =
-                        Some((member_idx, return_type, error_pos, is_abstract, is_declared));
-                }
-            } else if node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(accessor) = self.ctx.arena.get_accessor(node)
-                && let Some(name) = self.get_property_name(accessor.name)
-            {
-                // Check if this accessor is abstract or declared
-                let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
-                let is_declared = self.has_declare_modifier(&accessor.modifiers);
-
-                // Get the parameter type from the setter's first parameter
-                let param_type = if let Some(&first_param_idx) = accessor.parameters.nodes.first() {
-                    if let Some(param_node) = self.ctx.arena.get(first_param_idx) {
-                        if let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                            if !param.type_annotation.is_none() {
-                                self.get_type_of_node(param.type_annotation)
-                            } else {
-                                TypeId::ANY
-                            }
-                        } else {
-                            TypeId::ANY
-                        }
-                    } else {
-                        TypeId::ANY
-                    }
-                } else {
-                    TypeId::ANY
-                };
-
-                let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
-                    getter: None,
-                    setter: None,
-                });
-                info.setter = Some((member_idx, param_type, is_abstract, is_declared));
-            }
-        }
-
-        // Check type compatibility for each accessor pair
-        for (_, info) in accessors {
-            if let (
-                Some((_getter_idx, getter_type, error_pos, getter_abstract, getter_declared)),
-                Some((_setter_idx, setter_type, setter_abstract, setter_declared)),
-            ) = (info.getter, info.setter)
-            {
-                // Skip if either accessor is abstract - abstract accessors don't need type compatibility checks
-                if getter_abstract || setter_abstract {
-                    continue;
-                }
-
-                // Skip if either accessor is declared - declared accessors don't need type compatibility checks
-                if getter_declared || setter_declared {
-                    continue;
-                }
-
-                // Skip if either type is ANY (no meaningful check)
-                if getter_type == TypeId::ANY || setter_type == TypeId::ANY {
-                    continue;
-                }
-
-                // Check if getter return type is assignable to setter param type
-                if !self.is_assignable_to(getter_type, setter_type) {
-                    // Get type strings for error message
-                    let getter_type_str = self.format_type(getter_type);
-                    let setter_type_str = self.format_type(setter_type);
-
-                    self.error_at_node(
-                        error_pos,
-                        &format!(
-                            "Type '{}' is not assignable to type '{}'.",
-                            getter_type_str, setter_type_str
-                        ),
-                        diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
-                    );
-                }
-            }
-        }
-    }
-
-    /// Recursively check for TS7006 in nested function/arrow expressions within a node.
-    /// This handles cases like `async function foo(a = x => x)` where the nested arrow function
-    /// parameter `x` should trigger TS7006 if it lacks a type annotation.
-    pub(crate) fn check_for_nested_function_ts7006(&mut self, node_idx: NodeIndex) {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return;
-        };
-
-        // Check if this is a function or arrow expression
-        let is_function = match node.kind {
-            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => true,
-            k if k == syntax_kind_ext::ARROW_FUNCTION => true,
-            _ => false,
-        };
-
-        if is_function {
-            // Check all parameters of this function for TS7006
-            if let Some(func) = self.ctx.arena.get_function(node) {
-                for &param_idx in &func.parameters.nodes {
-                    if let Some(param_node) = self.ctx.arena.get(param_idx)
-                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                    {
-                        // Nested functions in default values don't have contextual types
-                        self.maybe_report_implicit_any_parameter(param, false);
-                    }
-                }
-            }
-
-            // Recursively check the function body for more nested functions
-            if let Some(func) = self.ctx.arena.get_function(node)
-                && !func.body.is_none()
-            {
-                self.check_for_nested_function_ts7006(func.body);
-            }
-        } else {
-            // Recursively check child nodes for function expressions
-            match node.kind {
-                // Binary expressions - check both sides
-                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                    if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-                        self.check_for_nested_function_ts7006(bin_expr.left);
-                        self.check_for_nested_function_ts7006(bin_expr.right);
-                    }
-                }
-                // Conditional expressions - check condition, then/else branches
-                k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
-                    if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
-                        self.check_for_nested_function_ts7006(cond.condition);
-                        self.check_for_nested_function_ts7006(cond.when_true);
-                        if !cond.when_false.is_none() {
-                            self.check_for_nested_function_ts7006(cond.when_false);
-                        }
-                    }
-                }
-                // Call expressions - check arguments
-                k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                    if let Some(call) = self.ctx.arena.get_call_expr(node) {
-                        self.check_for_nested_function_ts7006(call.expression);
-                        if let Some(args) = &call.arguments {
-                            for &arg in &args.nodes {
-                                self.check_for_nested_function_ts7006(arg);
-                            }
-                        }
-                    }
-                }
-                // Parenthesized expression - check contents
-                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                        self.check_for_nested_function_ts7006(paren.expression);
-                    }
-                }
-                // Type assertion - check expression
-                k if k == syntax_kind_ext::TYPE_ASSERTION => {
-                    if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
-                        self.check_for_nested_function_ts7006(assertion.expression);
-                    }
-                }
-                // Spread element - check expression
-                k if k == syntax_kind_ext::SPREAD_ELEMENT => {
-                    if let Some(spread) = self.ctx.arena.get_spread(node) {
-                        self.check_for_nested_function_ts7006(spread.expression);
-                    }
-                }
-                _ => {
-                    // For other node types, we don't recursively check
-                    // This covers literals, identifiers, array/object literals, etc.
-                }
-            }
-        }
-    }
-
-    // Section 45: Element Access Utilities
-    // -------------------------------------
-
-    /// Get literal key union from a type (string and/or number literals).
-    pub(crate) fn get_literal_key_union_from_type(
-        &self,
-        index_type: TypeId,
-    ) -> Option<(Vec<Atom>, Vec<f64>)> {
-        use crate::solver::{LiteralValue, TypeKey};
-
-        match self.ctx.types.lookup(index_type)? {
-            TypeKey::Literal(LiteralValue::String(atom)) => Some((vec![atom], Vec::new())),
-            TypeKey::Literal(LiteralValue::Number(num)) => Some((Vec::new(), vec![num.0])),
-            TypeKey::Union(members) => {
-                let members = self.ctx.types.type_list(members);
-                let mut string_keys = Vec::with_capacity(members.len());
-                let mut number_keys = Vec::new();
-                for &member in members.iter() {
-                    match self.ctx.types.lookup(member) {
-                        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
-                            string_keys.push(atom)
-                        }
-                        Some(TypeKey::Literal(LiteralValue::Number(num))) => {
-                            number_keys.push(num.0)
-                        }
-                        _ => return None,
-                    }
-                }
-                Some((string_keys, number_keys))
-            }
-            _ => None,
-        }
-    }
-
-    /// Get element access type for literal string keys.
-    pub(crate) fn get_element_access_type_for_literal_keys(
-        &mut self,
-        object_type: TypeId,
-        keys: &[Atom],
-    ) -> Option<TypeId> {
-        use crate::solver::{PropertyAccessResult, QueryDatabase};
-
-        if keys.is_empty() {
-            return None;
-        }
-
-        let numeric_as_index = self.is_array_like_type(object_type);
-        let mut types = Vec::with_capacity(keys.len());
-
-        for &key in keys {
-            let name = self.ctx.types.resolve_atom(key);
-            if numeric_as_index && let Some(index) = self.get_numeric_index_from_string(&name) {
-                let element_type =
-                    self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
-                types.push(element_type);
-                continue;
-            }
-
-            match self.ctx.types.property_access_type(object_type, &name) {
-                PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
-                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                    types.push(property_type.unwrap_or(TypeId::UNKNOWN));
-                }
-                PropertyAccessResult::IsUnknown => return None,
-                PropertyAccessResult::PropertyNotFound { .. } => return None,
-            }
-        }
-
-        if types.len() == 1 {
-            Some(types[0])
-        } else {
-            Some(self.ctx.types.union(types))
-        }
-    }
-
-    /// Get element access type for literal number keys.
-    pub(crate) fn get_element_access_type_for_literal_number_keys(
-        &mut self,
-        object_type: TypeId,
-        keys: &[f64],
-    ) -> Option<TypeId> {
-        if keys.is_empty() {
-            return None;
-        }
-
-        let mut types = Vec::with_capacity(keys.len());
-        for &value in keys {
-            if let Some(index) = self.get_numeric_index_from_number(value) {
-                types.push(self.get_element_access_type(object_type, TypeId::NUMBER, Some(index)));
-            } else {
-                return Some(self.get_element_access_type(object_type, TypeId::NUMBER, None));
-            }
-        }
-
-        if types.len() == 1 {
-            Some(types[0])
-        } else {
-            Some(self.ctx.types.union(types))
-        }
-    }
-
-    // Section 46: Constructor Accessibility Utilities
-    // -----------------------------------------------
-
-    /// Get the access name for a constructor level.
-    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
-        match level {
-            Some(MemberAccessLevel::Private) => "private",
-            Some(MemberAccessLevel::Protected) => "protected",
-            None => "public",
-        }
-    }
-
-    /// Check if there's a constructor accessibility mismatch.
-    pub(crate) fn constructor_accessibility_mismatch(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_level = self.constructor_access_level_for_type(source, env);
-        let target_level = self.constructor_access_level_for_type(target, env);
-
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-
-        let source_rank = Self::constructor_access_rank(source_level);
-        let target_rank = Self::constructor_access_rank(target_level);
-        if source_rank > target_rank {
-            return Some((source_level, target_level));
-        }
-        None
-    }
-
-    /// Check if there's a constructor accessibility mismatch for assignment.
-    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
-        &self,
-        left_idx: NodeIndex,
-        right_idx: NodeIndex,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_sym = self.class_symbol_from_expression(right_idx)?;
-        let target_sym = self.assignment_target_class_symbol(left_idx)?;
-        let source_level = self.class_constructor_access_level(source_sym);
-        let target_level = self.class_constructor_access_level(target_sym);
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
-        {
-            return Some((source_level, target_level));
-        }
-        None
-    }
-
-    // Section 47: Node Checking Utilities
-    // ------------------------------------
-
-    /// Check if an operator token is an assignment operator.
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
-        matches!(
-            operator,
-            k if k == SyntaxKind::EqualsToken as u16
-                || k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-        )
-    }
-
-    // Section 48: Namespace and Alias Utilities
-    // ------------------------------------------
-
-    /// Check if a namespace has a type-only member with the given name.
-    pub(crate) fn namespace_has_type_only_member(
-        &self,
-        object_type: TypeId,
-        property_name: &str,
-    ) -> bool {
-        use crate::solver::{SymbolRef, TypeKey};
-
-        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) else {
-            return false;
-        };
-
-        let symbol = match self.ctx.binder.get_symbol(SymbolId(sym_id)) {
-            Some(symbol) => symbol,
-            None => return false,
-        };
-
-        if symbol.flags & symbol_flags::MODULE == 0 {
-            return false;
-        }
-
-        let exports = match symbol.exports.as_ref() {
-            Some(exports) => exports,
-            None => return false,
-        };
-
-        let member_id = match exports.get(property_name) {
-            Some(member_id) => member_id,
-            None => return false,
-        };
-
-        let member_symbol = match self.ctx.binder.get_symbol(member_id) {
-            Some(member_symbol) => member_symbol,
-            None => return false,
-        };
-
-        let has_value = (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
-        let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
-        has_type && !has_value
-    }
-
-    /// Check if an alias symbol resolves to a type-only import.
-    pub(crate) fn alias_resolves_to_type_only(&self, sym_id: SymbolId) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol,
-            None => return false,
-        };
-
-        if symbol.flags & symbol_flags::ALIAS == 0 {
-            return false;
-        }
-        if symbol.is_type_only {
-            return true;
-        }
-
-        let mut visited = Vec::new();
-        let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
-            Some(target) => target,
-            None => return false,
-        };
-
-        let target_symbol = match self.ctx.binder.get_symbol(target) {
-            Some(target_symbol) => target_symbol,
-            None => return false,
-        };
-
-        let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
-        let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
-        has_type && !has_value
-    }
-
-    // Section 49: Index Signature Utilities
-    // -------------------------------------
-
-    /// Check if we should report a "no index signature" error.
-    ///
-    /// This determines whether element access on an object type should emit
-    /// an error when no matching index signature exists.
-    pub(crate) fn should_report_no_index_signature(
-        &self,
-        object_type: TypeId,
-        index_type: TypeId,
-        literal_index: Option<usize>,
-    ) -> bool {
-        use crate::solver::TypeKey;
-
-        if object_type == TypeId::ANY
-            || object_type == TypeId::UNKNOWN
-            || object_type == TypeId::ERROR
-        {
-            return false;
-        }
-
-        if index_type == TypeId::ANY || index_type == TypeId::UNKNOWN {
-            return false;
-        }
-
-        let index_key_kind = self.get_index_key_kind(index_type);
-        let wants_number = literal_index.is_some()
-            || index_key_kind
-                .as_ref()
-                .is_some_and(|(_, wants_number)| *wants_number);
-        let wants_string = index_key_kind
-            .as_ref()
-            .is_some_and(|(wants_string, _)| *wants_string);
-        if !wants_number && !wants_string {
-            return false;
-        }
-
-        let object_key = match self.ctx.types.lookup(object_type) {
-            Some(TypeKey::ReadonlyType(inner)) => self.ctx.types.lookup(inner),
-            other => other,
-        };
-
-        !self.is_element_indexable_key(&object_key, wants_string, wants_number)
-    }
-
-    /// Get the index key kind (string and/or number) for a type.
-    ///
-    /// Returns Some((wants_string, wants_number)) if the type can be used
-    /// as an index key, or None otherwise.
-    pub(crate) fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
-        use crate::solver::{IntrinsicKind, TypeKey};
-
-        // Use utility methods for literal type checks
-        if self.is_string_literal_type(index_type) {
-            return Some((true, false));
-        }
-        if self.is_number_literal_type(index_type) {
-            return Some((false, true));
-        }
-
-        match self.ctx.types.lookup(index_type)? {
-            TypeKey::Intrinsic(IntrinsicKind::String) => Some((true, false)),
-            TypeKey::Intrinsic(IntrinsicKind::Number) => Some((false, true)),
-            TypeKey::Union(_) => {
-                let members = self.get_union_members(index_type);
-                let mut wants_string = false;
-                let mut wants_number = false;
-                for member in members {
-                    let (member_string, member_number) = self.get_index_key_kind(member)?;
-                    wants_string |= member_string;
-                    wants_number |= member_number;
-                }
-                Some((wants_string, wants_number))
-            }
-            _ => None,
-        }
-    }
-
-    /// Check if a type key is element-indexable with the given constraints.
-    ///
-    /// This checks whether an object type supports element access with
-    /// string and/or number indices.
-    pub(crate) fn is_element_indexable_key(
-        &self,
-        object_key: &Option<crate::solver::TypeKey>,
-        wants_string: bool,
-        wants_number: bool,
-    ) -> bool {
-        use crate::solver::{IntrinsicKind, LiteralValue, TypeKey};
-
-        match object_key {
-            Some(TypeKey::Array(_)) | Some(TypeKey::Tuple(_)) => wants_number,
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(*shape_id);
-                let has_string = shape.string_index.is_some();
-                let has_number = shape.number_index.is_some();
-                (wants_string && has_string) || (wants_number && (has_number || has_string))
-            }
-            Some(TypeKey::Union(members)) => {
-                let members = self.ctx.types.type_list(*members);
-                members.iter().all(|member| {
-                    let key = self.ctx.types.lookup(*member);
-                    self.is_element_indexable_key(&key, wants_string, wants_number)
-                })
-            }
-            Some(TypeKey::Intersection(members)) => {
-                let members = self.ctx.types.type_list(*members);
-                members.iter().any(|member| {
-                    let key = self.ctx.types.lookup(*member);
-                    self.is_element_indexable_key(&key, wants_string, wants_number)
-                })
-            }
-            Some(TypeKey::Literal(LiteralValue::String(_))) => wants_string,
-            Some(TypeKey::Literal(LiteralValue::Number(_))) => wants_number,
-            Some(TypeKey::Intrinsic(IntrinsicKind::String)) => wants_string,
-            Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => wants_number,
-            _ => false,
-        }
-    }
-
-    // Section 50: Symbol Checking Utilities
-    // --------------------------------------
-
-    /// Check if a symbol is type-only (from `import type`).
-    ///
-    /// This is used to allow type-only imports in type positions while
-    /// preventing their use in value positions.
-    pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId) -> bool {
-        match self.ctx.binder.get_symbol(sym_id) {
-            Some(symbol) => symbol.is_type_only,
-            None => false,
-        }
-    }
-
-    // Section 51: Literal Type Utilities
-    // -----------------------------------
-
-    /// Infer a literal type from an initializer expression.
-    ///
-    /// This function attempts to infer the most specific literal type from an
-    /// expression, enabling const declarations to have literal types.
-    ///
-    /// **Literal Type Inference:**
-    /// - **String literals**: `"hello"` → `"hello"` (string literal type)
-    /// - **Numeric literals**: `42` → `42` (numeric literal type)
-    /// - **Boolean literals**: `true` → `true` (boolean literal type)
-    /// - **Null literals**: `null` → `null` (null literal type)
-    /// - **Unary +/-**: `-42` → `-42` (negative numeric literal)
-    ///
-    /// **Usage in Const Declarations:**
-    /// ```typescript
-    /// const x = "hello";  // Type: "hello" (not string)
-    /// let y = "hello";    // Type: string (widened)
-    /// ```
-    ///
-    /// ## Parameters:
-    /// - `idx`: The node index of the initializer expression
-    ///
-    /// ## Returns:
-    /// - `Some(TypeId)` with the literal type if inferrable
-    /// - `None` for non-literal expressions or missing nodes
-    ///
-    /// ## Implementation Notes:
-    /// - Handles string, numeric, boolean, and null literals
-    /// - Supports unary plus/minus on numeric literals
-    /// - Does NOT widen literals (that's handled by the caller)
-    pub(crate) fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
-        use crate::scanner::SyntaxKind;
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
-
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                let lit = self.ctx.arena.get_literal(node)?;
-                Some(self.ctx.types.literal_string(&lit.text))
-            }
-            k if k == SyntaxKind::NumericLiteral as u16 => {
-                let lit = self.ctx.arena.get_literal(node)?;
-                lit.value.map(|value| self.ctx.types.literal_number(value))
-            }
-            k if k == SyntaxKind::TrueKeyword as u16 => Some(self.ctx.types.literal_boolean(true)),
-            k if k == SyntaxKind::FalseKeyword as u16 => {
-                Some(self.ctx.types.literal_boolean(false))
-            }
-            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                let unary = self.ctx.arena.get_unary_expr(node)?;
-                let op = unary.operator;
-                if op != SyntaxKind::MinusToken as u16 && op != SyntaxKind::PlusToken as u16 {
-                    return None;
-                }
-                let operand = unary.operand;
-                let Some(operand_node) = self.ctx.arena.get(operand) else {
-                    return None;
-                };
-                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
-                    return None;
-                }
-                let lit = self.ctx.arena.get_literal(operand_node)?;
-                let value = lit.value?;
-                let value = if op == SyntaxKind::MinusToken as u16 {
-                    -value
-                } else {
-                    value
-                };
-                Some(self.ctx.types.literal_number(value))
-            }
-            _ => None,
-        }
-    }
-
-    /// Apply contextual typing to a literal type.
-    ///
-    /// This function checks whether a literal type should be preserved
-    /// based on the contextual type. If the contextual type allows the
-    /// literal, it's preserved; otherwise, it's widened to the base type.
-    ///
-    /// **Contextual Typing Rules:**
-    /// - If contextual type is `"hello" | "world"`, literal `"hello"` is preserved
-    /// - If contextual type is `string`, literal `"hello"` is widened to `string`
-    /// - If no contextual type, literal is widened based on declaration type
-    ///
-    /// ## Parameters:
-    /// - `literal_type`: The literal type to check
-    ///
-    /// ## Returns:
-    /// - `Some(literal_type)` if the literal is allowed by the contextual type
-    /// - `None` if the literal should be widened
-    pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
-        let ctx_type = self.ctx.contextual_type?;
-        if self.contextual_type_allows_literal(ctx_type, literal_type) {
-            Some(literal_type)
-        } else {
-            None
-        }
-    }
-
-    // Section 52: Node Predicate Utilities
-    // ------------------------------------
-
-    /// Check if a variable declaration is a catch clause variable.
-    ///
-    /// This determines whether a variable declaration is the variable
-    /// declaration of a catch clause, which has special scoping rules.
-    ///
-    /// **Catch Clause Variables:**
-    /// - Catch clause variables are block-scoped (like let/const)
-    /// - They shadow variables in outer scopes with the same name
-    /// - They cannot be accessed before the catch clause
-    ///
-    /// ## Parameters:
-    /// - `var_decl_idx`: The variable declaration node index
-    ///
-    /// ## Returns:
-    /// - `true` if this is a catch clause variable declaration
-    /// - `false` otherwise
-    pub(crate) fn is_catch_clause_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
-        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
-            return false;
-        };
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return false;
-        }
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-        if parent_node.kind != syntax_kind_ext::CATCH_CLAUSE {
-            return false;
-        }
-        let Some(catch) = self.ctx.arena.get_catch_clause(parent_node) else {
-            return false;
-        };
-        catch.variable_declaration == var_decl_idx
-    }
-
-    // Section 53: Heritage Clause Utilities
-    // -------------------------------------
-
-    /// Get the name text from a heritage clause node.
-    ///
-    /// Heritage clauses appear in class declarations with `extends` and `implements` keywords.
-    /// This function extracts the name text from such clauses, handling various formats:
-    ///
-    /// **Supported Formats:**
-    /// - **Simple identifier**: `extends Foo` → `"Foo"`
-    /// - **Qualified name**: `extends ns.Foo` → `"ns.Foo"`
-    /// - **Property access**: `extends Foo.Bar` → `"Foo.Bar"`
-    /// - **Keyword literals**: `extends null`, `extends true`, etc.
-    ///
-    /// ## Parameters:
-    /// - `idx`: The heritage clause node index
-    ///
-    /// ## Returns:
-    /// - `Some(String)` with the full name if successful
-    /// - `None` for unsupported node types or missing nodes
-    ///
-    /// ## Usage:
-    /// ```typescript
-    /// class Foo extends Bar {}  // → "Bar"
-    /// class Baz extends ns.Foo {}  // → "ns.Foo"
-    /// class Qux extends Foo.Bar {}  // → "Foo.Bar"
-    /// ```
-    pub(crate) fn heritage_name_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return self.entity_name_text(idx);
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = self.ctx.arena.get_access_expr(node)?;
-            let left = self.heritage_name_text(access.expression)?;
-            let right = self
-                .ctx
-                .arena
-                .get(access.name_or_argument)
-                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map(|ident| ident.escaped_text.clone())?;
-            let mut combined = String::with_capacity(left.len() + 1 + right.len());
-            combined.push_str(&left);
-            combined.push('.');
-            combined.push_str(&right);
-            return Some(combined);
-        }
-
-        // Handle keyword literals in heritage clauses (e.g., extends null, extends true)
-        match node.kind {
-            k if k == SyntaxKind::NullKeyword as u16 => return Some("null".to_string()),
-            k if k == SyntaxKind::TrueKeyword as u16 => return Some("true".to_string()),
-            k if k == SyntaxKind::FalseKeyword as u16 => return Some("false".to_string()),
-            k if k == SyntaxKind::UndefinedKeyword as u16 => return Some("undefined".to_string()),
-            k if k == SyntaxKind::NumericLiteral as u16 => return Some("0".to_string()),
-            k if k == SyntaxKind::StringLiteral as u16 => return Some("0".to_string()),
-            _ => {}
         }
 
         None
