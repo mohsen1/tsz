@@ -13356,9 +13356,47 @@ impl<'a> CheckerState<'a> {
         depth_exceeded.0
     }
 
-    /// Check if `source` type is a subtype of `target` type, resolving Ref types.
+    /// Check if source type is a subtype of target type with explicit environment.
     ///
-    /// Uses the provided TypeEnvironment to resolve type references.
+    /// This is a variant of `is_subtype_of` that accepts a custom TypeEnvironment.
+    /// Used when checking subtypes in a context where the type environment differs
+    /// from the default context.
+    ///
+    /// ## Custom Environment:
+    /// - Uses the provided TypeEnvironment instead of the context's default
+    /// - Allows subtype checking in different generic instantiation contexts
+    /// - Used by `is_subtype_of` internally with the context's environment
+    ///
+    /// ## Recursion Depth:
+    /// - Tracks depth during subtype checking
+    /// - Emits TS2589 if depth is exceeded
+    /// - Returns false (not a subtype) when depth exceeded
+    ///
+    /// ## Strict Null Checks:
+    /// - Respects the strict_null_checks compiler option
+    /// - Affects whether undefined is a subtype of object types
+    ///
+    /// ## Use Cases:
+    /// - Checking subtypes during generic type expansion
+    /// - Validating constraints in generic instantiations
+    /// - Subtype checks in conditional type resolution
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // The environment provides context for type parameter resolution
+    /// type Check<T> = T extends string ? "yes" : "no";
+    /// // When checking if `number` extends `string`, we use the environment
+    /// // where T is bound to `number`
+    ///
+    /// // Generic constraints
+    /// interface Box<T> {
+    ///   value: T;
+    /// }
+    /// function useBox<T extends Box<string>>(box: T) {
+    ///   // Check if the actual T satisfies the constraint Box<string>
+    ///   // This uses the environment where T is bound to the actual type
+    /// }
+    /// ```
     pub fn is_subtype_of_with_env(
         &mut self,
         source: TypeId,
@@ -13383,9 +13421,50 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Check if two types are identical.
+    /// Check if two types are identical (same TypeId).
     ///
-    /// O(1) operation - just compare TypeId values (structural interning).
+    /// This is an O(1) operation that compares TypeId values directly. Due to
+    /// type interning in the solver, identical type structures produce the
+    /// same TypeId, making this a fast equality check.
+    ///
+    /// ## Type Interning:
+    /// - The solver uses structural interning for types
+    /// - Identical type structures map to the same TypeId
+    /// - This makes equality checking O(1) instead of O(n) structural comparison
+    ///
+    /// ## When to Use:
+    /// - Fast equality check when exact type match is required
+    /// - Performance-critical code paths
+    /// - Checking if a type is a specific intrinsic (ANY, NEVER, etc.)
+    ///
+    /// ## vs Assignability:
+    /// - `are_types_identical`: Exact type match (structural equality)
+    /// - `is_assignable_to`: Allows subtyping, generic instantiation, etc.
+    /// - `are_types_identical(a, b)` implies `is_assignable_to(a, b)` but not vice versa
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Identical types
+    /// type A = string;
+    /// type B = string;
+    /// // are_types_identical(A, B) → true (both intern to STRING)
+    ///
+    /// // Aliased types
+    /// type C = { x: number };
+    /// type D = { x: number };
+    /// // are_types_identical(C, D) → true (same structure)
+    ///
+    /// // Different types (even if assignable)
+    /// type E = string;
+    /// type F = "hello";  // string literal
+    /// // are_types_identical(E, F) → false (different TypeIds)
+    /// // is_assignable_to(E, F) → true ("hello" assignable to string)
+    ///
+    /// // Type parameters
+    /// function foo<T>(value: T) {
+    ///   // are_types_identical(value, T) → true
+    /// }
+    /// ```
     pub fn are_types_identical(&self, type1: TypeId, type2: TypeId) -> bool {
         type1 == type2
     }
