@@ -3070,8 +3070,64 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve a qualified name (A.B) to a type.
-    /// Returns the type of the rightmost member, or reports TS2694 if not found.
+    /// Resolve a qualified name (A.B.C) to its type.
+    ///
+    /// This function handles qualified type names like `Namespace.SubType`, `Module.Interface`,
+    /// or deeply nested names like `A.B.C`. It resolves each segment and looks up the final member.
+    ///
+    /// ## Resolution Strategy:
+    /// 1. **Recursively resolve left side**: For `A.B.C`, first resolve `A.B`
+    /// 2. **Get member type**: Look up rightmost member in left type's exports
+    /// 3. **Handle symbol merging**: Supports merged class+namespace, enum+namespace, etc.
+    ///
+    /// ## Qualified Name Forms:
+    /// - `Module.Type` - Type from module
+    /// - `Namespace.Interface` - Interface from namespace
+    /// - `A.B.C` - Deeply nested qualified name
+    /// - `Class.StaticMember` - Static class member
+    ///
+    /// ## Symbol Resolution:
+    /// - Checks exports of left side's symbol
+    /// - Handles merged symbols (class+namespace, function+namespace)
+    /// - Falls back to property access if not found in exports
+    ///
+    /// ## Error Reporting:
+    /// - TS2694: Namespace has no exported member
+    /// - Returns ERROR type if resolution fails
+    ///
+    /// ## Lib Binders:
+    /// - Collects lib binders for cross-arena symbol lookup
+    /// - Fixes TS2694 false positives for lib.d.ts types
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Module members
+    /// namespace Utils {
+    ///   export interface Helper {}
+    /// }
+    /// let h: Utils.Helper;  // resolve_qualified_name("Utils.Helper")
+    ///
+    /// // Deep nesting
+    /// namespace A {
+    ///   export namespace B {
+    ///     export interface C {}
+    ///   }
+    /// }
+    /// let x: A.B.C;  // resolve_qualified_name("A.B.C")
+    ///
+    /// // Static class members
+    /// class Container {
+    ///   static class Inner {}
+    /// }
+    /// let y: Container.Inner;  // resolve_qualified_name("Container.Inner")
+    ///
+    /// // Merged symbols
+    /// function Model() {}
+    /// namespace Model {
+    ///   export interface Options {}
+    /// }
+    /// let opts: Model.Options;  // resolve_qualified_name("Model.Options")
+    /// ```
     fn resolve_qualified_name(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -13350,7 +13406,57 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Evaluate specific type constructs that are not directly handled in assignability.
+    /// Evaluate complex type constructs for assignability checking.
+    ///
+    /// This function pre-processes types before assignability checking to ensure
+    /// that complex type constructs are properly resolved. This is necessary because
+    /// some types need to be expanded or evaluated before compatibility can be determined.
+    ///
+    /// ## Type Constructs Evaluated:
+    /// - **Application** (`Map<string, number>`): Generic type instantiation
+    /// - **IndexAccess** (`Type["key"]`): Indexed access types
+    /// - **KeyOf** (`keyof Type`): Keyof operator types
+    /// - **Mapped** (`{ [K in Keys]: V }`): Mapped types
+    /// - **Conditional** (`T extends U ? X : Y`): Conditional types
+    ///
+    /// ## Evaluation Strategy:
+    /// - **Application types**: Full symbol resolution with type environment
+    /// - **Index/KeyOf/Mapped/Conditional**: Type environment evaluation
+    /// - **Other types**: No evaluation needed (already in simplest form)
+    ///
+    /// ## Why Evaluation is Needed:
+    /// - Generic types may be unevaluated applications (e.g., `Promise<T>`)
+    /// - Indexed access types need to compute the result type
+    /// - Mapped types need to expand the mapping
+    /// - Conditional types need to check the condition and select branch
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Application types
+    /// type App = Map<string, number>;
+    /// let x: App;
+    /// let y: Map<string, number>;
+    /// // evaluate_type_for_assignability expands App for comparison
+    ///
+    /// // Indexed access types
+    /// type User = { name: string; age: number };
+    /// type UserName = User["name"];  // string
+    /// // Evaluation needed to compute that UserName = string
+    ///
+    /// // Keyof types
+    /// type Keys = keyof { a: string; b: number };  // "a" | "b"
+    /// // Evaluation needed to compute the union of keys
+    ///
+    /// // Mapped types
+    /// type Readonly<T> = { readonly [P in keyof T]: T[P] };
+    /// type RO = Readonly<{ a: string }>;
+    /// // Evaluation needed to expand the mapping
+    ///
+    /// // Conditional types
+    /// type NonNull<T> = T extends null ? never : T;
+    /// type NN = NonNull<string | null>;  // string
+    /// // Evaluation needed to check condition and select branch
+    /// ```
     fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
         use crate::solver::TypeKey;
 
