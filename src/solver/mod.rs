@@ -32,6 +32,7 @@ mod subtype_rules;
 mod types;
 pub mod unsoundness_audit;
 mod utils;
+pub mod visitor;
 
 pub(crate) use apparent::*;
 pub use compat::*;
