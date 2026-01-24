@@ -64,6 +64,8 @@ mod assignability_tests;
 #[cfg(test)]
 mod control_flow_tests;
 #[cfg(test)]
+mod iterability_tests;
+#[cfg(test)]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
 mod symbol_resolver_stability_tests;
