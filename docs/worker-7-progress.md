@@ -43,15 +43,16 @@ This document tracks the progress on fixing TS2304 (Cannot find name) issues - b
 
 ### MISSING TS2304 (False Negatives - Need Addition)
 
-1. **Using Undeclared Variables** (High Priority)
+1. **Block-Scoped Let/Const Before Declaration (TDZ)** ✅ COMPLETED
+   - References to `let`/`const` variables before their declaration should emit TS2304
+   - **Implemented**: `is_node_before_decl` to check node positions
+   - **Implemented**: TDZ check integrated into symbol resolution logic
+   - When a block-scoped variable reference is before its declaration, the symbol is skipped
+
+2. **Using Undeclared Variables** (High Priority)
    - When `noImplicitAny` is enabled, undeclared variables should emit TS2304
    - Currently: `get_type_of_identifier` returns `TypeId::ERROR` and emits TS2304 when symbol not found
    - May need to verify this is working correctly in all cases
-
-2. **Block-Scoped Let/Const Before Declaration (TDZ)** (High Priority)
-   - References to `let`/`const` variables before their declaration should emit TS2304
-   - Stub implementation added in `resolve_identifier_symbol`
-   - Need to implement `is_node_before_decl` to check node positions
 
 3. **Using Private Members Outside Class** (Medium Priority)
    - Private identifier access (e.g., `obj.#priv`) outside class should emit appropriate error
