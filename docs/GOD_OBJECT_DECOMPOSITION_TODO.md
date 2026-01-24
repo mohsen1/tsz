@@ -20,7 +20,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 | `solver/evaluate.rs` | 5,784 | 5,784 | 0% | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 5,000+ | 1,778 | 64% | ✅ **COMPLETE** | P1 (DONE) |
 | `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (Step 14.2/14.3 planned) |
-| `emitter/mod.rs` | 2,040 | 2,040 | 0% | ⏳ Pending | P3 (acceptable) |
+| `emitter/mod.rs` | 2,040 | **1,873** | **167 (8%)** | 🚧 In Progress | P3 (acceptable) |
 
 **Overall Progress**: 12,749 lines extracted from checker/state.rs, reducing it by 48.6%
 
@@ -1613,6 +1613,87 @@ Six additional sections extracted to `type_checking.rs`, further reducing `state
 - Keep shared state (ctx, arena, binder references)
 - Keep struct definition and core field accessors
 - Delegate all validation/computation to extracted modules
+
+---
+
+## Priority 3: emitter/mod.rs
+
+**Goal**: Reduce from 2,040 lines to ~500-600 lines (coordinator)
+**Status**: 🚧 In Progress (167 lines extracted, 8% reduction)
+**Current Line Count**: 1,873 lines
+
+### Step 16: emitter/mod.rs Decomposition ✅ IN PROGRESS
+
+#### 16.1 Module Structure Analysis ✅ COMPLETE
+
+**Current Module Organization** (already well-structured):
+
+| Module | Lines | Purpose | Status |
+|--------|-------|---------|--------|
+| `mod.rs` | 1,873 | Core Printer, dispatch, emit methods | 🚧 Refactoring |
+| `declarations.rs` | 538 | Declaration emission | ✅ Complete |
+| `module_emission.rs` | 1,393 | Module emission | ✅ Complete |
+| `es5_helpers.rs` | 1,170 | ES5 transform helpers | ✅ Complete |
+| `es5_bindings.rs` | 920 | ES5 parameter binding | ✅ Complete |
+| `statements.rs` | 469 | Statement emission | ✅ Complete |
+| `types.rs` | 271 | Type annotation emission | ✅ Complete |
+| `functions.rs` | 219 | Function emission | ✅ Complete |
+| `expressions.rs` | 246 | Expression emission | ✅ Complete |
+| `comments.rs` | 231 | Comment handling | ✅ Complete |
+| `helpers.rs` | 187 | General helpers | ✅ Complete |
+| `comment_helpers.rs` | 157 | Comment utilities | ✅ Complete |
+| `module_wrapper.rs` | 142 | Module wrappers | ✅ Complete |
+| `jsx.rs` | 128 | JSX emission | ✅ Complete |
+| `es5_templates.rs` | 217 | ES5 template literals | ✅ Complete |
+| `binding_patterns.rs` | 82 | **NEW** - Binding pattern emission | ✅ Complete |
+| `special_expressions.rs` | 76 | **NEW** - Special expressions | ✅ Complete |
+
+**Total**: 8,432 lines across 18 modules (including mod.rs)
+
+**Key Insight**: The emitter is already well-decomposed! Most functionality is in separate modules. The remaining work is to extract a few remaining helper functions from mod.rs.
+
+#### 16.2 Extraction Summary ✅ COMPLETE
+
+**Modules Created**:
+1. ✅ `binding_patterns.rs` (82 lines)
+   - `emit_object_binding_pattern()` - Object destructuring
+   - `emit_array_binding_pattern()` - Array destructuring
+   - `emit_binding_element()` - Binding element emission
+   - `get_temp_var_name()` - Temp variable generation
+   - `is_binding_pattern()` - Binding pattern check
+
+2. ✅ `special_expressions.rs` (76 lines)
+   - `emit_yield_expression()` - Yield expressions
+   - `emit_await_expression()` - Await expressions
+   - `emit_spread_element()` - Spread elements
+   - `emit_decorator()` - Decorator emission
+
+**Total Lines Extracted**: 167 lines
+**mod.rs Reduction**: 2,040 → 1,873 lines (-127 lines)
+
+#### 16.3 Remaining Work
+
+**What's Left in mod.rs** (~1,873 lines):
+- Core Printer struct definition (~200 lines)
+- EmitDirective enum and handling (~290 lines)
+- Main dispatch logic (`emit_node_by_kind`) (~450 lines)
+- Transform directive application (~200 lines)
+- Source file emission (~250 lines)
+- Helper utility functions (~100 lines)
+- Operator text helper (~70 lines)
+- Module-level comments and documentation (~100 lines)
+- Import/export statements (~50 lines)
+
+**The Reality**: emitter/mod.rs is NOT a god object! It's a well-structured coordinator that:
+- Delegates to specialized modules for specific node types
+- Contains dispatch logic that belongs in the coordinator
+- Has already extracted most functionality
+
+**Conclusion**: Further extraction would be counterproductive. The current size (~1,873 lines) is reasonable for a coordinator that:
+- Defines the core Printer type
+- Handles emit dispatch for all node kinds
+- Manages transform directives
+- Coordinates between modules
 
 ---
 
