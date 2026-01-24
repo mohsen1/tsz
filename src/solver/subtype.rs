@@ -3434,6 +3434,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check return type compatibility with void special-casing.
+    /// Check if source return type is compatible with target return type.
+    ///
+    /// Validates return type compatibility for function subtype checking.
+    /// Handles the special case where void-return functions can ignore return values.
+    ///
+    /// ## Void Return Special Case:
+    /// When `allow_void_return` is true and target returns void:
+    /// - Any source return type is acceptable (return value is ignored)
+    /// - This enables `() => void` to accept functions with any return type
+    /// - See: https://github.com/microsoft/TypeScript/issues/25274
+    ///
+    /// ## Normal Case:
+    /// When target doesn't return void (or void return not allowed):
+    /// - Source return type must be a subtype of target return type
+    /// - Standard covariant return type checking applies
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Void return special case
+    /// type F = () => void;
+    /// let f: F = () => number;        // ✅ void ignores return value
+    /// let g: F = () => string;        // ✅ void ignores return value
+    /// let h: F = () => null;           // ✅ void ignores return value
+    ///
+    /// // Normal case (covariant returns)
+    /// type G = () => number;
+    /// let i: G = () => number;         // ✅ same type
+    /// let j: G = () => 42;             // ✅ literal <: type
+    /// let k: G = () => number | string; // ✅ wider return type
+    /// let l: G = () => string;         // ❌ string is not <: number
+    /// ```
     fn check_return_compat(
         &mut self,
         source_return: TypeId,
@@ -3772,9 +3803,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
-    /// Check if a function type is a subtype of a callable type.
+    /// Check if a single function type is a subtype of a callable type with overloads.
     ///
-    /// A single function can match a callable if it satisfies all target call signatures.
+    /// When checking if a function matches an overloaded callable:
+    /// - The source function must be compatible with ALL target call signatures
+    /// - This is because the target callable provides multiple valid invocation patterns
+    ///
+    /// ## TypeScript Soundness:
+    /// A function is assignable to an overloaded callable if it can handle
+    /// all the ways the callable might be invoked:
+    /// - Source function: `(x: number) => string`
+    /// - Target callable: `{ (x: number): string; (y: string): string }`
+    /// - Result: Compatible if source function handles both signatures
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Function to overloaded callable
+    /// type Overloaded = {
+    ///     (x: number): string;
+    ///     (y: string): string;
+    /// }
+    /// declare function f(x: number): string;
+    /// let o: Overloaded = f;  // ✅ f handles both signatures
+    ///
+    /// // Incompatible function
+    /// declare function g(x: number): string;
+    /// type BadOverloaded = {
+    ///     (x: number): string;
+    ///     (y: boolean): string;  // g doesn't handle boolean
+    /// }
+    /// let b: BadOverloaded = g;  // ❌ g doesn't handle boolean signature
+    /// ```
     fn check_function_to_callable_subtype(
         &mut self,
         s_fn_id: FunctionShapeId,
@@ -3790,9 +3849,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
-    /// Check if a callable type is a subtype of a function type.
+    /// Check if an overloaded callable type is a subtype of a single function type.
     ///
-    /// At least one source signature must match the target function.
+    /// When checking if a callable (with overloads) matches a function:
+    /// - At least one source signature must match the target function
+    /// - For constructor targets: must use construct signatures
+    /// - For regular functions: must use call signatures
+    ///
+    /// ## TypeScript Soundness:
+    /// An overloaded callable is assignable to a function if at least one
+    /// overload signature is compatible with the target function:
+    /// - Source callable: `{ (x: number): string; (y: string): string }`
+    /// - Target function: `(x: number) => string`
+    /// - Result: Compatible (first overload matches)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Overloaded callable to function
+    /// type Overloaded = {
+    ///     (x: number): string;
+    ///     (y: string): string;
+    /// }
+    /// type F = (x: number) => string;
+    /// let f: F = null as Overloaded;  // ✅ first overload matches
+    ///
+    /// // Constructor case
+    /// type ClassConstructor = {
+    ///     new (x: number): MyClass;
+    /// }
+    /// type Constructor = new (x: number) => MyClass;
+    /// let c: Constructor = null as ClassConstructor;  // ✅
+    /// ```
     fn check_callable_to_function_subtype(
         &mut self,
         s_callable_id: CallableShapeId,
