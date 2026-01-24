@@ -8469,4 +8469,205 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    // ============================================================================
+    // Section 53: Type and Symbol Utilities
+    // ============================================================================
+
+    /// Widen a literal type to its primitive type.
+    ///
+    /// This function converts literal types to their corresponding primitive types,
+    /// which is used for type widening in various contexts:
+    /// - Variable declarations without type annotations
+    /// - Property assignments
+    /// - Return type inference
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Literal types are widened to primitives:
+    /// let x = "hello";  // Type: string (not "hello")
+    /// let y = 42;       // Type: number (not 42)
+    /// let z = true;     // Type: boolean (not true)
+    /// ```
+    pub(crate) fn widen_literal_type(&self, type_id: TypeId) -> TypeId {
+        use crate::solver::{LiteralValue, TypeKey};
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Literal(literal)) => match literal {
+                LiteralValue::String(_) => TypeId::STRING,
+                LiteralValue::Number(_) => TypeId::NUMBER,
+                LiteralValue::BigInt(_) => TypeId::BIGINT,
+                LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+            },
+            _ => type_id,
+        }
+    }
+
+    /// Map an expanded argument index back to the original argument node index.
+    ///
+    /// This handles spread arguments that expand to multiple elements.
+    /// When a spread argument has a tuple type, it expands to multiple positional
+    /// arguments. This function maps from the expanded index back to the original
+    /// argument node for error reporting purposes.
+    ///
+    /// ## Parameters:
+    /// - `args`: Slice of argument node indices
+    /// - `expanded_index`: Index in the expanded argument list
+    ///
+    /// ## Returns:
+    /// - `Some(NodeIndex)`: The original argument node index
+    /// - `None`: If the index doesn't map to a valid argument
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// function foo(a: string, b: number, c: boolean) {}
+    /// const tuple = ["hello", 42, true] as const;
+    /// // Spread expands to 3 arguments: foo(...tuple)
+    /// // expanded_index 0, 1, 2 all map to the spread argument node
+    /// ```
+    pub(crate) fn map_expanded_arg_index_to_original(
+        &self,
+        args: &[NodeIndex],
+        expanded_index: usize,
+    ) -> Option<NodeIndex> {
+        use crate::solver::TypeKey;
+
+        let mut current_expanded_index = 0;
+
+        for &arg_idx in args.iter() {
+            if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
+                // Check if this is a spread element
+                if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
+                {
+                    // Try to get the cached type, fall back to looking up directly
+                    let spread_type = self
+                        .ctx
+                        .node_types
+                        .get(&spread_data.expression.0)
+                        .copied()
+                        .unwrap_or(TypeId::ANY);
+                    let spread_type = self.resolve_type_for_property_access_simple(spread_type);
+
+                    // If it's a tuple type, it expands to multiple elements
+                    if let Some(TypeKey::Tuple(elems_id)) = self.ctx.types.lookup(spread_type) {
+                        let elems = self.ctx.types.tuple_list(elems_id);
+                        let end_index = current_expanded_index + elems.len();
+                        if expanded_index >= current_expanded_index && expanded_index < end_index {
+                            // The error is within this spread - report at the spread node
+                            return Some(arg_idx);
+                        }
+                        current_expanded_index = end_index;
+                        continue;
+                    }
+                }
+            }
+
+            // Non-spread or non-tuple spread: takes one slot
+            if expanded_index == current_expanded_index {
+                return Some(arg_idx);
+            }
+            current_expanded_index += 1;
+        }
+
+        None
+    }
+
+    /// Simple type resolution for property access - doesn't trigger new type computation.
+    ///
+    /// This function resolves type applications to their base type without
+    /// triggering expensive type computation. It's used in contexts where we
+    /// just need the base type for inspection, not full type resolution.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// type Box<T> = { value: T };
+    /// // Box<string> resolves to Box for property access inspection
+    /// ```
+    fn resolve_type_for_property_access_simple(&self, type_id: TypeId) -> TypeId {
+        use crate::solver::TypeKey;
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Application(app_id)) => {
+                let app = self.ctx.types.type_application(app_id);
+                app.base
+            }
+            _ => type_id,
+        }
+    }
+
+    /// Check if a symbol is value-only (has value but not type).
+    ///
+    /// This function distinguishes between symbols that can only be used as values
+    /// vs. symbols that can be used as types. This is important for:
+    /// - Import/export checking
+    /// - Type position validation
+    /// - Value expression validation
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Value-only symbols:
+    /// const x = 42;  // x is value-only
+    ///
+    /// // Not value-only:
+    /// type T = string;  // T is type-only
+    /// interface Box {}  // Box is both type and value
+    /// class Foo {}  // Foo is both type and value
+    /// ```
+    pub(crate) fn symbol_is_value_only(&self, sym_id: SymbolId) -> bool {
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        // If the symbol is type-only (from `import type`), it's not value-only
+        // In type positions, type-only imports should be allowed
+        if symbol.is_type_only {
+            return false;
+        }
+
+        let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+        let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+        has_value && !has_type
+    }
+
+    /// Check if an alias resolves to a value-only symbol.
+    ///
+    /// This function follows alias chains to determine if the ultimate target
+    /// is a value-only symbol. This is used for validating import/export aliases
+    /// and type position checks.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Original declarations
+    /// const x = 42;
+    /// type T = string;
+    ///
+    /// // Aliases
+    /// import { x as xAlias } from "./mod";  // xAlias resolves to value-only
+    /// import { type T as TAlias } from "./mod";  // TAlias is type-only
+    /// ```
+    pub(crate) fn alias_resolves_to_value_only(&self, sym_id: SymbolId) -> bool {
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+
+        // If the alias symbol itself is type-only, it doesn't resolve to value-only
+        if symbol.is_type_only {
+            return false;
+        }
+
+        let mut visited = Vec::new();
+        let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
+            Some(target) => target,
+            None => return false,
+        };
+
+        self.symbol_is_value_only(target)
+    }
 }
