@@ -267,7 +267,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Find the next text span after the given index.
-    pub(crate) fn find_next_text_span(&self, spans: &[TemplateSpan], start_idx: usize) -> Option<usize> {
+    pub(crate) fn find_next_text_span(
+        &self,
+        spans: &[TemplateSpan],
+        start_idx: usize,
+    ) -> Option<usize> {
         for i in start_idx..spans.len() {
             if matches!(spans[i], TemplateSpan::Text(_)) {
                 return Some(i);

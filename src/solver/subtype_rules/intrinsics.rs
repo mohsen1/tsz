@@ -218,7 +218,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// When primitives are used in object-like operations (e.g., `"hello".length`),
     /// TypeScript wraps them in their corresponding wrapper types. This function
     /// returns the object shape that represents those wrapper type members.
-    pub(crate) fn apparent_primitive_shape_for_key(&mut self, key: &TypeKey) -> Option<ObjectShape> {
+    pub(crate) fn apparent_primitive_shape_for_key(
+        &mut self,
+        key: &TypeKey,
+    ) -> Option<ObjectShape> {
         let kind = self.apparent_primitive_kind(key)?;
         Some(self.apparent_primitive_shape(kind))
     }
@@ -315,7 +318,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Get the apparent primitive kind for a type (helper for template literal checking).
     ///
     /// Returns the IntrinsicKind if the type represents a primitive value.
-    pub(crate) fn apparent_primitive_kind_for_type(&self, type_id: TypeId) -> Option<IntrinsicKind> {
+    pub(crate) fn apparent_primitive_kind_for_type(
+        &self,
+        type_id: TypeId,
+    ) -> Option<IntrinsicKind> {
         let key = self.interner.lookup(type_id);
         match key {
             Some(TypeKey::Intrinsic(kind)) => Some(kind),
