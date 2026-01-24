@@ -1427,4 +1427,85 @@ impl<'a> CheckerState<'a> {
             current = parent_idx;
         }
     }
+
+    // =========================================================================
+    // Definite Assignment Checking
+    // =========================================================================
+
+    /// Check if a symbol should be checked for definite assignment.
+    ///
+    /// Definite assignment checking applies to:
+    /// - Block-scoped variables (let/const) without initializers
+    /// - Parameters in certain contexts
+    /// - Not in ambient contexts
+    /// - Not in type-only positions
+    pub(crate) fn should_check_definite_assignment(
+        &mut self,
+        _sym_id: SymbolId,
+        _idx: NodeIndex,
+    ) -> bool {
+        // TODO: Implement proper definite assignment checking
+        // For now, return false to avoid false positives
+        // This should check:
+        // - Is the symbol block-scoped?
+        // - Does it have an initializer?
+        // - Is it in an ambient context?
+        // - Is it a parameter without a default value?
+        false
+    }
+
+    /// Check if a variable is definitely assigned at a given point.
+    ///
+    /// This performs flow-sensitive analysis to determine if a variable
+    /// has been assigned on all code paths leading to the usage point.
+    pub(crate) fn is_definitely_assigned_at(&self, _idx: NodeIndex) -> bool {
+        // TODO: Implement flow-sensitive definite assignment analysis
+        // This should check the flow graph to see if the variable
+        // has been assigned on all paths leading to this point
+        // For now, return true to avoid false positives
+        true
+    }
+
+    // =========================================================================
+    // Temporal Dead Zone (TDZ) Checking
+    // =========================================================================
+
+    /// Check if a variable is used before its declaration in a static block.
+    ///
+    /// Static blocks have special TDZ rules where class members cannot be
+    /// accessed before their declaration within the same static block.
+    pub(crate) fn is_variable_used_before_declaration_in_static_block(
+        &self,
+        _sym_id: SymbolId,
+        _usage_idx: NodeIndex,
+    ) -> bool {
+        // TODO: Implement TDZ checking for static blocks
+        false
+    }
+
+    /// Check if a variable is used before its declaration in a computed property.
+    ///
+    /// Computed property names are evaluated before the property declaration,
+    /// creating a TDZ for the class being declared.
+    pub(crate) fn is_variable_used_before_declaration_in_computed_property(
+        &self,
+        _sym_id: SymbolId,
+        _usage_idx: NodeIndex,
+    ) -> bool {
+        // TODO: Implement TDZ checking for computed properties
+        false
+    }
+
+    /// Check if a variable is used before its declaration in a heritage clause.
+    ///
+    /// Heritage clauses (extends, implements) are evaluated before the class body,
+    /// creating a TDZ for the class being declared.
+    pub(crate) fn is_variable_used_before_declaration_in_heritage_clause(
+        &self,
+        _sym_id: SymbolId,
+        _usage_idx: NodeIndex,
+    ) -> bool {
+        // TODO: Implement TDZ checking for heritage clauses
+        false
+    }
 }
