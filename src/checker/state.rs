@@ -4942,26 +4942,6 @@ impl<'a> CheckerState<'a> {
         (TypeId::ANY, Vec::new())
     }
 
-    pub(crate) fn is_catch_clause_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
-        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
-            return false;
-        };
-        let parent_idx = ext.parent;
-        if parent_idx.is_none() {
-            return false;
-        }
-        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-            return false;
-        };
-        if parent_node.kind != syntax_kind_ext::CATCH_CLAUSE {
-            return false;
-        }
-        let Some(catch) = self.ctx.arena.get_catch_clause(parent_node) else {
-            return false;
-        };
-        catch.variable_declaration == var_decl_idx
-    }
-
     /// Infer a literal type from an initializer expression.
     ///
     /// This function attempts to infer the most specific literal type from an

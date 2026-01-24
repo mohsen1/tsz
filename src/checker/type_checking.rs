@@ -7942,4 +7942,51 @@ impl<'a> CheckerState<'a> {
             None => false,
         }
     }
+
+    // Section 47: Node Predicate Utilities
+    // ------------------------------------
+
+    /// Check if a variable declaration is a catch clause variable.
+    ///
+    /// This function determines if a given variable declaration node is
+    /// the variable declaration of a catch clause (try/catch statement).
+    ///
+    /// ## Catch Clause Variables:
+    /// - Catch clause variables have special scoping rules
+    /// - They are block-scoped to the catch block
+    /// - They shadow variables with the same name in outer scopes
+    /// - They cannot be accessed before declaration (TDZ applies)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// try {
+    ///   throw new Error("error");
+    /// } catch (e) {
+    ///   // e is a catch clause variable
+    ///   console.log(e.message);
+    /// }
+    /// // is_catch_clause_variable_declaration(e_node) → true
+    ///
+    /// const x = 5;
+    /// // is_catch_clause_variable_declaration(x_node) → false
+    /// ```
+    pub(crate) fn is_catch_clause_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::CATCH_CLAUSE {
+            return false;
+        }
+        let Some(catch) = self.ctx.arena.get_catch_clause(parent_node) else {
+            return false;
+        };
+        catch.variable_declaration == var_decl_idx
+    }
 }
