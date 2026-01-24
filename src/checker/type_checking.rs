@@ -7806,4 +7806,111 @@ impl<'a> CheckerState<'a> {
             None => false,
         }
     }
+
+    // Section 51: Literal Type Utilities
+    // -----------------------------------
+
+    /// Infer a literal type from an initializer expression.
+    ///
+    /// This function attempts to infer the most specific literal type from an
+    /// expression, enabling const declarations to have literal types.
+    ///
+    /// **Literal Type Inference:**
+    /// - **String literals**: `"hello"` → `"hello"` (string literal type)
+    /// - **Numeric literals**: `42` → `42` (numeric literal type)
+    /// - **Boolean literals**: `true` → `true` (boolean literal type)
+    /// - **Null literals**: `null` → `null` (null literal type)
+    /// - **Unary +/-**: `-42` → `-42` (negative numeric literal)
+    ///
+    /// **Usage in Const Declarations:**
+    /// ```typescript
+    /// const x = "hello";  // Type: "hello" (not string)
+    /// let y = "hello";    // Type: string (widened)
+    /// ```
+    ///
+    /// ## Parameters:
+    /// - `idx`: The node index of the initializer expression
+    ///
+    /// ## Returns:
+    /// - `Some(TypeId)` with the literal type if inferrable
+    /// - `None` for non-literal expressions or missing nodes
+    ///
+    /// ## Implementation Notes:
+    /// - Handles string, numeric, boolean, and null literals
+    /// - Supports unary plus/minus on numeric literals
+    /// - Does NOT widen literals (that's handled by the caller)
+    pub(crate) fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
+        use crate::scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return None;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(node)?;
+                Some(self.ctx.types.literal_string(&lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.ctx.arena.get_literal(node)?;
+                lit.value.map(|value| self.ctx.types.literal_number(value))
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(self.ctx.types.literal_boolean(true)),
+            k if k == SyntaxKind::FalseKeyword as u16 => {
+                Some(self.ctx.types.literal_boolean(false))
+            }
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.ctx.arena.get_unary_expr(node)?;
+                let op = unary.operator;
+                if op != SyntaxKind::MinusToken as u16 && op != SyntaxKind::PlusToken as u16 {
+                    return None;
+                }
+                let operand = unary.operand;
+                let Some(operand_node) = self.ctx.arena.get(operand) else {
+                    return None;
+                };
+                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return None;
+                }
+                let lit = self.ctx.arena.get_literal(operand_node)?;
+                let value = lit.value?;
+                let value = if op == SyntaxKind::MinusToken as u16 {
+                    -value
+                } else {
+                    value
+                };
+                Some(self.ctx.types.literal_number(value))
+            }
+            _ => None,
+        }
+    }
+
+    /// Apply contextual typing to a literal type.
+    ///
+    /// This function checks whether a literal type should be preserved
+    /// based on the contextual type. If the contextual type allows the
+    /// literal, it's preserved; otherwise, it's widened to the base type.
+    ///
+    /// **Contextual Typing Rules:**
+    /// - If contextual type is `"hello" | "world"`, literal `"hello"` is preserved
+    /// - If contextual type is `string`, literal `"hello"` is widened to `string`
+    /// - If no contextual type, literal is widened based on declaration type
+    ///
+    /// ## Parameters:
+    /// - `literal_type`: The literal type to check
+    ///
+    /// ## Returns:
+    /// - `Some(literal_type)` if the literal is allowed by the contextual type
+    /// - `None` if the literal should be widened
+    pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
+        let ctx_type = self.ctx.contextual_type?;
+        if self.contextual_type_allows_literal(ctx_type, literal_type) {
+            Some(literal_type)
+        } else {
+            None
+        }
+    }
 }
