@@ -3,6 +3,7 @@
 **Date**: 2026-01-24
 **Status**: Active
 **Current Phase**: Phase 2 - Break Up God Objects
+**Last Updated**: 2026-01-24 (Sections 24-26 added to type_checking.rs)
 
 ---
 
@@ -14,7 +15,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 | File | Lines | Status | Priority |
 |------|-------|--------|----------|
-| `checker/state.rs` | ~19,584 | 🚧 In Progress | **P1 (CURRENT)** |
+| `checker/state.rs` | 16,058 | 🚧 In Progress (38.7% reduced) | **P1 (CURRENT)** |
 | `parser/state.rs` | 10,762 | ⏳ Pending | P3 (low priority) |
 | `solver/evaluate.rs` | 5,784 | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 1,778 | ✅ **COMPLETE** | P1 (DONE) |
@@ -278,9 +279,19 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 ## Priority 1: checker/state.rs 🚧 CURRENT FOCUS
 
 **Goal**: Reduce from ~28,000 lines to ~2,000 lines (coordinator)
-**Progress**: ~1,080 lines extracted (promise, iterable, symbol_resolver modules)
-**Current Line Count**: 20,612 lines
+**Progress**: ~10,159 lines extracted (38.7% reduction from original 26,217 lines)
+**Current Line Count**: 16,058 lines
 **Status**: 🚧 In Progress (PRIORITY #1)
+
+### Extracted Modules
+
+| Module | Lines | Purpose | Status |
+|--------|-------|---------|--------|
+| `type_computation.rs` | 2,992 | Type computation logic (get_type_of_*) | ✅ Complete |
+| `type_checking.rs` | 5,636 | Type checking validation (26 sections) | ✅ Complete |
+| `symbol_resolver.rs` | 1,272 | Symbol resolution (resolve_*) | ✅ Complete |
+| `error_reporter.rs` | ~2,000 | Error reporting and diagnostics | ✅ Complete |
+| **Total Extracted** | **11,900** | **Focused, maintainable code** | |
 
 ### Step 7: Extract Type Computation Logic (~3,000-4,000 lines)
 
@@ -418,50 +429,156 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [ ] Run full test suite
 - [ ] Update documentation
 
-### Step 8: Extract Type Checking Logic (~3,000-4,000 lines)
+### Step 8: Extract Type Checking Logic ✅ COMPLETE
 
 **Target**: Create `checker/type_checking.rs`
+**Result**: 5,636 lines with 26 organized sections
 
-#### 8.1 Identify `check_*` Functions
-- [ ] List all `check_*` functions in `checker/state.rs`
-- [ ] Count lines for each function
-- [ ] Identify dependencies between functions
-- [ ] Plan extraction order
+#### 8.1 Section Organization ✅
+**✅ Sections 1-15**: Previous work (before this session)
+**✅ Section 16**: Unreachable Code Detection (8 functions)
+**✅ Section 17**: Property Initialization Checking (5 functions)
+**✅ Section 18**: AST Context Checking (4 functions)
+**✅ Section 19**: Type and Name Checking Utilities (8 functions)
+**✅ Section 20**: Declaration and Node Checking Utilities (6 functions)
+**✅ Section 21**: Property Name Utilities (2 functions)
+**✅ Section 22**: Type Checking Utilities (2 functions)
+**✅ Section 23**: Import and Private Brand Utilities (7 functions, moved to symbol_resolver.rs)
+**✅ Section 24**: Module Detection Utilities (3 functions)
+**✅ Section 25**: AST Traversal Utilities (5 functions + 6 from earlier work)
+**✅ Section 26**: Class and Member Finding Utilities (10 functions)
 
-#### 8.2 Extract Assignment Checking
-- [ ] Extract `check_assignment` (~200-300 lines)
-- [ ] Extract `check_type_assignable_to` (~150-200 lines)
-- [ ] Extract `check_property_assignment` (~100-150 lines)
-- [ ] Run tests after each extraction
-- [ ] Commit after each extraction
+#### 8.2 Key Functions Extracted ✅
+**Assignment and Expression Checking**:
+- check_assignment_statement, check_variable_statement
+- check_binary_operator, check_compound_assignment
+- check_assignment_expression, check_compound_assignment_expression
 
-#### 8.3 Extract Expression Checking
-- [ ] Extract `check_binary_expression` (~200-300 lines)
-- [ ] Extract `check_unary_expression` (~100-150 lines)
-- [ ] Extract `check_conditional_expression` (~150-200 lines)
-- [ ] Run tests after each extraction
-- [ ] Commit after each extraction
+**Statement Validation**:
+- check_statement_for_early_property_access
+- check_expression_for_early_property_access
+- check_if_statement, check_while_statement, check_do_statement
 
-#### 8.4 Extract Declaration Checking
-- [ ] Extract `check_variable_declaration` (~200-300 lines)
-- [ ] Extract `check_function_declaration` (~300-400 lines)
-- [ ] Extract `check_class_declaration` (~400-600 lines)
-- [ ] Extract `check_interface_declaration` (~300-500 lines)
-- [ ] Run tests after each extraction
-- [ ] Commit after each extraction
+**Declaration Checking**:
+- check_class_declaration, check_class_expression
+- check_interface_declaration, check_type_alias_declaration
+- check_enum_declaration, check_namespace_declaration
 
-#### 8.5 Update Module Structure
-- [ ] Ensure `checker/type_checking.rs` has all extracted functions
-- [ ] Add `pub(crate)` visibility as needed
-- [ ] Update imports in `checker/state.rs`
-- [ ] Run full test suite
-- [ ] Update documentation
+**Member Checking**:
+- check_class_member, check_property_declaration
+- check_method_declaration, check_constructor_declaration
+- check_accessor_declaration
+
+**Validation Utilities**:
+- check_parameters, check_call_argument_excess_properties
+- check_accessor_type_compatibility
+- check_type_member_for_missing_names
+- check_property_initialization
+
+**Helper Functions Made pub(crate)**:
+- find_enclosing_function, find_enclosing_non_arrow_function
+- find_enclosing_variable_statement, find_enclosing_variable_declaration
+- find_enclosing_source_file, find_enclosing_static_block
+- find_enclosing_computed_property, find_enclosing_heritage_clause
+- find_class_for_static_block, find_class_for_computed_property
+- find_class_for_heritage_clause, find_constructor_impl
+- find_method_impl, find_return_statement_pos, find_function_impl
+- is_variable_captured_in_closure, is_narrowable_type
+- is_node_within, should_validate_async_function_context
+- is_file_module, has_export_modifier_on_modifiers
+- get_require_module_specifier, is_require_call
+- is_property_access_on_unresolved_import
+- get_private_brand, types_have_same_private_brand
+- get_private_field_name_from_brand, private_brand_mismatch_error
+
+#### 8.3 Module Structure ✅
+- ✅ 26 sections with clear organization
+- ✅ All functions properly documented
+- ✅ Helper methods made pub(crate) where needed
+- ✅ All functions compile successfully
+
+**State.rs reduction**: 26,217 → 16,058 lines (~10,159 lines extracted, 38.7% reduction)
 
 ### Step 9: Extract Symbol Resolution Logic ✅ COMPLETE
 
 **Target**: Expand `checker/symbol_resolver.rs`
-**Result**: symbol_resolver.rs expanded from 747 to 1,272 lines (~525 lines added)
-**Progress**: state.rs reduced from 21,032 to 20,612 lines (~420 lines extracted)
+**Result**: symbol_resolver.rs created with 1,272 lines
+**Progress**: state.rs reduced from 21,032 → 20,612 lines (~420 lines from symbol resolution)
+**Final**: 16,058 lines (includes additional extractions)
+
+#### 9.1 Identify Symbol Resolution Functions ✅
+- [x] List all `resolve_*` functions
+- [x] List all symbol lookup functions
+- [x] Count lines for each function
+- [x] Plan extraction order
+
+#### 9.2 Extract Symbol Lookup ✅
+- [x] Extract `lookup_type_parameter` (~3 lines)
+- [x] Extract `get_type_param_bindings` (~6 lines)
+- [x] Extract `entity_name_text` (~20 lines)
+- [x] Extract `resolve_type_symbol_for_lowering` (~10 lines)
+- [x] Extract `resolve_value_symbol_for_lowering` (~10 lines)
+- [x] Extract `resolve_global_value_symbol` (~3 lines)
+- [x] Run tests after extraction
+- [x] Commit changes
+
+#### 9.3 Extract Import Resolution ✅
+- [x] Extract `get_require_module_specifier` (~27 lines)
+- [x] Extract `resolve_require_call_symbol` (~13 lines)
+- [x] Extract `is_require_call` (~25 lines)
+- [x] Run tests after extraction
+- [x] Commit changes
+
+#### 9.4 Extract Type Resolution ✅
+- [x] Extract `missing_type_query_left` (~21 lines)
+- [x] Extract `report_type_query_missing_member` (~45 lines)
+- [x] Extract `parse_test_option_bool` (~28 lines)
+- [x] Extract `resolve_no_implicit_any_from_source` (~8 lines)
+- [x] Extract `resolve_no_implicit_returns_from_source` (~6 lines)
+- [x] Extract `resolve_use_unknown_in_catch_variables_from_source` (~8 lines)
+- [x] Extract `resolve_duplicate_decl_node` (~20 lines)
+- [x] Run tests after extraction
+- [x] Commit changes
+
+#### 9.5 Extract Class Resolution ✅
+- [x] Extract `resolve_heritage_symbol` (~26 lines)
+- [x] Extract `is_property_access_on_unresolved_import` (~32 lines)
+- [x] Extract `resolve_class_for_access` (~35 lines)
+- [x] Extract `resolve_receiver_class_for_access` (~24 lines)
+- [x] Run tests after extraction
+- [x] Commit changes
+
+#### 9.6 Extract Private Brand Checking ✅
+- [x] Extract `get_private_brand` (~29 lines)
+- [x] Extract `types_have_same_private_brand` (~8 lines)
+- [x] Extract `get_private_field_name_from_brand` (~25 lines)
+- [x] Extract `private_brand_mismatch_error` (~23 lines)
+- [x] Run tests after extraction
+- [x] Commit changes
+
+#### 9.7 Update Module Structure ✅
+- [x] Ensure `checker/symbol_resolver.rs` has all extracted functions
+- [x] Add `pub(crate)` visibility as needed
+- [x] Update imports in `checker/state.rs`
+- [x] Run full test suite (pre-existing failures unrelated to extraction)
+- [x] Update documentation
+
+**symbol_resolver.rs sections**:
+- Symbol Type Resolution
+- Global Symbol Detection
+- Symbol Information Queries
+- Identifier Symbol Resolution
+- Qualified Name Resolution
+- Private Identifier Resolution
+- Type Parameter Resolution
+- Library Type Resolution
+- Type Query Resolution
+- Namespace Member Resolution
+- Global Value Resolution
+- Heritage Symbol Resolution
+- Access Class Resolution
+- Import/Export Checking
+- Private Brand Detection
 
 #### 9.1 Identify Symbol Resolution Functions ✅
 - [x] List all `resolve_*` functions
