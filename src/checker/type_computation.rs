@@ -1443,7 +1443,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing new expression data - propagate error
         };
 
-        // Check if trying to instantiate an abstract class
+        // Check if trying to instantiate an abstract class or type-only symbol
         // The expression is typically an identifier referencing the class
         if let Some(expr_node) = self.ctx.arena.get(new_expr.expression) {
             // If it's a direct identifier (e.g., `new MyClass()`)
@@ -1465,6 +1465,19 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = symbol_opt
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
+                    // Check if it's type-only (interface, type alias without value, or type-only import)
+                    let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+                    let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+                    let is_interface = (symbol.flags & symbol_flags::INTERFACE) != 0;
+                    let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
+
+                    // Emit TS2693 for interfaces and type aliases used as values
+                    // Also check for type-only symbols
+                    if (has_type && !has_value) || is_interface || is_type_alias {
+                        self.error_type_only_value_at(class_name, new_expr.expression);
+                        return TypeId::ERROR;
+                    }
+
                     // Check if it has the ABSTRACT flag
                     if symbol.flags & symbol_flags::ABSTRACT != 0 {
                         self.error_at_node(
@@ -2862,7 +2875,15 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(0);
             let has_type = (flags & crate::binder::symbol_flags::TYPE) != 0;
             let has_value = (flags & crate::binder::symbol_flags::VALUE) != 0;
-            if has_type && !has_value {
+            let is_interface = (flags & crate::binder::symbol_flags::INTERFACE) != 0;
+            let is_type_alias = (flags & crate::binder::symbol_flags::TYPE_ALIAS) != 0;
+
+            // Check for type-only symbols used as values
+            // This includes:
+            // 1. Symbols with TYPE flag but no VALUE flag
+            // 2. Interfaces (TYPE flag, but typically no VALUE unless merged)
+            // 3. Type aliases (TYPE flag, never have VALUE)
+            if (has_type && !has_value) || is_interface || is_type_alias {
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
             }
