@@ -1377,6 +1377,287 @@ impl<'a> CheckerState<'a> {
         ));
     }
 
+    /// Check if definite assignment analysis should be performed for a symbol.
+    ///
+    /// Definite assignment analysis ensures that block-scoped variables (let/const)
+    /// are assigned before use.
+    pub(crate) fn should_check_definite_assignment(
+        &mut self,
+        sym_id: SymbolId,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+        // Only check block-scoped (let/const) variables for definite assignment
+        // Function-scoped (var) variables do not require definite assignment
+        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+            return false;
+        }
+
+        if self.symbol_is_parameter(sym_id) {
+            return false;
+        }
+
+        if self.symbol_has_definite_assignment_assertion(sym_id) {
+            return false;
+        }
+
+        if self.is_for_in_of_assignment_target(idx) {
+            return false;
+        }
+
+        // Skip if the variable declaration has an initializer
+        if self.symbol_has_initializer(sym_id) {
+            return false;
+        }
+
+        // Skip if the variable is in an ambient context (declare var x: T)
+        if self.symbol_is_in_ambient_context(sym_id) {
+            return false;
+        }
+
+        // Skip if the variable is captured in a closure (used in a different function).
+        // TypeScript doesn't check definite assignment for variables captured in non-IIFE closures
+        // because the closure might be called later when the variable is assigned.
+        if self.is_variable_captured_in_closure(sym_id, idx) {
+            return false;
+        }
+
+        // Skip definite assignment check for variables whose types allow uninitialized use:
+        // - Literal types: `let key: "a"` - the type restricts to a single literal
+        // - Union of literals: `let key: "a" | "b"` - all possible values are literals
+        // - Types with undefined: `let obj: Foo | undefined` - undefined is the default
+        if self.symbol_type_allows_uninitialized(sym_id) {
+            return false;
+        }
+
+        true
+    }
+
+    /// Check if a variable symbol is in an ambient context (declared with `declare`).
+    fn symbol_is_in_ambient_context(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Quick check: if lib_contexts is not empty and symbol is not in main binder's arena,
+        // it's likely from lib.d.ts which is all ambient
+        if !self.ctx.lib_contexts.is_empty() {
+            // Check if symbol exists in main binder's symbol arena
+            let is_from_lib = self.ctx.binder.get_symbols().get(sym_id).is_none();
+            if is_from_lib {
+                // Symbol is from lib.d.ts, which is all ambient (declare statements)
+                return true;
+            }
+        }
+
+        for &decl_idx in &symbol.declarations {
+            // Check if the variable statement has a declare modifier
+            if let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx)
+                && let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx)
+                && let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node)
+                && self.has_declare_modifier(&var_stmt.modifiers)
+            {
+                return true;
+            }
+
+            // Also check node flags for AMBIENT
+            if let Some(node) = self.ctx.arena.get(decl_idx)
+                && (node.flags as u32) & crate::parser::node_flags::AMBIENT != 0
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a variable is captured in a closure (used in a different function than its declaration).
+    /// TypeScript does not check definite assignment for variables captured in non-IIFE closures.
+    fn is_variable_captured_in_closure(&self, sym_id: SymbolId, usage_idx: NodeIndex) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Get the enclosing function for the usage
+        let usage_function = self.find_enclosing_function(usage_idx);
+
+        // Get the enclosing function for the variable's declaration
+        for &decl_idx in &symbol.declarations {
+            let decl_function = self.find_enclosing_function(decl_idx);
+
+            // If the usage is in a different function than the declaration,
+            // the variable is captured in a closure
+            if usage_function != decl_function {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a variable symbol can be used without initialization.
+    fn symbol_type_allows_uninitialized(&mut self, sym_id: SymbolId) -> bool {
+        use crate::solver::{SymbolRef, TypeKey};
+
+        let declared_type = self.get_type_of_symbol(sym_id);
+
+        // TypeScript doesn't check definite assignment for `any` typed variables
+        if declared_type == TypeId::ANY {
+            return true;
+        }
+
+        // Check if it's undefined type
+        if declared_type == TypeId::UNDEFINED {
+            return true;
+        }
+
+        let Some(type_key) = self.ctx.types.lookup(declared_type) else {
+            return false;
+        };
+
+        // Handle TypeQuery (typeof x) - resolve the underlying type
+        if let TypeKey::TypeQuery(SymbolRef(ref_sym_id)) = type_key {
+            let resolved = self.get_type_of_symbol(SymbolId(ref_sym_id));
+            // Check if resolved type allows uninitialized use
+            if resolved == TypeId::UNDEFINED || resolved == TypeId::ANY {
+                return true;
+            }
+            // Also check if the resolved type is a union containing undefined
+            if self.union_contains(resolved, TypeId::UNDEFINED) {
+                return true;
+            }
+        }
+
+        // Check if it's a single literal type
+        if matches!(type_key, TypeKey::Literal(_)) {
+            return true;
+        }
+
+        // Check if it's a union
+        if let TypeKey::Union(members) = type_key {
+            let member_ids = self.ctx.types.type_list(members);
+
+            // Union of only literal types - allowed without initialization
+            let all_literals = member_ids.iter().all(|&member_id| {
+                matches!(self.ctx.types.lookup(member_id), Some(TypeKey::Literal(_)))
+            });
+            if all_literals {
+                return true;
+            }
+
+            // If union includes undefined, allowed without initialization
+            if member_ids.contains(&TypeId::UNDEFINED) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a variable symbol's declaration has an initializer.
+    fn symbol_has_initializer(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            let Some(var_decl_idx) = self.find_enclosing_variable_declaration(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_decl_node) else {
+                continue;
+            };
+            // Variable has an initializer - it's definitely assigned at declaration
+            if !var_decl.initializer.is_none() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a variable is definitely assigned at a usage location.
+    pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
+        let flow_node = match self.ctx.binder.get_node_flow(idx) {
+            Some(flow) => flow,
+            None => return false, // No flow info means variable is not definitely assigned
+        };
+        let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
+        analyzer.is_definitely_assigned(idx, flow_node)
+    }
+
+    /// Check if a symbol is a function parameter.
+    fn symbol_is_parameter(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.node_is_or_within_kind(decl_idx, syntax_kind_ext::PARAMETER))
+    }
+
+    /// Check if a symbol has a definite assignment assertion (! modifier).
+    fn symbol_has_definite_assignment_assertion(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            let Some(var_decl_idx) = self.find_enclosing_variable_declaration(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(var_decl_node) else {
+                continue;
+            };
+            if var_decl.exclamation_token {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a node is the same kind as or within a parent of that kind.
+    fn node_is_or_within_kind(&self, idx: NodeIndex, kind: u16) -> bool {
+        let mut current = idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let node = match self.ctx.arena.get(current) {
+                Some(node) => node,
+                None => return false,
+            };
+            if node.kind == kind {
+                return true;
+            }
+            let ext = match self.ctx.arena.get_extended(current) {
+                Some(ext) => ext,
+                None => return false,
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+    }
+
     /// Check if a node is within a parameter's default value initializer.
     /// This is used to detect `await` used in default parameter values (TS2524).
     pub(crate) fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
@@ -1426,5 +1707,251 @@ impl<'a> CheckerState<'a> {
 
             current = parent_idx;
         }
+    }
+
+    // =========================================================================
+    // TDZ (Temporal Dead Zone) Checks
+    // =========================================================================
+
+    /// Check if a variable is used in a static block before its declaration (TDZ check).
+    ///
+    /// In TypeScript, if a variable is declared at module level AFTER a class declaration,
+    /// using that variable inside the class's static block should emit TS2454.
+    pub(crate) fn is_variable_used_before_declaration_in_static_block(
+        &self,
+        sym_id: SymbolId,
+        usage_idx: NodeIndex,
+    ) -> bool {
+        // Check if we're inside a static block
+        let Some(static_block_idx) = self.find_enclosing_static_block(usage_idx) else {
+            return false;
+        };
+
+        // Get the class containing the static block
+        let Some(class_idx) = self.find_class_for_static_block(static_block_idx) else {
+            return false;
+        };
+
+        // Get the class position
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let class_pos = class_node.pos;
+
+        // Get the symbol's declaration
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Check if the symbol is a module-level variable (not a class member)
+        // We're looking for variables declared outside the class
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        // Get the position of the variable's declaration
+        for &decl_idx in &symbol.declarations {
+            // Check if this is a variable declaration
+            let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx) else {
+                continue;
+            };
+            let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx) else {
+                continue;
+            };
+
+            // Variable is declared AFTER the class - this is TDZ error
+            if var_stmt_node.pos > class_pos {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a variable is used in a computed property name before its declaration (TDZ check).
+    pub(crate) fn is_variable_used_before_declaration_in_computed_property(
+        &self,
+        sym_id: SymbolId,
+        usage_idx: NodeIndex,
+    ) -> bool {
+        // Check if we're inside a computed property name
+        let Some(computed_idx) = self.find_enclosing_computed_property(usage_idx) else {
+            return false;
+        };
+
+        // Get the class containing the computed property
+        let Some(class_idx) = self.find_class_for_computed_property(computed_idx) else {
+            return false;
+        };
+
+        // Get the class position
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let class_pos = class_node.pos;
+
+        // Get the symbol's declaration
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Check if the symbol is a module-level variable (not a class member)
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        // Get the position of the variable's declaration
+        for &decl_idx in &symbol.declarations {
+            // Check if this is a variable declaration
+            let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx) else {
+                continue;
+            };
+            let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx) else {
+                continue;
+            };
+
+            // Variable is declared AFTER the class - this is TDZ error
+            if var_stmt_node.pos > class_pos {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a variable is used in an extends clause before its declaration (TDZ check).
+    pub(crate) fn is_variable_used_before_declaration_in_heritage_clause(
+        &self,
+        sym_id: SymbolId,
+        usage_idx: NodeIndex,
+    ) -> bool {
+        // Check if we're inside a heritage clause
+        let Some(heritage_idx) = self.find_enclosing_heritage_clause(usage_idx) else {
+            return false;
+        };
+
+        // Get the class/interface containing the heritage clause
+        let Some(class_idx) = self.find_class_for_heritage_clause(heritage_idx) else {
+            return false;
+        };
+
+        // Get the class position
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let class_pos = class_node.pos;
+
+        // Get the symbol's declaration
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Check if the symbol is a module-level variable
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        // Get the position of the variable's declaration
+        for &decl_idx in &symbol.declarations {
+            let Some(var_stmt_idx) = self.find_enclosing_variable_statement(decl_idx) else {
+                continue;
+            };
+            let Some(var_stmt_node) = self.ctx.arena.get(var_stmt_idx) else {
+                continue;
+            };
+
+            // Variable is declared AFTER the class - this is TDZ error
+            if var_stmt_node.pos > class_pos {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    // =========================================================================
+    // Type Narrowing
+    // =========================================================================
+
+    /// Narrow a union type by a typeof guard.
+    ///
+    /// This handles `typeof x === "string"` style checks, narrowing the type
+    /// to only include members that match the typeof result.
+    pub fn narrow_by_typeof(&self, source: TypeId, typeof_result: &str) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_by_typeof(source, typeof_result)
+    }
+
+    /// Narrow a union type by a typeof guard (negative case).
+    ///
+    /// This handles the negated typeof check (`typeof x !== "string"`), narrowing
+    /// the type to exclude the typeof result.
+    pub fn narrow_by_typeof_negation(&self, source: TypeId, typeof_result: &str) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+
+        // Get the target type for this typeof result
+        let target = match typeof_result {
+            "string" => TypeId::STRING,
+            "number" => TypeId::NUMBER,
+            "boolean" => TypeId::BOOLEAN,
+            "bigint" => TypeId::BIGINT,
+            "symbol" => TypeId::SYMBOL,
+            "undefined" => TypeId::UNDEFINED,
+            "object" => TypeId::OBJECT,
+            "function" => return ctx.narrow_excluding_function(source),
+            _ => return source,
+        };
+
+        ctx.narrow_excluding_type(source, target)
+    }
+
+    /// Narrow a discriminated union by a discriminant property check.
+    ///
+    /// This implements TypeScript's discriminated union narrowing, where a common
+    /// property with literal values is used to distinguish between union variants.
+    pub fn narrow_by_discriminant(
+        &self,
+        union_type: TypeId,
+        property_name: Atom,
+        literal_value: TypeId,
+    ) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_by_discriminant(union_type, property_name, literal_value)
+    }
+
+    /// Narrow a discriminated union by excluding a discriminant value (negative case).
+    pub fn narrow_by_excluding_discriminant(
+        &self,
+        union_type: TypeId,
+        property_name: Atom,
+        excluded_value: TypeId,
+    ) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_by_excluding_discriminant(union_type, property_name, excluded_value)
+    }
+
+    /// Find discriminant properties in a union type.
+    pub fn find_discriminants(&self, union_type: TypeId) -> Vec<crate::solver::DiscriminantInfo> {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.find_discriminants(union_type)
+    }
+
+    /// Narrow a type to include only members assignable to target.
+    pub fn narrow_to_type(&self, source: TypeId, target: TypeId) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_to_type(source, target)
+    }
+
+    /// Narrow a type to exclude members assignable to target.
+    pub fn narrow_excluding_type(&self, source: TypeId, excluded: TypeId) -> TypeId {
+        use crate::solver::NarrowingContext;
+        let ctx = NarrowingContext::new(self.ctx.types);
+        ctx.narrow_excluding_type(source, excluded)
     }
 }
