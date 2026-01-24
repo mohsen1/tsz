@@ -20,6 +20,7 @@ mod contextual;
 mod db;
 mod diagnostics;
 mod evaluate;
+pub mod evaluate_rules;
 mod format;
 mod infer;
 mod instantiate;

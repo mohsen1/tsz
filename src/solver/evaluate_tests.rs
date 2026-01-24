@@ -1,5 +1,5 @@
 use super::*;
-use crate::solver::{TypeSubstitution, instantiate_type};
+use crate::solver::{SubtypeChecker, TypeSubstitution, instantiate_type};
 
 #[test]
 fn test_conditional_true_branch() {
