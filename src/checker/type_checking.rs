@@ -3853,7 +3853,7 @@ impl<'a> CheckerState<'a> {
         if type_args.len() > base_type_params.len() {
             type_args.truncate(base_type_params.len());
         }
-        let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
         // Get the derived class name for the error message
         let derived_class_name = if !class_data.name.is_none() {
@@ -4003,8 +4003,8 @@ impl<'a> CheckerState<'a> {
                 // Resolve TypeQuery types (typeof) before comparison
                 // If member_type is `typeof y` and base_type is `typeof x`,
                 // we need to compare the actual types of y and x
-                let resolved_member_type = self.resolve_type_query_to_structural(member_type);
-                let resolved_base_type = self.resolve_type_query_to_structural(base_type);
+                let resolved_member_type = self.resolve_type_query_type(member_type);
+                let resolved_base_type = self.resolve_type_query_type(base_type);
 
                 // Check type compatibility - derived type must be assignable to base type
                 if !self.is_assignable_to(resolved_member_type, resolved_base_type) {
@@ -4190,7 +4190,7 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+                let substitution = TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
                 for (member_name, member_type) in &derived_members {
                     let mut found = false;
