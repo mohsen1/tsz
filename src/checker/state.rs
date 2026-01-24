@@ -3550,22 +3550,6 @@ impl<'a> CheckerState<'a> {
         (params, this_type)
     }
 
-    pub(crate) fn type_predicate_target(
-        &self,
-        param_name: NodeIndex,
-    ) -> Option<crate::solver::TypePredicateTarget> {
-        use crate::solver::TypePredicateTarget;
-
-        let node = self.ctx.arena.get(param_name)?;
-        if node.kind == SyntaxKind::ThisKeyword as u16 || node.kind == syntax_kind_ext::THIS_TYPE {
-            return Some(TypePredicateTarget::This);
-        }
-
-        self.ctx.arena.get_identifier(node).map(|ident| {
-            TypePredicateTarget::Identifier(self.ctx.types.intern_string(&ident.escaped_text))
-        })
-    }
-
     pub(crate) fn return_type_and_predicate(
         &mut self,
         type_annotation: NodeIndex,
