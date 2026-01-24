@@ -124,7 +124,8 @@ impl KeyofKeySet {
     }
 }
 
-const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
+/// Array methods that return any (used for apparent type computation).
+pub const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
     "concat",
     "filter",
     "flat",
@@ -149,8 +150,10 @@ const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
     "reduce",
     "reduceRight",
 ];
-const ARRAY_METHODS_RETURN_BOOLEAN: &[&str] = &["every", "includes", "some"];
-const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
+/// Array methods that return boolean.
+pub const ARRAY_METHODS_RETURN_BOOLEAN: &[&str] = &["every", "includes", "some"];
+/// Array methods that return number.
+pub const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
     "findIndex",
     "findLastIndex",
     "indexOf",
@@ -158,8 +161,10 @@ const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
     "push",
     "unshift",
 ];
-const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
-const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
+/// Array methods that return void.
+pub const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
+/// Array methods that return string.
+pub const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
 
 fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
