@@ -19,8 +19,8 @@
 //! - Type parameter instantiation for generic bases
 
 use crate::checker::state::CheckerState;
-use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 
@@ -250,7 +250,7 @@ impl<'a> CheckerState<'a> {
         declarations: &[NodeIndex],
         mut derived_type: TypeId,
     ) -> TypeId {
-        use crate::solver::{instantiate_type, TypeSubstitution};
+        use crate::solver::{TypeSubstitution, instantiate_type};
 
         let mut pushed_derived = false;
         let mut derived_param_updates = Vec::new();

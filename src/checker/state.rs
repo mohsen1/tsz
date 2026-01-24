@@ -17929,7 +17929,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if modifiers include the 'readonly' keyword.
-    pub(crate) fn has_readonly_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+    pub(crate) fn has_readonly_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
         use crate::scanner::SyntaxKind;
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -17944,7 +17947,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if modifiers include a parameter property keyword.
-    pub(crate) fn has_parameter_property_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+    pub(crate) fn has_parameter_property_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
         use crate::scanner::SyntaxKind;
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -20839,7 +20845,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a node has the `abstract` modifier.
-    pub(crate) fn has_abstract_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+    pub(crate) fn has_abstract_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
         use crate::scanner::SyntaxKind;
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -20884,7 +20893,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if modifiers include the 'protected' keyword.
-    pub(crate) fn has_protected_modifier(&self, modifiers: &Option<crate::parser::NodeList>) -> bool {
+    pub(crate) fn has_protected_modifier(
+        &self,
+        modifiers: &Option<crate::parser::NodeList>,
+    ) -> bool {
         use crate::scanner::SyntaxKind;
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
