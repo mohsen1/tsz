@@ -6792,7 +6792,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-
     /// Get type of object literal.
     /// Get property name as string from a property name node (identifier, string literal, etc.)
     pub(crate) fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
@@ -10090,7 +10089,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-
     /// Check if a node is a `this` expression.
     pub(crate) fn is_this_expression(&self, idx: NodeIndex) -> bool {
         use crate::scanner::SyntaxKind;
@@ -10262,7 +10260,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-
     /// Validate explicit type arguments against their constraints for call expressions.
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
     pub(crate) fn validate_call_type_arguments(
@@ -10410,7 +10407,6 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
 
     /// Format a type as a human-readable string for error messages and diagnostics.
     ///
@@ -14657,7 +14653,6 @@ impl<'a> CheckerState<'a> {
             _ => false,
         }
     }
-
 
     pub(crate) fn private_member_declaring_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;

@@ -823,7 +823,11 @@ impl<'a> CheckerState<'a> {
 
     /// Find identifiers in scope that are similar to the given name.
     /// Returns a list of suggestions sorted by similarity (empty if none found).
-    pub(crate) fn find_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Option<Vec<String>> {
+    pub(crate) fn find_similar_identifiers(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> Option<Vec<String>> {
         let mut suggestions = Vec::new();
 
         // Collect all visible symbols in the current scope chain

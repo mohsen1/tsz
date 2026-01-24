@@ -12,6 +12,7 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
+use crate::binder::symbol_flags;
 use crate::checker::FlowAnalyzer;
 use crate::checker::state::{
     CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, PropertyKey,
@@ -21,7 +22,6 @@ use crate::parser::node::ImportDeclData;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
-use crate::binder::symbol_flags;
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -5078,7 +5078,10 @@ impl<'a> CheckerState<'a> {
     /// - `node`: The node to check (must be a declaration with modifiers)
     ///
     /// Returns true if the node has an export modifier.
-    pub(crate) fn has_export_modifier_on_modifiers(&self, node: &crate::parser::node::Node) -> bool {
+    pub(crate) fn has_export_modifier_on_modifiers(
+        &self,
+        node: &crate::parser::node::Node,
+    ) -> bool {
         let modifiers = match node.kind {
             syntax_kind_ext::FUNCTION_DECLARATION => self
                 .ctx

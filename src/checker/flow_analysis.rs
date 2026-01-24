@@ -285,9 +285,7 @@ impl<'a> CheckerState<'a> {
                     exits: None,
                 };
             }
-            k if k == syntax_kind_ext::FOR_STATEMENT
-                || k == syntax_kind_ext::WHILE_STATEMENT =>
-            {
+            k if k == syntax_kind_ext::FOR_STATEMENT || k == syntax_kind_ext::WHILE_STATEMENT => {
                 // For for/while loops: body might not execute
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     let mut assigned = assigned_in.clone();
