@@ -38,6 +38,7 @@ pub mod iterable_checker;
 pub mod jsx;
 pub mod literal_type;
 pub mod nullish;
+pub mod object_type;
 pub mod optional_chain;
 pub mod promise_checker;
 pub mod reachability_analyzer;
