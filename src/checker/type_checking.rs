@@ -1312,7 +1312,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none() && element_type != TypeId::ANY {
+        // Note: We check default values even when element_type is ANY to catch type errors
+        // This matches TSC behavior where default values must be valid even in loose contexts
+        if !element_data.initializer.is_none() && !self.type_contains_error(element_type) {
             let default_value_type = self.get_type_of_node(element_data.initializer);
 
             if !self.is_assignable_to(default_value_type, element_type) {

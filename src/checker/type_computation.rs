@@ -30,6 +30,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// Computes the type of `condition ? whenTrue : whenFalse`.
     /// Returns the union of the two branch types if they differ.
+    ///
+    /// When a contextual type is available, each branch is checked against it
+    /// to catch type errors (TS2322).
     pub(crate) fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -39,8 +42,25 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
-        let when_true = self.get_type_of_node(cond.when_true);
-        let when_false = self.get_type_of_node(cond.when_false);
+        // Apply contextual typing to each branch and check assignability
+        let prev_context = self.ctx.contextual_type;
+        let (when_true, when_false) = if let Some(contextual) = prev_context {
+            // Check whenTrue branch against contextual type
+            self.ctx.contextual_type = Some(contextual);
+            let when_true = self.get_type_of_node(cond.when_true);
+
+            // Check whenFalse branch against contextual type
+            self.ctx.contextual_type = Some(contextual);
+            let when_false = self.get_type_of_node(cond.when_false);
+
+            self.ctx.contextual_type = prev_context;
+            (when_true, when_false)
+        } else {
+            // No contextual type - just compute branch types
+            let when_true = self.get_type_of_node(cond.when_true);
+            let when_false = self.get_type_of_node(cond.when_false);
+            (when_true, when_false)
+        };
 
         if when_true == when_false {
             when_true
