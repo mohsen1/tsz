@@ -1,0 +1,304 @@
+//! Binary operation type evaluation.
+//!
+//! This module handles type evaluation for binary operations like:
+//! - Arithmetic: +, -, *, /, %, **
+//! - Comparison: ==, !=, <, >, <=, >=
+//! - Logical: &&, ||, !
+//! - Bitwise: &, |, ^, ~, <<, >>, >>>
+//!
+//! ## Architecture
+//!
+//! The `BinaryOpEvaluator` evaluates the result type of binary operations
+//! and validates that operands are compatible with the operator.
+//!
+//! All functions take `TypeId` as input and return structured results,
+//! making them pure logic that can be unit tested independently.
+
+use crate::solver::{TypeDatabase, TypeKey, IntrinsicKind, LiteralValue, TypeId};
+
+/// Result of a binary operation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BinaryOpResult {
+    /// Operation succeeded, returns the result type
+    Success(TypeId),
+
+    /// Operand type error
+    TypeError {
+        left: TypeId,
+        right: TypeId,
+        op: &'static str,
+    },
+}
+
+/// Primitive type classes for overlap detection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrimitiveClass {
+    String,
+    Number,
+    Boolean,
+    Bigint,
+    Symbol,
+    Null,
+    Undefined,
+}
+
+/// Evaluates binary operations on types.
+pub struct BinaryOpEvaluator<'a> {
+    interner: &'a dyn TypeDatabase,
+}
+
+impl<'a> BinaryOpEvaluator<'a> {
+    /// Create a new binary operation evaluator.
+    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
+        Self { interner }
+    }
+
+    /// Check if a type is valid for arithmetic operations (number, bigint, enum, or any).
+    /// This is used for TS2362/TS2363 error checking.
+    pub fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::ANY {
+            return true;
+        }
+        self.is_number_like(type_id) || self.is_bigint_like(type_id)
+    }
+
+    /// Evaluate a binary operation on two types.
+    pub fn evaluate(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
+        match op {
+            "+" => self.evaluate_plus(left, right),
+            "-" | "*" | "/" | "%" | "**" => self.evaluate_arithmetic(left, right, op),
+            "==" | "!=" | "===" | "!==" => {
+                if self.has_overlap(left, right) {
+                    BinaryOpResult::Success(TypeId::BOOLEAN)
+                } else {
+                    BinaryOpResult::TypeError { left, right, op }
+                }
+            }
+            "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right),
+            "&&" | "||" => self.evaluate_logical(left, right),
+            _ => BinaryOpResult::TypeError { left, right, op },
+        }
+    }
+
+    /// Evaluate the + operator (can be string concatenation or addition).
+    fn evaluate_plus(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
+        // any + anything = any (and vice versa)
+        if left == TypeId::ANY || right == TypeId::ANY {
+            return BinaryOpResult::Success(TypeId::ANY);
+        }
+
+        // string-like + anything = string (and vice versa)
+        if self.is_string_like(left) || self.is_string_like(right) {
+            return BinaryOpResult::Success(TypeId::STRING);
+        }
+
+        // number-like + number-like = number
+        if self.is_number_like(left) && self.is_number_like(right) {
+            return BinaryOpResult::Success(TypeId::NUMBER);
+        }
+
+        // bigint-like + bigint-like = bigint
+        if self.is_bigint_like(left) && self.is_bigint_like(right) {
+            return BinaryOpResult::Success(TypeId::BIGINT);
+        }
+
+        BinaryOpResult::TypeError {
+            left,
+            right,
+            op: "+",
+        }
+    }
+
+    /// Evaluate arithmetic operators (-, *, /, %, **).
+    fn evaluate_arithmetic(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
+        // any allows all operations
+        if left == TypeId::ANY || right == TypeId::ANY {
+            return BinaryOpResult::Success(TypeId::NUMBER);
+        }
+
+        // number-like * number-like = number
+        if self.is_number_like(left) && self.is_number_like(right) {
+            return BinaryOpResult::Success(TypeId::NUMBER);
+        }
+
+        // bigint-like * bigint-like = bigint
+        if self.is_bigint_like(left) && self.is_bigint_like(right) {
+            return BinaryOpResult::Success(TypeId::BIGINT);
+        }
+
+        BinaryOpResult::TypeError { left, right, op }
+    }
+
+    /// Evaluate comparison operators (<, >, <=, >=).
+    fn evaluate_comparison(&self, _left: TypeId, _right: TypeId) -> BinaryOpResult {
+        // Comparison operators always return boolean
+        BinaryOpResult::Success(TypeId::BOOLEAN)
+    }
+
+    /// Evaluate logical operators (&&, ||).
+    fn evaluate_logical(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
+        // For && and ||, TypeScript returns a union of the two types
+        BinaryOpResult::Success(self.interner.union2(left, right))
+    }
+
+    /// Check if a type is number-like (number, number literal, numeric enum, or any).
+    fn is_number_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
+            return true;
+        }
+        if let Some(key) = self.interner.lookup(type_id) {
+            match key {
+                TypeKey::Literal(LiteralValue::Number(_)) => return true,
+                TypeKey::Union(list_id) => {
+                    let members = self.interner.type_list(list_id);
+                    if members.is_empty() {
+                        return false;
+                    }
+                    return members.iter().all(|&m| self.is_number_like(m));
+                }
+                TypeKey::Ref(_) => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Check if a type is string-like (string, string literal, template literal, or any).
+    fn is_string_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::STRING || type_id == TypeId::ANY {
+            return true;
+        }
+        if let Some(key) = self.interner.lookup(type_id) {
+            match key {
+                TypeKey::Literal(LiteralValue::String(_)) => return true,
+                TypeKey::TemplateLiteral(_) => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Check if a type is bigint-like (bigint, bigint literal, bigint enum, or any).
+    fn is_bigint_like(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
+            return true;
+        }
+        if let Some(key) = self.interner.lookup(type_id) {
+            match key {
+                TypeKey::Literal(LiteralValue::BigInt(_)) => return true,
+                TypeKey::Union(list_id) => {
+                    let members = self.interner.type_list(list_id);
+                    if members.is_empty() {
+                        return false;
+                    }
+                    return members.iter().all(|&m| self.is_bigint_like(m));
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Check if two types have any overlap (can be compared).
+    pub fn has_overlap(&self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+        if left == TypeId::ANY
+            || right == TypeId::ANY
+            || left == TypeId::UNKNOWN
+            || right == TypeId::UNKNOWN
+            || left == TypeId::ERROR
+            || right == TypeId::ERROR
+        {
+            return true;
+        }
+        if left == TypeId::NEVER || right == TypeId::NEVER {
+            return false;
+        }
+
+        if let Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) =
+            self.interner.lookup(left)
+        {
+            if let Some(constraint) = info.constraint {
+                return self.has_overlap(constraint, right);
+            }
+            return true;
+        }
+
+        if let Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) =
+            self.interner.lookup(right)
+        {
+            if let Some(constraint) = info.constraint {
+                return self.has_overlap(left, constraint);
+            }
+            return true;
+        }
+
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(left) {
+            let members = self.interner.type_list(members);
+            return members
+                .iter()
+                .any(|member| self.has_overlap(*member, right));
+        }
+        if let Some(TypeKey::Union(members)) = self.interner.lookup(right) {
+            let members = self.interner.type_list(members);
+            return members.iter().any(|member| self.has_overlap(left, *member));
+        }
+
+        if let (Some(TypeKey::Literal(left_lit)), Some(TypeKey::Literal(right_lit))) =
+            (self.interner.lookup(left), self.interner.lookup(right))
+        {
+            return left_lit == right_lit;
+        }
+
+        if self.primitive_classes_disjoint(left, right) {
+            return false;
+        }
+
+        if self.interner.intersection2(left, right) == TypeId::NEVER {
+            return false;
+        }
+
+        true
+    }
+
+    /// Check if two types belong to disjoint primitive classes.
+    fn primitive_classes_disjoint(&self, left: TypeId, right: TypeId) -> bool {
+        match (self.primitive_class(left), self.primitive_class(right)) {
+            (Some(left_class), Some(right_class)) => left_class != right_class,
+            _ => false,
+        }
+    }
+
+    /// Get the primitive class of a type (if applicable).
+    fn primitive_class(&self, type_id: TypeId) -> Option<PrimitiveClass> {
+        let key = self.interner.lookup(type_id)?;
+        match key {
+            TypeKey::Intrinsic(kind) => match kind {
+                IntrinsicKind::String => Some(PrimitiveClass::String),
+                IntrinsicKind::Number => Some(PrimitiveClass::Number),
+                IntrinsicKind::Boolean => Some(PrimitiveClass::Boolean),
+                IntrinsicKind::Bigint => Some(PrimitiveClass::Bigint),
+                IntrinsicKind::Symbol => Some(PrimitiveClass::Symbol),
+                IntrinsicKind::Null => Some(PrimitiveClass::Null),
+                IntrinsicKind::Undefined | IntrinsicKind::Void => Some(PrimitiveClass::Undefined),
+                _ => None,
+            },
+            TypeKey::Literal(literal) => match literal {
+                LiteralValue::String(_) => Some(PrimitiveClass::String),
+                LiteralValue::Number(_) => Some(PrimitiveClass::Number),
+                LiteralValue::Boolean(_) => Some(PrimitiveClass::Boolean),
+                LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
+            },
+            TypeKey::TemplateLiteral(_) => Some(PrimitiveClass::String),
+            TypeKey::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+}

@@ -834,22 +834,60 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 ## Priority 4: solver/operations.rs
 
-**Goal**: Reduce from 3,416 lines to ~1,500 lines  
-**Status**: ⏳ Pending (start after solver/evaluate.rs)
+**Goal**: Reduce from 3,538 lines to ~200 lines (coordinator)
+**Status**: 🚧 In Progress (Step 14 analysis complete)
 
-### Step 14: Plan solver/operations.rs Decomposition
+### Step 14: solver/operations.rs Decomposition
 
-#### 14.1 Analysis
-- [ ] Read through `solver/operations.rs`
-- [ ] Identify major sections
-- [ ] Count lines for each section
-- [ ] Identify extraction candidates
+#### 14.1 Analysis ✅ COMPLETE
 
-#### 14.2 Create Extraction Plan
-- [ ] Document extraction targets
-- [ ] Estimate effort for each extraction
-- [ ] Plan module structure
-- [ ] Update this TODO with detailed steps
+**File**: `src/solver/operations.rs`
+**Current Lines**: 3,538
+**Target Lines**: ~200 (coordinator) + extracted modules
+
+**Major Sections Identified**:
+
+| Section | Lines | Purpose | Dependencies |
+|---------|-------|---------|--------------|
+| **CallEvaluator** | ~1,700 | Function call resolution and generic instantiation | `infer`, `instantiate`, `subtype` |
+| **PropertyAccessEvaluator** | ~1,300 | Property access and index signature handling | `types`, `utils`, `subtype` |
+| **BinaryOpEvaluator** | ~350 | Binary operations (+, -, *, /, etc.) | `types` only |
+| **Utilities** | ~288 | Helper functions and type definitions | Varies |
+
+**Extraction Candidates** (in dependency order):
+1. **BinaryOpEvaluator** → `solver/binary_ops.rs` (~380 lines)
+2. **PropertyAccessEvaluator** → `solver/property_access.rs` (~1,400 lines)
+3. **CallEvaluator** → `solver/call_resolution.rs` (~1,800 lines)
+
+#### 14.2 Extraction Plan ✅ COMPLETE
+
+**Priority Order** (lowest to highest dependency):
+1. Step 14.1: Extract `BinaryOpEvaluator` → `solver/binary_ops.rs`
+2. Step 14.2: Extract `PropertyAccessEvaluator` → `solver/property_access.rs`
+3. Step 14.3: Extract `CallEvaluator` → `solver/call_resolution.rs`
+
+**Final Module Structure**:
+```
+solver/
+├── operations.rs          (~200 lines - coordinator/re-exports)
+├── binary_ops.rs          (~380 lines - NEW)
+├── property_access.rs     (~1,400 lines - NEW)
+└── call_resolution.rs     (~1,800 lines - NEW)
+```
+
+**Estimated Effort**:
+- Step 14.1: 1-2 hours (LOW dependency)
+- Step 14.2: 2-3 hours (MEDIUM dependency)
+- Step 14.3: 3-4 hours (HIGH dependency)
+- **Total**: 7-10 hours
+
+**Success Metrics**:
+| Metric | Current | Target |
+|--------|---------|--------|
+| operations.rs lines | 3,538 | ~200 |
+| Total lines (all modules) | 3,538 | 3,580 (same) |
+| Module count | 1 | 4 |
+| Test pass rate | 100% | 100% |
 
 ---
 
