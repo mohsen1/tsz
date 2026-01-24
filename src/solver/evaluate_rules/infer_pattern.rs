@@ -1184,7 +1184,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return false;
                     }
                     // Use the last call signature (TypeScript's behavior for overloads)
-                    let source_sig = source_shape.call_signatures.last().unwrap();
+                    // Safe to use last() here as we've verified the vector is not empty
+                    let source_sig = match source_shape.call_signatures.last() {
+                        Some(sig) => sig,
+                        None => return false,
+                    };
                     match_params_and_return(
                         source,
                         &source_sig.params,
@@ -1214,7 +1218,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 if source_shape.call_signatures.is_empty() {
                                     return false;
                                 }
-                                let source_sig = source_shape.call_signatures.last().unwrap();
+                                // Safe to use last() here as we've verified the vector is not empty
+                                let source_sig = match source_shape.call_signatures.last() {
+                                    Some(sig) => sig,
+                                    None => return false,
+                                };
                                 if !match_params_and_return(
                                     member,
                                     &source_sig.params,
@@ -1354,7 +1362,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if source_shape.call_signatures.is_empty() {
                         return false;
                     }
-                    let source_sig = source_shape.call_signatures.last().unwrap();
+                    // Safe to use last() here as we've verified the vector is not empty
+                    let source_sig = match source_shape.call_signatures.last() {
+                        Some(sig) => sig,
+                        None => return false,
+                    };
                     match_return(source, source_sig.return_type, bindings)
                 }
                 Some(TypeKey::Union(members)) => {
@@ -1378,7 +1390,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 if source_shape.call_signatures.is_empty() {
                                     return false;
                                 }
-                                let source_sig = source_shape.call_signatures.last().unwrap();
+                                // Safe to use last() here as we've verified the vector is not empty
+                                let source_sig = match source_shape.call_signatures.last() {
+                                    Some(sig) => sig,
+                                    None => return false,
+                                };
                                 if !match_return(
                                     member,
                                     source_sig.return_type,
