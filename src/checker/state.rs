@@ -1282,16 +1282,6 @@ impl<'a> CheckerState<'a> {
             .map(|(instance_type, _)| instance_type)
     }
 
-    /// Check if a type has a prototype property.
-    ///
-    /// Functions with a prototype property can be used as constructors.
-    /// This is used to determine if `new fn()` is valid for function types.
-    pub(crate) fn type_has_prototype_property(&self, _type_id: TypeId) -> bool {
-        // For now, return false - function constructability should be determined
-        // by construct signatures, not prototype property presence
-        false
-    }
-
     /// Apply this substitution to a call return type.
     ///
     /// When a method is called on an object, the return type may reference `this`.
