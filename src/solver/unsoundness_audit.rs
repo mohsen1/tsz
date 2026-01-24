@@ -149,11 +149,11 @@ impl UnsoundnessAudit {
             rule_number: 20,
             name: "The `Object` vs `object` vs `{}` Trifecta",
             phase: ImplementationPhase::Phase1,
-            status: ImplementationStatus::PartiallyImplemented,
+            status: ImplementationStatus::FullyImplemented,
             implementation_files: vec!["src/solver/compat.rs", "src/solver/subtype.rs"],
-            test_coverage: 0.70,
+            test_coverage: 0.85,
             dependencies: vec![12],
-            notes: "Empty object {} handling implemented in compat.rs. Object interface and object keyword partially done. Primitive assignability to Object needs completion.",
+            notes: "FULLY IMPLEMENTED. All three variants: {} accepts everything except null/undefined, lowercase object rejects primitives, global Object interface accepts everything (including primitives). Tests: test_object_trifecta_assignability, test_object_trifecta_subtyping",
         });
 
         rules.insert(6, RuleImplementation {
@@ -171,11 +171,11 @@ impl UnsoundnessAudit {
             rule_number: 11,
             name: "Error Poisoning",
             phase: ImplementationPhase::Phase1,
-            status: ImplementationStatus::PartiallyImplemented,
-            implementation_files: vec!["src/solver/compat.rs", "src/solver/subtype.rs"],
-            test_coverage: 0.60,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/intern.rs", "src/solver/compat.rs", "src/solver/subtype.rs"],
+            test_coverage: 0.90,
             dependencies: vec![],
-            notes: "ERROR types do not silently pass in compat.rs (lines 158-164, 203-210, 254-256). However, Union(Error, T) suppression not fully implemented.",
+            notes: "FULLY IMPLEMENTED. Union(Error, T) suppression in intern.rs (lines 664-666). Error types don't silently pass checks in compat.rs. Prevents cascading errors.",
         });
 
         rules.insert(3, RuleImplementation {
@@ -267,11 +267,11 @@ impl UnsoundnessAudit {
             rule_number: 40,
             name: "Distributivity Disabling (`[T] extends [U]`)",
             phase: ImplementationPhase::Phase3,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/lower.rs", "src/solver/evaluate_rules/conditional.rs"],
+            test_coverage: 0.85,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. Tuple wrapping to disable conditional type distribution not handled.",
+            notes: "FULLY IMPLEMENTED. is_naked_type_param() in lower.rs (lines 1410-1456) returns false for Tuple types, preventing distributivity. Test: test_conditional_tuple_wrapper_no_distribution_assignable()",
         });
 
         rules.insert(30, RuleImplementation {
@@ -300,11 +300,11 @@ impl UnsoundnessAudit {
             rule_number: 41,
             name: "Key Remapping & Filtering (`as never`)",
             phase: ImplementationPhase::Phase3,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/evaluate_rules/mapped.rs"],
+            test_coverage: 0.85,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. Mapped types with `as never` should remove properties from result.",
+            notes: "FULLY IMPLEMENTED. remap_key_type() in mapped.rs (lines 65-78) returns Ok(None) when key evaluates to Never, which causes property to be skipped (line 151). This implements Omit utility type.",
         });
 
         // =========================================================================
