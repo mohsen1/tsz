@@ -190,6 +190,20 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a type has a prototype property (stub implementation).
+    pub(crate) fn type_has_prototype_property(&self, _type_id: crate::solver::TypeId) -> bool {
+        false
+    }
+
+    /// Apply this substitution to call return type (stub implementation).
+    pub(crate) fn apply_this_substitution_to_call_return(
+        &mut self,
+        return_type: crate::solver::TypeId,
+        _call_expression: crate::parser::NodeIndex,
+    ) -> crate::solver::TypeId {
+        return_type
+    }
+
     /// Create a new CheckerState with explicit compiler options.
     ///
     /// # Arguments
