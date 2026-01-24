@@ -1143,6 +1143,7 @@ impl<'a> CheckerState<'a> {
         let right_str = formatter.format(right_type);
 
         // Check if this is an arithmetic operator (-, *, /, %)
+        // Note: + is handled separately - it can be string concatenation or arithmetic
         let is_arithmetic = matches!(op, "-" | "*" | "/" | "%");
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
@@ -1150,6 +1151,95 @@ impl<'a> CheckerState<'a> {
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
         let left_is_valid_arithmetic = evaluator.is_arithmetic_operand(left_type);
         let right_is_valid_arithmetic = evaluator.is_arithmetic_operand(right_type);
+
+        // For + operator, check if we should emit TS2362/TS2363 or TS2365
+        // TS2362/TS2363 are emitted when the operation cannot be string concatenation
+        // (i.e., when one operand is clearly not compatible with the other)
+        if op == "+" {
+            // Check if + could be string concatenation
+            let left_could_be_string = left_type == TypeId::STRING
+                || left_type == TypeId::ANY
+                || self.type_has_string_union_member(left_type);
+            let right_could_be_string = right_type == TypeId::STRING
+                || right_type == TypeId::ANY
+                || self.type_has_string_union_member(right_type);
+
+            // If neither operand can be a string, this must be arithmetic - emit TS2362/TS2363
+            let is_arithmetic_context = !left_could_be_string && !right_could_be_string;
+
+            if is_arithmetic_context {
+                // Treat as arithmetic operation
+                let mut emitted_specific_error = false;
+                if !left_is_valid_arithmetic {
+                    if let Some(loc) = self.get_source_location(left_idx) {
+                        let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                        emitted_specific_error = true;
+                    }
+                }
+                if !right_is_valid_arithmetic {
+                    if let Some(loc) = self.get_source_location(right_idx) {
+                        let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                        emitted_specific_error = true;
+                    }
+                }
+                // If both operands are valid arithmetic types but the operation still failed
+                // (e.g., mixing number and bigint), emit TS2365
+                if !emitted_specific_error {
+                    if let Some(loc) = self.get_source_location(node_idx) {
+                        let message = format!(
+                            "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                            op, left_str, right_str
+                        );
+                        self.ctx.diagnostics.push(Diagnostic {
+                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                            category: DiagnosticCategory::Error,
+                            message_text: message,
+                            file: self.ctx.file_name.clone(),
+                            start: loc.start,
+                            length: loc.length(),
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+                return;
+            }
+
+            // For string concatenation context or ambiguous, emit TS2365
+            if let Some(loc) = self.get_source_location(node_idx) {
+                let message = format!(
+                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                    op, left_str, right_str
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+            }
+            return;
+        }
 
         if is_arithmetic {
             // For arithmetic operators, emit specific left/right errors (TS2362, TS2363)
@@ -1202,23 +1292,6 @@ impl<'a> CheckerState<'a> {
                         related_information: Vec::new(),
                     });
                 }
-            }
-        } else if op == "+" {
-            // For + operator, emit TS2365
-            if let Some(loc) = self.get_source_location(node_idx) {
-                let message = format!(
-                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                    op, left_str, right_str
-                );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
             }
         }
     }
@@ -1461,6 +1534,32 @@ impl<'a> CheckerState<'a> {
         for diag in collector.to_checker_diagnostics() {
             self.ctx.diagnostics.push(diag);
         }
+    }
+
+    /// Check if a type has string as a union member (directly or nested).
+    /// Used to determine if + operator could be string concatenation.
+    fn type_has_string_union_member(&self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        if type_id == TypeId::STRING {
+            return true;
+        }
+
+        // Check if this is a union type containing string
+        if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(type_id) {
+            let member_list = self.ctx.types.union_list(members);
+            for &member in member_list.iter() {
+                if member == TypeId::STRING {
+                    return true;
+                }
+                // Recursively check nested unions
+                if self.type_has_string_union_member(member) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
