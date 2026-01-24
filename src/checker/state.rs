@@ -9739,6 +9739,182 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::CLASS_DECLARATION => {
                 self.check_class_declaration(stmt_idx);
             }
+            // Function expression and arrow function - check return types
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    let (_type_params, type_param_updates) =
+                        self.push_type_parameters(&func.type_parameters);
+
+                    // Check for parameter properties (error 2369)
+                    self.check_parameter_properties(&func.parameters.nodes);
+
+                    // Check for duplicate parameter names (TS2300)
+                    self.check_duplicate_parameters(&func.parameters);
+
+                    // Check for required parameters following optional parameters (TS1016)
+                    self.check_parameter_ordering(&func.parameters);
+
+                    // Check return type annotation for parameter properties
+                    if !func.type_annotation.is_none() {
+                        self.check_type_for_parameter_properties(func.type_annotation);
+                    }
+
+                    for &param_idx in &func.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        self.maybe_report_implicit_any_parameter(param, false);
+                    }
+
+                    // Check function body if present
+                    let has_type_annotation = !func.type_annotation.is_none();
+                    if !func.body.is_none() {
+                        let mut return_type = if has_type_annotation {
+                            self.get_type_of_node(func.type_annotation)
+                        } else {
+                            TypeId::UNKNOWN
+                        };
+
+                        // Cache parameter types
+                        self.cache_parameter_types(&func.parameters.nodes, None);
+                        self.infer_parameter_types_from_context(&func.parameters.nodes);
+
+                        // Check parameter default values
+                        self.check_parameter_initializers(&func.parameters.nodes);
+
+                        if !has_type_annotation {
+                            return_type = self.infer_return_type_from_body(func.body, None);
+                        }
+
+                        // Report implicit any return
+                        let func_name = self.get_function_name_from_node(stmt_idx);
+                        let name_node = if !func.name.is_none() {
+                            Some(func.name)
+                        } else {
+                            None
+                        };
+                        self.maybe_report_implicit_any_return(
+                            func_name,
+                            name_node,
+                            return_type,
+                            has_type_annotation,
+                            false,
+                            stmt_idx,
+                        );
+
+                        // TS2705: Async function must return Promise
+                        if func.is_async && !func.asterisk_token && has_type_annotation {
+                            let should_emit_ts2705 = !self.is_promise_type(return_type)
+                                && return_type != TypeId::ERROR
+                                && !self.return_type_annotation_looks_like_promise(
+                                    func.type_annotation,
+                                );
+
+                            if should_emit_ts2705 {
+                                use crate::checker::types::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages,
+                                };
+                                self.error_at_node(
+                                    func.type_annotation,
+                                    diagnostic_messages::ASYNC_FUNCTION_RETURNS_PROMISE,
+                                    diagnostic_codes::ASYNC_FUNCTION_RETURNS_PROMISE,
+                                );
+                            }
+                        }
+
+                        // Enter async context for await expression checking
+                        if func.is_async {
+                            self.ctx.enter_async_context();
+                        }
+
+                        // KEY FIX: Push return type before checking body
+                        self.push_return_type(return_type);
+                        self.check_statement(func.body);
+
+                        // Check for error 2355: function with return type must return a value
+                        let is_async = func.is_async;
+                        let is_generator = func.asterisk_token;
+                        let check_return_type = self.return_type_for_implicit_return_check(
+                            return_type,
+                            is_async,
+                            is_generator,
+                        );
+                        let requires_return = self.requires_return_value(check_return_type);
+                        let has_return = self.body_has_return_with_value(func.body);
+                        let falls_through = self.function_body_falls_through(func.body);
+
+                        if has_type_annotation && requires_return && falls_through && !is_async {
+                            if !has_return {
+                                use crate::checker::types::diagnostics::diagnostic_codes;
+                                self.error_at_node(
+                                    func.type_annotation,
+                                    "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                                    diagnostic_codes::FUNCTION_LACKS_RETURN_TYPE,
+                                );
+                            } else {
+                                use crate::checker::types::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages,
+                                };
+                                self.error_at_node(
+                                    func.type_annotation,
+                                    diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT,
+                                    diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_VALUE,
+                                );
+                            }
+                        } else if self.ctx.no_implicit_returns() && has_return && falls_through {
+                            use crate::checker::types::diagnostics::{
+                                diagnostic_codes, diagnostic_messages,
+                            };
+                            let error_node = if !func.name.is_none() {
+                                func.name
+                            } else {
+                                func.body
+                            };
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN,
+                                diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN,
+                            );
+                        }
+
+                        self.pop_return_type();
+
+                        // Exit async context
+                        if func.is_async {
+                            self.ctx.exit_async_context();
+                        }
+                    } else if self.ctx.no_implicit_any() && !has_type_annotation {
+                        let is_ambient = self.has_declare_modifier(&func.modifiers)
+                            || self.ctx.file_name.ends_with(".d.ts");
+                        if is_ambient
+                            && let Some(func_name) = self.get_function_name_from_node(stmt_idx)
+                        {
+                            use crate::checker::types::diagnostics::{
+                                diagnostic_codes, diagnostic_messages, format_message,
+                            };
+                            let message = format_message(
+                                diagnostic_messages::IMPLICIT_ANY_RETURN,
+                                &[&func_name, "any"],
+                            );
+                            let name_node = if !func.name.is_none() {
+                                Some(func.name)
+                            } else {
+                                None
+                            };
+                            self.error_at_node(
+                                name_node.unwrap_or(stmt_idx),
+                                &message,
+                                diagnostic_codes::IMPLICIT_ANY_RETURN,
+                            );
+                        }
+                    }
+
+                    self.pop_type_parameters(type_param_updates);
+                }
+            }
             _ => {
                 // Catch-all for other statement types
                 self.get_type_of_node(stmt_idx);
