@@ -11561,7 +11561,9 @@ impl<'a> CheckerState<'a> {
             Some(TypeKey::ReadonlyType(inner)) => self.is_array_like_type(inner),
             Some(TypeKey::Union(_)) => {
                 let members = self.get_union_members(object_type);
-                members.iter().all(|&member| self.is_array_like_type(member))
+                members
+                    .iter()
+                    .all(|&member| self.is_array_like_type(member))
             }
             Some(TypeKey::Intersection(members)) => {
                 let members = self.ctx.types.type_list(members);

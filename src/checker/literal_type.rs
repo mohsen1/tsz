@@ -149,10 +149,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if they're the same kind of literal
-        match (
-            self.ctx.types.lookup(type1),
-            self.ctx.types.lookup(type2),
-        ) {
+        match (self.ctx.types.lookup(type1), self.ctx.types.lookup(type2)) {
             (
                 Some(TypeKey::Literal(LiteralValue::String(a1))),
                 Some(TypeKey::Literal(LiteralValue::String(a2))),
