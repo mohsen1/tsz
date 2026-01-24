@@ -12,10 +12,10 @@
 //! - `bind_infer`: Bind a type to an infer parameter
 
 use crate::interner::Atom;
+use crate::solver::TypeDatabase;
 use crate::solver::subtype::{SubtypeChecker, TypeResolver};
 use crate::solver::types::*;
 use crate::solver::utils;
-use crate::solver::TypeDatabase;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::evaluate::TypeEvaluator;
@@ -688,7 +688,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return false;
                 }
                 let source_type = if source_elem.optional {
-                    self.interner().union2(source_elem.type_id, TypeId::UNDEFINED)
+                    self.interner()
+                        .union2(source_elem.type_id, TypeId::UNDEFINED)
                 } else {
                     source_elem.type_id
                 };
@@ -738,7 +739,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return false;
             }
             let source_type = if source_elem.optional {
-                self.interner().union2(source_elem.type_id, TypeId::UNDEFINED)
+                self.interner()
+                    .union2(source_elem.type_id, TypeId::UNDEFINED)
             } else {
                 source_elem.type_id
             };
@@ -887,12 +889,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         match pattern_key {
             TypeKey::Infer(info) => self.bind_infer(&info, source, bindings, checker),
-            TypeKey::Function(pattern_fn_id) => {
-                self.match_infer_function_pattern(source, pattern_fn_id, pattern, bindings, visited, checker)
-            }
-            TypeKey::Callable(pattern_shape_id) => {
-                self.match_infer_callable_pattern(source, pattern_shape_id, pattern, bindings, visited, checker)
-            }
+            TypeKey::Function(pattern_fn_id) => self.match_infer_function_pattern(
+                source,
+                pattern_fn_id,
+                pattern,
+                bindings,
+                visited,
+                checker,
+            ),
+            TypeKey::Callable(pattern_shape_id) => self.match_infer_callable_pattern(
+                source,
+                pattern_shape_id,
+                pattern,
+                bindings,
+                visited,
+                checker,
+            ),
             TypeKey::Array(pattern_elem) => match self.interner().lookup(source) {
                 Some(TypeKey::Array(source_elem)) => {
                     self.match_infer_pattern(source_elem, pattern_elem, bindings, visited, checker)
@@ -901,7 +913,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
-                        let Some(TypeKey::Array(source_elem)) = self.interner().lookup(member) else {
+                        let Some(TypeKey::Array(source_elem)) = self.interner().lookup(member)
+                        else {
                             return false;
                         };
                         let mut member_bindings = FxHashMap::default();
@@ -983,12 +996,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 };
                 self.match_infer_pattern(source_inner, pattern_inner, bindings, visited, checker)
             }
-            TypeKey::Object(pattern_shape_id) => {
-                self.match_infer_object_pattern(source, pattern_shape_id, pattern, bindings, visited, checker)
-            }
-            TypeKey::ObjectWithIndex(pattern_shape_id) => {
-                self.match_infer_object_with_index_pattern(source, pattern_shape_id, pattern, bindings, visited, checker)
-            }
+            TypeKey::Object(pattern_shape_id) => self.match_infer_object_pattern(
+                source,
+                pattern_shape_id,
+                pattern,
+                bindings,
+                visited,
+                checker,
+            ),
+            TypeKey::ObjectWithIndex(pattern_shape_id) => self
+                .match_infer_object_with_index_pattern(
+                    source,
+                    pattern_shape_id,
+                    pattern,
+                    bindings,
+                    visited,
+                    checker,
+                ),
             TypeKey::Application(pattern_app_id) => match self.interner().lookup(source) {
                 Some(TypeKey::Application(source_app_id)) => {
                     let source_app = self.interner().type_application(source_app_id);
@@ -1081,8 +1105,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if pattern_fn.this_type.is_none() && has_param_infer && has_return_infer {
             // Check if pattern has a single rest parameter (e.g., (...args: any[]) => infer R)
             // This should match any function signature and only extract the return type
-            let has_single_rest_param =
-                pattern_fn.params.len() == 1 && pattern_fn.params[0].rest;
+            let has_single_rest_param = pattern_fn.params.len() == 1 && pattern_fn.params[0].rest;
 
             let mut match_params_and_return = |source_type: TypeId,
                                                source_params: &[ParamInfo],
@@ -1187,13 +1210,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 }
                             }
                             Some(TypeKey::Callable(source_shape_id)) => {
-                                let source_shape =
-                                    self.interner().callable_shape(source_shape_id);
+                                let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.is_empty() {
                                     return false;
                                 }
-                                let source_sig =
-                                    source_shape.call_signatures.last().unwrap();
+                                let source_sig = source_shape.call_signatures.last().unwrap();
                                 if !match_params_and_return(
                                     member,
                                     &source_sig.params,
@@ -1224,7 +1245,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if pattern_fn.this_type.is_none() && has_param_infer && !has_return_infer {
             // Handle constructor function patterns differently
             if pattern_fn.is_constructor {
-                return self.match_infer_constructor_pattern(source, &pattern_fn, bindings, checker);
+                return self.match_infer_constructor_pattern(
+                    source,
+                    &pattern_fn,
+                    bindings,
+                    checker,
+                );
             }
 
             // Regular function parameter inference
@@ -1275,17 +1301,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
-                        let Some(TypeKey::Function(source_fn_id)) =
-                            self.interner().lookup(member)
+                        let Some(TypeKey::Function(source_fn_id)) = self.interner().lookup(member)
                         else {
                             return false;
                         };
                         let mut member_bindings = FxHashMap::default();
-                        if !match_function_params(
-                            member,
-                            source_fn_id,
-                            &mut member_bindings,
-                        ) {
+                        if !match_function_params(member, source_fn_id, &mut member_bindings) {
                             return false;
                         }
                         for (name, ty) in member_bindings {
@@ -1353,13 +1374,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 }
                             }
                             Some(TypeKey::Callable(source_shape_id)) => {
-                                let source_shape =
-                                    self.interner().callable_shape(source_shape_id);
+                                let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.is_empty() {
                                     return false;
                                 }
-                                let source_sig =
-                                    source_shape.call_signatures.last().unwrap();
+                                let source_sig = source_shape.call_signatures.last().unwrap();
                                 if !match_return(
                                     member,
                                     source_sig.return_type,
@@ -1427,8 +1446,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let members = self.interner().type_list(members);
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
-                    let Some(TypeKey::Function(source_fn_id)) =
-                        self.interner().lookup(member)
+                    let Some(TypeKey::Function(source_fn_id)) = self.interner().lookup(member)
                     else {
                         return false;
                     };
@@ -1468,37 +1486,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if has_single_rest_infer {
             let infer_ty = pattern_fn.params[0].type_id;
-            let mut match_construct_params_tuple =
-                |source_params: &[ParamInfo],
-                 bindings: &mut FxHashMap<Atom, TypeId>|
-                 -> bool {
-                    // Build a tuple type from all source parameters
-                    let tuple_elems: Vec<TupleElement> = source_params
-                        .iter()
-                        .map(|p| TupleElement {
-                            type_id: p.type_id,
-                            name: p.name,
-                            optional: p.optional,
-                            rest: false,
-                        })
-                        .collect();
-                    let tuple_ty = self.interner().tuple(tuple_elems);
+            let mut match_construct_params_tuple = |source_params: &[ParamInfo],
+                                                    bindings: &mut FxHashMap<Atom, TypeId>|
+             -> bool {
+                // Build a tuple type from all source parameters
+                let tuple_elems: Vec<TupleElement> = source_params
+                    .iter()
+                    .map(|p| TupleElement {
+                        type_id: p.type_id,
+                        name: p.name,
+                        optional: p.optional,
+                        rest: false,
+                    })
+                    .collect();
+                let tuple_ty = self.interner().tuple(tuple_elems);
 
-                    // Match the tuple against the infer type
-                    let mut local_visited = FxHashSet::default();
-                    self.match_infer_pattern(
-                        tuple_ty,
-                        infer_ty,
-                        bindings,
-                        &mut local_visited,
-                        checker,
-                    )
-                };
+                // Match the tuple against the infer type
+                let mut local_visited = FxHashSet::default();
+                self.match_infer_pattern(tuple_ty, infer_ty, bindings, &mut local_visited, checker)
+            };
 
             return match self.interner().lookup(source) {
                 Some(TypeKey::Callable(source_shape_id)) => {
-                    let source_shape =
-                        self.interner().callable_shape(source_shape_id);
+                    let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.construct_signatures.is_empty() {
                         return false;
                     }
@@ -1512,13 +1522,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
                             Some(TypeKey::Callable(source_shape_id)) => {
-                                let source_shape =
-                                    self.interner().callable_shape(source_shape_id);
+                                let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.construct_signatures.is_empty() {
                                     return false;
                                 }
-                                let source_sig =
-                                    &source_shape.construct_signatures[0];
+                                let source_sig = &source_shape.construct_signatures[0];
                                 if !match_construct_params_tuple(
                                     &source_sig.params,
                                     &mut member_bindings,
@@ -1546,9 +1554,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // General case: match parameters individually
         let mut match_construct_params =
-            |source_params: &[ParamInfo],
-             bindings: &mut FxHashMap<Atom, TypeId>|
-             -> bool {
+            |source_params: &[ParamInfo], bindings: &mut FxHashMap<Atom, TypeId>| -> bool {
                 let mut local_visited = FxHashSet::default();
                 self.match_signature_params(
                     source_params,
@@ -1575,16 +1581,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut member_bindings = FxHashMap::default();
                     match self.interner().lookup(member) {
                         Some(TypeKey::Callable(source_shape_id)) => {
-                            let source_shape =
-                                self.interner().callable_shape(source_shape_id);
+                            let source_shape = self.interner().callable_shape(source_shape_id);
                             if source_shape.construct_signatures.is_empty() {
                                 return false;
                             }
                             let source_sig = &source_shape.construct_signatures[0];
-                            if !match_construct_params(
-                                &source_sig.params,
-                                &mut member_bindings,
-                            ) {
+                            if !match_construct_params(&source_sig.params, &mut member_bindings) {
                                 return false;
                             }
                         }
@@ -1691,8 +1693,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
                             Some(TypeKey::Callable(source_shape_id)) => {
-                                let source_shape =
-                                    self.interner().callable_shape(source_shape_id);
+                                let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.len() != 1
                                     || !source_shape.construct_signatures.is_empty()
                                     || !source_shape.properties.is_empty()
@@ -1738,21 +1739,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
         if pattern_sig.this_type.is_none() && has_param_infer && !has_return_infer {
-            let mut match_params = |source_params: &[ParamInfo],
-                                    bindings: &mut FxHashMap<Atom, TypeId>|
-             -> bool {
-                let mut local_visited = FxHashSet::default();
-                // Match params and infer types. Skip subtype check since pattern matching
-                // success implies compatibility. The subtype check can fail for optional
-                // params due to contravariance issues with undefined.
-                self.match_signature_params(
-                    source_params,
-                    &pattern_sig.params,
-                    bindings,
-                    &mut local_visited,
-                    checker,
-                )
-            };
+            let mut match_params =
+                |source_params: &[ParamInfo], bindings: &mut FxHashMap<Atom, TypeId>| -> bool {
+                    let mut local_visited = FxHashSet::default();
+                    // Match params and infer types. Skip subtype check since pattern matching
+                    // success implies compatibility. The subtype check can fail for optional
+                    // params due to contravariance issues with undefined.
+                    self.match_signature_params(
+                        source_params,
+                        &pattern_sig.params,
+                        bindings,
+                        &mut local_visited,
+                        checker,
+                    )
+                };
 
             return match self.interner().lookup(source) {
                 Some(TypeKey::Callable(source_shape_id)) => {
@@ -1777,8 +1777,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
                             Some(TypeKey::Callable(source_shape_id)) => {
-                                let source_shape =
-                                    self.interner().callable_shape(source_shape_id);
+                                let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.len() != 1
                                     || !source_shape.construct_signatures.is_empty()
                                     || !source_shape.properties.is_empty()
@@ -1856,8 +1855,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
                             Some(TypeKey::Callable(source_shape_id)) => {
-                                let source_shape =
-                                    self.interner().callable_shape(source_shape_id);
+                                let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.len() != 1
                                     || !source_shape.construct_signatures.is_empty()
                                     || !source_shape.properties.is_empty()

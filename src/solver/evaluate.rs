@@ -11,10 +11,10 @@
 //! - Handles deferred evaluation when type parameters are unknown
 //! - Supports distributivity for naked type parameters in unions
 
+use crate::solver::TypeDatabase;
 use crate::solver::instantiate::instantiate_generic;
 use crate::solver::subtype::{NoopResolver, TypeResolver};
 use crate::solver::types::*;
-use crate::solver::TypeDatabase;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 

@@ -3,14 +3,14 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
+use crate::solver::ApparentMemberKind;
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
 use crate::solver::utils;
-use crate::solver::ApparentMemberKind;
 
 use super::super::evaluate::{
-    TypeEvaluator, ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN,
-    ARRAY_METHODS_RETURN_NUMBER, ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID,
+    ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
+    ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
 
 fn is_member(name: &str, list: &[&str]) -> bool {
@@ -130,9 +130,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate property access on an object type
-    pub(crate) fn evaluate_object_index(&self, props: &[PropertyInfo], index_type: TypeId) -> TypeId {
+    pub(crate) fn evaluate_object_index(
+        &self,
+        props: &[PropertyInfo],
+        index_type: TypeId,
+    ) -> TypeId {
         // If index is a literal string, look up the property directly
-        if let Some(TypeKey::Literal(LiteralValue::String(name))) = self.interner().lookup(index_type)
+        if let Some(TypeKey::Literal(LiteralValue::String(name))) =
+            self.interner().lookup(index_type)
         {
             for prop in props {
                 if prop.name == name {
@@ -169,7 +174,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate property access on an object type with index signatures.
-    pub(crate) fn evaluate_object_with_index(&self, shape: &ObjectShape, index_type: TypeId) -> TypeId {
+    pub(crate) fn evaluate_object_with_index(
+        &self,
+        shape: &ObjectShape,
+        index_type: TypeId,
+    ) -> TypeId {
         // If index is a union, evaluate each member
         if let Some(TypeKey::Union(members)) = self.interner().lookup(index_type) {
             let members = self.interner().type_list(members);
@@ -187,7 +196,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // If index is a literal string, look up the property first, then fallback to string index.
-        if let Some(TypeKey::Literal(LiteralValue::String(name))) = self.interner().lookup(index_type)
+        if let Some(TypeKey::Literal(LiteralValue::String(name))) =
+            self.interner().lookup(index_type)
         {
             for prop in &shape.properties {
                 if prop.name == name {
@@ -206,7 +216,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // If index is a literal number, prefer number index, then string index.
-        if let Some(TypeKey::Literal(LiteralValue::Number(_))) = self.interner().lookup(index_type) {
+        if let Some(TypeKey::Literal(LiteralValue::Number(_))) = self.interner().lookup(index_type)
+        {
             if let Some(number_index) = shape.number_index.as_ref() {
                 return self.add_undefined_if_unchecked(number_index.value_type);
             }
@@ -323,7 +334,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate index access on a tuple type
-    pub(crate) fn evaluate_tuple_index(&self, elements: &[TupleElement], index_type: TypeId) -> TypeId {
+    pub(crate) fn evaluate_tuple_index(
+        &self,
+        elements: &[TupleElement],
+        index_type: TypeId,
+    ) -> TypeId {
         if let Some(TypeKey::Union(members)) = self.interner().lookup(index_type) {
             let members = self.interner().type_list(members);
             let mut results = Vec::new();
@@ -340,7 +355,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // If index is a literal number, return the specific element
-        if let Some(TypeKey::Literal(LiteralValue::Number(n))) = self.interner().lookup(index_type) {
+        if let Some(TypeKey::Literal(LiteralValue::Number(n))) = self.interner().lookup(index_type)
+        {
             let value = n.0;
             if !value.is_finite() || value.fract() != 0.0 || value < 0.0 {
                 return TypeId::UNDEFINED;
@@ -364,7 +380,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(union);
         }
 
-        if let Some(TypeKey::Literal(LiteralValue::String(name))) = self.interner().lookup(index_type)
+        if let Some(TypeKey::Literal(LiteralValue::String(name))) =
+            self.interner().lookup(index_type)
         {
             if utils::is_numeric_property_name(self.interner(), name) {
                 let name_str = self.interner().resolve_atom_ref(name);
@@ -443,7 +460,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(union);
         }
 
-        if let Some(TypeKey::Literal(LiteralValue::String(name))) = self.interner().lookup(index_type)
+        if let Some(TypeKey::Literal(LiteralValue::String(name))) =
+            self.interner().lookup(index_type)
         {
             if utils::is_numeric_property_name(self.interner(), name) {
                 return self.add_undefined_if_unchecked(elem);

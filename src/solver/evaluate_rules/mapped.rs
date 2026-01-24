@@ -267,7 +267,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // If constraint is a literal, return it
-        if let Some(TypeKey::Literal(LiteralValue::String(_))) = self.interner().lookup(constraint) {
+        if let Some(TypeKey::Literal(LiteralValue::String(_))) = self.interner().lookup(constraint)
+        {
             return constraint;
         }
 
