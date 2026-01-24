@@ -20,6 +20,9 @@ use std::cell::RefCell;
 #[cfg(test)]
 use crate::solver::TypeInterner;
 
+/// Maximum number of type lowering operations to prevent infinite loops
+const MAX_LOWERING_OPERATIONS: u32 = 100_000;
+
 /// Type lowering context.
 /// Converts AST type nodes into interned TypeIds.
 pub struct TypeLowering<'a> {
@@ -31,6 +34,10 @@ pub struct TypeLowering<'a> {
     /// Optional value resolver for typeof queries.
     value_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
     type_param_scopes: RefCell<Vec<Vec<(Atom, TypeId)>>>,
+    /// Operation counter to prevent infinite loops
+    operations: RefCell<u32>,
+    /// Whether the operation limit has been exceeded
+    limit_exceeded: RefCell<bool>,
 }
 
 struct InterfaceParts {
@@ -183,6 +190,8 @@ impl<'a> TypeLowering<'a> {
             type_resolver: None,
             value_resolver: None,
             type_param_scopes: RefCell::new(Vec::new()),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
         }
     }
 
@@ -199,6 +208,8 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(resolver),
             value_resolver: Some(resolver),
             type_param_scopes: RefCell::new(Vec::new()),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
         }
     }
 
@@ -215,7 +226,30 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(type_resolver),
             value_resolver: Some(value_resolver),
             type_param_scopes: RefCell::new(Vec::new()),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
         }
+    }
+
+    /// Check if the operation limit has been exceeded
+    fn check_limit(&self) -> bool {
+        if *self.limit_exceeded.borrow() {
+            return true;
+        }
+        let mut ops = self.operations.borrow_mut();
+        *ops += 1;
+        if *ops > MAX_LOWERING_OPERATIONS {
+            *self.limit_exceeded.borrow_mut() = true;
+            return true;
+        }
+        false
+    }
+
+    /// Reset the operation counter (for testing purposes)
+    #[cfg(test)]
+    fn reset_operations(&self) {
+        *self.operations.borrow_mut() = 0;
+        *self.limit_exceeded.borrow_mut() = false;
     }
 
     pub fn seed_type_params(&self, params: &[(Atom, TypeId)]) {
@@ -294,6 +328,11 @@ impl<'a> TypeLowering<'a> {
     /// Lower a type node to a TypeId.
     /// This is the main entry point for type synthesis.
     pub fn lower_type(&self, node_idx: NodeIndex) -> TypeId {
+        // Check operation limit to prevent infinite loops
+        if self.check_limit() {
+            return TypeId::ERROR;
+        }
+
         if node_idx == NodeIndex::NONE {
             // Return ERROR for missing type annotations to prevent "Any poisoning".
             // This forces explicit type annotations and surfaces bugs early instead
