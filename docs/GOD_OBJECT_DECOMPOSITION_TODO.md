@@ -303,7 +303,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [ ] `get_type_of_element_access` (~200 lines)
 - [ ] `get_type_of_assignment_target` (~80 lines)
 
-**Progress**: state.rs 26,217 → 25,885 lines (**-332 lines, 7 functions extracted**)
+**Progress**: state.rs 26,217 → 25,731 lines (**-486 lines, 10 functions extracted**)
 - `get_type_of_conditional_expression` (~18 lines) → type_computation.rs ✅
 - `get_type_of_array_literal` (~131 lines) → type_computation.rs ✅
 - `get_type_of_prefix_unary` (~37 lines) → type_computation.rs ✅
@@ -311,6 +311,9 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - `get_type_of_variable_declaration` (~29 lines) → type_computation.rs ✅
 - `get_type_of_assignment_target` (~19 lines) → type_computation.rs ✅
 - `get_type_of_property_access_by_name` (~53 lines) → type_computation.rs ✅
+- `get_type_of_class_member` (~37 lines) → type_computation.rs ✅
+- `get_type_of_interface_member_simple` (~41 lines) → type_computation.rs ✅
+- `get_type_of_interface_member` (~65 lines) → type_computation.rs ✅
 
 **Helper methods made pub(crate)**:
 - `literal_type_from_initializer`
