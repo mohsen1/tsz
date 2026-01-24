@@ -17,6 +17,7 @@ use crate::checker::FlowAnalyzer;
 use crate::checker::state::{
     CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, PropertyKey,
 };
+use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::node::ImportDeclData;
 use crate::parser::syntax_kind_ext;
@@ -7527,5 +7528,59 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(self.ctx.types.union(types))
         }
+    }
+
+    // Section 46: Constructor Accessibility Utilities
+    // ----------------------------------------------
+
+    /// Get the access name for a constructor level.
+    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
+        match level {
+            Some(MemberAccessLevel::Private) => "private",
+            Some(MemberAccessLevel::Protected) => "protected",
+            None => "public",
+        }
+    }
+
+    /// Check if there's a constructor accessibility mismatch.
+    pub(crate) fn constructor_accessibility_mismatch(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_level = self.constructor_access_level_for_type(source, env);
+        let target_level = self.constructor_access_level_for_type(target, env);
+
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+
+        let source_rank = Self::constructor_access_rank(source_level);
+        let target_rank = Self::constructor_access_rank(target_level);
+        if source_rank > target_rank {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    /// Check if there's a constructor accessibility mismatch for assignment.
+    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
+        &self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_sym = self.class_symbol_from_expression(right_idx)?;
+        let target_sym = self.assignment_target_class_symbol(left_idx)?;
+        let source_level = self.class_constructor_access_level(source_sym);
+        let target_level = self.class_constructor_access_level(target_sym);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
+        {
+            return Some((source_level, target_level));
+        }
+        None
     }
 }
