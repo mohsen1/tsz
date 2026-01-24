@@ -1092,6 +1092,335 @@ impl<'a> CheckerState<'a> {
         if ty == TypeId::ERROR { fallback } else { ty }
     }
 
+    /// Get the type of an object literal expression.
+    ///
+    /// Computes the type of object literals like `{ x: 1, y: 2 }` or `{ foo, bar }`.
+    /// Handles:
+    /// - Property assignments: `{ x: value }`
+    /// - Shorthand properties: `{ x }`
+    /// - Method shorthands: `{ foo() {} }`
+    /// - Getters/setters: `{ get foo() {}, set foo(v) {} }`
+    /// - Spread properties: `{ ...obj }`
+    /// - Duplicate property detection
+    /// - Contextual type inference
+    /// - Implicit any reporting (TS7008)
+    pub(crate) fn get_type_of_object_literal(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+        use crate::interner::Atom;
+        use crate::solver::{PropertyInfo, QueryDatabase};
+        use rustc_hash::FxHashMap;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        let Some(obj) = self.ctx.arena.get_literal_expr(node) else {
+            return TypeId::ERROR; // Missing object literal data - propagate error
+        };
+
+        // Collect properties from the object literal (later entries override earlier ones)
+        let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Property assignment: { x: value }
+            if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                if let Some(name) = self.get_property_name(prop.name) {
+                    // Set contextual type for property value
+                    let prev_context = self.ctx.contextual_type;
+                    if let Some(ctx_type) = prev_context {
+                        self.ctx.contextual_type =
+                            self.ctx.types.contextual_property_type(ctx_type, &name);
+                    }
+
+                    let value_type = self.get_type_of_node(prop.initializer);
+
+                    // TS7008: Member implicitly has an 'any' type
+                    // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
+                    // and the property value type is 'any'
+                    if self.ctx.no_implicit_any()
+                        && prev_context.is_some()
+                        && value_type == TypeId::ANY
+                    {
+                        let message = format_message(
+                            diagnostic_messages::MEMBER_IMPLICIT_ANY,
+                            &[&name, "any"],
+                        );
+                        self.error_at_node(
+                            prop.name,
+                            &message,
+                            diagnostic_codes::IMPLICIT_ANY_MEMBER,
+                        );
+                    }
+
+                    // Restore context
+                    self.ctx.contextual_type = prev_context;
+
+                    let name_atom = self.ctx.types.intern_string(&name);
+
+                    // Check for duplicate property
+                    if properties.contains_key(&name_atom) {
+                        let message = format_message(
+                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            prop.name,
+                            &message,
+                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                        );
+                    }
+
+                    properties.insert(
+                        name_atom,
+                        PropertyInfo {
+                            name: name_atom,
+                            type_id: value_type,
+                            write_type: value_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                        },
+                    );
+                }
+            }
+            // Shorthand property: { x } - identifier is both name and value
+            else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                if let Some(ident) = self.ctx.arena.get_identifier(elem_node) {
+                    let name = ident.escaped_text.clone();
+
+                    // Set contextual type for shorthand property value
+                    let prev_context = self.ctx.contextual_type;
+                    if let Some(ctx_type) = prev_context {
+                        self.ctx.contextual_type =
+                            self.ctx.types.contextual_property_type(ctx_type, &name);
+                    }
+
+                    let value_type = self.get_type_of_node(elem_idx);
+
+                    // Restore context
+                    self.ctx.contextual_type = prev_context;
+
+                    // TS7008: Member implicitly has an 'any' type
+                    // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
+                    // and the shorthand property value type is 'any'
+                    if self.ctx.no_implicit_any()
+                        && prev_context.is_some()
+                        && value_type == TypeId::ANY
+                    {
+                        let message = format_message(
+                            diagnostic_messages::MEMBER_IMPLICIT_ANY,
+                            &[&name, "any"],
+                        );
+                        self.error_at_node(
+                            elem_idx,
+                            &message,
+                            diagnostic_codes::IMPLICIT_ANY_MEMBER,
+                        );
+                    }
+
+                    let name_atom = self.ctx.types.intern_string(&name);
+
+                    // Check for duplicate property
+                    if properties.contains_key(&name_atom) {
+                        let message = format_message(
+                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            elem_idx,
+                            &message,
+                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                        );
+                    }
+
+                    properties.insert(
+                        name_atom,
+                        PropertyInfo {
+                            name: name_atom,
+                            type_id: value_type,
+                            write_type: value_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                        },
+                    );
+                }
+            }
+            // Method shorthand: { foo() {} }
+            else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                if let Some(name) = self.get_property_name(method.name) {
+                    // Set contextual type for method
+                    let prev_context = self.ctx.contextual_type;
+                    if let Some(ctx_type) = prev_context {
+                        self.ctx.contextual_type =
+                            self.ctx.types.contextual_property_type(ctx_type, &name);
+                    }
+
+                    let method_type = self.get_type_of_function(elem_idx);
+
+                    // Restore context
+                    self.ctx.contextual_type = prev_context;
+
+                    let name_atom = self.ctx.types.intern_string(&name);
+
+                    // Check for duplicate property
+                    if properties.contains_key(&name_atom) {
+                        let message = format_message(
+                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            method.name,
+                            &message,
+                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                        );
+                    }
+
+                    properties.insert(
+                        name_atom,
+                        PropertyInfo {
+                            name: name_atom,
+                            type_id: method_type,
+                            write_type: method_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                        },
+                    );
+                }
+            }
+            // Accessor: { get foo() {} } or { set foo(v) {} }
+            else if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
+                // Check for missing body - error 1005 at end of accessor
+                if accessor.body.is_none() {
+                    use crate::checker::types::diagnostics::diagnostic_codes;
+                    // Report at accessor.end - 1 (pointing to the closing paren)
+                    let end_pos = elem_node.end.saturating_sub(1);
+                    self.error_at_position(
+                        end_pos,
+                        1,
+                        "'{' expected.",
+                        diagnostic_codes::TOKEN_EXPECTED,
+                    );
+                }
+
+                // For setters, check implicit any on parameters (error 7006)
+                if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
+                    for &param_idx in &accessor.parameters.nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        {
+                            self.maybe_report_implicit_any_parameter(param, false);
+                        }
+                    }
+                }
+
+                if let Some(name) = self.get_property_name(accessor.name) {
+                    // For getter, infer return type; for setter, it's void
+                    let accessor_type = if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        self.get_type_of_function(elem_idx)
+                    } else {
+                        TypeId::VOID
+                    };
+                    let name_atom = self.ctx.types.intern_string(&name);
+
+                    // Check for duplicate property
+                    if properties.contains_key(&name_atom) {
+                        let message = format_message(
+                            diagnostic_messages::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            accessor.name,
+                            &message,
+                            diagnostic_codes::OBJECT_LITERAL_DUPLICATE_PROPERTY,
+                        );
+                    }
+
+                    properties.insert(
+                        name_atom,
+                        PropertyInfo {
+                            name: name_atom,
+                            type_id: accessor_type,
+                            write_type: accessor_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                        },
+                    );
+                }
+            }
+            // Spread assignment: { ...obj }
+            else if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                let spread_expr = self
+                    .ctx
+                    .arena
+                    .get_spread(elem_node)
+                    .map(|spread| spread.expression)
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_unary_expr_ex(elem_node)
+                            .map(|unary| unary.expression)
+                    });
+                if let Some(spread_expr) = spread_expr {
+                    let spread_type = self.get_type_of_node(spread_expr);
+                    for prop in self.collect_object_spread_properties(spread_type) {
+                        properties.insert(prop.name, prop);
+                    }
+                }
+            }
+            // Skip computed properties for now
+        }
+
+        let properties: Vec<PropertyInfo> = properties.into_values().collect();
+        self.ctx.types.object(properties)
+    }
+
+    /// Collect properties from a spread expression in an object literal.
+    ///
+    /// Given the type of the spread expression, extracts all properties that would
+    /// be spread into the object literal.
+    fn collect_object_spread_properties(
+        &mut self,
+        type_id: TypeId,
+    ) -> Vec<crate::solver::PropertyInfo> {
+        use crate::interner::Atom;
+        use crate::solver::TypeKey;
+        use rustc_hash::FxHashMap;
+
+        let resolved = self.resolve_type_for_property_access(type_id);
+        match self.ctx.types.lookup(resolved) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                shape.properties.to_vec()
+            }
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                shape.properties.to_vec()
+            }
+            Some(TypeKey::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                let mut merged: FxHashMap<Atom, crate::solver::PropertyInfo> = FxHashMap::default();
+                for &member in members.iter() {
+                    for prop in self.collect_object_spread_properties(member) {
+                        merged.insert(prop.name, prop);
+                    }
+                }
+                merged.into_values().collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     // =========================================================================
     // Type Relationship Queries
     // =========================================================================
