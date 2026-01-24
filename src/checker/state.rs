@@ -5419,29 +5419,6 @@ impl<'a> CheckerState<'a> {
     /// - Type comparison (typeof X should be compared to X's type)
     /// - Generic constraint evaluation
     ///
-    pub(crate) fn resolve_type_query_to_structural(&mut self, type_id: TypeId) -> TypeId {
-        use crate::binder::SymbolId;
-        use crate::solver::{SymbolRef, TypeKey};
-
-        if let Some(TypeKey::TypeQuery(SymbolRef(sym_id))) = self.ctx.types.lookup(type_id) {
-            // Resolve the symbol to its actual type
-            self.get_type_of_symbol(SymbolId(sym_id))
-        } else {
-            type_id
-        }
-    }
-
-    /// Get type of binary expression.
-    pub(crate) fn apply_this_substitution_to_call_return(
-        &mut self,
-        return_type: TypeId,
-        callee_idx: NodeIndex,
-    ) -> TypeId {
-        if let Some(receiver_type) = self.get_call_receiver_type(callee_idx) {
-            return self.substitute_this_type(return_type, receiver_type);
-        }
-        return_type
-    }
 
     /// Get type of call expression.
     pub(crate) fn refine_mixin_call_return_type(
@@ -8606,7 +8583,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn substitute_this_type(&mut self, type_id: TypeId, this_type: TypeId) -> TypeId {
+    pub(crate) fn substitute_this_type(&mut self, type_id: TypeId, this_type: TypeId) -> TypeId {
         use rustc_hash::FxHashMap;
 
         let mut cache = FxHashMap::default();
