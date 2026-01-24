@@ -264,4 +264,41 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Check iterability of an array destructuring pattern and emit TS2488 if not iterable.
+    ///
+    /// Used for array destructuring patterns like `const [a, b] = expr;`.
+    /// Returns `true` if the type is iterable.
+    ///
+    /// Note: This is called in addition to TS2461 checks - both errors may be emitted
+    /// for non-iterable types in array destructuring contexts.
+    pub fn check_array_destructuring_iterability(&mut self, source_type: TypeId, pattern_idx: NodeIndex) -> bool {
+        // Skip error types and any/unknown
+        if source_type == TypeId::ANY
+            || source_type == TypeId::UNKNOWN
+            || source_type == TypeId::ERROR
+        {
+            return true;
+        }
+
+        if self.is_iterable_type(source_type) {
+            return true;
+        }
+
+        // Not iterable - emit TS2488
+        if let Some((start, end)) = self.get_node_span(pattern_idx) {
+            let type_str = self.format_type(source_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                &[&type_str],
+            );
+            self.error(
+                start,
+                end.saturating_sub(start),
+                message,
+                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+            );
+        }
+        false
+    }
 }
