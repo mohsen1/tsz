@@ -539,12 +539,54 @@ impl<'a> CheckerState<'a> {
     // Diagnostics (delegated to CheckerContext)
     // =========================================================================
 
-    /// Add an error diagnostic.
+    /// Add an error diagnostic to the diagnostics collection.
+    ///
+    /// This is the main entry point for reporting type errors. All error reporting
+    /// flows through this function (directly or through helper functions).
+    ///
+    /// **Diagnostic Components:**
+    /// - **start**: Byte offset of error start in file
+    /// - **length**: Length of the error span in bytes
+    /// - **message**: Human-readable error message
+    /// - **code**: TypeScript error code (TSxxxx)
+    ///
+    /// **Error Categories:**
+    /// - **Error**: Type errors that prevent compilation
+    /// - **Warning**: Potential issues that don't prevent compilation
+    /// - **Suggestion**: Code quality suggestions
+    ///
+    /// **Error Codes:**
+    /// - TS2304: Cannot find name
+    /// - TS2322: Type is not assignable
+    /// - TS2339: Property does not exist
+    /// - And many more...
+    ///
+    /// **Use Cases:**
+    /// - Direct error emission: `self.error(start, length, message, 2304)`
+    /// - Through helper functions: `error_cannot_find_name_at`, `error_type_not_assignable_at`, etc.
+    /// - Error messages are formatted with type information
+    ///
     pub fn error(&mut self, start: u32, length: u32, message: String, code: u32) {
         self.ctx.error(start, length, message, code);
     }
 
-    /// Get node span (pos, end) from index.
+    /// Get the (start, end) span of a node for error reporting.
+    ///
+    /// This function retrieves the position information of an AST node,
+    /// which is used for error reporting and IDE features.
+    ///
+    /// **Span Information:**
+    /// - Returns `(start, end)` tuple of byte offsets
+    /// - Start is the byte offset of the node's first character
+    /// - End is the byte offset of the node's last character
+    /// - Returns None if node doesn't exist in arena
+    ///
+    /// **Use Cases:**
+    /// - Error reporting: `self.error(start, end - start, message, code)`
+    /// - Diagnostic spans: Point to the problematic code
+    /// - Quick info: Hover information for IDE
+    /// - Code navigation: Jump to definition references
+    ///
     pub fn get_node_span(&self, idx: NodeIndex) -> Option<(u32, u32)> {
         self.ctx.get_node_span(idx)
     }
