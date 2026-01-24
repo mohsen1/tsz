@@ -8033,4 +8033,72 @@ impl<'a> CheckerState<'a> {
             TypePredicateTarget::Identifier(self.ctx.types.intern_string(&ident.escaped_text))
         })
     }
+
+    // Section 49: Constructor Accessibility Utilities
+    // -----------------------------------------------
+
+    /// Convert a constructor access level to its string representation.
+    ///
+    /// This function is used for error messages to display the accessibility
+    /// level of a constructor (private, protected, or public).
+    ///
+    /// ## Constructor Accessibility:
+    /// - **Private**: `private constructor()` - Only accessible within the class
+    /// - **Protected**: `protected constructor()` - Accessible within class and subclasses
+    /// - **Public**: `constructor()` or `public constructor()` - Accessible everywhere
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// class Singleton {
+    ///   private constructor() {} // Only accessible within Singleton
+    /// }
+    /// // constructor_access_name(Some(Private)) → "private"
+    ///
+    /// class Base {
+    ///   protected constructor() {} // Accessible in Base and subclasses
+    /// }
+    /// // constructor_access_name(Some(Protected)) → "protected"
+    ///
+    /// class Public {
+    ///   constructor() {} // Public by default
+    /// }
+    /// // constructor_access_name(None) → "public"
+    /// ```
+    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
+        match level {
+            Some(MemberAccessLevel::Private) => "private",
+            Some(MemberAccessLevel::Protected) => "protected",
+            None => "public",
+        }
+    }
+
+    /// Get the numeric rank of a constructor access level.
+    ///
+    /// This function assigns a numeric value to access levels for comparison:
+    /// - Private (2) > Protected (1) > Public (0)
+    ///
+    /// Higher ranks indicate more restrictive access levels. This is used
+    /// to determine if a constructor accessibility mismatch exists between
+    /// source and target types.
+    ///
+    /// ## Rank Ordering:
+    /// ```typescript
+    /// Private (2)   - Most restrictive
+    /// Protected (1) - Medium restrictiveness
+    /// Public (0)    - Least restrictive
+    /// ```
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// constructor_access_rank(Some(Private))    // → 2
+    /// constructor_access_rank(Some(Protected)) // → 1
+    /// constructor_access_rank(None)            // → 0 (Public)
+    /// ```
+    fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
+        match level {
+            Some(MemberAccessLevel::Private) => 2,
+            Some(MemberAccessLevel::Protected) => 1,
+            None => 0,
+        }
+    }
 }
