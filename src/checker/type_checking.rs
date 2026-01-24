@@ -69,6 +69,9 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
+        // Check if the left-hand side property exists (for property access assignments)
+        self.check_property_exists_before_assignment(left_idx, left_type);
+
         self.check_readonly_assignment(left_idx, expr_idx);
 
         // Perform assignability check for all non-ANY types
@@ -141,6 +144,9 @@ impl<'a> CheckerState<'a> {
 
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
+
+        // Check if the left-hand side property exists (for property access assignments)
+        self.check_property_exists_before_assignment(left_idx, left_type);
 
         self.check_readonly_assignment(left_idx, expr_idx);
 
