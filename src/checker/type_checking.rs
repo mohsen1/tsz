@@ -8670,4 +8670,399 @@ impl<'a> CheckerState<'a> {
 
         self.symbol_is_value_only(target)
     }
+
+    // ============================================================================
+    // Section 54: Literal Key and Element Access Utilities
+    // ============================================================================
+
+    /// Extract literal keys from a type as string and number atom vectors.
+    ///
+    /// This function is used for element access type inference when the index
+    /// type contains literal types. It extracts string and number literal values
+    /// from single literals or unions of literals.
+    ///
+    /// ## Parameters:
+    /// - `index_type`: The type to extract literal keys from
+    ///
+    /// ## Returns:
+    /// - `Some((string_keys, number_keys))`: Tuple of string and number literal keys
+    /// - `None`: If the type is not a literal or union of literals
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Single literal:
+    /// type T1 = "foo";  // Returns: (["foo"], [])
+    ///
+    /// // Union of literals:
+    /// type T2 = "a" | "b" | 1 | 2;  // Returns: (["a", "b"], [1.0, 2.0])
+    ///
+    /// // Non-literal type:
+    /// type T3 = string;  // Returns: None
+    /// ```
+    pub(crate) fn get_literal_key_union_from_type(
+        &self,
+        index_type: TypeId,
+    ) -> Option<(Vec<crate::interner::Atom>, Vec<f64>)> {
+        use crate::solver::{LiteralValue, TypeKey};
+
+        match self.ctx.types.lookup(index_type)? {
+            TypeKey::Literal(LiteralValue::String(atom)) => Some((vec![atom], Vec::new())),
+            TypeKey::Literal(LiteralValue::Number(num)) => Some((Vec::new(), vec![num.0])),
+            TypeKey::Union(members) => {
+                let members = self.ctx.types.type_list(members);
+                let mut string_keys = Vec::with_capacity(members.len());
+                let mut number_keys = Vec::new();
+                for &member in members.iter() {
+                    match self.ctx.types.lookup(member) {
+                        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                            string_keys.push(atom)
+                        }
+                        Some(TypeKey::Literal(LiteralValue::Number(num))) => {
+                            number_keys.push(num.0)
+                        }
+                        _ => return None,
+                    }
+                }
+                Some((string_keys, number_keys))
+            }
+            _ => None,
+        }
+    }
+
+    /// Get element access type for literal string keys.
+    ///
+    /// This function computes the type of element access when the index is a
+    /// string literal or union of string literals. It handles both property
+    /// access and numeric array indexing (when strings represent numeric indices).
+    ///
+    /// ## Parameters:
+    /// - `object_type`: The type of the object being accessed
+    /// - `keys`: Slice of string literal keys to look up
+    ///
+    /// ## Returns:
+    /// - `Some(TypeId)`: The union of all property/element types
+    /// - `None`: If any property is not found or if keys is empty
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// const obj = { a: 1, b: "hello" };
+    /// type T = obj["a" | "b"];  // number | string
+    ///
+    /// const arr = [1, 2, 3];
+    /// type U = arr["0" | "1"];  // number (treated as numeric index)
+    /// ```
+    pub(crate) fn get_element_access_type_for_literal_keys(
+        &mut self,
+        object_type: TypeId,
+        keys: &[crate::interner::Atom],
+    ) -> Option<TypeId> {
+        use crate::solver::{PropertyAccessResult, QueryDatabase};
+
+        if keys.is_empty() {
+            return None;
+        }
+
+        let numeric_as_index = self.is_array_like_type(object_type);
+        let mut types = Vec::with_capacity(keys.len());
+
+        for &key in keys {
+            let name = self.ctx.types.resolve_atom(key);
+            if numeric_as_index && let Some(index) = self.get_numeric_index_from_string(&name) {
+                let element_type =
+                    self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+                types.push(element_type);
+                continue;
+            }
+
+            match self.ctx.types.property_access_type(object_type, &name) {
+                PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    types.push(property_type.unwrap_or(TypeId::UNKNOWN));
+                }
+                // IsUnknown: Return None to signal that property access on unknown failed
+                // The caller has node context and will report TS2571 error
+                PropertyAccessResult::IsUnknown => return None,
+                PropertyAccessResult::PropertyNotFound { .. } => return None,
+            }
+        }
+
+        if types.len() == 1 {
+            Some(types[0])
+        } else {
+            Some(self.ctx.types.union(types))
+        }
+    }
+
+    /// Get element access type for literal number keys.
+    ///
+    /// This function computes the type of element access when the index is a
+    /// number literal or union of number literals. It handles array/tuple
+    /// indexing with literal numeric values.
+    ///
+    /// ## Parameters:
+    /// - `object_type`: The type of the object being accessed
+    /// - `keys`: Slice of numeric literal keys to look up
+    ///
+    /// ## Returns:
+    /// - `Some(TypeId)`: The union of all element types
+    /// - `None`: If keys is empty
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// const arr = [1, "hello", true];
+    /// type T = arr[0 | 1];  // number | string
+    ///
+    /// const tuple = [1, 2] as const;
+    /// type U = tuple[0 | 1];  // 1 | 2
+    /// ```
+    pub(crate) fn get_element_access_type_for_literal_number_keys(
+        &mut self,
+        object_type: TypeId,
+        keys: &[f64],
+    ) -> Option<TypeId> {
+        if keys.is_empty() {
+            return None;
+        }
+
+        let mut types = Vec::with_capacity(keys.len());
+        for &value in keys {
+            if let Some(index) = self.get_numeric_index_from_number(value) {
+                types.push(self.get_element_access_type(object_type, TypeId::NUMBER, Some(index)));
+            } else {
+                return Some(self.get_element_access_type(object_type, TypeId::NUMBER, None));
+            }
+        }
+
+        if types.len() == 1 {
+            Some(types[0])
+        } else {
+            Some(self.ctx.types.union(types))
+        }
+    }
+
+    /// Check if a type is array-like (supports numeric indexing).
+    ///
+    /// This function determines if a type supports numeric element access,
+    /// including arrays, tuples, and unions/intersections of array-like types.
+    ///
+    /// ## Array-like Types:
+    /// - Array types: `T[]`, `Array<T>`
+    /// - Tuple types: `[T1, T2, ...]`
+    /// - Readonly arrays: `readonly T[]`, `ReadonlyArray<T>`
+    /// - Unions where all members are array-like
+    /// - Intersections where any member is array-like
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Array-like types:
+    /// type A = number[];
+    /// type B = [string, number];
+    /// type C = readonly boolean[];
+    /// type D = A | B;  // Union of array-like types
+    ///
+    /// // Not array-like:
+    /// type E = { [key: string]: number };  // Index signature, not array-like
+    /// ```
+    fn is_array_like_type(&self, object_type: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        // Check for array/tuple types directly
+        if self.is_mutable_array_type(object_type) {
+            return true;
+        }
+
+        match self.ctx.types.lookup(object_type) {
+            Some(TypeKey::Tuple(_)) => true,
+            Some(TypeKey::ReadonlyType(inner)) => self.is_array_like_type(inner),
+            Some(TypeKey::Union(_)) => {
+                let members = self.get_union_members(object_type);
+                members
+                    .iter()
+                    .all(|&member| self.is_array_like_type(member))
+            }
+            Some(TypeKey::Intersection(members)) => {
+                let members = self.ctx.types.type_list(members);
+                members
+                    .iter()
+                    .any(|member| self.is_array_like_type(*member))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if an index signature error should be reported for element access.
+    ///
+    /// This function determines whether a "No index signature" error should be
+    /// emitted for element access on an object type. This happens when:
+    /// - The object type doesn't have an appropriate index signature
+    /// - The index type is a literal or union of literals
+    /// - The access is not valid property access
+    ///
+    /// ## Parameters:
+    /// - `object_type`: The type of the object being accessed
+    /// - `index_type`: The type of the index expression
+    /// - `literal_index`: Optional explicit numeric index
+    ///
+    /// ## Returns:
+    /// - `true`: Report "No index signature" error
+    /// - `false`: Don't report (has index signature, or any/unknown type)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// const obj = { a: 1, b: 2 };
+    /// obj["c"];  // Error: No index signature with parameter of type '"c"'
+    ///
+    /// const obj2: { [key: string]: number } = { a: 1 };
+    /// obj2["c"];  // OK: Has string index signature
+    /// ```
+    pub(crate) fn should_report_no_index_signature(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> bool {
+        use crate::solver::TypeKey;
+
+        if object_type == TypeId::ANY
+            || object_type == TypeId::UNKNOWN
+            || object_type == TypeId::ERROR
+        {
+            return false;
+        }
+
+        if index_type == TypeId::ANY || index_type == TypeId::UNKNOWN {
+            return false;
+        }
+
+        let index_key_kind = self.get_index_key_kind(index_type);
+        let wants_number = literal_index.is_some()
+            || index_key_kind
+                .as_ref()
+                .is_some_and(|(_, wants_number)| *wants_number);
+        let wants_string = index_key_kind
+            .as_ref()
+            .is_some_and(|(wants_string, _)| *wants_string);
+        if !wants_number && !wants_string {
+            return false;
+        }
+
+        let object_key = match self.ctx.types.lookup(object_type) {
+            Some(TypeKey::ReadonlyType(inner)) => self.ctx.types.lookup(inner),
+            other => other,
+        };
+
+        !self.is_element_indexable_key(&object_key, wants_string, wants_number)
+    }
+
+    /// Determine what kind of index key a type represents.
+    ///
+    /// This function analyzes a type to determine if it can be used for string
+    /// or numeric indexing. Returns a tuple of (wants_string, wants_number).
+    ///
+    /// ## Returns:
+    /// - `Some((true, false))`: String index (e.g., `"foo"`, `string`)
+    /// - `Some((false, true))`: Number index (e.g., `42`, `number`)
+    /// - `Some((true, true))`: Both string and number (e.g., `"a" | 1 | 2`)
+    /// - `None`: Not an index type
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// type A = "foo";        // (true, false) - string literal
+    /// type B = 42;           // (false, true) - number literal
+    /// type C = string;       // (true, false) - string type
+    /// type D = "a" | "b";    // (true, false) - union of strings
+    /// type E = "a" | 1;      // (true, true) - mixed literals
+    /// ```
+    fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
+        use crate::solver::{IntrinsicKind, TypeKey};
+
+        // Use utility methods for literal type checks
+        if self.is_string_literal_type(index_type) {
+            return Some((true, false));
+        }
+        if self.is_number_literal_type(index_type) {
+            return Some((false, true));
+        }
+
+        match self.ctx.types.lookup(index_type)? {
+            TypeKey::Intrinsic(IntrinsicKind::String) => Some((true, false)),
+            TypeKey::Intrinsic(IntrinsicKind::Number) => Some((false, true)),
+            TypeKey::Union(_) => {
+                let members = self.get_union_members(index_type);
+                let mut wants_string = false;
+                let mut wants_number = false;
+                for member in members {
+                    let (member_string, member_number) = self.get_index_key_kind(member)?;
+                    wants_string |= member_string;
+                    wants_number |= member_number;
+                }
+                Some((wants_string, wants_number))
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if a type key supports element indexing.
+    ///
+    /// This function determines if a type supports element access with the
+    /// specified index kind (string, number, or both).
+    ///
+    /// ## Parameters:
+    /// - `object_key`: The type key to check
+    /// - `wants_string`: Whether string indexing is needed
+    /// - `wants_number`: Whether numeric indexing is needed
+    ///
+    /// ## Returns:
+    /// - `true`: The type supports the requested indexing
+    /// - `false`: The type does not support the requested indexing
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Array supports numeric indexing:
+    /// const arr: number[] = [1, 2, 3];
+    /// arr[0];  // OK
+    ///
+    /// // Object with string index supports string indexing:
+    /// const obj: { [key: string]: number } = {};
+    /// obj["foo"];  // OK
+    ///
+    /// // Object without index signature doesn't support indexing:
+    /// const plain: { a: number } = { a: 1 };
+    /// plain["b"];  // Error: No index signature
+    /// ```
+    fn is_element_indexable_key(
+        &self,
+        object_key: &Option<crate::solver::TypeKey>,
+        wants_string: bool,
+        wants_number: bool,
+    ) -> bool {
+        use crate::solver::{IntrinsicKind, LiteralValue, TypeKey};
+
+        match object_key {
+            Some(TypeKey::Array(_)) | Some(TypeKey::Tuple(_)) => wants_number,
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(*shape_id);
+                let has_string = shape.string_index.is_some();
+                let has_number = shape.number_index.is_some();
+                (wants_string && has_string) || (wants_number && (has_number || has_string))
+            }
+            Some(TypeKey::Union(members)) => {
+                let members = self.ctx.types.type_list(*members);
+                members.iter().all(|member| {
+                    let key = self.ctx.types.lookup(*member);
+                    self.is_element_indexable_key(&key, wants_string, wants_number)
+                })
+            }
+            Some(TypeKey::Intersection(members)) => {
+                let members = self.ctx.types.type_list(*members);
+                members.iter().any(|member| {
+                    let key = self.ctx.types.lookup(*member);
+                    self.is_element_indexable_key(&key, wants_string, wants_number)
+                })
+            }
+            Some(TypeKey::Literal(LiteralValue::String(_))) => wants_number,
+            Some(TypeKey::Intrinsic(IntrinsicKind::String)) => wants_number,
+            _ => false,
+        }
+    }
 }
