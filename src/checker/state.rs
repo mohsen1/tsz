@@ -13550,12 +13550,23 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Check if this is a destructuring pattern (object/array binding)
+        let is_destructuring = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+            name_node.kind != SyntaxKind::Identifier as u16
+        } else {
+            false
+        };
+
         // Get the variable name for adding to local scope
-        let var_name = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
-            self.ctx
-                .arena
-                .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.clone())
+        let var_name = if !is_destructuring {
+            if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+                self.ctx
+                    .arena
+                    .get_identifier(name_node)
+                    .map(|ident| ident.escaped_text.clone())
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -13608,11 +13619,21 @@ impl<'a> CheckerState<'a> {
                                 var_decl.initializer,
                             )
                         {
-                            checker.error_type_not_assignable_with_reason_at(
-                                init_type,
-                                declared_type,
-                                var_decl.initializer,
-                            );
+                            // For destructuring patterns, emit a generic TS2322 error
+                            // instead of detailed property mismatch errors (TS2326)
+                            if is_destructuring {
+                                checker.error_type_not_assignable_generic_at(
+                                    init_type,
+                                    declared_type,
+                                    var_decl.initializer,
+                                );
+                            } else {
+                                checker.error_type_not_assignable_with_reason_at(
+                                    init_type,
+                                    declared_type,
+                                    var_decl.initializer,
+                                );
+                            }
                         }
 
                         // For object literals, also check for excess properties
