@@ -335,11 +335,19 @@ pub fn strip_readonly(&self, type_id: TypeId) -> TypeId {
 Classify types into broad categories:
 
 ```rust
-use crate::solver::visitor::{is_type_kind, TypeKind};
+use crate::solver::visitor::{is_type_kind, TypeKind, TypeKindVisitor};
 
 let is_primitive = is_type_kind(&types, type_id, TypeKind::Primitive);
 let is_object = is_type_kind(&types, type_id, TypeKind::Object);
 let is_function = is_type_kind(&types, type_id, TypeKind::Function);
+
+// TypeKind enum now includes these categories:
+// - Primitive, Literal, Object, Array, Tuple, Union, Intersection
+// - Function, Generic, TypeParameter, Conditional, Mapped
+// - IndexAccess, TemplateLiteral, TypeQuery, KeyOf, Reference, Error, Other
+
+// Get the kind of any type:
+let kind = TypeKindVisitor::get_kind_of(&types, type_id);
 ```
 
 ### TypeCollectorVisitor
@@ -355,6 +363,17 @@ for dep_type_id in dependencies {
 }
 ```
 
+### RecursiveTypeCollector
+
+Collect all types recursively, with proper traversal into nested structures:
+
+```rust
+use crate::solver::visitor::collect_all_types;
+
+// Collects all types including nested object properties, function params/return, etc.
+let all_types = collect_all_types(&types, type_id);
+```
+
 ### TypePredicateVisitor
 
 Test types against custom predicates:
@@ -365,6 +384,66 @@ use crate::solver::TypeKey;
 
 let is_numeric = test_type(&types, type_id, |key| {
     matches!(key, TypeKey::Intrinsic(IntrinsicKind::Number))
+});
+```
+
+---
+
+## Specialized Type Predicate Functions
+
+The visitor module now exports ready-to-use predicate functions for common type checks:
+
+```rust
+use crate::solver::visitor::*;
+
+// Check type categories
+is_literal_type(&types, type_id)           // Matches TypeKey::Literal(_)
+is_function_type(&types, type_id)          // Matches Function or Callable (includes intersections)
+is_object_like_type(&types, type_id)       // Object, Array, Tuple, Mapped types
+is_empty_object_type(&types, type_id)      // Empty {} type
+is_primitive_type(&types, type_id)         // Intrinsics and literals
+
+// Structural type checks
+is_union_type(&types, type_id)             // TypeKey::Union(_)
+is_intersection_type(&types, type_id)      // TypeKey::Intersection(_)
+is_array_type(&types, type_id)             // TypeKey::Array(_)
+is_tuple_type(&types, type_id)             // TypeKey::Tuple(_)
+is_type_parameter(&types, type_id)         // TypeParameter or Infer
+is_conditional_type(&types, type_id)       // TypeKey::Conditional(_)
+is_mapped_type(&types, type_id)            // TypeKey::Mapped(_)
+is_index_access_type(&types, type_id)      // TypeKey::IndexAccess(_, _)
+is_template_literal_type(&types, type_id)  // TypeKey::TemplateLiteral(_)
+is_type_reference(&types, type_id)         // TypeKey::Ref(_)
+is_generic_application(&types, type_id)    // TypeKey::Application(_)
+
+// TypeDatabase versions (for use outside TypeInterner)
+is_literal_type_db(&interner, type_id)
+is_function_type_db(&interner, type_id)
+is_object_like_type_db(&interner, type_id)
+is_empty_object_type_db(&interner, type_id)
+```
+
+---
+
+## Contains Type Checks
+
+Check if a type contains specific kinds of types anywhere in its structure:
+
+```rust
+use crate::solver::visitor::*;
+
+// Check for type parameters anywhere in the type
+let has_generics = contains_type_parameters(&types, type_id);
+
+// Check for infer types
+let has_infer = contains_infer_types(&types, type_id);
+
+// Check for error types
+let has_error = contains_error_type(&types, type_id);
+
+// Custom predicate - check for any type matching a condition
+let has_literal = contains_type_matching(&types, type_id, |key| {
+    matches!(key, TypeKey::Literal(_))
 });
 ```
 
