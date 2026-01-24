@@ -2326,7 +2326,17 @@ impl<'a> CheckerState<'a> {
             self.validate_call_type_arguments(callee_type, type_args_list, idx);
         }
 
-        let overload_signatures = match self.ctx.types.lookup(callee_type) {
+        // Apply explicit type arguments to the callee type before checking arguments.
+        // This ensures that when we have `fn<T>(x: T)` and call it as `fn<number>("string")`,
+        // the parameter type becomes `number` (after substituting T=number), and we can
+        // correctly check if `"string"` is assignable to `number`.
+        let callee_type_for_resolution = if call.type_arguments.is_some() {
+            self.apply_type_arguments_to_callable_type(callee_type, call.type_arguments.as_ref())
+        } else {
+            callee_type
+        };
+
+        let overload_signatures = match self.ctx.types.lookup(callee_type_for_resolution) {
             Some(TypeKey::Callable(shape_id)) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.call_signatures.len() > 1 {
@@ -2352,8 +2362,8 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Create contextual context from callee type
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, callee_type);
+        // Create contextual context from callee type with type arguments applied
+        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, callee_type_for_resolution);
         let check_excess_properties = overload_signatures.is_none();
         let arg_types = self.collect_call_argument_types_with_context(
             args,
@@ -2362,7 +2372,7 @@ impl<'a> CheckerState<'a> {
         );
 
         // Use CallEvaluator to resolve the call
-        self.ensure_application_symbols_resolved(callee_type);
+        self.ensure_application_symbols_resolved(callee_type_for_resolution);
         for &arg_type in &arg_types {
             self.ensure_application_symbols_resolved(arg_type);
         }
@@ -2372,7 +2382,7 @@ impl<'a> CheckerState<'a> {
             checker.set_strict_function_types(self.ctx.strict_function_types());
             checker.set_strict_null_checks(self.ctx.strict_null_checks());
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            evaluator.resolve_call(callee_type, &arg_types)
+            evaluator.resolve_call(callee_type_for_resolution, &arg_types)
         };
 
         match result {
