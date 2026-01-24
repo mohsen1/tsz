@@ -1,189 +1,48 @@
-# Design Document: Checker-Solver Integration Improvements
+# Checker-Solver Integration Improvements
 
-**Author:** Claude
+**Status:** RFC
 **Date:** 2026-01-24
-**Status:** RFC (Request for Comments)
 
-## Executive Summary
+## Summary
 
-This document critically evaluates potential improvements to the checker-solver integration in TSZ. After deep analysis of the existing architecture, **most initially proposed features already exist or would violate architectural principles**. This document identifies the few genuine opportunities for improvement and honestly rejects ideas that seemed good initially but don't hold up to scrutiny.
+This document proposes three improvements to how the checker utilizes the solver's existing capabilities. The solver's architecture is sound; the opportunities lie in better integration, not new type system features.
 
----
+## Background
 
-## 1. Architectural Context
+The checker and solver have a clean separation:
 
-### Current Design Philosophy
+| Component | Responsibility |
+|-----------|----------------|
+| **Solver** | Structural type logic, interning, subtyping (AST-agnostic) |
+| **Checker** | Flow analysis, AST traversal, diagnostics |
 
-The TSZ type system follows a clean separation:
+The solver already provides: type normalization, rich error diagnostics (`SubtypeFailureReason`), coinductive recursion handling, variance checking, and Union-Find based generic inference.
 
-| Component | Responsibility | AST Awareness |
-|-----------|----------------|---------------|
-| **Solver** | Structural type logic, interning, subtyping | None (pure types) |
-| **Checker** | Flow analysis, AST traversal, diagnostics | Full |
+## Proposed Changes
 
-This separation is **intentional and correct**. The solver is reusable for LSP, linting, and other tools. The checker handles TypeScript-specific semantics tied to program structure.
+### 1. Utilize Existing Error Facilities
 
-### What the Solver Already Does Well
+**Priority:** P0 (Low effort, high impact)
 
-Before proposing new features, we must acknowledge existing capabilities:
+**Problem:** The checker generates generic "Type X is not assignable to type Y" errors instead of leveraging the solver's detailed `SubtypeFailureReason` variants.
 
-1. **Recursive Types**: Coinductive checking with `SubtypeResult::Provisional` handles cycles elegantly
-2. **Type Normalization**: Union/intersection simplification built into interning (`never` removal, literal absorption, object merging)
-3. **Error Diagnostics**: 14-variant `SubtypeFailureReason` enum with `explain_failure()` function
-4. **Apparent Types**: `apparent_primitive_shape_for_key()` synthesizes object shapes for primitives
-5. **Variance**: Context-aware bivariance for methods, contravariance for strict mode
-6. **Generic Inference**: Union-Find based constraint solving with `InferenceContext`
-7. **Branded Types**: Private brand properties (`__private_brand_xxx`) for nominal class checking
-
----
-
-## 2. Rejected Ideas (With Honest Reasoning)
-
-### 2.1 Control Flow Narrowing in Solver
-
-**Original Proposal**: Move type narrowing logic (typeof, instanceof, truthiness) to the solver.
-
-**Why It's Wrong**:
-- Narrowing is fundamentally about **program structure**, not type structure
-- Requires understanding of scopes, blocks, control flow graphs
-- Would make the solver AST-aware, breaking its core abstraction
-- The checker is the correct location for flow-sensitive analysis
-
-**Verdict**: ❌ Rejected. Violates separation of concerns.
-
-### 2.2 Symbolic Constraint Solving
-
-**Original Proposal**: Build a full constraint solver for queries like "under what constraints is this valid?"
-
-**Why It's Wrong**:
-- Union-Find inference with `ConstraintSet` already exists
-- Full constraint solving is essentially SAT/SMT—massive complexity for marginal benefit
-- TypeScript's type system isn't designed around constraint logic
-- 99% of real code doesn't need this sophistication
-
-**Verdict**: ❌ Rejected. Over-engineered; current inference is sufficient.
-
-### 2.3 Type Simplification Engine
-
-**Original Proposal**: Add a `simplify_type()` API for normalizing complex types.
-
-**Why It's Wrong**:
-- **Already exists**. `normalize_union()` and `normalize_intersection()` in intern.rs handle this
-- Interning automatically deduplicates and simplifies
-- `string | never` → `string` happens during union construction
-- `{a: T} & {b: U}` → merged object happens during intersection construction
-
-**Verdict**: ❌ Rejected. Feature already exists.
-
-### 2.4 Variance Caching
-
-**Original Proposal**: Pre-compute and cache variance of type parameters.
-
-**Why It's Problematic**:
-- Variance depends on **context**: `strictFunctionTypes`, `is_method` flag, position in type
-- The same type parameter can be covariant in one position, contravariant in another
-- Caching would require tracking (type, position, flags) tuples—complex invalidation
-- Current on-demand checking is fast enough (single bit checks)
-
-**Verdict**: ❌ Rejected. Complexity exceeds benefit; current approach is adequate.
-
-### 2.5 Type Guards & Assertion Functions in Solver
-
-**Original Proposal**: Solver understands type predicates like `x is string`.
-
-**Why It's Wrong**:
-- Same problem as narrowing: requires AST awareness
-- Type guards affect **control flow**, not structural typing
-- The checker correctly handles this by tracking narrowed types in scope
-
-**Verdict**: ❌ Rejected. Wrong layer.
-
-### 2.6 Apparent Type Resolution
-
-**Original Proposal**: Centralize "apparent type" logic in solver.
-
-**Why It's Wrong**:
-- **Already exists**. `apparent_primitive_shape_for_key()` handles this
-- Hardcoded method lists for String/Number/Boolean/BigInt primitives
-- Synthesizes temporary object shapes for subtype checking
-
-**Verdict**: ❌ Rejected. Feature already exists.
-
-### 2.7 Recursive Type Detection
-
-**Original Proposal**: Add `is_recursive_type()` and unfolding APIs.
-
-**Why It's Wrong**:
-- Coinductive checking already handles this transparently
-- `SubtypeResult::Provisional` breaks cycles automatically
-- Unfolding recursive types defeats interning (creates infinite structures)
-- Users rarely need to know if a type is recursive
-
-**Verdict**: ❌ Rejected. Current coinductive approach is superior.
-
-### 2.8 Incremental Dependency Tracking
-
-**Original Proposal**: Track which types depend on which symbols for cache invalidation.
-
-**Why It's Wrong Layer**:
-- Symbols are checker/binder concepts; solver works with interned TypeIds
-- The solver is deliberately symbol-agnostic after type construction
-- Dependency tracking belongs in the checker or a separate layer
-- LSP already has file-based invalidation
-
-**Verdict**: ❌ Rejected. Wrong architectural layer.
-
-### 2.9 Branded/Nominal Type Support
-
-**Original Proposal**: First-class brand support in solver.
-
-**Why It's Wrong**:
-- **Already exists**. Private brand checking via `__private_brand_xxx` properties
-- Structural encoding `string & { __brand: 'UserId' }` works correctly
-- Adding special support complicates the type system unnecessarily
-- TypeScript is intentionally structural
-
-**Verdict**: ❌ Rejected. Feature already exists via structural encoding.
-
-### 2.10 Rich Error Explanation API
-
-**Original Proposal**: Add detailed error tree generation.
-
-**Why It's Partially Wrong**:
-- **Already exists**. `SubtypeFailureReason` with 14 variants, `explain_failure()` function
-- The real problem is the **checker not fully utilizing** these facilities
-- This is an integration issue, not a missing solver feature
-
-**Verdict**: ⚠️ Reframed. See Section 3.1.
-
----
-
-## 3. Genuine Opportunities for Improvement
-
-After rejecting 10 ideas, three genuine opportunities remain:
-
-### 3.1 Better Utilization of Existing Error Facilities
-
-**Problem**: The solver provides rich `SubtypeFailureReason` variants, but the checker doesn't fully convert these to user-facing diagnostics.
-
-**Current State**:
+**Current solver API** (subtype.rs:704-794):
 ```rust
-// Solver provides (subtype.rs:704-794)
 enum SubtypeFailureReason {
     MissingProperty { name, source_type, target_type },
-    PropertyTypeMismatch { property, source_type, target_type, nested_reason },
+    PropertyTypeMismatch { property, nested_reason, ... },
     ReturnTypeMismatch { source_return, target_return, nested_reason },
     ParameterTypeMismatch { index, source_param, target_param, nested_reason },
-    // ... 10 more variants
+    TupleElementMismatch { index, ... },
+    IndexSignatureMismatch { ... },
+    NoUnionMemberMatches { source, union_members },
+    // ... 7 more variants
 }
 ```
 
-**What's Missing**: The checker often generates generic "Type X is not assignable to type Y" instead of leveraging nested reasons like "Property 'foo' is missing" or "Return type 'string' is not assignable to 'number'".
-
-**Proposed Solution**:
+**Proposed checker addition:**
 
 ```rust
-// In checker: New diagnostic generation from solver failures
 impl CheckerState {
     fn diagnose_assignment_failure(
         &mut self,
@@ -213,127 +72,51 @@ impl CheckerState {
             }
             SubtypeFailureReason::PropertyTypeMismatch { property, nested_reason, .. } => {
                 let mut diag = Diagnostic::error(span, format!(
-                    "Types of property '{}' are incompatible",
-                    property
+                    "Types of property '{}' are incompatible", property
                 ));
                 if depth < 3 {
                     diag.add_related(self.render_failure_reason(*nested_reason, span, depth + 1));
                 }
                 diag
             }
-            // ... handle other variants
+            // Handle remaining variants...
         }
     }
 }
 ```
 
-**Effort**: Low
-**Impact**: High (much better error messages)
+**Expected outcome:** Specific error messages like "Property 'foo' is missing" instead of generic assignability errors.
 
-### 3.2 Constraint Conflict Detection
+---
 
-**Problem**: When generic inference produces conflicting constraints (e.g., `T <: number` AND `T <: string`), the failure is detected late with poor error messages.
+### 2. Centralize Type Formatting
 
-**Current State**: `ConstraintSet` tracks bounds but doesn't eagerly detect conflicts:
-```rust
-pub struct ConstraintSet {
-    lower_bounds: Vec<TypeId>,  // T :> L1, T :> L2, ...
-    upper_bounds: Vec<TypeId>,  // T <: U1, T <: U2, ...
-}
-```
+**Priority:** P1 (Medium effort, medium impact)
 
-**Proposed Addition** (in solver/infer.rs):
+**Problem:** Type-to-string formatting is duplicated across checker code with repeated `TypeKey` pattern matching.
+
+**Proposed addition** (solver/format.rs):
 
 ```rust
-impl ConstraintSet {
-    /// Detect obviously conflicting constraints early
-    pub fn detect_conflicts(&self, interner: &TypeInterner) -> Option<ConstraintConflict> {
-        // Check if upper bounds are mutually exclusive
-        for (i, &u1) in self.upper_bounds.iter().enumerate() {
-            for &u2 in &self.upper_bounds[i+1..] {
-                if are_disjoint(interner, u1, u2) {
-                    return Some(ConstraintConflict::DisjointUpperBounds(u1, u2));
-                }
-            }
-        }
-
-        // Check if any lower bound exceeds all upper bounds
-        for &lower in &self.lower_bounds {
-            let exceeds_all = self.upper_bounds.iter().all(|&upper| {
-                !is_subtype(interner, lower, upper)
-            });
-            if exceeds_all && !self.upper_bounds.is_empty() {
-                return Some(ConstraintConflict::LowerExceedsUpper(lower));
-            }
-        }
-
-        None
-    }
-}
-
-fn are_disjoint(interner: &TypeInterner, a: TypeId, b: TypeId) -> bool {
-    // string and number are disjoint
-    // string and "hello" are NOT disjoint
-    // {x: number} and {y: string} are NOT disjoint (can intersect)
-    match (interner.lookup(a), interner.lookup(b)) {
-        (Some(TypeKey::Intrinsic(k1)), Some(TypeKey::Intrinsic(k2))) => {
-            matches!(
-                (k1, k2),
-                (IntrinsicKind::String, IntrinsicKind::Number) |
-                (IntrinsicKind::Number, IntrinsicKind::String) |
-                (IntrinsicKind::Boolean, IntrinsicKind::Number) |
-                // ... other disjoint pairs
-            )
-        }
-        _ => false  // Conservative: assume not disjoint
-    }
-}
-
-pub enum ConstraintConflict {
-    DisjointUpperBounds(TypeId, TypeId),
-    LowerExceedsUpper(TypeId),
-}
-```
-
-**Effort**: Medium
-**Impact**: Medium (better inference errors for edge cases)
-
-### 3.3 Type Formatting in Solver
-
-**Problem**: The checker formats types for error messages, but duplicates logic that the solver understands better.
-
-**Current State**: Type formatting is scattered across checker code, requiring repeated pattern matching on `TypeKey`.
-
-**Proposed Addition** (new file: solver/format.rs):
-
-```rust
-/// Format a type as a human-readable string
 pub struct TypeFormatter<'a> {
     interner: &'a TypeInterner,
     max_depth: usize,
     max_union_members: usize,
-    truncate_objects: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
     pub fn new(interner: &'a TypeInterner) -> Self {
-        Self {
-            interner,
-            max_depth: 5,
-            max_union_members: 5,
-            truncate_objects: true,
-        }
+        Self { interner, max_depth: 5, max_union_members: 5 }
     }
 
     pub fn format(&self, type_id: TypeId) -> String {
-        self.format_with_depth(type_id, 0)
+        self.format_impl(type_id, 0)
     }
 
-    fn format_with_depth(&self, type_id: TypeId, depth: usize) -> String {
+    fn format_impl(&self, type_id: TypeId, depth: usize) -> String {
         if depth > self.max_depth {
             return "...".to_string();
         }
-
         match self.interner.lookup(type_id) {
             None => "<unknown>".to_string(),
             Some(TypeKey::Intrinsic(kind)) => self.format_intrinsic(kind),
@@ -344,108 +127,96 @@ impl<'a> TypeFormatter<'a> {
             }
             Some(TypeKey::Object(shape)) => self.format_object(shape, depth),
             Some(TypeKey::Function(shape)) => self.format_function(shape, depth),
-            // ... other type keys
+            Some(TypeKey::Tuple(elements)) => self.format_tuple(elements, depth),
+            // ... remaining type keys
         }
     }
-
-    fn format_union(&self, members: &[TypeId], depth: usize) -> String {
-        if members.len() > self.max_union_members {
-            let formatted: Vec<_> = members[..self.max_union_members]
-                .iter()
-                .map(|&m| self.format_with_depth(m, depth + 1))
-                .collect();
-            format!("{} | ... {} more", formatted.join(" | "), members.len() - self.max_union_members)
-        } else {
-            members
-                .iter()
-                .map(|&m| self.format_with_depth(m, depth + 1))
-                .collect::<Vec<_>>()
-                .join(" | ")
-        }
-    }
-
-    // ... other format methods
 }
 ```
 
-**Effort**: Medium
-**Impact**: Medium (cleaner code, consistent formatting)
+**Expected outcome:** Single source of truth for type formatting; checker delegates to solver.
 
 ---
 
-## 4. Implementation Priority
+### 3. Early Constraint Conflict Detection
 
-| Feature | Effort | Impact | Priority |
-|---------|--------|--------|----------|
-| Error facility utilization (3.1) | Low | High | **P0** |
-| Type formatting in solver (3.3) | Medium | Medium | P1 |
-| Constraint conflict detection (3.2) | Medium | Medium | P2 |
+**Priority:** P2 (Medium effort, medium impact)
 
-### Recommended Approach
+**Problem:** Generic inference with conflicting constraints (e.g., `T <: number` AND `T <: string`) fails late with poor error messages.
 
-1. **Phase 1**: Implement better error message generation using existing `SubtypeFailureReason`
-2. **Phase 2**: Add `TypeFormatter` to solver, migrate checker formatting code
-3. **Phase 3**: Add constraint conflict detection if inference errors remain problematic
+**Proposed addition** (solver/infer.rs):
+
+```rust
+impl ConstraintSet {
+    pub fn detect_conflicts(&self, interner: &TypeInterner) -> Option<ConstraintConflict> {
+        // Check for mutually exclusive upper bounds
+        for (i, &u1) in self.upper_bounds.iter().enumerate() {
+            for &u2 in &self.upper_bounds[i+1..] {
+                if are_disjoint_primitives(interner, u1, u2) {
+                    return Some(ConstraintConflict::DisjointUpperBounds(u1, u2));
+                }
+            }
+        }
+        // Check if lower bound exceeds all upper bounds
+        for &lower in &self.lower_bounds {
+            if !self.upper_bounds.is_empty()
+                && self.upper_bounds.iter().all(|&u| !is_subtype(interner, lower, u))
+            {
+                return Some(ConstraintConflict::LowerExceedsUpper(lower));
+            }
+        }
+        None
+    }
+}
+
+pub enum ConstraintConflict {
+    DisjointUpperBounds(TypeId, TypeId),
+    LowerExceedsUpper(TypeId),
+}
+
+fn are_disjoint_primitives(interner: &TypeInterner, a: TypeId, b: TypeId) -> bool {
+    match (interner.lookup(a), interner.lookup(b)) {
+        (Some(TypeKey::Intrinsic(k1)), Some(TypeKey::Intrinsic(k2))) => {
+            use IntrinsicKind::*;
+            matches!((k1, k2),
+                (String, Number) | (Number, String) |
+                (String, Boolean) | (Boolean, String) |
+                (Number, Boolean) | (Boolean, Number)
+            )
+        }
+        _ => false
+    }
+}
+```
+
+**Expected outcome:** Early detection of unsatisfiable constraints with clear error messages.
 
 ---
 
-## 5. What NOT To Do
+## Alternatives Considered
 
-This section exists to prevent future proposals of already-rejected ideas:
-
-| Don't Do This | Why |
-|---------------|-----|
-| Move narrowing to solver | Breaks AST-agnostic design |
-| Add constraint logic solver | Over-engineered; Union-Find is sufficient |
-| Add "simplify type" API | Already exists in interning |
-| Cache variance decisions | Context-dependent; complexity > benefit |
-| Add type guard support | Wrong layer; belongs in checker |
-| Add branded type syntax | Structural encoding already works |
-| Track symbol dependencies | Wrong layer; belongs in checker/binder |
+| Alternative | Reason Not Pursued |
+|-------------|-------------------|
+| Control flow narrowing in solver | Would break AST-agnostic design |
+| Type simplification API | Already exists (`normalize_union`, `normalize_intersection`) |
+| Variance caching | Context-dependent; complexity exceeds benefit |
+| Branded type syntax | Structural encoding via intersection already works |
+| Symbol dependency tracking | Wrong layer; belongs in checker/binder |
 
 ---
 
-## 6. Success Metrics
+## Implementation Plan
 
-If we implement the recommended improvements:
-
-1. **Error Message Quality**: Reduce generic "not assignable" errors by 50%+ in favor of specific property/parameter errors
-2. **Code Deduplication**: Remove type formatting code from checker (consolidate in solver)
-3. **Inference Errors**: Detect constraint conflicts during inference instead of at resolution
-
----
-
-## 7. Conclusion
-
-After critical analysis, **most ideas for "new solver features" were either already implemented or architecturally inappropriate**. The genuine opportunities lie in:
-
-1. Better utilizing existing solver capabilities (error reasons)
-2. Moving shared logic to the right layer (type formatting)
-3. Targeted additions for specific pain points (constraint conflicts)
-
-The solver's design is fundamentally sound. The improvements needed are integration and utilization, not new type system features.
+| Phase | Change | Files |
+|-------|--------|-------|
+| 1 | Error facility utilization | `checker/state.rs`, `checker/diagnostics.rs` |
+| 2 | Type formatter | New `solver/format.rs`, update `solver/mod.rs` |
+| 3 | Constraint conflict detection | `solver/infer.rs` |
 
 ---
 
-## Appendix A: Existing Solver Capabilities Reference
+## Success Criteria
 
-### Normalization (intern.rs)
-- `normalize_union()`: Flattens, deduplicates, removes `never`, absorbs into `any`/`unknown`
-- `normalize_intersection()`: Flattens, removes `unknown`, detects disjoint primitives → `never`
-
-### Error Diagnostics (subtype.rs)
-- `SubtypeFailureReason`: 14 variants covering all failure modes
-- `explain_failure()`: Two-pass (fast check, then deep explain)
-
-### Variance (subtype_rules/functions.rs)
-- Method bivariance: Configurable via `disable_method_bivariance`
-- Strict function types: Contravariant parameters when enabled
-
-### Recursion (subtype.rs)
-- Coinductive semantics via `SubtypeResult::Provisional`
-- `MAX_SUBTYPE_DEPTH = 100`, `MAX_TOTAL_SUBTYPE_CHECKS = 100,000`
-
-### Generic Inference (infer.rs)
-- Union-Find with `ena` crate
-- `ConstraintSet` with lower/upper bounds
-- `InferenceContext` manages fresh type variables
+1. Reduce generic "not assignable" errors by 50%+ (measure via test suite error messages)
+2. Remove duplicated type formatting code from checker
+3. Constraint conflicts detected during inference, not at resolution
