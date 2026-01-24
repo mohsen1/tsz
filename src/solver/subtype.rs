@@ -1373,6 +1373,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check if both branches of a conditional type are subtypes of target.
+    ///
+    /// When checking `T extends U ? X : Y <: target`, we need to verify that:
+    /// - Both the true branch (X) and false branch (Y) are subtypes of target
+    ///
+    /// This is used when the source is a conditional type and we need to check
+    /// if it can be used where the target type is expected.
+    ///
+    /// ## Logic:
+    /// - `X <: target` AND `Y <: target` => True
+    /// - Otherwise => False
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Both branches are strings
+    /// type T = boolean extends true ? "yes" : "no";
+    /// let x: string = null as T;  // ✅ "yes" <: string and "no" <: string
+    ///
+    /// // Branches have different types
+    /// type U = boolean extends true ? "yes" : 42;
+    /// let y: string = null as U;  // ❌ 42 is not <: string
+    /// ```
     fn conditional_branches_subtype(
         &mut self,
         cond: &ConditionalType,
@@ -1387,6 +1409,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Check if source is a subtype of both branches of a conditional type.
+    ///
+    /// When checking `source <: (T extends U ? X : Y)`, we need to verify that:
+    /// - Source is a subtype of both the true branch (X) and false branch (Y)
+    ///
+    /// This is used when the target is a conditional type and we need to check
+    /// if the source can be assigned to it regardless of which branch is selected.
+    ///
+    /// ## Logic:
+    /// - `source <: X` AND `source <: Y` => True
+    /// - Otherwise => False
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Source is compatible with both branches
+    /// type T = boolean extends true ? string : number;
+    /// let x: T = "hello";  // ✅ "hello" <: string and "hello" <: number
+    ///
+    /// // Source is only compatible with one branch
+    /// type U = boolean extends true ? string : Object;
+    /// let y: U = { x: 1 };  // ❌ { x: 1 } is not <: string
+    /// ```
     fn subtype_of_conditional_target(
         &mut self,
         source: TypeId,
@@ -1469,6 +1513,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// ## NOT compatible with object keyword:
     /// - Primitives (string, number, boolean, bigint, symbol, null, undefined, void)
     ///
+    /// ## TypeScript Soundness:
+    /// The `object` type (lowercase) represents all non-primitive values:
+    /// - **Includes**: Plain objects, arrays, tuples, functions, classes, interfaces
+    /// - **Excludes**: Primitives (string, number, boolean, bigint, symbol, null, undefined, void)
+    /// - **Special cases**: `Object`, `any`, `never`, `error` match for compatibility
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Object types (assignable to object)
+    /// let a: object = { x: 1 };              // ✅ Plain object
+    /// let b: object = [1, 2, 3];             // ✅ Array
+    /// let c: object = (x: number) => void;   // ✅ Function
+    /// let d: object = class {};              // ✅ Class
+    ///
+    /// // Primitive types (not assignable to object)
+    /// let e: object = "hello";               // ❌ string
+    /// let f: object = 42;                    // ❌ number
+    /// let g: object = true;                  // ❌ boolean
+    /// let h: object = null;                  // ❌ null
+    /// let i: object = undefined;             // ❌ undefined
+    ///
+    /// // Special cases
+    /// let j: object = new Object();          // ✅ Object constructor
+    /// let k: object = {};                    // ✅ Empty object
+    /// let l: object = <any>{};               // ✅ any matches everything
+    /// ```
+    ///
     /// This is used in subtype checking to determine when structural typing rules apply.
     fn is_object_keyword_type(&mut self, source: TypeId) -> bool {
         match source {
@@ -1516,7 +1587,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check if a type is callable (function or callable type).
+    /// Check if a type is callable (can be invoked as a function).
+    ///
+    /// Callable types represent values that can be called with parentheses syntax:
+    /// - Functions: `(x: number) => void`
+    /// - Function types: `Function` intrinsic
+    /// - Callable objects: Objects with call signatures
+    ///
+    /// ## TypeScript Soundness:
+    /// - **Union types**: All members must be callable (intersection semantics)
+    /// - **Intersection types**: At least one member must be callable
+    /// - **Type parameters**: Callable if their constraint is callable
+    /// - **Special cases**: `any`, `never`, `error`, `Function` are always callable
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Callable types
+    /// let a: Function = () => {};           // ✅ Function type
+    /// let b: Function = function() {};       // ✅ Function expression
+    ///
+    /// // Call signatures
+    /// interface Callable {
+    ///     (x: number): void;
+    /// }
+    /// let c: Callable = (x: number) => {};   // ✅ Callable object
+    ///
+    /// // Unions and intersections
+    /// type F = () => void;
+    /// type G = () => void;
+    /// type Union = F | G;                   // ✅ All members callable
+    /// type Intersect = F & G;               // ✅ At least one callable
+    ///
+    /// // Non-callable types
+    /// let d: Function = { x: 1 };           // ❌ Plain object
+    /// let e: Function = 42;                 // ❌ Number
+    /// ```
+    ///
     /// Rule #29: Function intrinsic accepts any callable type as a subtype.
     fn is_callable_type(&mut self, source: TypeId) -> bool {
         match source {
