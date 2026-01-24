@@ -1859,16 +1859,32 @@ pub enum GenericInstantiationResult {
 pub fn solve_generic_instantiation<C: AssignabilityChecker>(
     type_params: &[TypeParamInfo],
     type_args: &[TypeId],
+    interner: &dyn TypeDatabase,
     checker: &mut C,
 ) -> GenericInstantiationResult {
+    use crate::solver::{TypeSubstitution, instantiate_type};
+
     for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
         if let Some(constraint) = param.constraint {
+            // Constraints may reference earlier type parameters, so instantiate them
+            let instantiated_constraint = if i > 0 {
+                let mut subst = TypeSubstitution::new();
+                for (j, p) in type_params.iter().take(i).enumerate() {
+                    if let Some(&arg) = type_args.get(j) {
+                        subst.insert(p.name, arg);
+                    }
+                }
+                instantiate_type(interner, constraint, &subst)
+            } else {
+                constraint
+            };
+
             // Validate that the type argument satisfies the constraint
-            if !checker.is_assignable_to(type_arg, constraint) {
+            if !checker.is_assignable_to(type_arg, instantiated_constraint) {
                 return GenericInstantiationResult::ConstraintViolation {
                     param_index: i,
                     param_name: param.name,
-                    constraint,
+                    constraint: instantiated_constraint,
                     type_arg,
                 };
             }
