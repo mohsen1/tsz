@@ -6398,4 +6398,51 @@ impl<'a> CheckerState<'a> {
         }
         Some(parsed as usize)
     }
+
+    // =========================================================================
+    // Section 34: Type Validation Utilities
+    // =========================================================================
+
+    /// Check if a type can be array-destructured.
+    /// Returns true for arrays, tuples, strings, and types with [Symbol.iterator].
+    pub(crate) fn is_array_destructurable_type(&self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        // Handle primitive types
+        if type_id == TypeId::STRING {
+            return true;
+        }
+
+        let Some(type_key) = self.ctx.types.lookup(type_id) else {
+            return false;
+        };
+
+        match type_key {
+            // Array types are destructurable
+            TypeKey::Array(_) => true,
+            // Tuple types are destructurable
+            TypeKey::Tuple(_) => true,
+            // Readonly arrays are destructurable
+            TypeKey::ReadonlyType(inner) => self.is_array_destructurable_type(inner),
+            // Union types: all members must be destructurable
+            TypeKey::Union(list_id) => {
+                let types = self.ctx.types.type_list(list_id);
+                types.iter().all(|&t| self.is_array_destructurable_type(t))
+            }
+            // Intersection types: at least one member must be array-like
+            TypeKey::Intersection(list_id) => {
+                let types = self.ctx.types.type_list(list_id);
+                types.iter().any(|&t| self.is_array_destructurable_type(t))
+            }
+            // Object types might have an iterator - for now conservatively return false
+            TypeKey::Object(_) | TypeKey::ObjectWithIndex(_) => false,
+            // Literal types: check the base type
+            TypeKey::Literal(lit_value) => {
+                // String literals are destructurable
+                matches!(lit_value, crate::solver::LiteralValue::String(_))
+            }
+            // Other types are not array-destructurable
+            _ => false,
+        }
+    }
 }
