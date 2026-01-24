@@ -1762,6 +1762,101 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Emit TS2307 error for a module that cannot be found.
+    ///
+    /// This function emits a "Cannot find module" error with the module specifier
+    /// and attempts to report the error at the import declaration node if available.
+    fn emit_module_not_found_error(&mut self, module_specifier: &str, decl_node: NodeIndex) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        // Only emit if report_unresolved_imports is enabled
+        // (CLI driver handles module resolution in multi-file mode)
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        // Try to find the import declaration node to get the module specifier span
+        let (start, length) = if !decl_node.is_none() {
+            if let Some(node) = self.ctx.arena.get(decl_node) {
+                // For import equals declarations, try to get the module specifier node
+                if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                    if let Some(import) = self.ctx.arena.get_import_decl(node) {
+                        if let Some(module_node) = self.ctx.arena.get(import.module_specifier) {
+                            // Found the module specifier node - use its span
+                            (module_node.pos, module_node.end - module_node.pos)
+                        } else {
+                            // Fall back to the declaration node span
+                            (node.pos, node.end - node.pos)
+                        }
+                    } else {
+                        (node.pos, node.end - node.pos)
+                    }
+                } else if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    // For ES6 import declarations, the module specifier should be available
+                    if let Some(import) = self.ctx.arena.get_import_decl(node) {
+                        if let Some(module_node) = self.ctx.arena.get(import.module_specifier) {
+                            // Found the module specifier node - use its span
+                            (module_node.pos, module_node.end - module_node.pos)
+                        } else {
+                            // Fall back to the declaration node span
+                            (node.pos, node.end - node.pos)
+                        }
+                    } else {
+                        (node.pos, node.end - node.pos)
+                    }
+                } else if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                    || node.kind == syntax_kind_ext::IMPORT_NAMESPACE_SPECIFIER
+                    || node.kind == syntax_kind_ext::IMPORT_DEFAULT_SPECIFIER
+                {
+                    // For import specifiers, try to find the parent import declaration
+                    if let Some(ext) = self.ctx.arena.get_extended(decl_node) {
+                        let parent = ext.parent;
+                        if let Some(parent_node) = self.ctx.arena.get(parent) {
+                            if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                                if let Some(import) = self.ctx.arena.get_import_decl(parent_node) {
+                                    if let Some(module_node) = self.ctx.arena.get(import.module_specifier) {
+                                        // Found the module specifier node - use its span
+                                        (module_node.pos, module_node.end - module_node.pos)
+                                    } else {
+                                        // Fall back to the parent declaration node span
+                                        (parent_node.pos, parent_node.end - parent_node.pos)
+                                    }
+                                } else {
+                                    (parent_node.pos, parent_node.end - parent_node.pos)
+                                }
+                            } else {
+                                (node.pos, node.end - node.pos)
+                            }
+                        } else {
+                            (node.pos, node.end - node.pos)
+                        }
+                    } else {
+                        (node.pos, node.end - node.pos)
+                    }
+                } else {
+                    // Use the declaration node span for other cases
+                    (node.pos, node.end - node.pos)
+                }
+            } else {
+                // No node available - use position 0
+                (0, 0)
+            }
+        } else {
+            // No declaration node - use position 0
+            (0, 0)
+        };
+
+        // Note: We use self.error() which already checks emitted_diagnostics for deduplication
+        // The key is (start, code), so we won't emit duplicate errors at the same location
+        // Emit the TS2307 error
+        self.error(
+            start,
+            length,
+            format!("Cannot find module '{}'", module_specifier),
+            diagnostic_codes::CANNOT_FIND_MODULE,
+        );
+    }
+
     pub(crate) fn heritage_name_text(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
 
@@ -5044,7 +5139,8 @@ impl<'a> CheckerState<'a> {
                             let module_type = self.ctx.types.object(props);
                             return (module_type, Vec::new());
                         }
-                        // Module not found - return ANY to allow property access
+                        // Module not found - emit TS2307 error and return ANY to allow property access
+                        self.emit_module_not_found_error(&module_specifier, value_decl);
                         return (TypeId::ANY, Vec::new());
                     }
                     // Fall back to get_type_of_node for simple identifiers
@@ -5085,8 +5181,9 @@ impl<'a> CheckerState<'a> {
                     }
                     return (result, Vec::new());
                 }
-                // Module not found in exports - return ANY to prevent cascading TS2571 errors
+                // Module not found in exports - emit TS2307 error and return ANY
                 // TSC emits TS2307 for missing module but allows property access on the result
+                self.emit_module_not_found_error(module_name, value_decl);
                 return (TypeId::ANY, Vec::new());
             }
 
