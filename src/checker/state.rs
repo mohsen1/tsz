@@ -11693,28 +11693,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(crate) fn get_class_declaration_from_symbol(&self, sym_id: SymbolId) -> Option<NodeIndex> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if !symbol.value_declaration.is_none() {
-            let decl_idx = symbol.value_declaration;
-            if let Some(node) = self.ctx.arena.get(decl_idx)
-                && self.ctx.arena.get_class(node).is_some()
-            {
-                return Some(decl_idx);
-            }
-        }
-
-        for &decl_idx in &symbol.declarations {
-            if let Some(node) = self.ctx.arena.get(decl_idx)
-                && self.ctx.arena.get_class(node).is_some()
-            {
-                return Some(decl_idx);
-            }
-        }
-
-        None
-    }
-
     /// Check if a property is readonly in a class declaration (by looking at AST).
     fn is_class_property_readonly(&self, class_name: &str, prop_name: &str) -> bool {
         // Find the class declaration by name
