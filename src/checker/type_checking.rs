@@ -986,4 +986,74 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    // =========================================================================
+    // Private Identifier Validation
+    // =========================================================================
+
+    /// Check that a private identifier expression is valid.
+    ///
+    /// Validates that private field/property access is used correctly:
+    /// - The private identifier must be declared in a class
+    /// - The object type must be assignable to the declaring class type
+    /// - Emits appropriate errors for invalid private identifier usage
+    ///
+    /// ## Parameters:
+    /// - `name_idx`: The private identifier node index
+    /// - `rhs_type`: The type of the object on which the private identifier is accessed
+    ///
+    /// ## Validation:
+    /// - Resolves private identifier symbols
+    /// - Checks if the object type is assignable to the declaring class
+    /// - Handles shadowed private members (from derived classes)
+    /// - Emits property does not exist errors for invalid access
+    pub(crate) fn check_private_identifier_in_expression(
+        &mut self,
+        name_idx: NodeIndex,
+        rhs_type: TypeId,
+    ) {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return;
+        };
+        let property_name = ident.escaped_text.clone();
+
+        let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
+        if symbols.is_empty() {
+            if saw_class_scope {
+                self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
+            }
+            return;
+        }
+
+        let rhs_type = self.evaluate_application_type(rhs_type);
+        if rhs_type == TypeId::ANY || rhs_type == TypeId::ERROR || rhs_type == TypeId::UNKNOWN {
+            return;
+        }
+
+        let declaring_type = match self.private_member_declaring_type(symbols[0]) {
+            Some(ty) => ty,
+            None => {
+                if saw_class_scope {
+                    self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
+                }
+                return;
+            }
+        };
+
+        if !self.is_assignable_to(rhs_type, declaring_type) {
+            let shadowed = symbols.iter().skip(1).any(|sym_id| {
+                self.private_member_declaring_type(*sym_id)
+                    .map(|ty| self.is_assignable_to(rhs_type, ty))
+                    .unwrap_or(false)
+            });
+            if shadowed {
+                return;
+            }
+
+            self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
+        }
+    }
 }
