@@ -8,9 +8,11 @@
 //! - Cycle detection for recursive types (coinductive)
 //! - Set-theoretic operations for unions and intersections
 //! - TypeResolver trait for lazy symbol resolution
+//! - Tracer pattern for zero-cost diagnostic abstraction
 
 use crate::interner::Atom;
 use crate::solver::AssignabilityChecker;
+use crate::solver::diagnostics::{SubtypeTracer, FastTracer, DiagnosticTracer, SubtypeFailureReason};
 use crate::solver::TypeDatabase;
 use crate::solver::types::*;
 use crate::solver::utils;
@@ -700,97 +702,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 // Error Explanation API
 // =============================================================================
 
-/// Reason why a subtype check failed.
-/// Used by `explain_failure` to provide detailed error messages.
-#[derive(Clone, Debug)]
-pub enum SubtypeFailureReason {
-    /// A required property is missing in the source type.
-    MissingProperty {
-        property_name: Atom,
-        source_type: TypeId,
-        target_type: TypeId,
-    },
-    /// Property types are incompatible.
-    PropertyTypeMismatch {
-        property_name: Atom,
-        source_property_type: TypeId,
-        target_property_type: TypeId,
-        nested_reason: Option<Box<SubtypeFailureReason>>,
-    },
-    /// Optional property cannot satisfy required property.
-    OptionalPropertyRequired { property_name: Atom },
-    /// Readonly property cannot satisfy mutable property.
-    ReadonlyPropertyMismatch { property_name: Atom },
-    /// Return types are incompatible.
-    ReturnTypeMismatch {
-        source_return: TypeId,
-        target_return: TypeId,
-        nested_reason: Option<Box<SubtypeFailureReason>>,
-    },
-    /// Parameter types are incompatible.
-    ParameterTypeMismatch {
-        param_index: usize,
-        source_param: TypeId,
-        target_param: TypeId,
-    },
-    /// Too many parameters in source.
-    TooManyParameters {
-        source_count: usize,
-        target_count: usize,
-    },
-    /// Tuple element count mismatch.
-    TupleElementMismatch {
-        source_count: usize,
-        target_count: usize,
-    },
-    /// Tuple element type mismatch.
-    TupleElementTypeMismatch {
-        index: usize,
-        source_element: TypeId,
-        target_element: TypeId,
-    },
-    /// Array element type mismatch.
-    ArrayElementMismatch {
-        source_element: TypeId,
-        target_element: TypeId,
-    },
-    /// Index signature value type mismatch.
-    IndexSignatureMismatch {
-        index_kind: &'static str, // "string" or "number"
-        source_value_type: TypeId,
-        target_value_type: TypeId,
-    },
-    /// No union member matches.
-    NoUnionMemberMatches {
-        source_type: TypeId,
-        target_union_members: Vec<TypeId>,
-    },
-    /// No overlapping properties for weak type target.
-    NoCommonProperties {
-        source_type: TypeId,
-        target_type: TypeId,
-    },
-    /// Generic type mismatch (no more specific reason).
-    TypeMismatch {
-        source_type: TypeId,
-        target_type: TypeId,
-    },
-    /// Intrinsic type mismatch (e.g., string vs number).
-    IntrinsicTypeMismatch {
-        source_type: TypeId,
-        target_type: TypeId,
-    },
-    /// Literal type mismatch (e.g., "hello" vs "world" or "hello" vs 42).
-    LiteralTypeMismatch {
-        source_type: TypeId,
-        target_type: TypeId,
-    },
-    /// Error type encountered - indicates unresolved type that should not be silently compatible.
-    ErrorType {
-        source_type: TypeId,
-        target_type: TypeId,
-    },
-}
+// Re-export SubtypeFailureReason from diagnostics module
+pub use crate::solver::diagnostics::SubtypeFailureReason;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Explain why `source` is not assignable to `target`.
