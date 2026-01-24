@@ -156,6 +156,13 @@ impl<'a> BinaryOpEvaluator<'a> {
                     }
                     return members.iter().all(|&m| self.is_number_like(m));
                 }
+                // Check type parameter constraint - T extends number should be number-like
+                TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+                    if let Some(constraint) = info.constraint {
+                        return self.is_number_like(constraint);
+                    }
+                    return false;
+                }
                 TypeKey::Ref(_) => return false,
                 _ => {}
             }
@@ -172,6 +179,13 @@ impl<'a> BinaryOpEvaluator<'a> {
             match key {
                 TypeKey::Literal(LiteralValue::String(_)) => return true,
                 TypeKey::TemplateLiteral(_) => return true,
+                // Check type parameter constraint - T extends string should be string-like
+                TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+                    if let Some(constraint) = info.constraint {
+                        return self.is_string_like(constraint);
+                    }
+                    return false;
+                }
                 _ => {}
             }
         }
@@ -192,6 +206,13 @@ impl<'a> BinaryOpEvaluator<'a> {
                         return false;
                     }
                     return members.iter().all(|&m| self.is_bigint_like(m));
+                }
+                // Check type parameter constraint - T extends bigint should be bigint-like
+                TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+                    if let Some(constraint) = info.constraint {
+                        return self.is_bigint_like(constraint);
+                    }
+                    return false;
                 }
                 _ => {}
             }
