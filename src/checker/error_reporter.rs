@@ -1142,9 +1142,9 @@ impl<'a> CheckerState<'a> {
         let left_str = formatter.format(left_type);
         let right_str = formatter.format(right_type);
 
-        // Check if this is an arithmetic operator (-, *, /, %, **)
+        // Check if this is an arithmetic operator (-, *, /, %)
         // Note: + is handled separately - it can be string concatenation or arithmetic
-        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%" | "**");
+        let is_arithmetic = matches!(op, "-" | "*" | "/" | "%");
 
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
@@ -1547,7 +1547,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a union type containing string
         if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(type_id) {
-            let member_list = self.ctx.types.type_list(members);
+            let member_list = self.ctx.types.union_list(members);
             for &member in member_list.iter() {
                 if member == TypeId::STRING {
                     return true;

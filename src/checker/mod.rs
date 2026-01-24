@@ -64,6 +64,8 @@ mod control_flow_tests;
 #[cfg(test)]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+mod ts2322_tests;
+#[cfg(test)]
 mod value_usage_tests;
 
 // Re-export key types
