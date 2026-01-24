@@ -507,22 +507,22 @@ impl UnsoundnessAudit {
             rule_number: 26,
             name: "Split Accessors (Getter/Setter Variance)",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/types.rs", "src/solver/subtype_rules/objects.rs"],
+            test_coverage: 0.90,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. PropertyInfo needs read_type/write_type fields. Covariant reads, contravariant writes.",
+            notes: "FULLY IMPLEMENTED. PropertyInfo has type_id (read) and write_type (write). Subtype checking: read types are covariant, write types are contravariant (target_write <: source_write).",
         });
 
         rules.insert(27, RuleImplementation {
             rule_number: 27,
             name: "Homomorphic Mapped Types over Primitives",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/evaluate_rules/keyof.rs", "src/solver/evaluate_rules/apparent.rs", "src/solver/evaluate_rules/mapped.rs"],
+            test_coverage: 0.85,
             dependencies: vec![12],
-            notes: "NOT IMPLEMENTED. Mapped types over primitives should map over apparent types (String, Number interfaces).",
+            notes: "FULLY IMPLEMENTED. keyof of primitives calls apparent_primitive_keyof() which returns union of apparent member names. Mapped types then iterate over these keys.",
         });
 
         rules.insert(28, RuleImplementation {
@@ -562,11 +562,11 @@ impl UnsoundnessAudit {
             rule_number: 32,
             name: "Best Common Type (BCT) Inference",
             phase: ImplementationPhase::Phase4,
-            status: ImplementationStatus::NotImplemented,
-            implementation_files: vec![],
-            test_coverage: 0.0,
+            status: ImplementationStatus::FullyImplemented,
+            implementation_files: vec!["src/solver/infer.rs", "src/checker/type_computation.rs"],
+            test_coverage: 0.85,
             dependencies: vec![],
-            notes: "NOT IMPLEMENTED. Array literal type inference needs BCT algorithm. Find supertype of all candidates.",
+            notes: "FULLY IMPLEMENTED. Array literal type inference uses best_common_type() from TypeInterner. Algorithm: 1) Filter duplicates/never, 2) Find common base, 3) Find supertype of all, 4) Fall back to union.",
         });
 
         rules.insert(33, RuleImplementation {
