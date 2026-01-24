@@ -129,6 +129,89 @@ impl ConstraintSet {
             self.add_upper_bound(ty);
         }
     }
+
+    /// Detect early conflicts between collected constraints.
+    /// This allows failing fast before full resolution.
+    pub fn detect_conflicts(&self, interner: &dyn TypeDatabase) -> Option<ConstraintConflict> {
+        // 1. Check for mutually exclusive upper bounds
+        for (i, &u1) in self.upper_bounds.iter().enumerate() {
+            for &u2 in &self.upper_bounds[i + 1..] {
+                if are_disjoint(interner, u1, u2) {
+                    return Some(ConstraintConflict::DisjointUpperBounds(u1, u2));
+                }
+            }
+        }
+
+        // 2. Check if any lower bound is incompatible with any upper bound
+        for &lower in &self.lower_bounds {
+            for &upper in &self.upper_bounds {
+                // Ignore ERROR and ANY for conflict detection
+                if lower == TypeId::ERROR
+                    || upper == TypeId::ERROR
+                    || lower == TypeId::ANY
+                    || upper == TypeId::ANY
+                {
+                    continue;
+                }
+                if !crate::solver::subtype::is_subtype_of(interner, lower, upper) {
+                    return Some(ConstraintConflict::LowerExceedsUpper(lower, upper));
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Conflict detected between constraints on an inference variable.
+#[derive(Clone, Debug)]
+pub enum ConstraintConflict {
+    /// Mutually exclusive upper bounds (e.g., string AND number)
+    DisjointUpperBounds(TypeId, TypeId),
+    /// A lower bound is not a subtype of an upper bound
+    LowerExceedsUpper(TypeId, TypeId),
+}
+
+/// Helper to determine if two types are definitely disjoint (no common inhabitants).
+fn are_disjoint(interner: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
+    if a == b {
+        return false;
+    }
+    if a == TypeId::ANY || b == TypeId::ANY || a == TypeId::UNKNOWN || b == TypeId::UNKNOWN {
+        return false;
+    }
+
+    let key_a = interner.lookup(a);
+    let key_b = interner.lookup(b);
+
+    match (key_a, key_b) {
+        (Some(TypeKey::Intrinsic(k1)), Some(TypeKey::Intrinsic(k2))) => {
+            use IntrinsicKind::*;
+            // Basic primitives are disjoint (ignoring object/Function which are more complex)
+            k1 != k2
+                && !matches!(
+                    (k1, k2),
+                    (Object, _) | (_, Object) | (Function, _) | (_, Function)
+                )
+        }
+        (Some(TypeKey::Literal(l1)), Some(TypeKey::Literal(l2))) => l1 != l2,
+        (Some(TypeKey::Literal(l1)), Some(TypeKey::Intrinsic(k2))) => {
+            !is_literal_compatible_with_intrinsic(&l1, k2)
+        }
+        (Some(TypeKey::Intrinsic(k1)), Some(TypeKey::Literal(l2))) => {
+            !is_literal_compatible_with_intrinsic(&l2, k1)
+        }
+        _ => false,
+    }
+}
+
+fn is_literal_compatible_with_intrinsic(lit: &LiteralValue, kind: IntrinsicKind) -> bool {
+    match lit {
+        LiteralValue::String(_) => kind == IntrinsicKind::String,
+        LiteralValue::Number(_) => kind == IntrinsicKind::Number,
+        LiteralValue::BigInt(_) => kind == IntrinsicKind::Bigint,
+        LiteralValue::Boolean(_) => kind == IntrinsicKind::Boolean,
+    }
 }
 
 struct TupleRestExpansion {

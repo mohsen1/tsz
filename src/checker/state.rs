@@ -15979,30 +15979,88 @@ impl<'a> CheckerState<'a> {
     /// For detailed errors with elaboration (e.g., "property 'x' is missing"),
     /// use `error_type_not_assignable_with_reason_at` instead.
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
+        self.diagnose_assignment_failure(source, target, idx);
+    }
+
+    /// Diagnose why an assignment failed and report a detailed error.
+    pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         // ERROR TYPE SUPPRESSION
-        //
-        // When source or target type IS the ERROR sentinel type, suppress TS2322 emission.
-        // This prevents unhelpful cascading errors like "Type 'error' is not assignable to type 'string'".
-        //
-        // Rationale:
-        // 1. ERROR type means symbol resolution failed earlier (TS2304 already emitted)
-        // 2. Emitting TS2322 for ERROR provides no diagnostic value to users
-        // 3. TypeScript behavior: only report the root resolution failure, not cascades
-        //
-        // Note: We only suppress when type IS ERROR, not when type CONTAINS ERROR.
-        // A union like `string | error` should still be checked against other types.
         if source == TypeId::ERROR || target == TypeId::ERROR {
             return;
         }
 
         // ANY TYPE SUPPRESSION
-        //
-        // ANY is assignable to and from any type - this matches TypeScript semantics.
-        // The `any` type is an escape hatch that bypasses type checking entirely.
         if source == TypeId::ANY || target == TypeId::ANY {
             return;
         }
 
+        // Check for constructor accessibility mismatch
+        if let Some((source_level, target_level)) =
+            self.constructor_accessibility_mismatch(source, target, None)
+        {
+            self.error_constructor_accessibility_not_assignable(
+                source,
+                target,
+                source_level,
+                target_level,
+                idx,
+            );
+            return;
+        }
+
+        // Check for private brand mismatch
+        if let Some(detail) = self.private_brand_mismatch_error(source, target) {
+            use crate::checker::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+
+            let Some(loc) = self.get_node_span(idx) else {
+                return;
+            };
+
+            let source_type = self.format_type(source);
+            let target_type = self.format_type(target);
+            let message = format_message(
+                diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                &[&source_type, &target_type],
+            );
+
+            let diag = Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.0,
+                loc.1 - loc.0,
+                message,
+                diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+            )
+            .with_related(self.ctx.file_name.clone(), loc.0, loc.1 - loc.0, detail);
+
+            self.ctx.diagnostics.push(diag);
+            return;
+        }
+
+        // Use the solver's explain API to get the detailed reason
+        let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
+        let reason = checker.explain_failure(source, target);
+
+        match reason {
+            Some(failure_reason) => {
+                let diag = self.render_failure_reason(&failure_reason, source, target, idx, 0);
+                self.ctx.diagnostics.push(diag);
+            }
+            None => {
+                // Fallback to generic message
+                self.error_type_not_assignable_generic_at(source, target, idx);
+            }
+        }
+    }
+
+    /// Internal generic error reporting for type assignability failures.
+    fn error_type_not_assignable_generic_at(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
         if let Some(loc) = self.get_source_location(idx) {
             let mut builder = crate::solver::SpannedDiagnosticBuilder::new(
                 self.ctx.types,
@@ -16012,6 +16070,307 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .diagnostics
                 .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Recursively render a SubtypeFailureReason into a Diagnostic.
+    fn render_failure_reason(
+        &self,
+        reason: &crate::solver::SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        depth: u32,
+    ) -> Diagnostic {
+        use crate::checker::types::diagnostics::{
+            DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+            diagnostic_messages, format_message,
+        };
+        use crate::solver::SubtypeFailureReason;
+
+        let (start, length) = self.get_node_span(idx).unwrap_or((0, 0));
+        let file_name = self.ctx.file_name.clone();
+
+        match reason {
+            SubtypeFailureReason::MissingProperty {
+                property_name,
+                source_type,
+                target_type,
+            } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let source_str = self.format_type(*source_type);
+                let target_str = self.format_type(*target_type);
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                    &[&prop_name, &source_str, &target_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::PropertyTypeMismatch {
+                property_name,
+                source_property_type,
+                target_property_type,
+                nested_reason,
+            } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let message = format_message(
+                    diagnostic_messages::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                    &[&prop_name],
+                );
+                let mut diag = Diagnostic::error(
+                    file_name.clone(),
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPES_OF_PROPERTY_INCOMPATIBLE,
+                );
+
+                if let Some(nested) = nested_reason
+                    && depth < 5
+                {
+                    let nested_diag = self.render_failure_reason(
+                        nested,
+                        *source_property_type,
+                        *target_property_type,
+                        idx,
+                        depth + 1,
+                    );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: nested_diag.file,
+                        start: nested_diag.start,
+                        length: nested_diag.length,
+                        message_text: nested_diag.message_text,
+                        category: DiagnosticCategory::Message,
+                        code: nested_diag.code,
+                    });
+                }
+                diag
+            }
+
+            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let source_str = self.format_type(source);
+                let target_str = self.format_type(target);
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_MISSING_BUT_REQUIRED,
+                    &[&prop_name, &source_str, &target_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::PROPERTY_MISSING_IN_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::ReadonlyPropertyMismatch { property_name } => {
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let message =
+                    format_message(diagnostic_messages::CANNOT_ASSIGN_READONLY, &[&prop_name]);
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::CANNOT_ASSIGN_TO_READONLY_PROPERTY,
+                )
+            }
+
+            SubtypeFailureReason::ReturnTypeMismatch {
+                source_return,
+                target_return,
+                nested_reason,
+            } => {
+                let source_str = self.format_type(*source_return);
+                let target_str = self.format_type(*target_return);
+                let message = format!(
+                    "Return type '{}' is not assignable to '{}'.",
+                    source_str, target_str
+                );
+                let mut diag = Diagnostic::error(
+                    file_name.clone(),
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                );
+
+                if let Some(nested) = nested_reason
+                    && depth < 5
+                {
+                    let nested_diag = self.render_failure_reason(
+                        nested,
+                        *source_return,
+                        *target_return,
+                        idx,
+                        depth + 1,
+                    );
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: nested_diag.file,
+                        start: nested_diag.start,
+                        length: nested_diag.length,
+                        message_text: nested_diag.message_text,
+                        category: DiagnosticCategory::Message,
+                        code: nested_diag.code,
+                    });
+                }
+                diag
+            }
+
+            SubtypeFailureReason::TooManyParameters {
+                source_count,
+                target_count,
+            } => {
+                let message = format_message(
+                    diagnostic_messages::EXPECTED_ARGUMENTS,
+                    &[&target_count.to_string(), &source_count.to_string()],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::EXPECTED_ARGUMENTS,
+                )
+            }
+
+            SubtypeFailureReason::TupleElementMismatch {
+                source_count,
+                target_count,
+            } => {
+                let message = format!(
+                    "Tuple type has {} elements but target requires {}.",
+                    source_count, target_count
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::TupleElementTypeMismatch {
+                index,
+                source_element,
+                target_element,
+            } => {
+                let source_str = self.format_type(*source_element);
+                let target_str = self.format_type(*target_element);
+                let message = format!(
+                    "Type of element at index {} is incompatible: '{}' is not assignable to '{}'.",
+                    index, source_str, target_str
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::ArrayElementMismatch {
+                source_element,
+                target_element,
+            } => {
+                let source_str = self.format_type(*source_element);
+                let target_str = self.format_type(*target_element);
+                let message = format!(
+                    "Array element type '{}' is not assignable to '{}'.",
+                    source_str, target_str
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind,
+                source_value_type,
+                target_value_type,
+            } => {
+                let source_str = self.format_type(*source_value_type);
+                let target_str = self.format_type(*target_value_type);
+                let message = format!(
+                    "{} index signature is incompatible: '{}' is not assignable to '{}'.",
+                    index_kind, source_str, target_str
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::NoUnionMemberMatches {
+                source_type,
+                target_union_members: _,
+            } => {
+                let source_str = self.format_type(*source_type);
+                let target_str = self.format_type(target);
+                let message = format_message(
+                    diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                    &[&source_str, &target_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::NoCommonProperties {
+                source_type: _,
+                target_type: _,
+            } => {
+                let source_str = self.format_type(source);
+                let target_str = self.format_type(target);
+                let message = format_message(
+                    diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                    &[&source_str, &target_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
+
+            _ => {
+                let source_str = self.format_type(source);
+                let target_str = self.format_type(target);
+                let message = format_message(
+                    diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+                    &[&source_str, &target_str],
+                );
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
         }
     }
 
@@ -16030,102 +16389,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::solver::{CompatChecker, TypeFormatter};
-
-        // ERROR TYPE SUPPRESSION
-        //
-        // When source or target type IS the ERROR sentinel type, suppress TS2322 emission.
-        // This prevents unhelpful cascading errors like "Type 'error' is not assignable to type 'string'".
-        //
-        // Rationale:
-        // 1. ERROR type means symbol resolution failed earlier (TS2304 already emitted)
-        // 2. Emitting TS2322 for ERROR provides no diagnostic value to users
-        // 3. TypeScript behavior: only report the root resolution failure, not cascades
-        //
-        // Note: We only suppress when type IS ERROR, not when type CONTAINS ERROR.
-        // A union like `string | error` should still be checked against other types.
-        if source == TypeId::ERROR || target == TypeId::ERROR {
-            return;
-        }
-
-        if let Some((source_level, target_level)) =
-            self.constructor_accessibility_mismatch(source, target, None)
-        {
-            self.error_constructor_accessibility_not_assignable(
-                source,
-                target,
-                source_level,
-                target_level,
-                idx,
-            );
-            return;
-        }
-
-        // Check for private brand mismatch and generate specific error message
-        if let Some(detail) = self.private_brand_mismatch_error(source, target) {
-            use crate::checker::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
-
-            let Some(loc) = self.get_source_location(idx) else {
-                return;
-            };
-
-            let source_type = self.format_type(source);
-            let target_type = self.format_type(target);
-            let message = format_message(
-                diagnostic_messages::TYPE_NOT_ASSIGNABLE,
-                &[&source_type, &target_type],
-            );
-
-            let diag = Diagnostic::error(
-                self.ctx.file_name.clone(),
-                loc.start,
-                loc.length(),
-                message,
-                diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE,
-            )
-            .with_related(self.ctx.file_name.clone(), loc.start, loc.length(), detail);
-
-            self.ctx.diagnostics.push(diag);
-            return;
-        }
-
-        let Some(loc) = self.get_source_location(idx) else {
-            return;
-        };
-
-        // Use the solver's explain API to get the detailed reason
-        let mut checker = CompatChecker::new(self.ctx.types);
-        let reason = checker.explain_failure(source, target);
-
-        match reason {
-            Some(failure_reason) => {
-                // Convert the reason to a PendingDiagnostic with elaboration
-                let pending = failure_reason.to_diagnostic(source, target).with_span(
-                    crate::solver::SourceSpan::new(
-                        self.ctx.file_name.as_str(),
-                        loc.start,
-                        loc.length(),
-                    ),
-                );
-
-                // Render the pending diagnostic to a TypeDiagnostic
-                let mut formatter =
-                    TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
-                let type_diag = formatter.render(&pending);
-
-                // Convert to checker diagnostic and add
-                self.ctx
-                    .diagnostics
-                    .push(type_diag.to_checker_diagnostic(&self.ctx.file_name));
-            }
-            None => {
-                // Fallback: shouldn't happen if called after a failed check,
-                // but just use the basic error message
-                self.error_type_not_assignable_at(source, target, idx);
-            }
-        }
+        self.diagnose_assignment_failure(source, target, idx);
     }
 
     fn error_constructor_accessibility_not_assignable(
