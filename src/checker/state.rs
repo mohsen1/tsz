@@ -6903,6 +6903,68 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if definite assignment analysis should be performed for a symbol.
+    ///
+    /// Definite assignment analysis ensures that block-scoped variables (let/const)
+    /// are assigned before use. This function determines whether the analysis should
+    /// be applied to a specific symbol usage.
+    ///
+    /// ## When to Check:
+    /// - Block-scoped variables (`let` and `const`)
+    /// - Variables without initializers
+    /// - Not for `var` declarations (function-scoped, default to undefined)
+    /// - Not for parameters (always initialized by caller)
+    /// - Not for class properties (handled separately)
+    ///
+    /// ## Compiler Options:
+    /// - Respects `strictNullChecks` compiler option
+    /// - When strict: All block-scoped variables are checked
+    /// - When non-strict: Only variables with explicit type annotations
+    ///
+    /// ## Symbol Flags Checked:
+    /// - BLOCK_SCOPED: Variable is block-scoped (let/const)
+    /// - FUNCTION_SCOPED: Variable is function-scoped (var) - skip check
+    /// - PARAMETER: Symbol is a parameter - skip check
+    /// - PROPERTY: Symbol is a class property - skip check
+    ///
+    /// ## Flow Analysis:
+    /// - Checks all code paths to ensure variable is assigned
+    /// - Handles conditionals, loops, and early returns
+    /// - Tracks assignments through control flow
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Should check - let without initializer
+    /// let x: number;
+    /// console.log(x);  // ❌ TS2454: Variable used before assignment
+    ///
+    /// // Should NOT check - var (function-scoped)
+    /// var y: number;
+    /// console.log(y);  // ✅ OK (undefined by default)
+    ///
+    /// // Should NOT check - has initializer
+    /// let z: number = 42;
+    /// console.log(z);  // ✅ OK (initialized)
+    ///
+    /// // Should check - const without initializer
+    /// const c: string;  // ❌ TS2454: Variable used before assignment
+    ///
+    /// // Conditional assignment
+    /// let a: number;
+    /// if (Math.random() > 0.5) {
+    ///   a = 1;
+    /// } else {
+    ///   a = 2;
+    /// }
+    /// console.log(a);  // ✅ OK (assigned on all paths)
+    ///
+    /// // Missing assignment on one path
+    /// let b: number;
+    /// if (Math.random() > 0.5) {
+    ///   b = 1;
+    /// }
+    /// console.log(b);  // ❌ TS2454: Not assigned on else path
+    /// ```
     fn should_check_definite_assignment(&mut self, sym_id: SymbolId, idx: NodeIndex) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
