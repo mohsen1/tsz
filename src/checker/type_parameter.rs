@@ -79,15 +79,8 @@ impl<'a> CheckerState<'a> {
     /// Returns the constraint type (e.g., `T extends string` returns string),
     /// or None if the type parameter has no constraint.
     pub fn get_type_parameter_constraint(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::solver::TypeKey;
-
         match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::TypeParameter(_param_id)) => {
-                // Look up the type parameter info
-                // This would need access to the type parameter definition
-                // For now, return None as a placeholder
-                None
-            }
+            Some(TypeKey::TypeParameter(info)) => info.constraint,
             _ => None,
         }
     }
@@ -140,14 +133,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the default type if specified, or None otherwise.
     pub fn get_type_parameter_default(&self, type_id: TypeId) -> Option<TypeId> {
-        use crate::solver::TypeKey;
-
         match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::TypeParameter(_)) => {
-                // Look up the default type from the type parameter definition
-                // For now, return None as a placeholder
-                None
-            }
+            Some(TypeKey::TypeParameter(info)) => info.default,
             _ => None,
         }
     }
