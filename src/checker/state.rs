@@ -17351,7 +17351,68 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Format a type as a human-readable string using solver's TypeFormatter.
+    /// Format a type as a human-readable string for error messages and diagnostics.
+    ///
+    /// This is the main entry point for converting TypeId representations into
+    /// human-readable type strings. Used throughout the type checker for error
+    /// messages, quick info, and IDE features.
+    ///
+    /// ## Formatting Strategy:
+    /// - Delegates to the solver's TypeFormatter
+    /// - Provides symbol table for resolving symbol names
+    /// - Handles all type constructs (primitives, generics, unions, etc.)
+    ///
+    /// ## Type Formatting Rules:
+    /// - Primitives: Display as intrinsic names (string, number, etc.)
+    /// - Literals: Display as literal values ("hello", 42, true)
+    /// - Arrays: Display as T[] or Array<T>
+    /// - Tuples: Display as [T, U, V]
+    /// - Unions: Display as T | U | V (with parentheses when needed)
+    /// - Intersections: Display as T & U & V (with parentheses when needed)
+    /// - Functions: Display as (args) => return
+    /// - Objects: Display as { prop: Type; ... }
+    /// - Type Parameters: Display as T, U, V (short names)
+    /// - Type References: Display as RefName<Args>
+    ///
+    /// ## Use Cases:
+    /// - Error messages: "Type X is not assignable to Y"
+    /// - Quick info (hover): Type information for IDE
+    /// - Completion: Type hints in autocomplete
+    /// - Diagnostics: All type-related error messages
+    ///
+    /// ## TypeScript Examples (Formatted Output):
+    /// ```typescript
+    /// // Primitives
+    /// let x: string;           // format_type → "string"
+    /// let y: number;           // format_type → "number"
+    ///
+    /// // Literals
+    /// let a: "hello";          // format_type → "\"hello\""
+    /// let b: 42;               // format_type → "42"
+    ///
+    /// // Composed types
+    /// type Pair = [string, number];
+    /// // format_type(Pair) → "[string, number]"
+    ///
+    /// type Union = string | number | boolean;
+    /// // format_type(Union) → "string | number | boolean"
+    ///
+    /// // Generics
+    /// type Map<K, V> = Record<K, V>;
+    /// // format_type(Map<string, number>) → "Record<string, number>"
+    ///
+    /// // Functions
+    /// type Handler = (data: string) => void;
+    /// // format_type(Handler) → "(data: string) => void"
+    ///
+    /// // Objects
+    /// type User = { name: string; age: number };
+    /// // format_type(User) → "{ name: string; age: number }"
+    ///
+    /// // Complex
+    /// type Complex = Array<{ id: number } | null>;
+    /// // format_type(Complex) → "Array<{ id: number } | null>"
+    /// ```
     pub fn format_type(&self, type_id: TypeId) -> String {
         let mut formatter =
             crate::solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols);
@@ -17421,8 +17482,53 @@ impl<'a> CheckerState<'a> {
     // Source File Checking (Full Traversal)
     // =========================================================================
 
-    /// Check a source file and populate diagnostics.
-    /// This is the entry point for type checking a parsed and bound file.
+    /// Check a source file and populate diagnostics (main entry point).
+    ///
+    /// This is the primary entry point for type checking after parsing and binding.
+    /// It traverses the entire AST and performs all type checking operations.
+    ///
+    /// ## Checking Process:
+    /// 1. Initializes the type environment
+    /// 2. Traverses all top-level declarations
+    /// 3. Checks all statements and expressions
+    /// 4. Populates diagnostics with errors and warnings
+    ///
+    /// ## What Gets Checked:
+    /// - Type annotations
+    /// - Assignments (variable, property, return)
+    /// - Function calls
+    /// - Property access
+    /// - Type compatibility (extends, implements)
+    /// - Flow analysis (definite assignment, type narrowing)
+    /// - Generic constraints
+    /// - And much more...
+    ///
+    /// ## Diagnostics:
+    /// - Errors are added to `ctx.diagnostics`
+    /// - Includes error codes (TSxxxx) and messages
+    /// - Spans point to the problematic code
+    ///
+    /// ## Compilation Flow:
+    /// 1. **Parser**: Source code → AST
+    /// 2. **Binder**: AST → Symbols (scopes, declarations)
+    /// 3. **Checker** (this function): AST + Symbols → Types + Diagnostics
+    ///
+    /// ## TypeScript Example:
+    /// ```typescript
+    /// // File: example.ts
+    /// let x: string = 42;  // Type error: number not assignable to string
+    ///
+    /// function foo(a: number): string {
+    ///   return a;  // Type error: number not assignable to string
+    /// }
+    ///
+    /// interface User {
+    ///   name: string;
+    /// }
+    /// const user: User = { age: 25 };  // Type error: missing 'name' property
+    ///
+    /// // check_source_file() would find all three errors above
+    /// ```
     pub fn check_source_file(&mut self, root_idx: NodeIndex) {
         let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
 
