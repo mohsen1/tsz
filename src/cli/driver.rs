@@ -496,7 +496,12 @@ fn build_program_with_cache(
     let parsed_results = if to_parse.is_empty() {
         Vec::new()
     } else {
-        parallel::parse_and_bind_parallel(to_parse)
+        // Use parse_and_bind_parallel_with_lib_files to load lib.d.ts symbols
+        // This ensures global symbols like console, Array, Promise are available
+        // during binding, which prevents "Any poisoning" where unresolved symbols
+        // default to Any type instead of emitting TS2304 errors.
+        let lib_paths: Vec<&Path> = Vec::new(); // Empty = use defaults (lib.d.ts, lib.dom.d.ts)
+        parallel::parse_and_bind_parallel_with_lib_files(to_parse, &lib_paths)
     };
 
     let mut parsed_map: HashMap<String, BindResult> = parsed_results
