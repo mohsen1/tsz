@@ -7033,10 +7033,19 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
+                // If target has an index signature, it accepts any properties
+                if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+                    return false;
+                }
+
                 // Check if any source property doesn't exist in target
                 source_props
                     .iter()
                     .any(|source_prop| !target_props.iter().any(|p| p.name == source_prop.name))
+            }
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                // ObjectWithIndex always has an index signature, accepts any properties
+                return false;
             }
             Some(TypeKey::Union(members_id)) => {
                 let members = self.ctx.types.type_list(members_id);
@@ -10870,6 +10879,11 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
+                // If target has an index signature, it accepts any properties
+                if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+                    return;
+                }
+
                 // Check for excess properties in source that don't exist in target
                 // This is the "freshness" or "strict object literal" check
                 for source_prop in source_props {
@@ -10879,6 +10893,10 @@ impl<'a> CheckerState<'a> {
                         self.error_excess_property_at(&prop_name, target, idx);
                     }
                 }
+            }
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                // ObjectWithIndex always has an index signature, accepts any properties
+                return;
             }
             Some(TypeKey::Union(members_id)) => {
                 let members = self.ctx.types.type_list(members_id);
