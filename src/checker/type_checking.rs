@@ -2687,5 +2687,218 @@ impl<'a> CheckerState<'a> {
             _ => false,
         }
     }
+
+    // 17. Property Initialization Checking (5 functions)
+
+    /// Check for TS2729: Property is used before its initialization.
+    ///
+    /// This checks if a property initializer references another property via `this.X`
+    /// where X is declared after the current property.
+    ///
+    /// ## Parameters
+    /// - `current_prop_idx`: The current property node index
+    /// - `initializer_idx`: The initializer expression node index
+    pub(crate) fn check_property_initialization_order(
+        &mut self,
+        current_prop_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        // Get class info to access member order
+        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+            return;
+        };
+
+        // Find the position of the current property in the member list
+        let Some(current_pos) = class_info
+            .member_nodes
+            .iter()
+            .position(|&idx| idx == current_prop_idx)
+        else {
+            return;
+        };
+
+        // Collect all `this.X` property accesses in the initializer
+        let accesses = self.collect_this_property_accesses(initializer_idx);
+
+        for (name, access_node_idx) in accesses {
+            // Find if this name refers to another property in the class
+            for (target_pos, &target_idx) in class_info.member_nodes.iter().enumerate() {
+                if let Some(member_name) = self.get_member_name(target_idx)
+                    && member_name == name
+                {
+                    // Check if target is an instance property (not static, not a method)
+                    if self.is_instance_property(target_idx) {
+                        // Report 2729 if:
+                        // 1. Target is declared after current property, OR
+                        // 2. Target is an abstract property (no initializer in this class)
+                        let should_error =
+                            target_pos > current_pos || self.is_abstract_property(target_idx);
+                        if should_error {
+                            self.error_at_node(
+                                access_node_idx,
+                                &format!(
+                                    "Property '{}' is used before its initialization.",
+                                    name
+                                ),
+                                diagnostic_codes::PROPERTY_USED_BEFORE_INITIALIZATION,
+                            );
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Check if a property declaration is abstract (has abstract modifier).
+    ///
+    /// ## Parameters
+    /// - `member_idx`: The class member node index
+    ///
+    /// Returns true if the member is an abstract property declaration.
+    fn is_abstract_property(&self, member_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return false;
+        };
+
+        if node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return false;
+        }
+
+        if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+            return self.has_abstract_modifier(&prop.modifiers);
+        }
+
+        false
+    }
+
+    /// Collect all `this.propertyName` accesses in an expression.
+    ///
+    /// Stops at function boundaries where `this` context changes.
+    ///
+    /// ## Parameters
+    /// - `node_idx`: The expression node index to search
+    ///
+    /// Returns a list of (property_name, access_node) tuples.
+    fn collect_this_property_accesses(&self, node_idx: NodeIndex) -> Vec<(String, NodeIndex)> {
+        let mut accesses = Vec::new();
+        self.collect_this_accesses_recursive(node_idx, &mut accesses);
+        accesses
+    }
+
+    /// Recursive helper to collect this.X accesses.
+    ///
+    /// Traverses the AST to find `this.property` expressions, stopping at
+    /// function/class boundaries where `this` context changes (except arrow functions).
+    ///
+    /// ## Parameters
+    /// - `node_idx`: The current node to examine
+    /// - `accesses`: Accumulator for found accesses
+    fn collect_this_accesses_recursive(
+        &self,
+        node_idx: NodeIndex,
+        accesses: &mut Vec<(String, NodeIndex)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        // Stop at function boundaries where `this` context changes
+        // (but not arrow functions, which preserve `this`)
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+        {
+            return;
+        }
+
+        // Property access uses AccessExprData with expression and name_or_argument
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                // Check if the expression is `this`
+                if let Some(expr_node) = self.ctx.arena.get(access.expression) {
+                    if expr_node.kind == SyntaxKind::ThisKeyword as u16 {
+                        // Get the property name
+                        if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            accesses.push((ident.escaped_text.clone(), node_idx));
+                        }
+                    } else {
+                        // Recurse into the expression part
+                        self.collect_this_accesses_recursive(access.expression, accesses);
+                    }
+                }
+            }
+            return;
+        }
+
+        // For other nodes, recurse into children based on node type
+        match node.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(binary) = self.ctx.arena.get_binary_expr(node) {
+                    self.collect_this_accesses_recursive(binary.left, accesses);
+                    self.collect_this_accesses_recursive(binary.right, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    self.collect_this_accesses_recursive(call.expression, accesses);
+                    if let Some(ref args) = call.arguments {
+                        for &arg in &args.nodes {
+                            self.collect_this_accesses_recursive(arg, accesses);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.collect_this_accesses_recursive(paren.expression, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    self.collect_this_accesses_recursive(cond.condition, accesses);
+                    self.collect_this_accesses_recursive(cond.when_true, accesses);
+                    self.collect_this_accesses_recursive(cond.when_false, accesses);
+                }
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION => {
+                // Arrow functions: while they preserve `this` context, property access
+                // inside is deferred until the function is called. So we don't recurse
+                // because the access doesn't happen during initialization.
+                // (This matches TypeScript's behavior for error 2729)
+            }
+            _ => {
+                // For other expressions, we don't recurse further to keep it simple
+            }
+        }
+    }
+
+    /// Check if a class member is an instance property (not static, not a method/accessor).
+    ///
+    /// ## Parameters
+    /// - `member_idx`: The class member node index
+    ///
+    /// Returns true if the member is a non-static property declaration.
+    fn is_instance_property(&self, member_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return false;
+        };
+
+        if node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return false;
+        }
+
+        if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+            // Check if it has a static modifier
+            return !self.has_static_modifier(&prop.modifiers);
+        }
+
+        false
+    }
 }
 
