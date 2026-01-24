@@ -7053,56 +7053,6 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
-    pub(crate) fn check_private_identifier_in_expression(
-        &mut self,
-        name_idx: NodeIndex,
-        rhs_type: TypeId,
-    ) {
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return;
-        };
-        let property_name = ident.escaped_text.clone();
-
-        let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
-        if symbols.is_empty() {
-            if saw_class_scope {
-                self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
-            }
-            return;
-        }
-
-        let rhs_type = self.evaluate_application_type(rhs_type);
-        if rhs_type == TypeId::ANY || rhs_type == TypeId::ERROR || rhs_type == TypeId::UNKNOWN {
-            return;
-        }
-
-        let declaring_type = match self.private_member_declaring_type(symbols[0]) {
-            Some(ty) => ty,
-            None => {
-                if saw_class_scope {
-                    self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
-                }
-                return;
-            }
-        };
-
-        if !self.is_assignable_to(rhs_type, declaring_type) {
-            let shadowed = symbols.iter().skip(1).any(|sym_id| {
-                self.private_member_declaring_type(*sym_id)
-                    .map(|ty| self.is_assignable_to(rhs_type, ty))
-                    .unwrap_or(false)
-            });
-            if shadowed {
-                return;
-            }
-
-            self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
-        }
-    }
-
     /// Split a type into its non-nullable part and its nullable cause.
     pub(crate) fn split_nullish_type(
         &mut self,
@@ -21157,7 +21107,7 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn private_member_declaring_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+    pub(crate) fn private_member_declaring_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         for &decl_idx in &symbol.declarations {
