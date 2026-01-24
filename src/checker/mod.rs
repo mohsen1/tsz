@@ -43,6 +43,7 @@ pub mod symbol_resolver;
 pub mod type_computation;
 pub mod type_query;
 pub mod types;
+pub mod union_type;
 
 #[cfg(test)]
 mod control_flow_tests;
