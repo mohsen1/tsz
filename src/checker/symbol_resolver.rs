@@ -23,8 +23,8 @@
 
 use crate::binder::{ContainerKind, ScopeId, SymbolId, symbol_flags};
 use crate::checker::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
-use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::TypeId;
 use std::sync::Arc;
@@ -895,11 +895,27 @@ impl<'a> CheckerState<'a> {
     // Global Symbol Resolution
     // =========================================================================
 
-    /// Resolve a global value symbol by name from file_locals.
+    /// Resolve a global value symbol by name from file_locals and lib binders.
     ///
     /// This is used for looking up global values like `console`, `Math`, etc.
+    /// It checks:
+    /// 1. Local file_locals (for user-defined globals and merged lib symbols)
+    /// 2. Lib binders' file_locals (for symbols from lib.d.ts that haven't been merged)
     pub(crate) fn resolve_global_value_symbol(&self, name: &str) -> Option<SymbolId> {
-        self.ctx.binder.file_locals.get(name)
+        // First check local file_locals
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            return Some(sym_id);
+        }
+
+        // Then check lib binders for global symbols
+        let lib_binders = self.get_lib_binders();
+        for lib_binder in &lib_binders {
+            if let Some(sym_id) = lib_binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     // =========================================================================
