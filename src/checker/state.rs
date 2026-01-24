@@ -6406,21 +6406,6 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
-    pub(crate) fn merge_index_signature(
-        target: &mut Option<crate::solver::IndexSignature>,
-        incoming: crate::solver::IndexSignature,
-    ) {
-        if let Some(existing) = target.as_mut() {
-            if existing.value_type != incoming.value_type || existing.readonly != incoming.readonly
-            {
-                existing.value_type = TypeId::ERROR;
-                existing.readonly = false;
-            }
-        } else {
-            *target = Some(incoming);
-        }
-    }
-
     pub(crate) fn get_literal_key_union_from_type(
         &self,
         index_type: TypeId,
