@@ -327,11 +327,9 @@ impl<'a> CheckerState<'a> {
 
                             // For block scopes (let/const), check if we're before the declaration (TDZ)
                             // This fixes MISSING TS2304 for block-scoped variables before declaration
-                            if scope.kind == ContainerKind::Block
-                                && export_ok
-                                && !is_class_member
-                            {
-                                let is_block_scoped = (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+                            if scope.kind == ContainerKind::Block && export_ok && !is_class_member {
+                                let is_block_scoped =
+                                    (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
                                 if is_block_scoped {
                                     // Check if the reference node is before the declaration node
                                     if let Some(decl_node) = symbol.declarations.first() {
@@ -786,11 +784,9 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = left_symbol.import_module {
-            if let Some(reexported_sym) = self.resolve_reexported_member_symbol(
-                module_specifier,
-                right_name,
-                visited_aliases
-            ) {
+            if let Some(reexported_sym) =
+                self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
+            {
                 return Some(reexported_sym);
             }
         }
@@ -819,14 +815,22 @@ impl<'a> CheckerState<'a> {
         if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
             if let Some((source_module, original_name)) = file_reexports.get(member_name) {
                 let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                return self.resolve_reexported_member_symbol(source_module, name_to_lookup, visited_aliases);
+                return self.resolve_reexported_member_symbol(
+                    source_module,
+                    name_to_lookup,
+                    visited_aliases,
+                );
             }
         }
 
         // Check for wildcard re-exports: `export * from 'bar'`
         if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
             for source_module in source_modules {
-                if let Some(sym_id) = self.resolve_reexported_member_symbol(source_module, member_name, visited_aliases) {
+                if let Some(sym_id) = self.resolve_reexported_member_symbol(
+                    source_module,
+                    member_name,
+                    visited_aliases,
+                ) {
                     return Some(sym_id);
                 }
             }

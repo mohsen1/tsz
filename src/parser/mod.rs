@@ -21,9 +21,9 @@ pub mod node;
 pub mod state;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod parser_improvement_tests;
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 mod trailing_comma_tests;

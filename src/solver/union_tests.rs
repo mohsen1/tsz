@@ -554,10 +554,7 @@ fn test_empty_union_is_never() {
     let interner = TypeInterner::new();
     let empty_union = interner.union(vec![]);
 
-    assert_eq!(
-        empty_union, TypeId::NEVER,
-        "Empty union should be never"
-    );
+    assert_eq!(empty_union, TypeId::NEVER, "Empty union should be never");
 }
 
 #[test]
@@ -567,7 +564,8 @@ fn test_union_containing_never_simplifies() {
     let string_or_never = interner.union2(TypeId::STRING, TypeId::NEVER);
 
     assert_eq!(
-        string_or_never, TypeId::STRING,
+        string_or_never,
+        TypeId::STRING,
         "Union with never should simplify to the other member"
     );
 }
