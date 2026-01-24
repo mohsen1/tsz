@@ -1173,11 +1173,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let value = after_key[colon_pos + 1..].trim();
-            if value.starts_with("true") {
-                return Some(true);
-            }
-            if value.starts_with("false") {
-                return Some(false);
+
+            // Parse boolean value, handling comma-separated values like "true, false"
+            // Also handle trailing commas, semicolons, and other delimiters
+            let value_clean = if let Some(comma_pos) = value.find(',') {
+                &value[..comma_pos]
+            } else if let Some(semicolon_pos) = value.find(';') {
+                &value[..semicolon_pos]
+            } else {
+                value
+            }.trim();
+
+            match value_clean {
+                "true" => return Some(true),
+                "false" => return Some(false),
+                _ => continue,
             }
         }
         None
