@@ -2180,8 +2180,16 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         };
 
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+        if type_id == TypeId::ANY {
             return type_id;
+        }
+
+        // For UNKNOWN, 'prop' in x narrows to object types
+        // TypeScript allows narrowing unknown through 'in' operator
+        if type_id == TypeId::UNKNOWN {
+            // 'prop' in x narrows unknown to object types (objects, arrays, etc.)
+            // Primitives don't have properties that can be checked with 'in'
+            return TypeId::OBJECT;
         }
 
         if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(type_id) {
@@ -2224,8 +2232,15 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn narrow_to_objectish(&self, type_id: TypeId) -> TypeId {
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+        if type_id == TypeId::ANY {
             return type_id;
+        }
+        // For UNKNOWN, typeof x === "object" narrows to non-primitive types
+        // TypeScript allows narrowing unknown through typeof checks
+        if type_id == TypeId::UNKNOWN {
+            // typeof x === "object" narrows unknown to object types (excluding primitives)
+            // This is a union of object, array, tuple, function, etc.
+            return TypeId::OBJECT;
         }
 
         if let Some(TypeKey::Union(members)) = self.interner.lookup(type_id) {
@@ -2732,8 +2747,20 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     fn narrow_to_falsy(&self, type_id: TypeId) -> TypeId {
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+        if type_id == TypeId::ANY {
             return type_id;
+        }
+        // For UNKNOWN, we can narrow to the union of all falsy types
+        // TypeScript allows narrowing unknown through type guards
+        if type_id == TypeId::UNKNOWN {
+            return self.interner.union(vec![
+                TypeId::NULL,
+                TypeId::UNDEFINED,
+                self.interner.literal_boolean(false),
+                self.interner.literal_string(""),
+                self.interner.literal_number(0.0),
+                self.interner.literal_bigint("0"),
+            ]);
         }
 
         match self.falsy_component(type_id) {
