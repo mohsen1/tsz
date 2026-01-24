@@ -188,9 +188,17 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // If the value type is 'any' or 'unknown', we can't be sure
-        if value_type == TypeId::ANY || value_type == TypeId::UNKNOWN {
-            return false;
+        // For 'unknown' value type, we need to check if it could satisfy the predicate
+        // Type guards like `typeof x === 'string'` should narrow unknown to the predicate type
+        // This allows proper narrowing in user-defined type guards
+        if value_type == TypeId::UNKNOWN {
+            // unknown can be narrowed to any specific type via type guards
+            return true;
+        }
+
+        // If the value type is 'any', we can't be sure - but allow it for compatibility
+        if value_type == TypeId::ANY {
+            return true;
         }
 
         // Check if value_type is assignable to predicate_type
