@@ -104,6 +104,15 @@ impl<'a> CheckerState<'a> {
         self.has_construct_sig(type_id) && self.can_instantiate(type_id)
     }
 
+    /// Check if a type is a class constructor (typeof Class).
+    ///
+    /// Returns true for Callable types with only construct signatures (no call signatures).
+    /// This is used to detect when a class constructor is being called without `new`.
+    pub fn is_class_constructor_type(&self, type_id: TypeId) -> bool {
+        // A class constructor is a Callable with construct signatures but no call signatures
+        self.has_construct_sig(type_id) && !self.has_call_signature(type_id)
+    }
+
     /// Check if two constructor types have compatible accessibility.
     ///
     /// Returns true if source can be assigned to target based on their constructor accessibility.
