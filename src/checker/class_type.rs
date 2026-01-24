@@ -23,8 +23,8 @@
 use crate::binder::SymbolId;
 use crate::checker::state::{CheckerState, MemberAccessLevel};
 use crate::interner::Atom;
-use crate::parser::syntax_kind_ext;
 use crate::parser::NodeIndex;
+use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;
 use crate::solver::{
     CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeKey,

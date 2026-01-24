@@ -5,35 +5,40 @@
 **Codebase Version**: Branch `main`
 **Last Updated**: 2026-01-24 (Strategic pivot to accelerated extraction)
 
-## 🎯 Current Strategy: Accelerated Code Extraction
+## 🎯 Current Strategy: Solver/Subtype.rs Decomposition
 
-**STRATEGIC PIVOT** (2026-01-24): Documentation phase complete. Now focusing on **accelerated code extraction**.
+**CURRENT FOCUS** (2026-01-24): Focus on breaking up `check_subtype_inner` function in `solver/subtype.rs`.
 
-### New Extraction Targets (Commits 80+)
+### Extraction Targets (Commits 80+)
 
-1. **Accelerated Extraction**: Target **500-1,000 lines per batch** (not ~8 lines/commit)
-2. **Focus: Class/Interface Checking** - Large, cohesive logical units in `checker/state.rs`
+1. **Incremental Extraction**: Target **200-400 lines per commit** from `check_subtype_inner`
+2. **Focus: Type-Specific Subtyping Logic** - Extract cohesive type checking logic
 3. **Documentation**: Doc comments on public APIs only - NOT the primary goal
 
-### Why Class/Interface Checking?
+### Why Solver/Subtype.rs?
 
-Class and interface type checking represents some of the largest, most cohesive code blocks:
-- `get_type_of_class_declaration`: ~400-600 lines
-- `get_type_of_interface_declaration`: ~300-500 lines
-- `check_class_heritage_compatibility`: ~200-400 lines
-- `check_property_inheritance_compatibility`: ~300+ lines
-- `check_class_member_accessibility`: ~200+ lines
-- `check_index_signature_compatibility`: ~150+ lines
+The `check_subtype_inner` function is still ~2,214 lines (reduced from 2,437, 9% progress). Breaking it up will:
+- Improve testability (each helper can be unit tested)
+- Reduce cognitive load (clearer function names document intent)
+- Enable parallel work (different type categories can be worked on independently)
+- Establish patterns for future refactoring
 
-**Total extractable**: ~1,550-2,200 lines in focused, cohesive domain
+**Extractable Areas**:
+- **Object subtyping**: ~400-600 lines (property matching, index signatures, excess properties)
+- **Template literal types**: ~200-300 lines (pattern matching, backtracking)
+- **Mapped/conditional types**: ~300-400 lines (type evaluation, distribution)
+- **Primitive/intrinsic types**: ~200-300 lines (hierarchy, conversions)
+
+**Total extractable**: ~1,100-1,600 lines in focused, cohesive domains
 
 ### Success Criteria
 
-Each extraction batch should:
-- Remove **500-1,000 lines** from `checker/state.rs`
-- Create or expand focused module (e.g., `checker/class_checker.rs`)
+Each extraction commit should:
+- Extract **200-400 lines** into focused helper methods
+- Reduce `check_subtype_inner` complexity
 - Maintain 100% test pass rate
 - Include minimal documentation (doc comments only)
+- Use descriptive function names that document intent
 
 --- 
 ---
@@ -631,17 +636,16 @@ This deep analysis covers commits 31-40, representing a **mixed approach** with 
 
 **Recommendations for Next Batch (Commits 80+)**:
 
-1. **🎯 ACCELERATED EXTRACTION: Class/Interface Type Checking** (CRITICAL PRIORITY)
-   - **Target**: Extract 1,500-2,200 lines in 2-3 large commits
-   - **Success metric**: Reduce `checker/state.rs` from 28,500 to ~26,500 lines
-   - **Functions to extract**:
-     - `get_type_of_class_declaration` (~400-600 lines)
-     - `get_type_of_interface_declaration` (~300-500 lines)
-     - `check_class_heritage_compatibility` (~200-400 lines)
-     - `check_property_inheritance_compatibility` (~300+ lines)
-     - `check_class_member_accessibility` (~200+ lines)
-     - `check_index_signature_compatibility` (~150+ lines)
+1. **🎯 SOLVER/SUBTYPE.RS DECOMPOSITION** (CURRENT FOCUS - CRITICAL PRIORITY)
+   - **Target**: Extract 200-400 lines per commit from `check_subtype_inner`
+   - **Success metric**: Reduce `check_subtype_inner` from ~2,214 to ~500 lines (coordinator)
+   - **Areas to extract**:
+     - **Object subtyping** (~400-600 lines): Property matching, index signatures, excess properties
+     - **Template literal types** (~200-300 lines): Pattern matching, backtracking logic
+     - **Mapped/conditional types** (~300-400 lines): Type evaluation, distribution rules
+     - **Primitive/intrinsic types** (~200-300 lines): Hierarchy checking, conversions
    - **Documentation**: Doc comments on public APIs only - DO NOT make docs the goal
+   - **Final goal**: Move to `solver/subtype_rules/` module structure
 
 2. **🔥 PARALLEL TRACK: Missing Error Detection** (CRITICAL PRIORITY)
    - **Work in parallel** with extraction commits

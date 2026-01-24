@@ -236,44 +236,35 @@ pub trait SubtypeTracer {
 
 ## 6. Recommendations
 
-### 🎯 Strategic Pivot: Accelerated Extraction (2026-01-24)
+### 🎯 Current Focus: Solver/Subtype.rs Decomposition (2026-01-24)
 
-**New Approach**: Shift from incremental documentation to accelerated code extraction
+**Strategic Focus**: Break up `check_subtype_inner` function in `solver/subtype.rs`
 
-**Why This Change?**
-- Documentation phase (commits 61-79) successfully documented 60+ functions
-- Current rate: ~8.3 lines/commit is too slow (660 lines / 79 commits)
-- At current rate: Need ~3,200 more commits to reach target
-- **Solution**: Extract 500-1,000 lines per commit (60-120x faster)
+**Why This Focus?**
+- `check_subtype_inner` is still ~2,214 lines (reduced from 2,437, 9% progress)
+- Largest function in codebase - critical for maintainability
+- Breaking it up will improve testability and enable parallel work
+- Establishes patterns for future refactoring
 
-**First Target: Class/Interface Type Checking**
-- **Cohesive domain**: All related to object-oriented type checking
-- **Clear boundaries**: Well-defined interfaces with rest of type checker
-- **Large extractable block**: ~1,500-2,200 lines in 2-3 commits
-- **Minimal dependencies**: Mostly self-contained
+**Current Progress**:
+- 7 helper methods already extracted (~223 lines)
+- Remaining: ~1,700+ lines still in main function
+- Target: Reduce to ~500 lines (coordinator function)
 
-**Extraction Modules to Create**:
-1. `checker/class_checker.rs` (~800 lines)
-   - `get_type_of_class_declaration`
-   - `check_class_heritage_compatibility`
-   - `check_class_member_accessibility`
-   - Related class checking functions
-
-2. `checker/interface_checker.rs` (~600 lines)
-   - `get_type_of_interface_declaration`
-   - `check_interface_heritage_compatibility`
-   - `merge_interface_declarations`
-   - Related interface checking functions
-
-3. `checker/inheritance.rs` or shared utilities (~400 lines)
-   - `check_property_inheritance_compatibility`
-   - `check_index_signature_compatibility`
-   - Shared inheritance logic
+**Extraction Strategy**:
+- **Incremental approach**: Extract 200-400 lines per commit
+- **Focus areas**:
+  1. **Object subtyping** (~400-600 lines): Property matching, index signatures, excess properties
+  2. **Template literal types** (~200-300 lines): Pattern matching, backtracking
+  3. **Mapped/conditional types** (~300-400 lines): Type evaluation, distribution
+  4. **Primitive/intrinsic types** (~200-300 lines): Hierarchy, conversions
+- **Final goal**: Move to `solver/subtype_rules/` module structure
 
 **Expected Impact**:
-- `checker/state.rs`: 28,500 → ~26,500 lines in 2-3 commits
-- Establish pattern for accelerated extraction
-- Enable continued large-scale extraction
+- `check_subtype_inner`: ~2,214 → ~500 lines (coordinator)
+- Improved testability (each helper independently testable)
+- Reduced cognitive load (clearer function names)
+- Pattern established for future god object decomposition
 
 **Documentation Strategy**:
 - Doc comments on public APIs only
@@ -284,12 +275,13 @@ pub trait SubtypeTracer {
 
 ### 6.1 Immediate Priorities (Next 2-4 Weeks)
 
-1. **🎯 Accelerated Extraction: Class/Interface Checking** 🔴 **CRITICAL**
-   - **Focus**: Extract 1,500-2,200 lines to new modules
-   - **Impact**: Establish accelerated extraction pattern, reduce god object
-   - **Files**: Create `checker/class_checker.rs`, `checker/interface_checker.rs`
-   - **Target**: 500-1,000 lines per commit (not ~8 lines/commit)
-   - **Reference**: This document, "Strategic Pivot" section above
+1. **🎯 Solver/Subtype.rs Decomposition** 🔴 **CRITICAL - CURRENT FOCUS**
+   - **Focus**: Extract 200-400 lines per commit from `check_subtype_inner`
+   - **Impact**: Break up largest function, improve testability, establish patterns
+   - **Files**: `src/solver/subtype.rs` → eventually `solver/subtype_rules/`
+   - **Target**: Reduce from ~2,214 to ~500 lines (coordinator)
+   - **Areas**: Object subtyping, template literals, mapped/conditional types, primitives
+   - **Reference**: This document, "Current Focus" section above
 
 2. **Fix Missing Error Detection** 🔴 **CRITICAL**
    - **Focus**: TS2304/TS2318/TS2307 (symbol resolution, global types, modules)

@@ -7,31 +7,54 @@
 
 ---
 
-## 🎯 STRATEGIC PIVOT (2026-01-24)
+## 🎯 CURRENT FOCUS: Solver/Subtype.rs Decomposition (2026-01-24)
 
-### From Documentation to Accelerated Extraction
+### Strategic Focus: Break Up `check_subtype_inner`
 
-**Previous Strategy** (Commits 61-79): Documentation-first approach
-- Result: 60+ functions documented with comprehensive examples
-- Achievement: Code is now well-understood and ready for extraction
-- Problem: Only ~8.3 lines/commit reduction rate is too slow
+**Current State**:
+- `check_subtype_inner`: ~2,214 lines (reduced from 2,437, 9% progress)
+- 7 helper methods already extracted (union, intersection, type params, tuples, functions)
+- Remaining: ~1,700+ lines still in main function
 
-**New Strategy** (Commits 80+): Accelerated large-scale extraction
-- **Target**: 500-1,000 lines per commit (60-120x faster)
-- **Focus**: Class and interface type checking (1,500-2,200 extractable lines)
-- **Documentation**: Minimal - doc comments on public APIs only
-- **Goal**: Reduce `checker/state.rs` from 28,500 to ~26,500 lines in 2-3 commits
+**Goal**: Continue extracting cohesive logical units from `check_subtype_inner` to improve maintainability and testability.
 
-### Extraction Plan (Commits 80-85)
+### Extraction Plan (Commits 80+)
 
-| Commit | Module | Lines | Functions |
-|--------|--------|-------|-----------|
-| 80 | `checker/class_checker.rs` | ~800 | Class declaration, heritage, accessibility |
-| 81 | `checker/interface_checker.rs` | ~600 | Interface declaration, merging |
-| 82 | Inheritance utilities | ~400 | Property compatibility, index signatures |
-| 83 | Update call sites | ~0 | Replace direct calls |
-| 84 | Verify/cleanup | ~0 | Tests, minimal docs |
-| 85 | Update docs | ~0 | Metrics and analysis |
+**Target Areas for Extraction**:
+
+1. **Object Subtyping** (~400-600 lines)
+   - Property matching logic
+   - Index signature compatibility
+   - Excess property checking
+   - Freshness handling
+
+2. **Template Literal Type Checking** (~200-300 lines)
+   - Pattern matching
+   - Literal spans vs type holes
+   - Backtracking logic
+
+3. **Mapped/Conditional Type Expansion** (~300-400 lines)
+   - Mapped type evaluation
+   - Conditional type distribution
+   - Type parameter constraints
+
+4. **Primitive/Intrinsic Type Checking** (~200-300 lines)
+   - Intrinsic subtyping hierarchy
+   - Literal to intrinsic conversion
+   - Apparent type handling
+
+5. **Module Structure** (Final step)
+   - Move to `solver/subtype_rules/` subdirectory
+   - Organize by type category (objects, functions, primitives, etc.)
+
+### Success Criteria
+
+Each extraction should:
+- Extract **200-400 lines** per commit
+- Create focused helper methods with clear names
+- Maintain 100% test pass rate
+- Include minimal documentation (doc comments on public APIs)
+- Reduce cognitive load of main `check_subtype_inner` function
 
 ### Parallel Track: Missing Error Detection
 
@@ -468,20 +491,23 @@ All Phase 1 tasks from ARCHITECTURE_AUDIT_REPORT.md were verified as complete:
 
 ## Next Steps (Priority Order)
 
-### 1. Continue solver/subtype.rs Decomposition (HIGH PRIORITY)
+### 1. 🎯 Continue solver/subtype.rs Decomposition (CURRENT FOCUS)
 
-**Estimated Effort**: 2-3 days
-**Impact**: Reduces 2,437-line function to manageable pieces
+**Estimated Effort**: 1-2 weeks
+**Impact**: Reduces ~2,214-line function to manageable pieces (~500 lines coordinator)
+
+**Current Progress**: 9% complete (7 helper methods extracted, ~223 lines)
 
 **Approach**:
-- Extract remaining complex sections:
-  - Object subtyping (property matching, index signatures)
-  - Template literal type checking
-  - Mapped/conditional type expansion
-- Create `subtype_rules/` module structure
+- Extract remaining complex sections in focused commits:
+  - **Object subtyping** (~400-600 lines) - Property matching, index signatures, excess properties
+  - **Template literal type checking** (~200-300 lines) - Pattern matching, backtracking
+  - **Mapped/conditional type expansion** (~300-400 lines) - Type evaluation, distribution
+  - **Primitive/intrinsic type checking** (~200-300 lines) - Hierarchy, conversions
+- Eventually create `subtype_rules/` module structure
 - Move extracted methods to appropriate modules
 
-**Target Structure**:
+**Target Structure** (Final goal):
 ```
 solver/
 ├── subtype.rs         (coordinator, ~500 lines)
@@ -493,10 +519,17 @@ solver/
     ├── tuples.rs        (array/tuple checking)
     ├── objects.rs       (object property matching)
     ├── functions.rs     (callable signatures)
-    └── generics.rs      (type params, applications)
+    ├── templates.rs     (template literal types)
+    └── generics.rs      (type params, applications, mapped types)
 ```
 
-### 2. Break Up checker/state.rs God Object (HIGH PRIORITY)
+**Next Immediate Steps**:
+1. Extract object subtyping helpers (property matching, index signatures)
+2. Extract template literal checking logic
+3. Extract mapped/conditional type evaluation
+4. Continue incremental extraction until main function is ~500 lines
+
+### 2. Break Up checker/state.rs God Object (DEFERRED)
 
 **Estimated Effort**: 1-2 weeks
 **Impact**: Makes 27,525-line file maintainable
