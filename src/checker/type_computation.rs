@@ -187,6 +187,81 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.array(element_type)
     }
 
+    /// Get type of prefix unary expression.
+    ///
+    /// Computes the type of unary expressions like `!x`, `+x`, `-x`, `~x`, `++x`, `--x`, `typeof x`.
+    /// Returns boolean for `!`, number for arithmetic operators, string for `typeof`.
+    pub(crate) fn get_type_of_prefix_unary(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+            return TypeId::ERROR;
+        };
+
+        match unary.operator {
+            // ! returns boolean
+            k if k == SyntaxKind::ExclamationToken as u16 => TypeId::BOOLEAN,
+            // typeof returns string but still type-check operand for flow/node types.
+            k if k == SyntaxKind::TypeOfKeyword as u16 => {
+                self.get_type_of_node(unary.operand);
+                TypeId::STRING
+            }
+            // Unary + and - return number unless contextual typing expects a numeric literal.
+            k if k == SyntaxKind::PlusToken as u16 || k == SyntaxKind::MinusToken as u16 => {
+                if let Some(literal_type) = self.literal_type_from_initializer(idx)
+                    && self.contextual_literal_type(literal_type).is_some()
+                {
+                    return literal_type;
+                }
+                TypeId::NUMBER
+            }
+            // ~ returns number
+            k if k == SyntaxKind::TildeToken as u16 => TypeId::NUMBER,
+            // ++ and -- return number
+            k if k == SyntaxKind::PlusPlusToken as u16
+                || k == SyntaxKind::MinusMinusToken as u16 =>
+            {
+                TypeId::NUMBER
+            }
+            _ => TypeId::ANY,
+        }
+    }
+
+    /// Get type of template expression (template literal with substitutions).
+    ///
+    /// Type-checks all expressions within template spans to emit errors like TS2304.
+    /// Template expressions always produce string type.
+    pub(crate) fn get_type_of_template_expression(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::STRING;
+        };
+
+        let Some(template) = self.ctx.arena.get_template_expr(node) else {
+            return TypeId::STRING;
+        };
+
+        // Type-check each template span's expression
+        for &span_idx in &template.template_spans.nodes {
+            let Some(span_node) = self.ctx.arena.get(span_idx) else {
+                continue;
+            };
+
+            let Some(span) = self.ctx.arena.get_template_span(span_node) else {
+                continue;
+            };
+
+            // Type-check the expression - this will emit TS2304 if name is unresolved
+            self.get_type_of_node(span.expression);
+        }
+
+        // Template expressions always produce string type
+        TypeId::STRING
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
