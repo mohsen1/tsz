@@ -9510,4 +9510,119 @@ impl<'a> CheckerState<'a> {
             _ => false,
         }
     }
+
+    // ============================================================================
+    // Section 56: Declaration Symbol Flag Utilities
+    // ============================================================================
+
+    /// Get the symbol flags for a declaration node.
+    ///
+    /// This function determines what kind of symbol a declaration represents
+    /// by examining its syntax kind and modifiers. It's used during symbol
+    /// creation to assign the appropriate flags.
+    ///
+    /// ## Parameters:
+    /// - `decl_idx`: The declaration node index
+    ///
+    /// ## Returns:
+    /// - `Some(flags)`: The symbol flags for this declaration
+    /// - `None`: If the declaration kind is not recognized
+    ///
+    /// ## Symbol Flags:
+    /// The returned flags indicate the symbol's:
+    /// - Kind (function, class, interface, enum, property, method, etc.)
+    /// - Scope (block-scoped for let/const, function-scoped for var)
+    /// - Static modifier presence (for class members)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Variable declarations:
+    /// let x = 1;           // BLOCK_SCOPED_VARIABLE
+    /// const y = 2;         // BLOCK_SCOPED_VARIABLE
+    /// var z = 3;           // FUNCTION_SCOPED_VARIABLE
+    ///
+    /// // Declarations:
+    /// function foo() {}    // FUNCTION
+    /// class Bar {}         // CLASS
+    /// interface Baz {}     // INTERFACE
+    /// type Qux = string;   // TYPE_ALIAS
+    /// enum Quux {}         // REGULAR_ENUM
+    ///
+    /// // Class members:
+    /// class C {
+    ///   static prop;       // PROPERTY | STATIC
+    ///   method() {}        // METHOD
+    ///   get accessor() {}   // GET_ACCESSOR
+    ///   constructor() {}    // CONSTRUCTOR
+    /// }
+    /// ```
+    pub(crate) fn declaration_symbol_flags(&self, decl_idx: NodeIndex) -> Option<u32> {
+        use crate::binder::symbol_flags;
+        use crate::parser::node_flags;
+
+        let decl_idx = self.resolve_duplicate_decl_node(decl_idx)?;
+        let node = self.ctx.arena.get(decl_idx)?;
+
+        match node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let mut decl_flags = node.flags as u32;
+                if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
+                    && let Some(parent) =
+                        self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                    && let Some(parent_node) = self.ctx.arena.get(parent)
+                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                {
+                    decl_flags |= parent_node.flags as u32;
+                }
+                if (decl_flags & (node_flags::LET | node_flags::CONST)) != 0 {
+                    Some(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                } else {
+                    Some(symbol_flags::FUNCTION_SCOPED_VARIABLE)
+                }
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION => Some(symbol_flags::FUNCTION),
+            syntax_kind_ext::CLASS_DECLARATION => Some(symbol_flags::CLASS),
+            syntax_kind_ext::INTERFACE_DECLARATION => Some(symbol_flags::INTERFACE),
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some(symbol_flags::TYPE_ALIAS),
+            syntax_kind_ext::ENUM_DECLARATION => Some(symbol_flags::REGULAR_ENUM),
+            syntax_kind_ext::GET_ACCESSOR => {
+                let mut flags = symbol_flags::GET_ACCESSOR;
+                if let Some(accessor) = self.ctx.arena.get_accessor(node)
+                    && self.has_static_modifier(&accessor.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
+                Some(flags)
+            }
+            syntax_kind_ext::SET_ACCESSOR => {
+                let mut flags = symbol_flags::SET_ACCESSOR;
+                if let Some(accessor) = self.ctx.arena.get_accessor(node)
+                    && self.has_static_modifier(&accessor.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
+                Some(flags)
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                let mut flags = symbol_flags::METHOD;
+                if let Some(method) = self.ctx.arena.get_method_decl(node)
+                    && self.has_static_modifier(&method.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
+                Some(flags)
+            }
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let mut flags = symbol_flags::PROPERTY;
+                if let Some(prop) = self.ctx.arena.get_property_decl(node)
+                    && self.has_static_modifier(&prop.modifiers)
+                {
+                    flags |= symbol_flags::STATIC;
+                }
+                Some(flags)
+            }
+            syntax_kind_ext::CONSTRUCTOR => Some(symbol_flags::CONSTRUCTOR),
+            _ => None,
+        }
+    }
 }
