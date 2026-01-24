@@ -19,6 +19,7 @@
 
 pub mod accessibility;
 pub mod arena;
+pub mod constructor_checker;
 pub mod context;
 pub mod control_flow;
 pub mod declarations;
