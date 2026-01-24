@@ -646,10 +646,13 @@ impl<'a> ContextualTypeContext<'a> {
 
 /// Apply contextual type to infer a more specific type.
 ///
-/// If the expression type is compatible with the contextual type,
-/// returns the more specific type. Otherwise returns the expression type.
+/// This implements bidirectional type inference:
+/// 1. If expr_type is any/unknown/error, use contextual type
+/// 2. If expr_type is a literal and contextual type is a union containing that literal's base type, preserve literal
+/// 3. If expr_type is assignable to contextual type and is more specific, use expr_type
+/// 4. Otherwise, prefer expr_type (don't widen to contextual type)
 pub fn apply_contextual_type(
-    _interner: &dyn TypeDatabase,
+    interner: &dyn TypeDatabase,
     expr_type: TypeId,
     contextual_type: Option<TypeId>,
 ) -> TypeId {
@@ -658,8 +661,8 @@ pub fn apply_contextual_type(
         None => return expr_type,
     };
 
-    // If expression type is any or unknown, use contextual type
-    if expr_type == TypeId::ANY || expr_type == TypeId::UNKNOWN {
+    // If expression type is any, unknown, or error, use contextual type
+    if expr_type == TypeId::ANY || expr_type == TypeId::UNKNOWN || expr_type == TypeId::ERROR {
         return ctx_type;
     }
 
@@ -668,9 +671,56 @@ pub fn apply_contextual_type(
         return expr_type;
     }
 
-    // For now, prefer the expression type (intrinsic type wins)
-    // More sophisticated: check compatibility and narrow
+    // Check if expr_type is a literal type that should be preserved
+    // When contextual type is a union like string | number, we should preserve literal types
+    if let Some(expr_key) = interner.lookup(expr_type) {
+        // Literal types should be preserved when context is a union
+        if matches!(expr_key, TypeKey::Literal(_)) {
+            if let Some(ctx_key) = interner.lookup(ctx_type) {
+                if matches!(ctx_key, TypeKey::Union(_)) {
+                    // Preserve the literal type - it's more specific than the union
+                    return expr_type;
+                }
+            }
+        }
+    }
+
+    // Check if contextual type is a union
+    if let Some(TypeKey::Union(members)) = interner.lookup(ctx_type) {
+        let members = interner.type_list(members);
+        // If expr_type is in the union, it's valid - use the more specific expr_type
+        for &member in members.iter() {
+            if member == expr_type {
+                return expr_type;
+            }
+        }
+        // If expr_type is assignable to any union member, use expr_type
+        for &member in members.iter() {
+            if is_subtype_of(interner, expr_type, member) {
+                return expr_type;
+            }
+        }
+    }
+
+    // If expr_type is assignable to contextual type, use expr_type (it's more specific)
+    if is_subtype_of(interner, expr_type, ctx_type) {
+        return expr_type;
+    }
+
+    // If contextual type is assignable to expr_type, use contextual type (it's more specific)
+    if is_subtype_of(interner, ctx_type, expr_type) {
+        return ctx_type;
+    }
+
+    // Default: prefer the expression type (don't widen to contextual type)
+    // This prevents incorrectly widening concrete types to generic type parameters
     expr_type
+}
+
+/// Check if a type is a subtype of another type.
+fn is_subtype_of(interner: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    use crate::solver::subtype::is_subtype_of;
+    is_subtype_of(interner, source, target)
 }
 
 /// Context for yield expression contextual typing in generators.
