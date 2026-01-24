@@ -1746,6 +1746,20 @@ impl<'a> CheckerState<'a> {
         }
         visited_aliases.push(sym_id);
 
+        // First, try using the binder's resolve_import_symbol which follows re-export chains
+        // This handles both named re-exports (`export { foo } from 'bar'`) and wildcard
+        // re-exports (`export * from 'bar'`), properly following chains like:
+        // a.ts exports { x } from 'b.ts'
+        // b.ts exports { x } from 'c.ts'
+        // c.ts exports { x }
+        if let Some(resolved_sym_id) = self.ctx.binder.resolve_import_symbol(sym_id) {
+            // Prevent infinite loops in re-export chains
+            if !visited_aliases.contains(&resolved_sym_id) {
+                return self.resolve_alias_symbol(resolved_sym_id, visited_aliases);
+            }
+        }
+
+        // Fallback to direct module_exports lookup for backward compatibility
         // Handle ES6 imports: import { X } from 'module' or import X from 'module'
         // The binder sets import_module and import_name for these
         if let Some(ref module_name) = symbol.import_module {
