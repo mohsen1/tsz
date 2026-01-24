@@ -2,6 +2,7 @@
 
 use crate::solver::subtype::{NoopResolver, SubtypeChecker, SubtypeFailureReason, TypeResolver};
 use crate::solver::types::{PropertyInfo, TypeId, TypeKey};
+use crate::solver::visitor::is_empty_object_type_db;
 use crate::solver::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 
@@ -584,20 +585,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.resolve_ref_type(type_id)
     }
 
+    /// Check if a type is an empty object target.
+    /// Uses the visitor pattern from solver::visitor.
     fn is_empty_object_target(&self, target: TypeId) -> bool {
-        match self.interner.lookup(target) {
-            Some(TypeKey::Object(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape.properties.is_empty()
-            }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape.properties.is_empty()
-                    && shape.string_index.is_none()
-                    && shape.number_index.is_none()
-            }
-            _ => false,
-        }
+        is_empty_object_type_db(self.interner, target)
     }
 
     fn is_assignable_to_empty_object(&self, source: TypeId) -> bool {

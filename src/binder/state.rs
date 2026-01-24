@@ -1433,7 +1433,9 @@ impl BinderState {
 
                     // If the expression is an identifier, resolve it and copy its exports
                     if let Some(name) = self.get_identifier_name(arena, assign.expression) {
-                        if let Some(sym_id) = self.current_scope.get(name)
+                        if let Some(sym_id) = self
+                            .current_scope
+                            .get(name)
                             .or_else(|| self.file_locals.get(name))
                         {
                             // Copy the symbol's exports to the current module's exports
@@ -3418,7 +3420,8 @@ impl BinderState {
                         // so they can be accessed as N.x
 
                         // Check if we're inside a namespace
-                        let current_namespace_sym_id = self.scope_chain
+                        let current_namespace_sym_id = self
+                            .scope_chain
                             .get(self.current_scope_idx)
                             .and_then(|ctx| {
                                 if ctx.container_kind == ContainerKind::Module {
@@ -3427,7 +3430,9 @@ impl BinderState {
                                     None
                                 }
                             })
-                            .and_then(|container_idx| self.node_symbols.get(&container_idx.0).copied());
+                            .and_then(|container_idx| {
+                                self.node_symbols.get(&container_idx.0).copied()
+                            });
 
                         for &spec_idx in &named.elements.nodes {
                             if let Some(spec_node) = arena.get(spec_idx)
@@ -3453,7 +3458,9 @@ impl BinderState {
 
                                 if let (Some(orig), Some(exp)) = (original_name, exported_name) {
                                     // Resolve the original symbol in the current scope
-                                    let resolved_sym_id = self.current_scope.get(orig)
+                                    let resolved_sym_id = self
+                                        .current_scope
+                                        .get(orig)
                                         .or_else(|| self.file_locals.get(orig));
 
                                     if let Some(sym_id) = resolved_sym_id {
@@ -3468,9 +3475,13 @@ impl BinderState {
                                             // Store the target symbol for re-exports within namespaces
                                             if let Some(ns_sym_id) = current_namespace_sym_id {
                                                 // This is a namespace re-export - add to namespace's exports
-                                                if let Some(ns_sym) = self.symbols.get_mut(ns_sym_id) {
-                                                    let exports = ns_sym.exports
-                                                        .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                                                if let Some(ns_sym) =
+                                                    self.symbols.get_mut(ns_sym_id)
+                                                {
+                                                    let exports =
+                                                        ns_sym.exports.get_or_insert_with(|| {
+                                                            Box::new(SymbolTable::new())
+                                                        });
                                                     exports.set(exp.to_string(), sym_id);
                                                 }
                                             }
