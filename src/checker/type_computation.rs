@@ -244,30 +244,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // Choose a best common type if any element is a supertype of all others.
-        let element_type = if element_types.len() == 1 {
-            // For single element, prefer contextual type if available
-            if let Some(ref helper) = ctx_helper
-                && let Some(context_element_type) = helper.get_array_element_type()
-                && self.is_assignable_to(element_types[0], context_element_type)
-            {
-                context_element_type
-            } else {
-                element_types[0]
-            }
-        } else if element_types.is_empty() {
+        // Rule #32: Best Common Type (BCT) Inference
+        // Use the centralized best_common_type function which implements:
+        // 1. Filter out duplicates and never types
+        // 2. Try to find a single candidate that is a supertype of all others
+        // 3. If not found, create a union of all candidates
+        let element_type = if element_types.is_empty() {
             TypeId::NEVER
         } else {
-            let mut best = None;
-            'candidates: for &candidate in &element_types {
-                for &elem in &element_types {
-                    if !self.is_assignable_to(elem, candidate) {
-                        continue 'candidates;
-                    }
-                }
-                best = Some(candidate);
-                break;
-            }
-            best.unwrap_or_else(|| self.ctx.types.union(element_types))
+            // Use the TypeInterner's best_common_type method (Rule #32)
+            self.ctx.types.best_common_type(&element_types)
         };
 
         self.ctx.types.array(element_type)
