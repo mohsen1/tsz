@@ -11060,6 +11060,17 @@ impl<'a> CheckerState<'a> {
                                 var_decl.initializer,
                             );
                         }
+
+                        // Check array literal elements when assigned to a tuple type
+                        if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
+                            && init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        {
+                            checker.check_array_literal_tuple_assignability(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            );
+                        }
                     }
                 }
                 // Type annotation determines the final type
@@ -11575,6 +11586,74 @@ impl<'a> CheckerState<'a> {
             _ => (),
         }
         // Note: Missing property checks are handled by solver's explain_failure
+    }
+
+    /// Check array literal elements against a tuple type for assignability.
+    ///
+    /// When an array literal is assigned to a tuple type, we need to check each
+    /// element individually for assignability. This catches errors like:
+    ///   let x: [string, number] = [1, "a"];  // TS2322: number not assignable to string
+    ///
+    /// ## Parameters:
+    /// - `source`: The array literal type
+    /// - `target`: The target tuple type
+    /// - `idx`: The node index for error reporting
+    pub(crate) fn check_array_literal_tuple_assignability(
+        &mut self,
+        _source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        use crate::solver::TypeKey;
+        use crate::parser::syntax_kind_ext;
+
+        // Only check if target is a tuple type
+        let target_elements = match self.ctx.types.lookup(target) {
+            Some(TypeKey::Tuple(elements_id)) => self.ctx.types.tuple_list(elements_id),
+            _ => return,
+        };
+
+        // Get the array literal expression
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        let Some(literal) = self.ctx.arena.get_literal_expr(node) else {
+            return;
+        };
+
+        // Check each corresponding element
+        for (i, target_elem) in target_elements.iter().enumerate() {
+            // Skip rest elements - they're handled differently
+            if target_elem.rest {
+                break;
+            }
+
+            // Get the corresponding array literal element
+            let Some(&array_elem_idx) = literal.elements.nodes.get(i) else {
+                // Array literal has fewer elements than tuple - this is handled by the main assignability check
+                break;
+            };
+
+            // Skip omitted elements: [a, , b]
+            if array_elem_idx.is_none() {
+                continue;
+            }
+
+            // Get the type of the array element
+            let elem_type = self.get_type_of_node(array_elem_idx);
+
+            // Check if the element is assignable to the target tuple element type
+            if !self.is_assignable_to(elem_type, target_elem.type_id)
+                && !self.should_skip_weak_union_error(elem_type, target_elem.type_id, array_elem_idx)
+            {
+                self.error_type_not_assignable_with_reason_at(
+                    elem_type,
+                    target_elem.type_id,
+                    array_elem_idx,
+                );
+            }
+        }
     }
 
     /// Check if an assignment target is a readonly property.

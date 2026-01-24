@@ -96,6 +96,14 @@ impl<'a> CheckerState<'a> {
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
             }
+
+            // Check array literal elements when assigned to a tuple type
+            if left_type != TypeId::UNKNOWN
+                && let Some(right_node) = self.ctx.arena.get(right_idx)
+                && right_node.kind == crate::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            {
+                self.check_array_literal_tuple_assignability(right_type, left_type, right_idx);
+            }
         }
 
         right_type
@@ -172,6 +180,14 @@ impl<'a> CheckerState<'a> {
                 && right_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+            }
+
+            // Check array literal elements when assigned to a tuple type
+            if left_type != TypeId::UNKNOWN
+                && let Some(right_node) = self.ctx.arena.get(right_idx)
+                && right_node.kind == crate::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            {
+                self.check_array_literal_tuple_assignability(right_type, left_type, right_idx);
             }
         }
 
@@ -1921,6 +1937,20 @@ impl<'a> CheckerState<'a> {
             && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
             self.check_object_literal_excess_properties(
+                return_type,
+                expected_type,
+                return_data.expression,
+            );
+        }
+
+        // Check array literal elements when returned as a tuple type
+        if expected_type != TypeId::ANY
+            && expected_type != TypeId::UNKNOWN
+            && !return_data.expression.is_none()
+            && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
+            && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            self.check_array_literal_tuple_assignability(
                 return_type,
                 expected_type,
                 return_data.expression,
