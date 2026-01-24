@@ -2452,7 +2452,7 @@ fn collect_diagnostics(
                 compiler_options,
             )
         };
-        checker.ctx.report_unresolved_imports = false;
+        checker.ctx.report_unresolved_imports = true;
         // Set lib contexts for global symbol resolution (console, Array, Promise, etc.)
         if !lib_contexts.is_empty() {
             checker.ctx.set_lib_contexts(lib_contexts.clone());
