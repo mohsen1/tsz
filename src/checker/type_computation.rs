@@ -1956,6 +1956,183 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the Symbol constructor type.
+    ///
+    /// Creates the type for the global `Symbol` constructor, including:
+    /// - Call signature: `Symbol(description?: string | number): symbol`
+    /// - Well-known symbol properties (iterator, asyncIterator, etc.)
+    pub(crate) fn get_symbol_constructor_type(&self) -> TypeId {
+        use crate::solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo};
+
+        // Parameter: description?: string | number
+        let description_param_type = self.ctx.types.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        let description_param = ParamInfo {
+            name: Some(self.ctx.types.intern_string("description")),
+            type_id: description_param_type,
+            optional: true,
+            rest: false,
+        };
+
+        let call_signature = CallSignature {
+            type_params: vec![],
+            params: vec![description_param],
+            this_type: None,
+            return_type: TypeId::SYMBOL,
+            type_predicate: None,
+        };
+
+        let well_known = [
+            "iterator",
+            "asyncIterator",
+            "hasInstance",
+            "isConcatSpreadable",
+            "match",
+            "matchAll",
+            "replace",
+            "search",
+            "split",
+            "species",
+            "toPrimitive",
+            "toStringTag",
+            "unscopables",
+            "dispose",
+            "asyncDispose",
+            "metadata",
+        ];
+
+        let mut properties = Vec::new();
+        for name in well_known {
+            let name_atom = self.ctx.types.intern_string(name);
+            properties.push(PropertyInfo {
+                name: name_atom,
+                type_id: TypeId::SYMBOL,
+                write_type: TypeId::SYMBOL,
+                optional: false,
+                readonly: true,
+                is_method: false,
+            });
+        }
+
+        self.ctx.types.callable(CallableShape {
+            call_signatures: vec![call_signature],
+            construct_signatures: Vec::new(),
+            properties,
+            string_index: None,
+            number_index: None,
+        })
+    }
+
+    /// Get the type of the receiver object in a method call.
+    ///
+    /// For a call like `obj.method()`, returns the type of `obj` after
+    /// evaluating applications and resolving for property access.
+    pub(crate) fn get_call_receiver_type(&mut self, callee_idx: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(callee_idx)?;
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let receiver_type = self.get_type_of_node(access.expression);
+        let receiver_type = self.evaluate_application_type(receiver_type);
+        let receiver_type = self.resolve_type_for_property_access(receiver_type);
+        Some(receiver_type)
+    }
+
+    /// Get the class declaration node from a TypeId.
+    ///
+    /// This function attempts to find the class declaration for a given type
+    /// by looking for "private brand" properties that TypeScript adds to class
+    /// instances for brand checking.
+    ///
+    /// ## Private Brand Properties:
+    /// TypeScript adds private properties like `__private_brand_XXX` to class
+    /// instances for brand checking (e.g., for private class members).
+    /// This function searches for these brand properties to find the original
+    /// class declaration.
+    ///
+    /// ## Returns:
+    /// - `Some(NodeIndex)` - Found the class declaration
+    /// - `None` - Type doesn't represent a class or couldn't determine
+    pub(crate) fn get_class_decl_from_type(&self, type_id: TypeId) -> Option<NodeIndex> {
+        use crate::binder::SymbolId;
+        use crate::solver::TypeKey;
+
+        fn parse_brand_name(name: &str) -> Option<Result<SymbolId, NodeIndex>> {
+            const NODE_PREFIX: &str = "__private_brand_node_";
+            const PREFIX: &str = "__private_brand_";
+
+            if let Some(rest) = name.strip_prefix(NODE_PREFIX) {
+                let node_id: u32 = rest.parse().ok()?;
+                return Some(Err(NodeIndex(node_id)));
+            }
+            if let Some(rest) = name.strip_prefix(PREFIX) {
+                let sym_id: u32 = rest.parse().ok()?;
+                return Some(Ok(SymbolId(sym_id)));
+            }
+
+            None
+        }
+
+        fn collect_candidates<'a>(
+            checker: &CheckerState<'a>,
+            type_id: TypeId,
+            out: &mut Vec<NodeIndex>,
+        ) {
+            let Some(key) = checker.ctx.types.lookup(type_id) else {
+                return;
+            };
+
+            match key {
+                TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                    let shape = checker.ctx.types.object_shape(shape_id);
+                    for prop in &shape.properties {
+                        let name = checker.ctx.types.resolve_atom_ref(prop.name);
+                        if let Some(parsed) = parse_brand_name(&name) {
+                            let class_idx = match parsed {
+                                Ok(sym_id) => checker.get_class_declaration_from_symbol(sym_id),
+                                Err(node_idx) => Some(node_idx),
+                            };
+                            if let Some(class_idx) = class_idx {
+                                out.push(class_idx);
+                            }
+                        }
+                    }
+                }
+                TypeKey::Union(list_id) | TypeKey::Intersection(list_id) => {
+                    let list = checker.ctx.types.type_list(list_id);
+                    for &member in list.iter() {
+                        collect_candidates(checker, member, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut candidates = Vec::new();
+        collect_candidates(self, type_id, &mut candidates);
+        if candidates.is_empty() {
+            return None;
+        }
+        if candidates.len() == 1 {
+            return Some(candidates[0]);
+        }
+
+        candidates
+            .iter()
+            .find(|&&candidate| {
+                candidates.iter().all(|&other| {
+                    candidate == other || self.is_class_derived_from(candidate, other)
+                })
+            })
+            .copied()
+    }
+
+    /// Get the class name from a TypeId if it represents a class instance.
+    ///
+    /// Returns the class name as a string if the type represents a class,
+    /// or None if the type doesn't represent a class or the class has no name.
+    pub(crate) fn get_class_name_from_type(&self, type_id: TypeId) -> Option<String> {
+        self.get_class_decl_from_type(type_id)
+            .map(|class_idx| self.get_class_name_from_decl(class_idx))
+    }
+
     // =========================================================================
     // Type Relationship Queries
     // =========================================================================
