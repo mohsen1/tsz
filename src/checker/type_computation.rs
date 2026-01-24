@@ -149,7 +149,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let elems = self.ctx.types.tuple_list(elems_id);
 
-                        if tuple_context.is_some() {
+                        if let Some(ref expected) = tuple_context {
                             // For tuple context, add each element with spread flag
                             for elem in elems.iter() {
                                 let (name, optional) =
