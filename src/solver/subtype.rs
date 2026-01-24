@@ -3947,7 +3947,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check function subtyping
+    /// Check if a function type is a subtype of another function type.
+    ///
+    /// Validates function compatibility by checking multiple aspects:
+    /// - Constructor/non-constructor matching
+    /// - Return type compatibility (covariant)
+    /// - `this` parameter compatibility
+    /// - Type predicate compatibility
+    /// - Parameter compatibility (contravariant or bivariant for methods)
+    /// - Rest parameter handling
+    /// - Optional parameter compatibility
+    ///
+    /// ## TypeScript Soundness:
+    /// Function subtyping follows these rules:
+    /// - **Return types**: Covariant (source return <: target return)
+    /// - **Parameters**: Contravariant (target param <: source param)
+    /// - **Methods**: Bivariant parameters (for compatibility with JavaScript patterns)
+    /// - **Rest parameters**: Special handling for array rest and extra arguments
+    /// - **Optional parameters**: Source can have extra optional params
+    /// - **Type predicates**: More specific predicates are subtypes of less specific ones
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Return type covariance
+    /// type F1 = () => number;
+    /// type F2 = () => number | string;  // Wider return type
+    /// let x: F2 = null as F1;  // ✅ number <: number | string
+    ///
+    /// // Parameter contravariance
+    /// type G1 = (x: number | string) => void;
+    /// type G2 = (x: number) => void;
+    /// let y: G2 = null as G1;  // ✅ number <: number | string
+    ///
+    /// // Method bivariance
+    /// interface Obj {
+    ///   method(x: number): void;  // Method uses bivariance
+    /// }
+    /// ```
     fn check_function_subtype(
         &mut self,
         source: &FunctionShape,
