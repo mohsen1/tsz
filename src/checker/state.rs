@@ -11640,6 +11640,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Check for spread element: [...rest]
+            let Some(elem_node) = self.ctx.arena.get(array_elem_idx) else {
+                continue;
+            };
+
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                // Spread elements are handled by the main assignability check
+                // But we can still check if the spread type is assignable to the remaining tuple type
+                continue;
+            }
+
             // Get the type of the array element
             let elem_type = self.get_type_of_node(array_elem_idx);
 
@@ -11654,6 +11665,40 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+
+        // Check for excess elements in array literal beyond tuple length
+        // Only check if there's no rest element in the tuple
+        let has_rest_element = target_elements.iter().any(|e| e.rest);
+        if !has_rest_element && literal.elements.nodes.len() > target_elements.len() {
+            // Report excess element errors
+            for (i, &array_elem_idx) in literal.elements.nodes.iter().enumerate() {
+                if i >= target_elements.len() && !array_elem_idx.is_none() {
+                    // This is an excess element
+                    let elem_type = self.get_type_of_node(array_elem_idx);
+                    self.error_excess_array_literal_element_at(elem_type, target, idx);
+                    break; // Only report one error to avoid noise
+                }
+            }
+        }
+    }
+
+    /// Report an error for an excess array literal element.
+    ///
+    /// ## Parameters:
+    /// - `elem_type`: The type of the excess element
+    /// - `target_type`: The target tuple type
+    /// - `idx`: The node index for error reporting
+    fn error_excess_array_literal_element_at(&mut self, elem_type: TypeId, target_type: TypeId, idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let elem_str = self.display_type(elem_type);
+        let target_str = self.display_type(target_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+            &[&elem_str, &target_str],
+        );
+
+        self.error_at_node(idx, &message, diagnostic_codes::TYPE_NOT_ASSIGNABLE);
     }
 
     /// Check if an assignment target is a readonly property.
