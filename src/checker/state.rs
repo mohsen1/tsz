@@ -12981,10 +12981,62 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if `source` type is assignable to `target` type.
+    /// Check if source type is assignable to target type.
     ///
-    /// Uses the solver's SubtypeChecker with coinductive cycle detection.
-    /// Uses the context's TypeEnvironment for resolving type references and expanding Applications.
+    /// This is the main entry point for assignability checking, used throughout
+    /// the type system to validate assignments, function calls, returns, etc.
+    /// Assignability is more permissive than subtyping.
+    ///
+    /// ## Assignability vs Subtyping:
+    /// - Assignability allows bidirectional checking for function parameters in certain cases
+    /// - Subtyping is stricter (source must be true subtype of target)
+    /// - Assignability respects `strictFunctionTypes` compiler option
+    /// - By default, function parameters are bivariant (assignable both ways)
+    ///
+    /// ## Type Evaluation:
+    /// - Generic Applications are expanded (e.g., `Map<string, number>`)
+    /// - Type references are resolved through the TypeEnvironment
+    /// - Index access, keyof, mapped, and conditional types are evaluated
+    ///
+    /// ## Compiler Options:
+    /// - `strictFunctionTypes`: When true, function parameters are contravariant
+    /// - `strictNullChecks`: When true, undefined is not assignable to non-null types
+    ///
+    /// ## Coinductive Semantics:
+    /// - Uses coinductive (greatest fixpoint) semantics for recursive types
+    /// - Prevents infinite recursion in cyclic type checks
+    /// - Allows cyclic types to be checked for assignability
+    ///
+    /// ## Override Provider:
+    /// - Uses CheckerOverrideProvider for special assignability rules
+    /// - Handles class hierarchy relationships
+    /// - Implements enum-specific assignability
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Basic assignability
+    /// let x: string = "hello";  // ✅ string assignable to string
+    /// let y: string = 42;       // ❌ number not assignable to string
+    ///
+    /// // Covariant positions (returns, readonly)
+    /// interface Animal { speak(): string }
+    /// interface Dog extends Animal { bark(): void }
+    /// let dog: Dog;
+    /// let animal: Animal = dog;  // ✅ Dog assignable to Animal
+    ///
+    /// // Function bivariance (default)
+    /// type Handler = (data: string) => void;
+    /// let handler: Handler = (data: any) => {}; // ✅ any assignable to string (bivariant)
+    ///
+    /// // With strictFunctionTypes: true
+    /// // Handler above would reject any (contravariant)
+    ///
+    /// // Class hierarchy
+    /// class Base {}
+    /// class Derived extends Base {}
+    /// let derived: Derived = new Base();  // ❌ Base not assignable to Derived
+    /// let base: Base = new Derived();     // ✅ Derived assignable to Base
+    /// ```
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         use crate::solver::CompatChecker;
 
@@ -14752,8 +14804,56 @@ impl<'a> CheckerState<'a> {
 
     /// Narrow a discriminated union by a discriminant property check.
     ///
-    /// Example: `action.type === "add"` narrows `{ type: "add" } | { type: "remove" }`
-    /// to `{ type: "add" }`.
+    /// Narrow a discriminated union by a discriminant property check (positive case).
+    ///
+    /// This implements TypeScript's discriminated union narrowing, where a common
+    /// property with literal values is used to distinguish between union variants.
+    /// Also known as "tagged unions" or "algebraic data types".
+    ///
+    /// ## Discriminant Property:
+    /// - A property that exists in all union members with a literal type
+    /// - Each member has a unique literal value for this property
+    /// - The property name identifies which variant to select
+    ///
+    /// ## Type Narrowing:
+    /// - Unions are narrowed to only members matching the discriminant value
+    /// - Non-unions are returned unchanged
+    /// - If no match found, returns NEVER type
+    ///
+    /// ## Flow Analysis Integration:
+    /// - Called when property access is checked against a literal value
+    /// - Enables exhaustive checking in switch statements
+    /// - Supports exhaustive type narrowing patterns
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// type Action =
+    ///   | { type: "add"; payload: number }
+    ///   | { type: "remove"; payload: number }
+    ///   | { type: "clear" };
+    ///
+    /// function handle(action: Action) {
+    ///     if (action.type === "add") {
+    ///         // action is narrowed to { type: "add"; payload: number }
+    ///         console.log(action.payload); // ✅
+    ///     }
+    /// }
+    ///
+    /// // Exhaustive switch with discriminants
+    /// function handleExhaustively(action: Action) {
+    ///     switch (action.type) {
+    ///         case "add":
+    ///             console.log(action.payload); // ✅ number
+    ///             break;
+    ///         case "remove":
+    ///             console.log(action.payload); // ✅ number
+    ///             break;
+    ///         case "clear":
+    ///             // No payload property
+    ///             break;
+    ///     }
+    /// }
+    /// ```
     pub fn narrow_by_discriminant(
         &self,
         union_type: TypeId,
@@ -14765,9 +14865,48 @@ impl<'a> CheckerState<'a> {
         ctx.narrow_by_discriminant(union_type, property_name, literal_value)
     }
 
-    /// Narrow a discriminated union by excluding a discriminant value.
+    /// Narrow a discriminated union by excluding a discriminant value (negative case).
     ///
-    /// Example: `action.type !== "add"` narrows the union to exclude the "add" variant.
+    /// This handles the negated discriminant check (`action.type !== "add"`), narrowing
+    /// the type to exclude the matching variant. This is the dual of `narrow_by_discriminant`.
+    ///
+    /// ## Type Narrowing:
+    /// - Unions are narrowed to exclude members matching the discriminant value
+    /// - Non-unions are returned unchanged
+    /// - If all members excluded, returns NEVER type
+    ///
+    /// ## Flow Analysis Integration:
+    /// - Called when property access is negated against a literal value
+    /// - Enables type narrowing in else branches of discriminated unions
+    /// - Supports "all other cases" patterns
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// type Action =
+    ///   | { type: "add"; payload: number }
+    ///   | { type: "remove"; payload: number }
+    ///   | { type: "clear" };
+    ///
+    /// function handle(action: Action) {
+    ///     if (action.type === "add") {
+    ///         // action: { type: "add"; payload: number }
+    ///     } else {
+    ///         // action: { type: "remove" } | { type: "clear" }
+    ///         // "add" variant is excluded
+    ///     }
+    /// }
+    ///
+    /// // Multiple exclusions
+    /// function handle2(action: Action) {
+    ///     if (action.type === "add") {
+    ///         // ...
+    ///     } else if (action.type !== "clear") {
+    ///         // action: { type: "remove" }
+    ///         // Both "add" and "clear" are excluded
+    ///         console.log(action.payload); // ✅ number
+    ///     }
+    /// }
+    /// ```
     pub fn narrow_by_excluding_discriminant(
         &self,
         union_type: TypeId,
