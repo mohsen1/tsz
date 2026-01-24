@@ -19,6 +19,7 @@
 
 pub mod accessibility;
 pub mod arena;
+pub mod array_type;
 pub mod callable_type;
 pub mod constructor_checker;
 pub mod context;
