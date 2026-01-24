@@ -22,6 +22,7 @@
 
 use crate::interner::{Atom, ShardedInterner};
 use crate::solver::types::*;
+use crate::solver::visitor::{is_literal_type, is_object_like_type};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
@@ -1093,17 +1094,21 @@ impl TypeInterner {
         false
     }
 
+    /// Check if a type is a literal type.
+    /// Uses the visitor pattern from solver::visitor.
     fn is_literal(&self, type_id: TypeId) -> bool {
-        matches!(self.lookup(type_id), Some(TypeKey::Literal(_)))
+        is_literal_type(self, type_id)
     }
 
+    /// Check if a type is object-like (object, array, tuple, function, etc.).
+    /// Uses the visitor pattern from solver::visitor.
     #[allow(dead_code)] // Infrastructure for type introspection
     fn is_object_like_type(&self, type_id: TypeId) -> bool {
+        // Note: The visitor's is_object_like_type doesn't include functions
+        // This version explicitly includes functions for object-likeness
         match self.lookup(type_id) {
-            Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_)) => true,
             Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => true,
-            Some(TypeKey::Array(_)) | Some(TypeKey::Tuple(_)) => true,
-            _ => false,
+            _ => is_object_like_type(self, type_id),
         }
     }
 
