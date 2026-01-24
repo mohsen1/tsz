@@ -6336,6 +6336,59 @@ impl<'a> CheckerState<'a> {
         self.constructor_access_level(type_id, env, &mut visited)
     }
 
+    /// Check if there's a constructor accessibility mismatch between source and target types.
+    pub(crate) fn constructor_accessibility_mismatch(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_level = self.constructor_access_level_for_type(source, env);
+        let target_level = self.constructor_access_level_for_type(target, env);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level) {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    /// Check constructor accessibility mismatch for assignment expressions.
+    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
+        &self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_sym = self.class_symbol_from_expression(right_idx)?;
+        let target_sym = self.class_symbol_from_type_node_from_expr(left_idx)?;
+        let source_level = self.class_constructor_access_level(source_sym);
+        let target_level = self.class_constructor_access_level(target_sym);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level) {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    /// Get class symbol from type node of an expression.
+    fn class_symbol_from_type_node_from_expr(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return None;
+        };
+        let identifier_kind = SyntaxKind::Identifier as u16;
+        if node.kind == identifier_kind {
+            let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if symbol.flags & symbol_flags::CLASS != 0 {
+                return Some(sym_id);
+            }
+        }
+        None
+    }
+
     fn constructor_accessibility_override(
         &self,
         source: TypeId,
@@ -6377,6 +6430,64 @@ impl<'a> CheckerState<'a> {
         }
         let query = self.ctx.arena.get_type_query(node)?;
         self.class_symbol_from_expression(query.expr_name)
+    }
+
+    /// Get the name for a constructor access level.
+    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
+        match level {
+            Some(MemberAccessLevel::Private) => "private",
+            Some(MemberAccessLevel::Protected) => "protected",
+            None => "public",
+        }
+    }
+
+    /// Check if a token is an assignment operator.
+    pub(crate) fn is_assignment_operator(&self, token: u16) -> bool {
+        use crate::scanner::SyntaxKind;
+        token == SyntaxKind::EqualsToken as u16
+            || token == SyntaxKind::PlusEqualsToken as u16
+            || token == SyntaxKind::MinusEqualsToken as u16
+            || token == SyntaxKind::AsteriskEqualsToken as u16
+            || token == SyntaxKind::SlashEqualsToken as u16
+            || token == SyntaxKind::PercentEqualsToken as u16
+            || token == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || token == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || token == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || token == SyntaxKind::AmpersandEqualsToken as u16
+            || token == SyntaxKind::BarEqualsToken as u16
+            || token == SyntaxKind::CaretEqualsToken as u16
+            || token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || token == SyntaxKind::BarBarEqualsToken as u16
+            || token == SyntaxKind::QuestionQuestionEqualsToken as u16
+    }
+
+    /// Get literal key union from a type (for index access type checking).
+    pub(crate) fn get_literal_key_union_from_type(
+        &self,
+        _type_id: TypeId,
+    ) -> Option<(Vec<String>, Vec<f64>)> {
+        // TODO: Implement proper literal key extraction
+        None
+    }
+
+    /// Get element access type for literal string keys.
+    pub(crate) fn get_element_access_type_for_literal_keys(
+        &self,
+        _obj_type: TypeId,
+        _keys: &[String],
+    ) -> Option<TypeId> {
+        // TODO: Implement proper literal key element access
+        None
+    }
+
+    /// Get element access type for literal number keys.
+    pub(crate) fn get_element_access_type_for_literal_number_keys(
+        &self,
+        _obj_type: TypeId,
+        _keys: &[f64],
+    ) -> Option<TypeId> {
+        // TODO: Implement proper literal number key element access
+        None
     }
 
     pub(crate) fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
@@ -10620,14 +10731,14 @@ impl<'a> CheckerState<'a> {
     fn error_excess_array_literal_element_at(&mut self, elem_type: TypeId, target_type: TypeId, idx: NodeIndex) {
         use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        let elem_str = self.display_type(elem_type);
-        let target_str = self.display_type(target_type);
+        let elem_str = self.format_type(elem_type);
+        let target_str = self.format_type(target_type);
         let message = format_message(
             diagnostic_messages::TYPE_NOT_ASSIGNABLE,
             &[&elem_str, &target_str],
         );
 
-        self.error_at_node(idx, &message, diagnostic_codes::TYPE_NOT_ASSIGNABLE);
+        self.error_at_node(idx, &message, diagnostic_codes::TYPE_NOT_ASSIGNABLE_TO_TYPE);
     }
 
     /// Check if a property exists before assignment.
@@ -10687,7 +10798,7 @@ impl<'a> CheckerState<'a> {
 
                 // Check if property exists
                 let property_exists = shape.properties.iter().any(|p| {
-                    self.ctx.types.resolve_atom(p.name) == prop_name
+                    self.ctx.types.resolve_atom(p.name).as_str() == prop_name
                 });
 
                 // If property doesn't exist and there's no string index signature,
@@ -10961,9 +11072,8 @@ impl<'a> CheckerState<'a> {
 
         if let Some((string_keys, number_keys)) = self.get_literal_key_union_from_type(index_type) {
             for key in string_keys {
-                let name = self.ctx.types.resolve_atom(key);
-                if self.is_property_readonly(object_type, &name) {
-                    return Some(name);
+                if self.is_property_readonly(object_type, &key) {
+                    return Some(key);
                 }
             }
 
