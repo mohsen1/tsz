@@ -2017,51 +2017,6 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    pub(crate) fn heritage_name_text(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(idx)?;
-
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return self
-                .ctx
-                .arena
-                .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
-        }
-
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return self.entity_name_text(idx);
-        }
-
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = self.ctx.arena.get_access_expr(node)?;
-            let left = self.heritage_name_text(access.expression)?;
-            let right = self
-                .ctx
-                .arena
-                .get(access.name_or_argument)
-                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map(|ident| ident.escaped_text.clone())?;
-            let mut combined = String::with_capacity(left.len() + 1 + right.len());
-            combined.push_str(&left);
-            combined.push('.');
-            combined.push_str(&right);
-            return Some(combined);
-        }
-
-        // Handle keyword literals in heritage clauses (e.g., extends null, extends true)
-        match node.kind {
-            k if k == SyntaxKind::NullKeyword as u16 => return Some("null".to_string()),
-            k if k == SyntaxKind::TrueKeyword as u16 => return Some("true".to_string()),
-            k if k == SyntaxKind::FalseKeyword as u16 => return Some("false".to_string()),
-            k if k == SyntaxKind::UndefinedKeyword as u16 => return Some("undefined".to_string()),
-            k if k == SyntaxKind::NumericLiteral as u16 => return Some("0".to_string()),
-            k if k == SyntaxKind::StringLiteral as u16 => return Some("0".to_string()),
-            _ => {}
-        }
-
-        None
-    }
-
     pub(crate) fn apply_type_arguments_to_constructor_type(
         &mut self,
         ctor_type: TypeId,
