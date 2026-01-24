@@ -6368,21 +6368,64 @@ impl<'a> CheckerState<'a> {
 
     /// Check flow-based usage of an identifier.
     ///
-    /// This method combines:
-    /// - Definite assignment checking (TS2454 errors)
-    /// - Type narrowing based on control flow
+    /// Check flow-aware usage of a variable (definite assignment + type narrowing).
     ///
-    /// # Arguments
-    /// * `idx` - The AST node index of the identifier reference
-    /// * `declared_type` - The declared type of the identifier
-    /// * `sym_id` - The symbol ID of the identifier
+    /// This is the main entry point for flow analysis when variables are used.
+    /// It combines two critical TypeScript features:
+    /// 1. **Definite Assignment Analysis**: Catches use-before-assignment errors
+    /// 2. **Type Narrowing**: Refines types based on control flow
     ///
-    /// # Returns
-    /// The narrowed type if the identifier is definitely assigned, otherwise
-    /// the declared type (errors are reported separately).
+    /// ## Definite Assignment Checking:
+    /// - Block-scoped variables (let/const) without initializers are checked
+    /// - Variables are tracked through all code paths
+    /// - TS2454 error emitted if variable might not be assigned
+    /// - Error: "Variable 'x' is used before being assigned"
     ///
-    /// # Errors
-    /// Emits TS2454 error if the variable is used before being definitely assigned.
+    /// ## Type Narrowing:
+    /// - If definitely assigned, applies flow-based type narrowing
+    /// - typeof guards, discriminant checks, null checks refine types
+    /// - Returns narrowed type for precise type checking
+    ///
+    /// ## Flow Tracking:
+    /// - Each variable has a set of "definitely assigned" positions
+    /// - Control flow analysis tracks assignments through branches
+    /// - Narrowing applied based on guards and checks
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Definite assignment
+    /// let x: number;
+    /// console.log(x);  // ❌ TS2454: Variable used before assignment
+    ///
+    /// // Valid definite assignment
+    /// let y: number;
+    /// if (Math.random() > 0.5) {
+    ///     y = 1;
+    /// } else {
+    ///     y = 2;
+    /// }
+    /// console.log(y);  // ✅ Definitely assigned on all paths
+    ///
+    /// // Type narrowing
+    /// function example(value: string | number) {
+    ///     if (typeof value === "string") {
+    ///         // value narrowed to string
+    ///         value.toUpperCase(); // ✅
+    ///     }
+    /// }
+    ///
+    /// // Combined: definite assignment + narrowing
+    /// let z: string | number;
+    /// if (Math.random() > 0.5) {
+    ///     z = "hello";
+    /// } else {
+    ///     z = 42;
+    /// }
+    /// if (typeof z === "string") {
+    ///     // z narrowed to string (and definitely assigned)
+    ///     z.toUpperCase(); // ✅
+    /// }
+    /// ```
     pub fn check_flow_usage(
         &mut self,
         idx: NodeIndex,
@@ -14947,8 +14990,50 @@ impl<'a> CheckerState<'a> {
     /// Get type from a type node.
     ///
     /// Uses compile-time constant TypeIds for intrinsic types (O(1) lookup).
-    /// Delegates to TypeLowering for complex types (union, intersection, array, etc.).
-    /// Also validates that type references exist and reports errors.
+    /// Get the type representation of a type annotation node.
+    ///
+    /// This is the main entry point for converting type annotation AST nodes into
+    /// TypeId representations. Handles all TypeScript type syntax.
+    ///
+    /// ## Special Node Handling:
+    /// - **TypeReference**: Validates existence before lowering (catches missing types)
+    /// - **TypeQuery** (`typeof X`): Resolves via binder for proper symbol resolution
+    /// - **UnionType**: Handles specially for nested typeof expression resolution
+    /// - **TypeLiteral**: Uses checker resolution for type parameter support
+    /// - **Other nodes**: Delegated to TypeLowering
+    ///
+    /// ## Type Parameter Bindings:
+    /// - Uses current type parameter bindings from scope
+    /// - Allows type parameters to resolve correctly in generic contexts
+    ///
+    /// ## Symbol Resolvers:
+    /// - Provides type/value symbol resolvers to TypeLowering
+    /// - Resolves type references and value references (for typeof)
+    ///
+    /// ## Error Reporting:
+    /// - Checks for missing names before lowering
+    /// - Emits appropriate errors for undefined types
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Primitive types
+    /// let x: string;           // → STRING
+    /// let y: number | boolean; // → Union(NUMBER, BOOLEAN)
+    ///
+    /// // Type references
+    /// interface Foo {}
+    /// let z: Foo;              // → Ref to Foo symbol
+    ///
+    /// // Generic types
+    /// let a: Array<string>;    // → Application(Array, [STRING])
+    ///
+    /// // Type queries
+    /// let value = 42;
+    /// let b: typeof value;     // → TypeQuery(value symbol)
+    ///
+    /// // Type literals
+    /// let c: { x: number };    // → Object type with property x: number
+    /// ```
     pub fn get_type_from_type_node(&mut self, idx: NodeIndex) -> TypeId {
         use crate::solver::TypeLowering;
 
