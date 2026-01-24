@@ -6793,52 +6793,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type of object literal.
-    /// Get property name as string from a property name node (identifier, string literal, etc.)
-    pub(crate) fn get_property_name(&self, name_idx: NodeIndex) -> Option<String> {
-        use crate::scanner::SyntaxKind;
-
-        let name_node = self.ctx.arena.get(name_idx)?;
-
-        // Identifier
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
-        }
-
-        if matches!(
-            name_node.kind,
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
-            && !lit.text.is_empty()
-        {
-            return Some(lit.text.clone());
-        }
-
-        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-            && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
-        {
-            if let Some(symbol_name) = self.get_symbol_property_name_from_expr(computed.expression)
-            {
-                return Some(symbol_name);
-            }
-            if let Some(expr_node) = self.ctx.arena.get(computed.expression)
-                && matches!(
-                    expr_node.kind,
-                    k if k == SyntaxKind::StringLiteral as u16
-                        || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                        || k == SyntaxKind::NumericLiteral as u16
-                )
-                && let Some(lit) = self.ctx.arena.get_literal(expr_node)
-                && !lit.text.is_empty()
-            {
-                return Some(lit.text.clone());
-            }
-        }
-
-        None
-    }
-
     // =========================================================================
     // Type Relations (uses solver::CompatChecker for assignability)
     // =========================================================================
@@ -12008,24 +11962,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(crate) fn get_class_name_from_decl(&self, class_idx: NodeIndex) -> String {
-        let Some(node) = self.ctx.arena.get(class_idx) else {
-            return "<anonymous>".to_string();
-        };
-        let Some(class) = self.ctx.arena.get_class(node) else {
-            return "<anonymous>".to_string();
-        };
-
-        if !class.name.is_none()
-            && let Some(name_node) = self.ctx.arena.get(class.name)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-        {
-            return ident.escaped_text.clone();
-        }
-
-        "<anonymous>".to_string()
-    }
-
     pub(crate) fn get_base_class_idx(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
         use crate::scanner::SyntaxKind;
 
@@ -13811,28 +13747,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find the position of the first return statement's expression in a body.
-    /// Get the name of a class member (property, method, or accessor).
-    pub(crate) fn get_member_name(&self, member_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return None;
-        };
-
-        let name_idx = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                self.ctx.arena.get_property_decl(node).map(|p| p.name)
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                self.ctx.arena.get_method_decl(node).map(|m| m.name)
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                self.ctx.arena.get_accessor(node).map(|a| a.name)
-            }
-            _ => None,
-        }?;
-
-        self.get_property_name(name_idx)
-    }
-
     /// Check that all top-level function overload signatures have implementations.
     /// Reports errors 2389, 2391.
     pub(crate) fn check_function_implementations(&mut self, statements: &[NodeIndex]) {
@@ -13895,41 +13809,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if there's a function implementation with the given name after position `start`.
-    /// Get the name of a function declaration.
-    pub(crate) fn get_function_name_from_node(&self, stmt_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return None;
-        };
-
-        if let Some(func) = self.ctx.arena.get_function(node)
-            && !func.name.is_none()
-        {
-            let Some(name_node) = self.ctx.arena.get(func.name) else {
-                return None;
-            };
-            if let Some(id) = self.ctx.arena.get_identifier(name_node) {
-                return Some(id.escaped_text.clone());
-            }
-        }
-        None
-    }
-
     /// Check a module body for function overload implementations.
     /// Check if a statement has an export modifier.
     /// Check that parameters don't have property modifiers (error 2369).
     /// Parameter properties (public/private/protected/readonly on params) are only
     /// allowed in constructor implementations.
-    /// Get the name of a parameter from its binding name node.
-    /// Returns None for destructuring patterns.
-    pub(crate) fn get_parameter_name(&self, name_idx: NodeIndex) -> Option<String> {
-        let name_node = self.ctx.arena.get(name_idx)?;
-        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
-        }
-        None
-    }
-
     /// Check if an initializer expression directly references a name.
     /// Used for TS2372: parameter cannot reference itself.
     pub(crate) fn initializer_references_name(&self, init_idx: NodeIndex, name: &str) -> bool {
