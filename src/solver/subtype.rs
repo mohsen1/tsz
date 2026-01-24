@@ -1484,7 +1484,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
-    /// Check literal to intrinsic subtyping
+    /// Check if a literal value is compatible with an intrinsic type kind.
+    ///
+    /// Literal types are subtypes of their corresponding intrinsic types:
+    /// - String literals (e.g., "hello") are subtypes of `string`
+    /// - Number literals (e.g., 42, 3.14) are subtypes of `number`
+    /// - BigInt literals (e.g., 42n) are subtypes of `bigint`
+    /// - Boolean literals (true/false) are subtypes of `boolean`
+    ///
+    /// ## TypeScript Soundness:
+    /// Literal types are more specific than their base intrinsic types, so:
+    /// - `"hello"` <: `string` ✅
+    /// - `42` <: `number` ✅
+    /// - `42` <: `string` ❌
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// let x: "hello" = "hello";  // ✅
+    /// let y: string = "hello";    // ✅ (literal to intrinsic)
+    /// let z: number = "hello";    // ❌ (wrong intrinsic)
+    /// ```
     fn check_literal_to_intrinsic(
         &self,
         literal: &LiteralValue,
