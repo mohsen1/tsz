@@ -4687,11 +4687,13 @@ impl<'a> CheckerState<'a> {
 
                     // Skip conflict check if declarations are in different files
                     // (external modules are isolated, same-name declarations don't conflict)
-                    // Check by comparing if both nodes exist in our arena
-                    let both_in_same_file = self.ctx.arena.get(decl_idx).is_some()
+                    // We check if both declarations are in the current file's arena
+                    let both_in_current_file = self.ctx.arena.get(decl_idx).is_some()
                         && self.ctx.arena.get(other_idx).is_some();
 
-                    if !both_in_same_file {
+                    // If either declaration is not in the current file's arena, they can't conflict
+                    // This handles external modules where declarations in different files are isolated
+                    if !both_in_current_file {
                         continue;
                     }
 
