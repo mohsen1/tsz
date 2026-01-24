@@ -4280,67 +4280,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns a callable type with signature: `Symbol(description?: string | number): symbol`
     /// Note: Symbol cannot be constructed with `new`, so no construct signatures.
-    fn get_symbol_constructor_type(&self) -> TypeId {
-        use crate::solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo};
-
-        // Parameter: description?: string | number
-        let description_param_type = self.ctx.types.union(vec![TypeId::STRING, TypeId::NUMBER]);
-        let description_param = ParamInfo {
-            name: Some(self.ctx.types.intern_string("description")),
-            type_id: description_param_type,
-            optional: true,
-            rest: false,
-        };
-
-        let call_signature = CallSignature {
-            type_params: vec![],
-            params: vec![description_param],
-            this_type: None,
-            return_type: TypeId::SYMBOL,
-            type_predicate: None,
-        };
-
-        let well_known = [
-            "iterator",
-            "asyncIterator",
-            "hasInstance",
-            "isConcatSpreadable",
-            "match",
-            "matchAll",
-            "replace",
-            "search",
-            "split",
-            "species",
-            "toPrimitive",
-            "toStringTag",
-            "unscopables",
-            "dispose",
-            "asyncDispose",
-            "metadata",
-        ];
-
-        let mut properties = Vec::new();
-        for name in well_known {
-            let name_atom = self.ctx.types.intern_string(name);
-            properties.push(PropertyInfo {
-                name: name_atom,
-                type_id: TypeId::SYMBOL,
-                write_type: TypeId::SYMBOL,
-                optional: false,
-                readonly: true,
-                is_method: false,
-            });
-        }
-
-        self.ctx.types.callable(CallableShape {
-            call_signatures: vec![call_signature],
-            construct_signatures: Vec::new(),
-            properties,
-            string_index: None,
-            number_index: None,
-        })
-    }
-
     /// Apply control flow narrowing to a type at a specific identifier usage.
     ///
     /// This walks backwards through the control flow graph to determine what
@@ -6355,15 +6294,6 @@ impl<'a> CheckerState<'a> {
             return self.substitute_this_type(return_type, receiver_type);
         }
         return_type
-    }
-
-    fn get_call_receiver_type(&mut self, callee_idx: NodeIndex) -> Option<TypeId> {
-        let node = self.ctx.arena.get(callee_idx)?;
-        let access = self.ctx.arena.get_access_expr(node)?;
-        let receiver_type = self.get_type_of_node(access.expression);
-        let receiver_type = self.evaluate_application_type(receiver_type);
-        let receiver_type = self.resolve_type_for_property_access(receiver_type);
-        Some(receiver_type)
     }
 
     /// Get type of call expression.
@@ -16089,7 +16019,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn get_class_declaration_from_symbol(&self, sym_id: SymbolId) -> Option<NodeIndex> {
+    pub(crate) fn get_class_declaration_from_symbol(&self, sym_id: SymbolId) -> Option<NodeIndex> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if !symbol.value_declaration.is_none() {
             let decl_idx = symbol.value_declaration;
@@ -16111,7 +16041,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn get_class_name_from_decl(&self, class_idx: NodeIndex) -> String {
+    pub(crate) fn get_class_name_from_decl(&self, class_idx: NodeIndex) -> String {
         let Some(node) = self.ctx.arena.get(class_idx) else {
             return "<anonymous>".to_string();
         };
@@ -16157,7 +16087,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn is_class_derived_from(&self, derived_idx: NodeIndex, base_idx: NodeIndex) -> bool {
+    pub(crate) fn is_class_derived_from(&self, derived_idx: NodeIndex, base_idx: NodeIndex) -> bool {
         use rustc_hash::FxHashSet;
 
         if derived_idx == base_idx {
@@ -16178,85 +16108,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    fn get_class_decl_from_type(&self, type_id: TypeId) -> Option<NodeIndex> {
-        use crate::solver::TypeKey;
-
-        fn parse_brand_name(name: &str) -> Option<Result<SymbolId, NodeIndex>> {
-            const NODE_PREFIX: &str = "__private_brand_node_";
-            const PREFIX: &str = "__private_brand_";
-
-            if let Some(rest) = name.strip_prefix(NODE_PREFIX) {
-                let node_id: u32 = rest.parse().ok()?;
-                return Some(Err(NodeIndex(node_id)));
-            }
-            if let Some(rest) = name.strip_prefix(PREFIX) {
-                let sym_id: u32 = rest.parse().ok()?;
-                return Some(Ok(SymbolId(sym_id)));
-            }
-
-            None
-        }
-
-        fn collect_candidates<'a>(
-            checker: &CheckerState<'a>,
-            type_id: TypeId,
-            out: &mut Vec<NodeIndex>,
-        ) {
-            let Some(key) = checker.ctx.types.lookup(type_id) else {
-                return;
-            };
-
-            match key {
-                TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                    let shape = checker.ctx.types.object_shape(shape_id);
-                    for prop in &shape.properties {
-                        let name = checker.ctx.types.resolve_atom_ref(prop.name);
-                        if let Some(parsed) = parse_brand_name(&name) {
-                            let class_idx = match parsed {
-                                Ok(sym_id) => checker.get_class_declaration_from_symbol(sym_id),
-                                Err(node_idx) => Some(node_idx),
-                            };
-                            if let Some(class_idx) = class_idx {
-                                out.push(class_idx);
-                            }
-                        }
-                    }
-                }
-                TypeKey::Union(list_id) | TypeKey::Intersection(list_id) => {
-                    let list = checker.ctx.types.type_list(list_id);
-                    for &member in list.iter() {
-                        collect_candidates(checker, member, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let mut candidates = Vec::new();
-        collect_candidates(self, type_id, &mut candidates);
-        if candidates.is_empty() {
-            return None;
-        }
-        if candidates.len() == 1 {
-            return Some(candidates[0]);
-        }
-
-        candidates
-            .iter()
-            .find(|&&candidate| {
-                candidates.iter().all(|&other| {
-                    candidate == other || self.is_class_derived_from(candidate, other)
-                })
-            })
-            .copied()
-    }
-
-    /// Get the class name from a TypeId if it represents a class instance.
-    fn get_class_name_from_type(&self, type_id: TypeId) -> Option<String> {
-        self.get_class_decl_from_type(type_id)
-            .map(|class_idx| self.get_class_name_from_decl(class_idx))
     }
 
     /// Check if a property is readonly in a class declaration (by looking at AST).
