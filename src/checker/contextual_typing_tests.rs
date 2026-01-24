@@ -2,31 +2,30 @@
 
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
+use crate::parser::NodeArena;
 use crate::parser::ParserState;
 use crate::solver::TypeInterner;
+use crate::test_fixtures::TestContext;
 
 /// Helper function to create a checker
-fn create_checker(source: &str) -> CheckerState {
+fn create_checker(source: &str) -> (TestContext, CheckerState) {
+    let arena = NodeArena::new();
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    binder.bind_source_file(&arena, root);
 
     let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::checker::context::CheckerOptions {
-            strict_null_checks: true,
-            ..Default::default()
-        },
-    );
+    let ctx = TestContext {
+        arena,
+        binder,
+        types,
+    };
 
+    let mut checker = ctx.checker();
     checker.check_source_file(root);
-    checker
+    (ctx, checker)
 }
 
 #[test]
@@ -37,7 +36,7 @@ const strings = numbers.map(x => x.toString());
 // x should be inferred as number from the array
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322 - x should be correctly inferred as number
     let ts2322_count = checker
@@ -61,7 +60,7 @@ const h: Handler = n => n.toString();
 // n should be inferred as number from the Handler type
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322 - n should be correctly inferred
     let ts2322_count = checker
@@ -88,7 +87,7 @@ const p: Person = { name: "Alice", age: 30 };
 // Properties should be contextually typed
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -115,7 +114,7 @@ function getNumber(): number {
 }
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -139,7 +138,7 @@ x = Math.random() > 0.5 ? "hello" : "world";
 // Both branches should be contextually typed as string
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -163,7 +162,7 @@ const { x, y }: { x: number; y: number } = obj;
 // x and y should be contextually typed as number
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -188,7 +187,7 @@ const doubled = numbers.map(x => x * 2);
 // x should be inferred as number from the array
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -219,7 +218,7 @@ const calc: Calculator = {
 // Return type should be inferred as number
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -244,7 +243,7 @@ const arr2: string[] = ["a", "b", "c"];
 // Elements should be contextually typed as string
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
@@ -270,7 +269,7 @@ const result = identity("hello");
 // T should be inferred as string
 "#;
 
-    let checker = create_checker(source);
+    let (_ctx, checker) = create_checker(source);
 
     // Should NOT emit TS2322
     let ts2322_count = checker
