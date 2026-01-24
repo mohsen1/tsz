@@ -26,6 +26,7 @@ use crate::parser::{NodeIndex, NodeList};
 use crate::scanner::SyntaxKind;
 use crate::solver::{ContextualTypeContext, TypeId, TypeInterner};
 use rustc_hash::FxHashSet;
+use std::sync::Arc;
 use tracing::{Level, debug, span, trace};
 
 // =============================================================================
@@ -1633,8 +1634,6 @@ impl<'a> CheckerState<'a> {
                         (node.pos, node.end - node.pos)
                     }
                 } else if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
-                    || node.kind == syntax_kind_ext::IMPORT_NAMESPACE_SPECIFIER
-                    || node.kind == syntax_kind_ext::IMPORT_DEFAULT_SPECIFIER
                 {
                     // For import specifiers, try to find the parent import declaration
                     if let Some(ext) = self.ctx.arena.get_extended(decl_node) {
@@ -3626,156 +3625,6 @@ impl<'a> CheckerState<'a> {
     // Type Resolution - Specific Node Types
     // =========================================================================
 
-    /// Get type of identifier, with control flow analysis for narrowing.
-    /// Synthesize the Symbol constructor type.
-    ///
-    /// Returns a callable type with signature: `Symbol(description?: string | number): symbol`
-    /// Note: Symbol cannot be constructed with `new`, so no construct signatures.
-    /// Apply control flow narrowing to a type at a specific identifier usage.
-    ///
-    /// This walks backwards through the control flow graph to determine what
-    /// type guards (typeof, null checks, etc.) have been applied.
-    pub(crate) fn apply_flow_narrowing(&self, idx: NodeIndex, declared_type: TypeId) -> TypeId {
-        // Get the flow node for this identifier usage
-        let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => return declared_type, // No flow info - use declared type
-        };
-
-        // Skip narrowing for non-union types (nothing to narrow)
-        // Also skip for primitives that can't be narrowed further
-        if !self.is_narrowable_type(declared_type) {
-            return declared_type;
-        }
-
-        // Create a flow analyzer and apply narrowing
-        let analyzer = FlowAnalyzer::with_node_types(
-            self.ctx.arena,
-            self.ctx.binder,
-            self.ctx.types,
-            &self.ctx.node_types,
-        );
-
-        analyzer.get_flow_type(idx, declared_type, flow_node)
-    }
-
-    /// Check flow-based usage of an identifier.
-    ///
-    /// Check flow-aware usage of a variable (definite assignment + type narrowing).
-    ///
-    /// This is the main entry point for flow analysis when variables are used.
-    /// It combines two critical TypeScript features:
-    /// 1. **Definite Assignment Analysis**: Catches use-before-assignment errors
-    /// 2. **Type Narrowing**: Refines types based on control flow
-    ///
-    /// ## Definite Assignment Checking:
-    /// - Block-scoped variables (let/const) without initializers are checked
-    /// - Variables are tracked through all code paths
-    /// - TS2454 error emitted if variable might not be assigned
-    /// - Error: "Variable 'x' is used before being assigned"
-    ///
-    /// ## Type Narrowing:
-    /// - If definitely assigned, applies flow-based type narrowing
-    /// - typeof guards, discriminant checks, null checks refine types
-    /// - Returns narrowed type for precise type checking
-    ///
-    /// ## Flow Tracking:
-    /// - Each variable has a set of "definitely assigned" positions
-    /// - Control flow analysis tracks assignments through branches
-    /// - Narrowing applied based on guards and checks
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// // Definite assignment
-    /// let x: number;
-    /// console.log(x);  // ❌ TS2454: Variable used before assignment
-    ///
-    /// // Valid definite assignment
-    /// let y: number;
-    /// if (Math.random() > 0.5) {
-    ///     y = 1;
-    /// } else {
-    ///     y = 2;
-    /// }
-    /// console.log(y);  // ✅ Definitely assigned on all paths
-    ///
-    /// // Type narrowing
-    /// function example(value: string | number) {
-    ///     if (typeof value === "string") {
-    ///         // value narrowed to string
-    ///         value.toUpperCase(); // ✅
-    ///     }
-    /// }
-    ///
-    /// // Combined: definite assignment + narrowing
-    /// let z: string | number;
-    /// if (Math.random() > 0.5) {
-    ///     z = "hello";
-    /// } else {
-    ///     z = 42;
-    /// }
-    /// if (typeof z === "string") {
-    ///     // z narrowed to string (and definitely assigned)
-    ///     z.toUpperCase(); // ✅
-    /// }
-    /// ```
-    pub fn check_flow_usage(
-        &mut self,
-        idx: NodeIndex,
-        declared_type: TypeId,
-        sym_id: SymbolId,
-    ) -> TypeId {
-        // Check definite assignment for block-scoped variables without initializers
-        if self.should_check_definite_assignment(sym_id, idx)
-            && !self.is_definitely_assigned_at(idx)
-        {
-            // Report TS2454 error: Variable used before assignment
-            self.emit_definite_assignment_error(idx, sym_id);
-            // Return declared type to avoid cascading errors
-            return declared_type;
-        }
-
-        // Apply type narrowing based on control flow
-        self.apply_flow_narrowing(idx, declared_type)
-    }
-
-    /// Emit TS2454 error for variable used before definite assignment.
-    ///
-    /// # Arguments
-    /// * `idx` - The AST node where the variable is used
-    /// * `sym_id` - The symbol ID of the variable
-    fn emit_definite_assignment_error(&mut self, idx: NodeIndex, sym_id: SymbolId) {
-        // Get the variable name for the error message
-        let name = self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .map(|s| s.escaped_name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string());
-
-        // Get the location for error reporting
-        let Some(node) = self.ctx.arena.get(idx) else {
-            // If the node doesn't exist in the arena, emit error with position 0
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                0,
-                0,
-                format!("Variable '{}' is used before being assigned", name),
-                2454, // TS2454
-            ));
-            return;
-        };
-        let start = node.pos;
-        let length = node.end - node.pos;
-
-        self.ctx.diagnostics.push(Diagnostic::error(
-            self.ctx.file_name.clone(),
-            start,
-            length,
-            format!("Variable '{}' is used before being assigned", name),
-            2454, // TS2454
-        ));
-    }
 
     /// Check if a type can be narrowed through control flow analysis.
     ///
