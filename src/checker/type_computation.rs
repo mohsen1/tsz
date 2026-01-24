@@ -477,7 +477,6 @@ impl<'a> CheckerState<'a> {
     /// Returns an object type containing the member. For method signatures,
     /// creates a callable type. For property signatures, creates a property type.
     pub(crate) fn get_type_of_interface_member(&mut self, member_idx: NodeIndex) -> TypeId {
-        
         use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
         use crate::solver::{FunctionShape, PropertyInfo};
 
@@ -698,7 +697,6 @@ impl<'a> CheckerState<'a> {
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
-        
         use crate::solver::{PropertyAccessResult, QueryDatabase};
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1880,7 +1878,6 @@ impl<'a> CheckerState<'a> {
     /// // never
     /// ```
     pub(crate) fn get_keyof_type(&self, operand: TypeId) -> TypeId {
-        
         use crate::solver::{LiteralValue, TypeKey};
 
         let Some(key) = self.ctx.types.lookup(operand) else {
