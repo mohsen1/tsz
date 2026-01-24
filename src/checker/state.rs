@@ -280,7 +280,7 @@ impl<'a> CheckerState<'a> {
     ///   // Multiple uses of u resolve to the same cached type
     /// }
     /// ```
-    fn cache_symbol_type(&mut self, sym_id: SymbolId, type_id: TypeId) {
+    pub(crate) fn cache_symbol_type(&mut self, sym_id: SymbolId, type_id: TypeId) {
         self.ctx.symbol_types.insert(sym_id, type_id);
     }
 
@@ -298,107 +298,15 @@ impl<'a> CheckerState<'a> {
             .insert(dependency);
     }
 
-    fn push_symbol_dependency(&mut self, sym_id: SymbolId, clear_deps: bool) {
+    pub(crate) fn push_symbol_dependency(&mut self, sym_id: SymbolId, clear_deps: bool) {
         if clear_deps {
             self.ctx.symbol_dependencies.remove(&sym_id);
         }
         self.ctx.symbol_dependency_stack.push(sym_id);
     }
 
-    fn pop_symbol_dependency(&mut self) {
+    pub(crate) fn pop_symbol_dependency(&mut self) {
         self.ctx.symbol_dependency_stack.pop();
-    }
-
-    pub(crate) fn cache_parameter_types(
-        &mut self,
-        params: &[NodeIndex],
-        param_types: Option<&[Option<TypeId>]>,
-    ) {
-        for (i, &param_idx) in params.iter().enumerate() {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            let Some(sym_id) = self
-                .ctx
-                .binder
-                .get_node_symbol(param.name)
-                .or_else(|| self.ctx.binder.get_node_symbol(param_idx))
-            else {
-                continue;
-            };
-            self.push_symbol_dependency(sym_id, true);
-            let type_id = if let Some(types) = param_types {
-                types.get(i).and_then(|t| *t)
-            } else if !param.type_annotation.is_none() {
-                Some(self.get_type_from_type_node(param.type_annotation))
-            } else {
-                // Return UNKNOWN instead of ANY for parameter without type annotation
-                Some(TypeId::UNKNOWN)
-            };
-            self.pop_symbol_dependency();
-
-            if let Some(type_id) = type_id {
-                self.cache_symbol_type(sym_id, type_id);
-            }
-        }
-    }
-
-    /// Assign contextual types to destructuring parameters (binding patterns).
-    ///
-    /// When a function has a contextual type (e.g., from a callback position),
-    /// destructuring parameters need to have their bindings inferred from
-    /// the contextual parameter type.
-    ///
-    /// Example:
-    /// ```typescript
-    /// declare function map<T, U>(arr: T[], fn: (item: T) => U): U[];
-    /// map(arr, ({ x, y }) => x + y);  // x and y types come from contextual type T
-    /// ```
-    pub(crate) fn assign_contextual_types_to_destructuring_params(
-        &mut self,
-        params: &[NodeIndex],
-        param_types: &[Option<TypeId>],
-    ) {
-        for (i, &param_idx) in params.iter().enumerate() {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            // Skip if there's an explicit type annotation
-            if !param.type_annotation.is_none() {
-                continue;
-            }
-
-            let Some(name_node) = self.ctx.arena.get(param.name) else {
-                continue;
-            };
-
-            // Only process binding patterns (destructuring)
-            let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
-
-            if !is_binding_pattern {
-                continue;
-            }
-
-            // Get the contextual type for this parameter position
-            let contextual_type = param_types
-                .get(i)
-                .and_then(|t| *t)
-                .filter(|&t| t != TypeId::UNKNOWN && t != TypeId::ERROR);
-
-            if let Some(ctx_type) = contextual_type {
-                // Assign the contextual type to the binding pattern elements
-                self.assign_binding_pattern_symbol_types(param.name, ctx_type);
-            }
-        }
     }
 
     /// Infer and cache parameter types using contextual typing.
@@ -10664,7 +10572,7 @@ impl<'a> CheckerState<'a> {
     /// The binder creates symbols for identifiers inside binding patterns (e.g., `const [x] = arr;`),
     /// but their `value_declaration` is the identifier node, not the enclosing variable declaration.
     /// We infer the binding element type from the destructured value type and cache it on the symbol.
-    fn assign_binding_pattern_symbol_types(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) {
+    pub(crate) fn assign_binding_pattern_symbol_types(&mut self, pattern_idx: NodeIndex, parent_type: TypeId) {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
