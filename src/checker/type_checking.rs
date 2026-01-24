@@ -1336,7 +1336,7 @@ impl<'a> CheckerState<'a> {
     /// Check if the target type is valid for array destructuring.
     ///
     /// Validates that the type is array-like (has iterator, is tuple, or is string).
-    /// Emits TS2461 if the type is not array-like.
+    /// Emits TS2488 if the type is not iterable, TS2461 for other non-array-like types.
     ///
     /// ## Parameters:
     /// - `pattern_idx`: The array binding pattern node index
@@ -1344,7 +1344,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Validation:
     /// - Checks if the type is array, tuple, string, or has iterator
-    /// - Emits TS2461 for non-array-like types
+    /// - Emits TS2488 for non-iterable types (preferred error for destructuring)
+    /// - Emits TS2461 as fallback for non-array-like types
     fn check_array_destructuring_target_type(
         &mut self,
         pattern_idx: NodeIndex,
@@ -1363,7 +1364,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Check if the type is array-like (array, tuple, string, or has iterator)
+        // First check if the type is iterable (TS2488 - preferred error)
+        // This is the primary check for array destructuring
+        if !self.is_iterable_type(source_type) {
+            let type_str = self.format_type(source_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                &[&type_str],
+            );
+            self.error_at_node(
+                pattern_idx,
+                &message,
+                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+            );
+            return;
+        }
+
+        // Check if the type is array-like (TS2461 - fallback error)
+        // This catches cases where type is iterable but not array-like
         let is_array_like = self.is_array_destructurable_type(source_type);
 
         if !is_array_like {

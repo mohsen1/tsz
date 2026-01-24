@@ -264,4 +264,61 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Check iterability for array destructuring patterns and emit TS2488 if not iterable.
+    ///
+    /// This function is called before assigning types to binding elements in array
+    /// destructuring to ensure that the source type is iterable.
+    ///
+    /// ## Parameters:
+    /// - `pattern_idx`: The array binding pattern node index
+    /// - `pattern_type`: The type being destructured
+    /// - `init_expr`: The initializer expression (used for error location)
+    ///
+    /// ## Validation:
+    /// - Checks if pattern_type is iterable
+    /// - Emits TS2488 if the type is not iterable
+    /// - Skips check for ANY, UNKNOWN, ERROR types (defer to other checks)
+    pub fn check_destructuring_iterability(
+        &mut self,
+        pattern_idx: NodeIndex,
+        pattern_type: TypeId,
+        init_expr: NodeIndex,
+    ) -> bool {
+        // Skip check for types that defer to other validation
+        if pattern_type == TypeId::ANY
+            || pattern_type == TypeId::UNKNOWN
+            || pattern_type == TypeId::ERROR
+        {
+            return true;
+        }
+
+        // Check if the type is iterable
+        if self.is_iterable_type(pattern_type) {
+            return true;
+        }
+
+        // Not iterable - emit TS2488
+        // Use the initializer expression for error location if available
+        let error_idx = if init_expr.is_some() {
+            init_expr
+        } else {
+            pattern_idx
+        };
+
+        if let Some((start, end)) = self.get_node_span(error_idx) {
+            let type_str = self.format_type(pattern_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+                &[&type_str],
+            );
+            self.error(
+                start,
+                end.saturating_sub(start),
+                message,
+                diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR,
+            );
+        }
+        false
+    }
 }
