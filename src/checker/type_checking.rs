@@ -7382,4 +7382,331 @@ impl<'a> CheckerState<'a> {
             current = parent_idx;
         }
     }
+
+    // Section 45: Symbol Resolution Utilities
+    // ----------------------------------------
+
+    /// Resolve a library type by name from lib.d.ts and other library contexts.
+    ///
+    /// This function resolves types from library definition files like lib.d.ts,
+    /// es2015.d.ts, etc., which provide built-in JavaScript types and DOM APIs.
+    ///
+    /// ## Library Contexts:
+    /// - Searches through loaded library contexts (lib.d.ts, es2015.d.ts, etc.)
+    /// - Each lib context has its own binder and arena
+    /// - Types are "lowered" from lib arena to main arena
+    ///
+    /// ## Declaration Merging:
+    /// - Interfaces can have multiple declarations that are merged
+    /// - All declarations are lowered together to create merged type
+    /// - Essential for types like `Array` which have multiple lib declarations
+    ///
+    /// ## Global Augmentations:
+    /// - User's `declare global` blocks are merged with lib types
+    /// - Allows extending built-in types like `Window`, `String`, etc.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Built-in types from lib.d.ts
+    /// let arr: Array<number>;  // resolve_lib_type_by_name("Array")
+    /// let obj: Object;         // resolve_lib_type_by_name("Object")
+    /// let prom: Promise<string>; // resolve_lib_type_by_name("Promise")
+    ///
+    /// // Global augmentation
+    /// declare global {
+    ///   interface Window {
+    ///     myCustomProperty: string;
+    ///   }
+    /// }
+    /// // lib Window type is merged with augmentation
+    /// ```
+    pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+        use crate::solver::TypeLowering;
+
+        let mut lib_type_id: Option<TypeId> = None;
+
+        for lib_ctx in &self.ctx.lib_contexts {
+            // Look up the symbol in this lib file's file_locals
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                // Get the symbol's declaration(s)
+                if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
+                    // Lower the type from the lib file's arena
+                    let lowering = TypeLowering::new(lib_ctx.arena.as_ref(), self.ctx.types);
+                    // For interfaces, use all declarations (handles declaration merging)
+                    if !symbol.declarations.is_empty() {
+                        lib_type_id =
+                            Some(lowering.lower_interface_declarations(&symbol.declarations));
+                        break;
+                    }
+                    // For type aliases and other single-declaration types
+                    let decl_idx = symbol.value_declaration;
+                    if decl_idx.0 != u32::MAX {
+                        lib_type_id = Some(lowering.lower_type(decl_idx));
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Check for global augmentations in the current file that should merge with this type
+        if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
+            && !augmentation_decls.is_empty()
+        {
+            // Lower the augmentation declarations from the current file's arena
+            let lowering = TypeLowering::new(self.ctx.arena, self.ctx.types);
+            let augmentation_type = lowering.lower_interface_declarations(augmentation_decls);
+
+            // Merge lib type with augmentation using intersection
+            if let Some(lib_type) = lib_type_id {
+                return Some(self.ctx.types.intersection2(lib_type, augmentation_type));
+            } else {
+                // No lib type found, just return the augmentation
+                return Some(augmentation_type);
+            }
+        }
+
+        lib_type_id
+    }
+
+    /// Resolve an alias symbol to its target symbol.
+    ///
+    /// This function follows alias chains to find the ultimate target symbol.
+    /// Aliases are created by:
+    /// - ES6 imports: `import { foo } from 'bar'`
+    /// - Import equals: `import foo = require('bar')`
+    /// - Re-exports: `export { foo } from 'bar'`
+    ///
+    /// ## Alias Resolution:
+    /// - Follows re-export chains recursively
+    /// - Uses binder's resolve_import_symbol for ES6 imports
+    /// - Falls back to module_exports lookup
+    /// - Handles circular references with visited_aliases tracking
+    ///
+    /// ## Re-export Chains:
+    /// ```typescript
+    /// // a.ts exports { x } from 'b.ts'
+    /// // b.ts exports { x } from 'c.ts'
+    /// // c.ts exports { x }
+    /// // resolve_alias_symbol('x' in a.ts) → 'x' in c.ts
+    /// ```
+    ///
+    /// ## Returns:
+    /// - `Some(SymbolId)` - The resolved target symbol
+    /// - `None` - If circular reference detected or resolution failed
+    pub(crate) fn resolve_alias_symbol(
+        &self,
+        sym_id: crate::binder::SymbolId,
+        visited_aliases: &mut Vec<crate::binder::SymbolId>,
+    ) -> Option<crate::binder::SymbolId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return Some(sym_id);
+        }
+        if visited_aliases.contains(&sym_id) {
+            return None;
+        }
+        visited_aliases.push(sym_id);
+
+        // First, try using the binder's resolve_import_symbol which follows re-export chains
+        // This handles both named re-exports (`export { foo } from 'bar'`) and wildcard
+        // re-exports (`export * from 'bar'`), properly following chains like:
+        // a.ts exports { x } from 'b.ts'
+        // b.ts exports { x } from 'c.ts'
+        // c.ts exports { x }
+        if let Some(resolved_sym_id) = self.ctx.binder.resolve_import_symbol(sym_id) {
+            // Prevent infinite loops in re-export chains
+            if !visited_aliases.contains(&resolved_sym_id) {
+                return self.resolve_alias_symbol(resolved_sym_id, visited_aliases);
+            }
+        }
+
+        // Fallback to direct module_exports lookup for backward compatibility
+        // Handle ES6 imports: import { X } from 'module' or import X from 'module'
+        // The binder sets import_module and import_name for these
+        if let Some(ref module_name) = symbol.import_module {
+            let export_name = symbol
+                .import_name
+                .as_deref()
+                .unwrap_or(&symbol.escaped_name);
+            // Look up the exported symbol in module_exports
+            if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
+                && let Some(target_sym_id) = exports.get(export_name)
+            {
+                // Recursively resolve if the target is also an alias
+                return self.resolve_alias_symbol(target_sym_id, visited_aliases);
+            }
+            // For ES6 imports, if we can't find the export, return the alias symbol itself
+            // This allows the type checker to use the symbol reference
+            return Some(sym_id);
+        }
+
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            let import = self.ctx.arena.get_import_decl(decl_node)?;
+            if let Some(target) =
+                self.resolve_qualified_symbol_inner(import.module_specifier, visited_aliases)
+            {
+                return Some(target);
+            }
+            return self
+                .resolve_require_call_symbol(import.module_specifier, Some(visited_aliases));
+        }
+        // For other alias symbols (not ES6 imports or import equals), return None
+        // to indicate we couldn't resolve the alias
+        None
+    }
+
+    /// Check if an identifier refers to an import from an unresolved module.
+    ///
+    /// This function detects imports from modules that cannot be resolved,
+    /// which is important for avoiding false errors in type checking.
+    ///
+    /// ## Unresolved Module Detection:
+    /// - Checks if the symbol is an alias (import)
+    /// - Verifies if the module is in module_exports
+    /// - Checks shorthand_ambient_modules
+    /// - Checks declared_modules
+    /// - Checks CLI-resolved modules
+    ///
+    /// ## Returns:
+    /// - `true` - The import is from an unresolved module
+    /// - `false` - The import is resolved or not an import
+    pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
+            return false;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        // Check if this is an ALIAS symbol (import)
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+
+        // Check if it has an import_module - if so, check if that module is resolved
+        if let Some(ref module_name) = symbol.import_module {
+            // Check various ways a module can be resolved
+            if self.ctx.binder.module_exports.contains_key(module_name) {
+                return false; // Module is resolved
+            }
+            if self
+                .ctx
+                .binder
+                .shorthand_ambient_modules
+                .contains(module_name)
+            {
+                return false; // Ambient module exists
+            }
+            if self.ctx.binder.declared_modules.contains(module_name) {
+                return false; // Declared module exists
+            }
+            if let Some(ref resolved) = self.ctx.resolved_modules {
+                if resolved.contains(module_name) {
+                    return false; // CLI resolved module
+                }
+            }
+            // Module is not resolved - this is an unresolved import
+            return true;
+        }
+
+        // For import equals declarations without import_module set,
+        // check if the value_declaration is an import equals with a require
+        if !symbol.value_declaration.is_none() {
+            let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                if let Some(import) = self.ctx.arena.get_import_decl(decl_node) {
+                    if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
+                        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
+                            if let Some(lit) = self.ctx.arena.get_literal(ref_node) {
+                                let module_name = &lit.text;
+                                if !self.ctx.binder.module_exports.contains_key(module_name)
+                                    && !self
+                                        .ctx
+                                        .binder
+                                        .shorthand_ambient_modules
+                                        .contains(module_name)
+                                    && !self.ctx.binder.declared_modules.contains(module_name)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Get the text representation of a heritage clause name.
+    ///
+    /// Heritage clauses appear in class declarations as `extends` and `implements` clauses.
+    /// This function extracts the name text from various heritage clause node types.
+    ///
+    /// ## Heritage Clause Types:
+    /// - Simple identifier: `extends Foo` → "Foo"
+    /// - Qualified name: `extends ns.Foo` → "ns.Foo"
+    /// - Property access: `extends ns.Foo` → "ns.Foo"
+    /// - Keyword literals: `extends null`, `extends true` → "null", "true"
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// class Foo extends Bar {} // "Bar"
+    /// class Foo extends ns.Bar {} // "ns.Bar"
+    /// class Foo implements IFoo {} // "IFoo"
+    /// ```
+    pub(crate) fn heritage_name_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            return self.entity_name_text(idx);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            let left = self.heritage_name_text(access.expression)?;
+            let right = self
+                .ctx
+                .arena
+                .get(access.name_or_argument)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.clone())?;
+            let mut combined = String::with_capacity(left.len() + 1 + right.len());
+            combined.push_str(&left);
+            combined.push('.');
+            combined.push_str(&right);
+            return Some(combined);
+        }
+
+        // Handle keyword literals in heritage clauses (e.g., extends null, extends true)
+        match node.kind {
+            k if k == SyntaxKind::NullKeyword as u16 => return Some("null".to_string()),
+            k if k == SyntaxKind::TrueKeyword as u16 => return Some("true".to_string()),
+            k if k == SyntaxKind::FalseKeyword as u16 => return Some("false".to_string()),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => return Some("undefined".to_string()),
+            k if k == SyntaxKind::NumericLiteral as u16 => return Some("0".to_string()),
+            k if k == SyntaxKind::StringLiteral as u16 => return Some("0".to_string()),
+            _ => {}
+        }
+
+        None
+    }
 }
