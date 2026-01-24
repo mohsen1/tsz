@@ -379,6 +379,50 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the type of a class member.
+    ///
+    /// Computes the type for class property declarations, method declarations, and getters.
+    pub(crate) fn get_type_of_class_member(&mut self, member_idx: NodeIndex) -> TypeId {
+        use crate::parser::syntax_kind_ext;
+
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return TypeId::ANY;
+        };
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    return TypeId::ANY;
+                };
+
+                // Get the type: either from annotation or inferred from initializer
+                if !prop.type_annotation.is_none() {
+                    self.get_type_from_type_node(prop.type_annotation)
+                } else if !prop.initializer.is_none() {
+                    self.get_type_of_node(prop.initializer)
+                } else {
+                    TypeId::ANY
+                }
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                // Get the method type
+                self.get_type_of_node(member_idx)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                    return TypeId::ANY;
+                };
+
+                if !accessor.type_annotation.is_none() {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                } else {
+                    self.infer_getter_return_type(accessor.body)
+                }
+            }
+            _ => TypeId::ANY,
+        }
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
