@@ -10880,11 +10880,26 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let declared = if !var_decl.type_annotation.is_none() {
+            let has_type_annotation = !var_decl.type_annotation.is_none();
+            let declared = if has_type_annotation {
                 self.get_type_from_type_node(var_decl.type_annotation)
             } else {
                 element_type
             };
+
+            // Check assignability when there's a type annotation
+            // The element_type must be assignable to the declared type
+            if has_type_annotation && !self.type_contains_error(declared) {
+                if !self.is_assignable_to(element_type, declared)
+                    && !self.should_skip_weak_union_error(element_type, declared, var_decl.name)
+                {
+                    self.error_type_not_assignable_with_reason_at(
+                        element_type,
+                        declared,
+                        var_decl.name,
+                    );
+                }
+            }
 
             // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
             if let Some(name_node) = self.ctx.arena.get(var_decl.name)
