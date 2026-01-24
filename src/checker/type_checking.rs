@@ -6730,4 +6730,25 @@ impl<'a> CheckerState<'a> {
 
         self.error_at_node(idx, message, code);
     }
+
+    // =========================================================================
+    // Section 38: Index Signature Utilities
+    // =========================================================================
+
+    /// Merge an incoming index signature into a target.
+    /// If the signatures conflict, sets the target to ERROR.
+    pub(crate) fn merge_index_signature(
+        target: &mut Option<crate::solver::IndexSignature>,
+        incoming: crate::solver::IndexSignature,
+    ) {
+        if let Some(existing) = target.as_mut() {
+            if existing.value_type != incoming.value_type || existing.readonly != incoming.readonly
+            {
+                existing.value_type = TypeId::ERROR;
+                existing.readonly = false;
+            }
+        } else {
+            *target = Some(incoming);
+        }
+    }
 }
