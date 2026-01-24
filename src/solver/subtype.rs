@@ -1523,8 +1523,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check if a literal string matches a template literal pattern
-    /// Uses a backtracking algorithm to handle wildcards (string type holes)
+    /// Check if a literal string matches a template literal pattern.
+    ///
+    /// Uses backtracking to match a literal against a template literal pattern that may
+    /// contain type holes (represented by string type placeholders).
+    ///
+    /// ## Template Literal Pattern:
+    /// Template literals are represented as spans of literal text and type holes:
+    /// - Literal spans: must match exactly
+    /// - Type holes: match any string (wildcards)
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Pattern: `foo${string}bar`
+    /// // "foobazbar" ✅ matches (baz fills the type hole)
+    /// // "foobar" ❌ doesn't match (missing content for type hole)
+    ///
+    /// // Pattern: `prefix-${string}-suffix`
+    /// // "prefix-value-suffix" ✅ matches
+    /// ```
+    ///
+    /// ## Backtracking:
+    /// The algorithm tries different ways to match literal spans against type holes,
+    /// ensuring that all literal constraints are satisfied.
     fn check_literal_matches_template_literal(
         &self,
         literal: Atom,
