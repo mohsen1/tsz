@@ -6303,27 +6303,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the type of an assignment target without definite assignment checks.
-    fn get_type_of_assignment_target(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::scanner::SyntaxKind;
-
-        if let Some(node) = self.ctx.arena.get(idx)
-            && node.kind == SyntaxKind::Identifier as u16
-            && let Some(sym_id) = self.resolve_identifier_symbol(idx)
-        {
-            if self.alias_resolves_to_type_only(sym_id) {
-                if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                    self.error_type_only_value_at(&ident.escaped_text, idx);
-                }
-                return TypeId::ERROR;
-            }
-            let declared_type = self.get_type_of_symbol(sym_id);
-            return declared_type;
-        }
-
-        self.get_type_of_node(idx)
-    }
-
     /// Check an assignment expression, applying contextual typing to the RHS.
     fn check_assignment_expression(
         &mut self,
@@ -7951,7 +7930,7 @@ impl<'a> CheckerState<'a> {
         has_type && !has_value
     }
 
-    fn alias_resolves_to_type_only(&self, sym_id: SymbolId) -> bool {
+    pub(crate) fn alias_resolves_to_type_only(&self, sym_id: SymbolId) -> bool {
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(symbol) => symbol,
             None => return false,
