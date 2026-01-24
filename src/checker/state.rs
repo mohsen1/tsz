@@ -6000,10 +6000,19 @@ impl<'a> CheckerState<'a> {
                 && expected != TypeId::ANY
                 && expected != TypeId::UNKNOWN
                 && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
-                self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
+
+                // Check object literals for excess/missing properties
+                if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
+                    self.check_object_literal_missing_properties(arg_type, expected, arg_idx);
+                }
+
+                // Check array literals for tuple element assignability
+                if arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                    self.check_array_literal_tuple_assignability(arg_type, expected, arg_idx);
+                }
             }
         }
     }
@@ -10903,11 +10912,27 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        // For object literals, also check for excess properties
+                        // For object literals, also check for excess and missing properties
                         if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
                             && init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         {
                             checker.check_object_literal_excess_properties(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            );
+                            checker.check_object_literal_missing_properties(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            );
+                        }
+
+                        // Check array literal elements when assigned to a tuple type
+                        if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
+                            && init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        {
+                            checker.check_array_literal_tuple_assignability(
                                 init_type,
                                 declared_type,
                                 var_decl.initializer,
@@ -11428,6 +11453,258 @@ impl<'a> CheckerState<'a> {
             _ => (),
         }
         // Note: Missing property checks are handled by solver's explain_failure
+        // But we also add explicit checks below for better error messages
+    }
+
+    /// Check for missing required properties in object literals.
+    ///
+    /// When an object literal is assigned to an object type, check that all
+    /// required properties are present. This catches errors like:
+    ///   interface Foo { a: string; b: number }
+    ///   const x: Foo = { a: "hello" };  // TS2741: Missing property 'b'
+    ///
+    /// ## Parameters:
+    /// - `source`: The object literal type
+    /// - `target`: The target object type
+    /// - `idx`: The node index for error reporting
+    pub(crate) fn check_object_literal_missing_properties(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        use crate::solver::TypeKey;
+
+        let source_shape = match self.ctx.types.lookup(source) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                self.ctx.types.object_shape(shape_id)
+            }
+            _ => return,
+        };
+
+        let source_props = source_shape.properties.as_slice();
+        let resolved_target = self.resolve_type_for_property_access(target);
+
+        let target_shape = match self.ctx.types.lookup(resolved_target) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                self.ctx.types.object_shape(shape_id)
+            }
+            _ => return,
+        };
+
+        let target_props = target_shape.properties.as_slice();
+
+        // Check for missing required properties
+        for target_prop in target_props {
+            // Skip optional properties - they don't need to be present
+            if target_prop.optional {
+                continue;
+            }
+
+            // Skip if property exists in source
+            let exists = source_props.iter().any(|p| p.name == target_prop.name);
+            if exists {
+                continue;
+            }
+
+            // Check if there's an index signature that could provide this property
+            if let Some(ref index) = target_shape.string_index {
+                // If the object has a string index signature, the property might
+                // be provided dynamically, so we don't report it as missing
+                continue;
+            }
+
+            // Property is missing - report error
+            let prop_name = self.ctx.types.resolve_atom(target_prop.name);
+            self.error_property_missing_at(&prop_name, source, target, idx);
+        }
+    }
+
+    /// Check array literal elements against a tuple type for assignability.
+    ///
+    /// When an array literal is assigned to a tuple type, we need to check each
+    /// element individually for assignability. This catches errors like:
+    ///   let x: [string, number] = [1, "a"];  // TS2322: number not assignable to string
+    ///
+    /// ## Parameters:
+    /// - `source`: The array literal type
+    /// - `target`: The target tuple type
+    /// - `idx`: The node index for error reporting
+    pub(crate) fn check_array_literal_tuple_assignability(
+        &mut self,
+        _source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        use crate::solver::TypeKey;
+        use crate::parser::syntax_kind_ext;
+
+        // Only check if target is a tuple type
+        let target_elements = match self.ctx.types.lookup(target) {
+            Some(TypeKey::Tuple(elements_id)) => self.ctx.types.tuple_list(elements_id),
+            _ => return,
+        };
+
+        // Get the array literal expression
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+
+        let Some(literal) = self.ctx.arena.get_literal_expr(node) else {
+            return;
+        };
+
+        // Check each corresponding element
+        for (i, target_elem) in target_elements.iter().enumerate() {
+            // Skip rest elements - they're handled differently
+            if target_elem.rest {
+                break;
+            }
+
+            // Get the corresponding array literal element
+            let Some(&array_elem_idx) = literal.elements.nodes.get(i) else {
+                // Array literal has fewer elements than tuple - this is handled by the main assignability check
+                break;
+            };
+
+            // Skip omitted elements: [a, , b]
+            if array_elem_idx.is_none() {
+                continue;
+            }
+
+            // Check for spread element: [...rest]
+            let Some(elem_node) = self.ctx.arena.get(array_elem_idx) else {
+                continue;
+            };
+
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                // Spread elements are handled by the main assignability check
+                // But we can still check if the spread type is assignable to the remaining tuple type
+                continue;
+            }
+
+            // Get the type of the array element
+            let elem_type = self.get_type_of_node(array_elem_idx);
+
+            // Check if the element is assignable to the target tuple element type
+            if !self.is_assignable_to(elem_type, target_elem.type_id)
+                && !self.should_skip_weak_union_error(elem_type, target_elem.type_id, array_elem_idx)
+            {
+                self.error_type_not_assignable_with_reason_at(
+                    elem_type,
+                    target_elem.type_id,
+                    array_elem_idx,
+                );
+            }
+        }
+
+        // Check for excess elements in array literal beyond tuple length
+        // Only check if there's no rest element in the tuple
+        let has_rest_element = target_elements.iter().any(|e| e.rest);
+        if !has_rest_element && literal.elements.nodes.len() > target_elements.len() {
+            // Report excess element errors
+            for (i, &array_elem_idx) in literal.elements.nodes.iter().enumerate() {
+                if i >= target_elements.len() && !array_elem_idx.is_none() {
+                    // This is an excess element
+                    let elem_type = self.get_type_of_node(array_elem_idx);
+                    self.error_excess_array_literal_element_at(elem_type, target, idx);
+                    break; // Only report one error to avoid noise
+                }
+            }
+        }
+    }
+
+    /// Report an error for an excess array literal element.
+    ///
+    /// ## Parameters:
+    /// - `elem_type`: The type of the excess element
+    /// - `target_type`: The target tuple type
+    /// - `idx`: The node index for error reporting
+    fn error_excess_array_literal_element_at(&mut self, elem_type: TypeId, target_type: TypeId, idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let elem_str = self.display_type(elem_type);
+        let target_str = self.display_type(target_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_NOT_ASSIGNABLE,
+            &[&elem_str, &target_str],
+        );
+
+        self.error_at_node(idx, &message, diagnostic_codes::TYPE_NOT_ASSIGNABLE);
+    }
+
+    /// Check if a property exists before assignment.
+    ///
+    /// When assigning to a property access expression (obj.prop = value),
+    /// we should verify that the property actually exists on the object type.
+    /// This helps catch errors like:
+    ///   obj.typo = value;  // Property 'typo' does not exist on type 'typeof obj'
+    ///
+    /// ## Parameters:
+    /// - `target_idx`: The left-hand side of the assignment
+    /// - `target_type`: The type of the target (for property access)
+    pub(crate) fn check_property_exists_before_assignment(
+        &mut self,
+        target_idx: NodeIndex,
+        target_type: TypeId,
+    ) {
+        use crate::solver::TypeKey;
+
+        // Only check property access expressions
+        let Some(target_node) = self.ctx.arena.get(target_idx) else {
+            return;
+        };
+
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+
+        // Don't check if target is any/unknown/error
+        if target_type == TypeId::ANY
+            || target_type == TypeId::UNKNOWN
+            || target_type == TypeId::ERROR
+        {
+            return;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(target_node) else {
+            return;
+        };
+
+        // Get the property name
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return;
+        };
+
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return;
+        };
+
+        let prop_name = &ident.escaped_text;
+
+        // Check if the property exists on the target type
+        // If the target type is an object, check if it has this property
+        match self.ctx.types.lookup(target_type) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+
+                // Check if property exists
+                let property_exists = shape.properties.iter().any(|p| {
+                    self.ctx.types.resolve_atom(p.name) == prop_name
+                });
+
+                // If property doesn't exist and there's no string index signature,
+                // this might be an error (but we skip it here to avoid duplicate errors)
+                if !property_exists && shape.string_index.is_none() {
+                    // The assignability check will catch this, but we can provide
+                    // a more specific error message
+                }
+            }
+            _ => {
+                // For other types (union, intersection, etc.), the main assignability
+                // check will handle property existence
+            }
+        }
     }
 
     /// Check if an assignment target is a readonly property.

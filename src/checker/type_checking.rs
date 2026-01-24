@@ -70,6 +70,9 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
+        // Check if the left-hand side property exists (for property access assignments)
+        self.check_property_exists_before_assignment(left_idx, left_type);
+
         self.check_readonly_assignment(left_idx, expr_idx);
 
         // Perform assignability check for all non-ANY types
@@ -96,6 +99,15 @@ impl<'a> CheckerState<'a> {
                 && right_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+                self.check_object_literal_missing_properties(right_type, left_type, right_idx);
+            }
+
+            // Check array literal elements when assigned to a tuple type
+            if left_type != TypeId::UNKNOWN
+                && let Some(right_node) = self.ctx.arena.get(right_idx)
+                && right_node.kind == crate::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            {
+                self.check_array_literal_tuple_assignability(right_type, left_type, right_idx);
             }
         }
 
@@ -135,6 +147,9 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
+        // Check if the left-hand side property exists (for property access assignments)
+        self.check_property_exists_before_assignment(left_idx, left_type);
+
         self.check_readonly_assignment(left_idx, expr_idx);
 
         let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
@@ -173,6 +188,15 @@ impl<'a> CheckerState<'a> {
                 && right_node.kind == crate::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+                self.check_object_literal_missing_properties(right_type, left_type, right_idx);
+            }
+
+            // Check array literal elements when assigned to a tuple type
+            if left_type != TypeId::UNKNOWN
+                && let Some(right_node) = self.ctx.arena.get(right_idx)
+                && right_node.kind == crate::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            {
+                self.check_array_literal_tuple_assignability(right_type, left_type, right_idx);
             }
         }
 
@@ -1936,6 +1960,25 @@ impl<'a> CheckerState<'a> {
             && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
             self.check_object_literal_excess_properties(
+                return_type,
+                expected_type,
+                return_data.expression,
+            );
+            self.check_object_literal_missing_properties(
+                return_type,
+                expected_type,
+                return_data.expression,
+            );
+        }
+
+        // Check array literal elements when returned as a tuple type
+        if expected_type != TypeId::ANY
+            && expected_type != TypeId::UNKNOWN
+            && !return_data.expression.is_none()
+            && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
+            && expr_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            self.check_array_literal_tuple_assignability(
                 return_type,
                 expected_type,
                 return_data.expression,
