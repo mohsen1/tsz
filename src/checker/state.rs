@@ -6540,7 +6540,7 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
-    fn is_array_like_type(&self, object_type: TypeId) -> bool {
+    pub(crate) fn is_array_like_type(&self, object_type: TypeId) -> bool {
         use crate::solver::TypeKey;
 
         // Check for array/tuple types directly
@@ -6998,19 +6998,11 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
+    pub(crate) fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
         match level {
             Some(MemberAccessLevel::Private) => 2,
             Some(MemberAccessLevel::Protected) => 1,
             None => 0,
-        }
-    }
-
-    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
-        match level {
-            Some(MemberAccessLevel::Private) => "private",
-            Some(MemberAccessLevel::Protected) => "protected",
-            None => "public",
         }
     }
 
@@ -7059,34 +7051,13 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn constructor_access_level_for_type(
+    pub(crate) fn constructor_access_level_for_type(
         &self,
         type_id: TypeId,
         env: Option<&crate::solver::TypeEnvironment>,
     ) -> Option<MemberAccessLevel> {
         let mut visited = FxHashSet::default();
         self.constructor_access_level(type_id, env, &mut visited)
-    }
-
-    pub(crate) fn constructor_accessibility_mismatch(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_level = self.constructor_access_level_for_type(source, env);
-        let target_level = self.constructor_access_level_for_type(target, env);
-
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-
-        let source_rank = Self::constructor_access_rank(source_level);
-        let target_rank = Self::constructor_access_rank(target_level);
-        if source_rank > target_rank {
-            return Some((source_level, target_level));
-        }
-        None
     }
 
     fn constructor_accessibility_override(
@@ -7107,7 +7078,7 @@ impl<'a> CheckerState<'a> {
     // NOTE: private_brand_assignability_override moved to solver/compat.rs
     // It only needs TypeDatabase, not checker context, so it lives in the solver layer.
 
-    fn class_symbol_from_expression(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+    pub(crate) fn class_symbol_from_expression(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
         let Some(node) = self.ctx.arena.get(expr_idx) else {
             return None;
         };
@@ -7132,7 +7103,7 @@ impl<'a> CheckerState<'a> {
         self.class_symbol_from_expression(query.expr_name)
     }
 
-    fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
+    pub(crate) fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
         let Some(node) = self.ctx.arena.get(left_idx) else {
             return None;
         };
@@ -7169,7 +7140,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn class_constructor_access_level(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
+    pub(crate) fn class_constructor_access_level(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
@@ -7200,25 +7171,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         access
-    }
-
-    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
-        &self,
-        left_idx: NodeIndex,
-        right_idx: NodeIndex,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_sym = self.class_symbol_from_expression(right_idx)?;
-        let target_sym = self.assignment_target_class_symbol(left_idx)?;
-        let source_level = self.class_constructor_access_level(source_sym);
-        let target_level = self.class_constructor_access_level(target_sym);
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
-        {
-            return Some((source_level, target_level));
-        }
-        None
     }
 
     fn constructor_accessibility_mismatch_for_var_decl(
