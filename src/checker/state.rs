@@ -2643,7 +2643,15 @@ impl<'a> CheckerState<'a> {
             } else if let Some(name) = name_text {
                 if is_identifier {
                     if self.is_known_global_value_name(&name) {
-                        return TypeId::ANY; // Known global but not resolved - use ANY to allow property access
+                        // Emit TS2318/TS2583 for missing global type in typeof context
+                        // TS2583 for ES2015+ types, TS2304 for other globals
+                        use crate::lib_loader;
+                        if lib_loader::is_es2015_plus_type(&name) {
+                            self.error_cannot_find_global_type(&name, type_query.expr_name);
+                        } else {
+                            self.error_cannot_find_name_at(&name, type_query.expr_name);
+                        }
+                        return TypeId::ERROR;
                     }
                     // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
                     if self.is_unresolved_import_symbol(type_query.expr_name) {
@@ -10003,7 +10011,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.is_known_global_value_name(name) {
-            return TypeId::ANY; // Known global but unresolved - use ANY to allow property access
+            // Emit TS2318/TS2583 for missing global type in property access context
+            // TS2583 for ES2015+ types, TS2318 for other global types
+            use crate::lib_loader;
+            if lib_loader::is_es2015_plus_type(name) {
+                self.error_cannot_find_global_type(name, error_node);
+            } else {
+                // For pre-ES2015 globals, emit TS2318 (global type missing) instead of TS2304
+                self.error_cannot_find_global_type(name, error_node);
+            }
+            return TypeId::ERROR;
         }
 
         self.error_property_not_exist_at(name, TypeId::ANY, error_node);
