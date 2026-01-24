@@ -34,6 +34,7 @@ pub mod expr;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod flow_narrowing;
+pub mod function_type;
 pub mod indexed_access_type;
 pub mod intersection_type;
 pub mod iterable_checker;
