@@ -7989,4 +7989,48 @@ impl<'a> CheckerState<'a> {
         };
         catch.variable_declaration == var_decl_idx
     }
+
+    // Section 48: Type Predicate Utilities
+    // -------------------------------------
+
+    /// Get the target of a type predicate from a parameter name node.
+    ///
+    /// Type predicates are used in function signatures to narrow types
+    /// based on runtime checks. The target can be either `this` or an
+    /// identifier parameter name.
+    ///
+    /// ## Type Predicate Targets:
+    /// - **This**: `asserts this is T` - Used in methods to narrow the receiver type
+    /// - **Identifier**: `argName is T` - Used to narrow a parameter's type
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // This type predicate
+    /// function assertIsString(this: unknown): asserts this is string {
+    ///   if (typeof this === 'string') {
+    ///     return; // this is narrowed to string
+    ///   }
+    ///   throw new Error('Not a string');
+    /// }
+    /// // type_predicate_target(thisKeywordNode) → TypePredicateTarget::This
+    ///
+    /// // Identifier type predicate
+    /// function isString(val: unknown): val is string {
+    ///   return typeof val === 'string';
+    /// }
+    /// // type_predicate_target(valIdentifierNode) → TypePredicateTarget::Identifier("val")
+    /// ```
+    pub(crate) fn type_predicate_target(
+        &self,
+        param_name: NodeIndex,
+    ) -> Option<TypePredicateTarget> {
+        let node = self.ctx.arena.get(param_name)?;
+        if node.kind == SyntaxKind::ThisKeyword as u16 || node.kind == syntax_kind_ext::THIS_TYPE {
+            return Some(TypePredicateTarget::This);
+        }
+
+        self.ctx.arena.get_identifier(node).map(|ident| {
+            TypePredicateTarget::Identifier(self.ctx.types.intern_string(&ident.escaped_text))
+        })
+    }
 }
