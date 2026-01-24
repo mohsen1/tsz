@@ -1254,6 +1254,8 @@ impl<'a> CheckerState<'a> {
         // TS2488: Check if array destructuring is applied to a non-iterable type
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             self.check_array_destructuring_target_type(pattern_idx, pattern_type);
+            // Also check for TS2488 - type must have Symbol.iterator
+            self.check_array_destructuring_iterability(pattern_type, pattern_idx);
         }
 
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
