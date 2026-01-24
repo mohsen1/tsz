@@ -37,7 +37,11 @@ const x = new Foo();
         .iter()
         .filter(|d| d.code == 2693)
         .count();
-    assert!(ts2693_count >= 1, "Expected at least 1 TS2693 error, got {}", ts2693_count);
+    assert!(
+        ts2693_count >= 1,
+        "Expected at least 1 TS2693 error, got {}",
+        ts2693_count
+    );
 }
 
 #[test]
@@ -72,7 +76,11 @@ const x = new Foo();
         .iter()
         .filter(|d| d.code == 2693)
         .count();
-    assert!(ts2693_count >= 1, "Expected at least 1 TS2693 error, got {}", ts2693_count);
+    assert!(
+        ts2693_count >= 1,
+        "Expected at least 1 TS2693 error, got {}",
+        ts2693_count
+    );
 }
 
 #[test]
@@ -105,7 +113,11 @@ const result = str - 5;
         .iter()
         .filter(|d| d.code == 2362)
         .count();
-    assert!(ts2362_count >= 1, "Expected at least 1 TS2362 error, got {}", ts2362_count);
+    assert!(
+        ts2362_count >= 1,
+        "Expected at least 1 TS2362 error, got {}",
+        ts2362_count
+    );
 }
 
 #[test]
@@ -138,7 +150,11 @@ const result = flag * 10;
         .iter()
         .filter(|d| d.code == 2362)
         .count();
-    assert!(ts2362_count >= 1, "Expected at least 1 TS2362 error, got {}", ts2362_count);
+    assert!(
+        ts2362_count >= 1,
+        "Expected at least 1 TS2362 error, got {}",
+        ts2362_count
+    );
 }
 
 #[test]
@@ -172,7 +188,11 @@ const result = num / str;
         .iter()
         .filter(|d| d.code == 2363)
         .count();
-    assert!(ts2363_count >= 1, "Expected at least 1 TS2363 error, got {}", ts2363_count);
+    assert!(
+        ts2363_count >= 1,
+        "Expected at least 1 TS2363 error, got {}",
+        ts2363_count
+    );
 }
 
 #[test]
@@ -215,8 +235,16 @@ const r3 = obj % 2;  // TS2362
         .filter(|d| d.code == 2363)
         .count();
 
-    assert!(ts2362_count >= 2, "Expected at least 2 TS2362 errors, got {}", ts2362_count);
-    assert!(ts2363_count >= 1, "Expected at least 1 TS2363 error, got {}", ts2363_count);
+    assert!(
+        ts2362_count >= 2,
+        "Expected at least 2 TS2362 errors, got {}",
+        ts2362_count
+    );
+    assert!(
+        ts2363_count >= 1,
+        "Expected at least 1 TS2363 error, got {}",
+        ts2363_count
+    );
 }
 
 #[test]
@@ -255,7 +283,11 @@ const r6 = a ** b;  // OK - number exponentiation
         .iter()
         .filter(|d| d.code == 2362 || d.code == 2363)
         .count();
-    assert_eq!(error_count, 0, "Expected no TS2362/TS2363 errors, got {}", error_count);
+    assert_eq!(
+        error_count, 0,
+        "Expected no TS2362/TS2363 errors, got {}",
+        error_count
+    );
 }
 
 #[test]
@@ -298,8 +330,16 @@ const r3 = true ** 2;  // TS2362
         .filter(|d| d.code == 2363)
         .count();
 
-    assert!(ts2362_count >= 2, "Expected at least 2 TS2362 errors, got {}", ts2362_count);
-    assert!(ts2363_count >= 1, "Expected at least 1 TS2363 error, got {}", ts2363_count);
+    assert!(
+        ts2362_count >= 2,
+        "Expected at least 2 TS2362 errors, got {}",
+        ts2362_count
+    );
+    assert!(
+        ts2363_count >= 1,
+        "Expected at least 1 TS2363 error, got {}",
+        ts2363_count
+    );
 }
 
 #[test]
@@ -334,5 +374,9 @@ const r2 = 2 ** 10;  // OK - number exponentiation
         .iter()
         .filter(|d| d.code == 2362 || d.code == 2363)
         .count();
-    assert_eq!(error_count, 0, "Expected no TS2362/TS2363 errors for valid exponentiation, got {}", error_count);
+    assert_eq!(
+        error_count, 0,
+        "Expected no TS2362/TS2363 errors for valid exponentiation, got {}",
+        error_count
+    );
 }

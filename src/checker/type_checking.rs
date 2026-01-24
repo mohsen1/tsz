@@ -12,7 +12,7 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
-use crate::binder::symbol_flags;
+use crate::binder::{SymbolId, symbol_flags};
 use crate::checker::FlowAnalyzer;
 use crate::checker::state::{
     CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, PropertyKey,
@@ -1344,7 +1344,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none() && element_type != TypeId::ANY && !self.type_contains_error(element_type) {
+        if !element_data.initializer.is_none()
+            && element_type != TypeId::ANY
+            && !self.type_contains_error(element_type)
+        {
             let default_value_type = self.get_type_of_node(element_data.initializer);
 
             if !self.is_assignable_to(default_value_type, element_type) {
@@ -7118,7 +7121,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the declaring type for a private member.
-    pub(crate) fn private_member_declaring_type(&mut self, sym_id: crate::binder::SymbolId) -> Option<TypeId> {
+    pub(crate) fn private_member_declaring_type(
+        &mut self,
+        sym_id: crate::binder::SymbolId,
+    ) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         for &decl_idx in &symbol.declarations {
@@ -7411,4 +7417,258 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    // Section 45: Element Access Utilities
+    // -------------------------------------
+
+    /// Get literal key union from a type (string and/or number literals).
+    pub(crate) fn get_literal_key_union_from_type(
+        &self,
+        index_type: TypeId,
+    ) -> Option<(Vec<Atom>, Vec<f64>)> {
+        use crate::solver::{LiteralValue, TypeKey};
+
+        match self.ctx.types.lookup(index_type)? {
+            TypeKey::Literal(LiteralValue::String(atom)) => Some((vec![atom], Vec::new())),
+            TypeKey::Literal(LiteralValue::Number(num)) => Some((Vec::new(), vec![num.0])),
+            TypeKey::Union(members) => {
+                let members = self.ctx.types.type_list(members);
+                let mut string_keys = Vec::with_capacity(members.len());
+                let mut number_keys = Vec::new();
+                for &member in members.iter() {
+                    match self.ctx.types.lookup(member) {
+                        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                            string_keys.push(atom)
+                        }
+                        Some(TypeKey::Literal(LiteralValue::Number(num))) => {
+                            number_keys.push(num.0)
+                        }
+                        _ => return None,
+                    }
+                }
+                Some((string_keys, number_keys))
+            }
+            _ => None,
+        }
+    }
+
+    /// Get element access type for literal string keys.
+    pub(crate) fn get_element_access_type_for_literal_keys(
+        &mut self,
+        object_type: TypeId,
+        keys: &[Atom],
+    ) -> Option<TypeId> {
+        use crate::solver::{PropertyAccessResult, QueryDatabase};
+
+        if keys.is_empty() {
+            return None;
+        }
+
+        let numeric_as_index = self.is_array_like_type(object_type);
+        let mut types = Vec::with_capacity(keys.len());
+
+        for &key in keys {
+            let name = self.ctx.types.resolve_atom(key);
+            if numeric_as_index && let Some(index) = self.get_numeric_index_from_string(&name) {
+                let element_type =
+                    self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
+                types.push(element_type);
+                continue;
+            }
+
+            match self.ctx.types.property_access_type(object_type, &name) {
+                PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    types.push(property_type.unwrap_or(TypeId::UNKNOWN));
+                }
+                PropertyAccessResult::IsUnknown => return None,
+                PropertyAccessResult::PropertyNotFound { .. } => return None,
+            }
+        }
+
+        if types.len() == 1 {
+            Some(types[0])
+        } else {
+            Some(self.ctx.types.union(types))
+        }
+    }
+
+    /// Get element access type for literal number keys.
+    pub(crate) fn get_element_access_type_for_literal_number_keys(
+        &mut self,
+        object_type: TypeId,
+        keys: &[f64],
+    ) -> Option<TypeId> {
+        if keys.is_empty() {
+            return None;
+        }
+
+        let mut types = Vec::with_capacity(keys.len());
+        for &value in keys {
+            if let Some(index) = self.get_numeric_index_from_number(value) {
+                types.push(self.get_element_access_type(object_type, TypeId::NUMBER, Some(index)));
+            } else {
+                return Some(self.get_element_access_type(object_type, TypeId::NUMBER, None));
+            }
+        }
+
+        if types.len() == 1 {
+            Some(types[0])
+        } else {
+            Some(self.ctx.types.union(types))
+        }
+    }
+
+    // Section 46: Constructor Accessibility Utilities
+    // -----------------------------------------------
+
+    /// Get the access name for a constructor level.
+    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
+        match level {
+            Some(MemberAccessLevel::Private) => "private",
+            Some(MemberAccessLevel::Protected) => "protected",
+            None => "public",
+        }
+    }
+
+    /// Check if there's a constructor accessibility mismatch.
+    pub(crate) fn constructor_accessibility_mismatch(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_level = self.constructor_access_level_for_type(source, env);
+        let target_level = self.constructor_access_level_for_type(target, env);
+
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+
+        let source_rank = Self::constructor_access_rank(source_level);
+        let target_rank = Self::constructor_access_rank(target_level);
+        if source_rank > target_rank {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    /// Check if there's a constructor accessibility mismatch for assignment.
+    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
+        &self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_sym = self.class_symbol_from_expression(right_idx)?;
+        let target_sym = self.assignment_target_class_symbol(left_idx)?;
+        let source_level = self.class_constructor_access_level(source_sym);
+        let target_level = self.class_constructor_access_level(target_sym);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
+        {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    // Section 47: Node Checking Utilities
+    // ------------------------------------
+
+    /// Check if an operator token is an assignment operator.
+    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
+        matches!(
+            operator,
+            k if k == SyntaxKind::EqualsToken as u16
+                || k == SyntaxKind::PlusEqualsToken as u16
+                || k == SyntaxKind::MinusEqualsToken as u16
+                || k == SyntaxKind::AsteriskEqualsToken as u16
+                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                || k == SyntaxKind::SlashEqualsToken as u16
+                || k == SyntaxKind::PercentEqualsToken as u16
+                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::AmpersandEqualsToken as u16
+                || k == SyntaxKind::BarEqualsToken as u16
+                || k == SyntaxKind::BarBarEqualsToken as u16
+                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
+                || k == SyntaxKind::CaretEqualsToken as u16
+        )
+    }
+
+    // Section 48: Namespace and Alias Utilities
+    // ------------------------------------------
+
+    /// Check if a namespace has a type-only member with the given name.
+    pub(crate) fn namespace_has_type_only_member(
+        &self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> bool {
+        use crate::solver::{SymbolRef, TypeKey};
+
+        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) else {
+            return false;
+        };
+
+        let symbol = match self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        if symbol.flags & symbol_flags::MODULE == 0 {
+            return false;
+        }
+
+        let exports = match symbol.exports.as_ref() {
+            Some(exports) => exports,
+            None => return false,
+        };
+
+        let member_id = match exports.get(property_name) {
+            Some(member_id) => member_id,
+            None => return false,
+        };
+
+        let member_symbol = match self.ctx.binder.get_symbol(member_id) {
+            Some(member_symbol) => member_symbol,
+            None => return false,
+        };
+
+        let has_value = (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
+        let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+        has_type && !has_value
+    }
+
+    /// Check if an alias symbol resolves to a type-only import.
+    pub(crate) fn alias_resolves_to_type_only(&self, sym_id: SymbolId) -> bool {
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+        if symbol.is_type_only {
+            return true;
+        }
+
+        let mut visited = Vec::new();
+        let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
+            Some(target) => target,
+            None => return false,
+        };
+
+        let target_symbol = match self.ctx.binder.get_symbol(target) {
+            Some(target_symbol) => target_symbol,
+            None => return false,
+        };
+
+        let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
+        let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
+        has_type && !has_value
+    }
 }

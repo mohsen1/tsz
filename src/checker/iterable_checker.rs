@@ -272,7 +272,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Note: This is called in addition to TS2461 checks - both errors may be emitted
     /// for non-iterable types in array destructuring contexts.
-    pub fn check_array_destructuring_iterability(&mut self, source_type: TypeId, pattern_idx: NodeIndex) -> bool {
+    pub fn check_array_destructuring_iterability(
+        &mut self,
+        source_type: TypeId,
+        pattern_idx: NodeIndex,
+    ) -> bool {
         // Skip error types and any/unknown
         if source_type == TypeId::ANY
             || source_type == TypeId::UNKNOWN

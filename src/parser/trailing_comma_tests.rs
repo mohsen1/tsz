@@ -26,7 +26,10 @@ function foo(a: string, b: number,) {
         let diagnostics = parse_code(code);
         // Should not emit any errors - trailing comma is allowed
         let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
-        assert_eq!(ts1005_count, 0, "Trailing comma in parameter list should not emit TS1005");
+        assert_eq!(
+            ts1005_count, 0,
+            "Trailing comma in parameter list should not emit TS1005"
+        );
     }
 
     #[test]
@@ -41,7 +44,10 @@ enum Color {
         let diagnostics = parse_code(code);
         // Should not emit any errors - trailing comma is allowed
         let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
-        assert_eq!(ts1005_count, 0, "Trailing comma in enum should not emit TS1005");
+        assert_eq!(
+            ts1005_count, 0,
+            "Trailing comma in enum should not emit TS1005"
+        );
     }
 
     #[test]
@@ -52,7 +58,10 @@ const arr = [1, 2, 3,];
         let diagnostics = parse_code(code);
         // Should not emit any errors - trailing comma is allowed
         let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
-        assert_eq!(ts1005_count, 0, "Trailing comma in array literal should not emit TS1005");
+        assert_eq!(
+            ts1005_count, 0,
+            "Trailing comma in array literal should not emit TS1005"
+        );
     }
 
     #[test]
@@ -63,7 +72,10 @@ const obj = { a: 1, b: 2, };
         let diagnostics = parse_code(code);
         // Should not emit any errors - trailing comma is allowed
         let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
-        assert_eq!(ts1005_count, 0, "Trailing comma in object literal should not emit TS1005");
+        assert_eq!(
+            ts1005_count, 0,
+            "Trailing comma in object literal should not emit TS1005"
+        );
     }
 
     #[test]
@@ -76,7 +88,10 @@ function foo<T, U,>() {
         let diagnostics = parse_code(code);
         // Should not emit any errors - trailing comma is allowed
         let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
-        assert_eq!(ts1005_count, 0, "Trailing comma in type parameters should not emit TS1005");
+        assert_eq!(
+            ts1005_count, 0,
+            "Trailing comma in type parameters should not emit TS1005"
+        );
     }
 
     #[test]
@@ -87,7 +102,10 @@ const arr: Array<string, number,> = [1, 2];
         let diagnostics = parse_code(code);
         // Should not emit any errors - trailing comma is allowed
         let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
-        assert_eq!(ts1005_count, 0, "Trailing comma in type arguments should not emit TS1005");
+        assert_eq!(
+            ts1005_count, 0,
+            "Trailing comma in type arguments should not emit TS1005"
+        );
     }
 
     #[test]
@@ -176,6 +194,9 @@ function Utils() {
         let diagnostics = parse_code(code);
         // Namespace + function merging should not emit TS2300
         let ts2300_count = diagnostics.iter().filter(|d| d.code == 2300).count();
-        assert_eq!(ts2300_count, 0, "Namespace + function merging should not emit TS2300");
+        assert_eq!(
+            ts2300_count, 0,
+            "Namespace + function merging should not emit TS2300"
+        );
     }
 }

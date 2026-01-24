@@ -963,7 +963,11 @@ impl ParserState {
     }
 
     /// Create a NodeList with trailing comma information
-    fn make_node_list_with_trailing_comma(&self, nodes: Vec<NodeIndex>, has_trailing_comma: bool) -> NodeList {
+    fn make_node_list_with_trailing_comma(
+        &self,
+        nodes: Vec<NodeIndex>,
+        has_trailing_comma: bool,
+    ) -> NodeList {
         NodeList {
             nodes,
             pos: 0,
@@ -6341,7 +6345,10 @@ impl ParserState {
             // like a type annotation on the next line or some other construct
             if !self.scanner.has_preceding_line_break() {
                 use crate::checker::types::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::TOKEN_EXPECTED);
+                self.parse_error_at_current_token(
+                    "'=>' expected.",
+                    diagnostic_codes::TOKEN_EXPECTED,
+                );
             }
             // Don't consume the {, just continue to body parsing
             // The arrow is logically present but missing
