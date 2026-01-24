@@ -20,7 +20,7 @@
 //! ```
 
 use crate::emit_context::EmitContext;
-use crate::parser::{NodeIndex, NodeArena};
+use crate::parser::{NodeArena, NodeIndex};
 
 /// Trait for transform emitters that can emit transformed JavaScript code
 ///
