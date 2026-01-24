@@ -3262,6 +3262,12 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Check if type has a prototype property (functions with prototype are constructable)
+        // This handles cases like `function Foo() {}` where `Foo.prototype` exists
+        if self.type_has_prototype_property(type_id) {
+            return true;
+        }
+
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
         match self.ctx.types.lookup(type_id) {
@@ -3276,6 +3282,29 @@ impl<'a> CheckerState<'a> {
                 let member_types = self.ctx.types.type_list(members);
                 member_types.iter().any(|&m| self.is_constructor_type(m))
             }
+            _ => false,
+        }
+    }
+
+    /// Check if a type has a 'prototype' property.
+    ///
+    /// Functions with a prototype property can be used as constructors.
+    /// This handles cases like:
+    /// ```typescript
+    /// function Foo() {}
+    /// new Foo(); // Valid if Foo.prototype exists
+    /// ```
+    pub(crate) fn type_has_prototype_property(&self, type_id: TypeId) -> bool {
+        use crate::solver::TypeKey;
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                // Check if properties contain 'prototype'
+                let prototype_atom = self.ctx.types.intern_string("prototype");
+                shape.properties.iter().any(|p| p.name == prototype_atom)
+            }
+            Some(TypeKey::Function(_)) => true, // Function types typically have prototype
             _ => false,
         }
     }
@@ -5346,7 +5375,10 @@ impl<'a> CheckerState<'a> {
     /// - `static_block_idx`: The static block node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_static_block(&self, static_block_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_static_block(
+        &self,
+        static_block_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(static_block_idx)?;
         let parent = ext.parent;
         if parent.is_none() {
@@ -5406,7 +5438,10 @@ impl<'a> CheckerState<'a> {
     /// - `computed_idx`: The computed property node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    pub(crate) fn find_class_for_computed_property(&self, computed_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_computed_property(
+        &self,
+        computed_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         // Walk up to find the class member (property, method, accessor)
         let mut current = computed_idx;
         while !current.is_none() {
@@ -5476,7 +5511,10 @@ impl<'a> CheckerState<'a> {
     /// - `heritage_idx`: The heritage clause node index
     ///
     /// Returns Some(NodeIndex) if the parent is a class/interface, None otherwise.
-    pub(crate) fn find_class_for_heritage_clause(&self, heritage_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn find_class_for_heritage_clause(
+        &self,
+        heritage_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let ext = self.ctx.arena.get_extended(heritage_idx)?;
         let parent = ext.parent;
         if parent.is_none() {
