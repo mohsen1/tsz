@@ -116,6 +116,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if member == TypeId::ANY && source != TypeId::ANY {
                 continue;
             }
+            // Optimization: For literal sources, check if the primitive type is in the union
+            // This helps reduce false positives when a literal should match a union containing its primitive
+            if let TypeKey::Literal(literal) = source_key {
+                let primitive_type = match literal {
+                    LiteralValue::String(_) => TypeId::STRING,
+                    LiteralValue::Number(_) => TypeId::NUMBER,
+                    LiteralValue::BigInt(_) => TypeId::BIGINT,
+                    LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+                };
+                if member == primitive_type {
+                    return SubtypeResult::True;
+                }
+            }
             if self.check_subtype(source, member).is_true() {
                 return SubtypeResult::True;
             }
