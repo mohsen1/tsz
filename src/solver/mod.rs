@@ -28,6 +28,7 @@ mod lower;
 mod narrowing;
 mod operations;
 mod subtype;
+mod subtype_rules;
 mod types;
 pub mod unsoundness_audit;
 mod utils;
