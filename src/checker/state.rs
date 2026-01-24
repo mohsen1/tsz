@@ -19974,7 +19974,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check that all top-level function overload signatures have implementations.
     /// Reports errors 2389, 2391.
-    fn check_function_implementations(&mut self, statements: &[NodeIndex]) {
+    pub(crate) fn check_function_implementations(&mut self, statements: &[NodeIndex]) {
         use crate::checker::types::diagnostics::diagnostic_codes;
 
         let mut i = 0;
@@ -20092,135 +20092,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a module body for function overload implementations.
-    fn check_module_body(&mut self, body_idx: NodeIndex) {
-        let Some(body_node) = self.ctx.arena.get(body_idx) else {
-            return;
-        };
-
-        // Module body can be a MODULE_BLOCK or another MODULE_DECLARATION (for nested namespaces)
-        if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
-            if let Some(block) = self.ctx.arena.get_module_block(body_node)
-                && let Some(ref statements) = block.statements
-            {
-                // Check statements
-                for &stmt_idx in &statements.nodes {
-                    self.check_statement(stmt_idx);
-                }
-                // Check for function overload implementations
-                self.check_function_implementations(&statements.nodes);
-            }
-        } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-            // Nested namespace - recurse
-            self.check_statement(body_idx);
-        }
-    }
-
-    /// Check for export assignment with other exported elements (error 2309).
-    /// `export = X` cannot be used when there are also `export class/function/etc.`
-    /// Also checks that the exported expression exists (error 2304).
-    fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-
-        let mut export_assignment_idx: Option<NodeIndex> = None;
-        let mut has_other_exports = false;
-
-        for &stmt_idx in statements {
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-
-            match node.kind {
-                syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                    export_assignment_idx = Some(stmt_idx);
-
-                    // Check that the exported expression exists
-                    if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
-                        // Get the type of the expression (this will report 2304 if not found)
-                        self.get_type_of_node(export_data.expression);
-                    }
-                }
-                syntax_kind_ext::EXPORT_DECLARATION => {
-                    // export { ... } or export * from '...'
-                    has_other_exports = true;
-                }
-                _ => {
-                    // Check for export modifiers on declarations
-                    // (export class X, export function f, export const x, etc.)
-                    if self.has_export_modifier(stmt_idx) {
-                        has_other_exports = true;
-                    }
-                }
-            }
-        }
-
-        // Report error 2309 if there's an export assignment AND other exports
-        if let Some(export_idx) = export_assignment_idx
-            && has_other_exports
-        {
-            self.error_at_node(
-                export_idx,
-                "An export assignment cannot be used in a module with other exported elements.",
-                diagnostic_codes::EXPORT_ASSIGNMENT_WITH_OTHER_EXPORTS,
-            );
-        }
-    }
-
     /// Check if a statement has an export modifier.
-    fn has_export_modifier(&self, stmt_idx: NodeIndex) -> bool {
-        use crate::scanner::SyntaxKind;
-
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return false;
-        };
-
-        // Check different declaration types for export modifier
-        let modifiers = match node.kind {
-            syntax_kind_ext::FUNCTION_DECLARATION => self
-                .ctx
-                .arena
-                .get_function(node)
-                .and_then(|f| f.modifiers.as_ref()),
-            syntax_kind_ext::CLASS_DECLARATION => self
-                .ctx
-                .arena
-                .get_class(node)
-                .and_then(|c| c.modifiers.as_ref()),
-            syntax_kind_ext::VARIABLE_STATEMENT => self
-                .ctx
-                .arena
-                .get_variable(node)
-                .and_then(|v| v.modifiers.as_ref()),
-            syntax_kind_ext::INTERFACE_DECLARATION => self
-                .ctx
-                .arena
-                .get_interface(node)
-                .and_then(|i| i.modifiers.as_ref()),
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                .ctx
-                .arena
-                .get_type_alias(node)
-                .and_then(|t| t.modifiers.as_ref()),
-            syntax_kind_ext::ENUM_DECLARATION => self
-                .ctx
-                .arena
-                .get_enum(node)
-                .and_then(|e| e.modifiers.as_ref()),
-            _ => None,
-        };
-
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     /// Check that parameters don't have property modifiers (error 2369).
     /// Parameter properties (public/private/protected/readonly on params) are only
     /// allowed in constructor implementations.
