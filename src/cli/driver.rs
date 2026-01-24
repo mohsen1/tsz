@@ -2486,8 +2486,13 @@ fn collect_diagnostics(
                 base_dir,
                 &mut resolution_cache,
             );
-            if resolved.is_some() {
-                continue;
+            if let Some(resolved_path) = resolved {
+                let canonical = canonicalize_or_owned(&resolved_path);
+                if program_paths.contains(&canonical) {
+                    continue;
+                }
+                // Module resolved to a path outside program_paths (e.g., node_modules)
+                // Still emit TS2307 since it's not part of the compilation
             }
             if specifier_node.is_none() {
                 continue;
