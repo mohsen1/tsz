@@ -2074,7 +2074,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn apply_type_arguments_to_constructor_type(
+    pub(crate) fn apply_type_arguments_to_constructor_type(
         &mut self,
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
@@ -7161,7 +7161,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn collect_call_argument_types_with_context<F>(
+    pub(crate) fn collect_call_argument_types_with_context<F>(
         &mut self,
         args: &[NodeIndex],
         mut expected_for_index: F,
@@ -7342,7 +7342,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn resolve_overloaded_call_with_signatures(
+    pub(crate) fn resolve_overloaded_call_with_signatures(
         &mut self,
         args: &[NodeIndex],
         signatures: &[crate::solver::CallSignature],
@@ -7405,267 +7405,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type of new expression.
-    fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-        use crate::solver::{CallEvaluator, CallResult, CallableShape, CompatChecker, TypeKey};
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        let Some(new_expr) = self.ctx.arena.get_call_expr(node) else {
-            return TypeId::ERROR; // Missing new expression data - propagate error
-        };
-
-        // Check if trying to instantiate an abstract class
-        // The expression is typically an identifier referencing the class
-        if let Some(expr_node) = self.ctx.arena.get(new_expr.expression) {
-            // If it's a direct identifier (e.g., `new MyClass()`)
-            if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-                let class_name = &ident.escaped_text;
-
-                // Try multiple ways to find the symbol:
-                // 1. Check if the identifier node has a direct symbol binding
-                // 2. Look up in file_locals
-                // 3. Search all symbols by name (handles local scopes like classes inside functions)
-
-                let symbol_opt = self
-                    .ctx
-                    .binder
-                    .get_node_symbol(new_expr.expression)
-                    .or_else(|| self.ctx.binder.file_locals.get(class_name))
-                    .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name));
-
-                if let Some(sym_id) = symbol_opt
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
-                    // Check if it has the ABSTRACT flag
-                    if symbol.flags & symbol_flags::ABSTRACT != 0 {
-                        self.error_at_node(
-                            idx,
-                            "Cannot create an instance of an abstract class.",
-                            diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
-                        );
-                        return TypeId::ERROR;
-                    }
-                }
-            }
-        }
-
-        // Get the type of the constructor expression
-        let constructor_type = self.get_type_of_node(new_expr.expression);
-
-        // Validate explicit type arguments against constraints (TS2344)
-        if let Some(ref type_args_list) = new_expr.type_arguments
-            && !type_args_list.nodes.is_empty()
-        {
-            self.validate_new_expression_type_arguments(constructor_type, type_args_list, idx);
-        }
-
-        // If the `new` expression provides explicit type arguments (`new Foo<T>()`),
-        // instantiate the constructor signatures with those args so we don't fall back to
-        // inference (and so we match tsc behavior).
-        let constructor_type = self.apply_type_arguments_to_constructor_type(
-            constructor_type,
-            new_expr.type_arguments.as_ref(),
-        );
-
-        // Check if the constructor type contains any abstract classes (for union types)
-        // e.g., `new cls()` where `cls: typeof AbstractA | typeof AbstractB`
-        if self.type_contains_abstract_class(constructor_type) {
-            self.error_at_node(
-                idx,
-                "Cannot create an instance of an abstract class.",
-                diagnostic_codes::CANNOT_CREATE_INSTANCE_OF_ABSTRACT_CLASS,
-            );
-            return TypeId::ERROR;
-        }
-
-        if constructor_type == TypeId::ANY {
-            return TypeId::ANY;
-        }
-        if constructor_type == TypeId::ERROR {
-            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
-        }
-
-        let construct_type = match self.ctx.types.lookup(constructor_type) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.construct_signatures.is_empty() {
-                    None
-                } else {
-                    Some(self.ctx.types.callable(CallableShape {
-                        call_signatures: shape.construct_signatures.clone(),
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                    }))
-                }
-            }
-            Some(TypeKey::Function(_)) => Some(constructor_type),
-            Some(TypeKey::Intersection(members_id)) => {
-                // For intersection of constructors (mixin pattern), the result is an
-                // intersection of all instance types. Handle this specially.
-                let members = self.ctx.types.type_list(members_id);
-                let mut instance_types: Vec<TypeId> = Vec::new();
-
-                for &member in members.iter() {
-                    if let Some(TypeKey::Callable(shape_id)) = self.ctx.types.lookup(member) {
-                        let shape = self.ctx.types.callable_shape(shape_id);
-                        // Get the return type from the first construct signature
-                        if let Some(sig) = shape.construct_signatures.first() {
-                            instance_types.push(sig.return_type);
-                        }
-                    }
-                }
-
-                if instance_types.is_empty() {
-                    return TypeId::ERROR; // No construct signatures in intersection - expose error
-                } else if instance_types.len() == 1 {
-                    return instance_types[0];
-                } else {
-                    // Return intersection of all instance types
-                    return self.ctx.types.intersection(instance_types);
-                }
-            }
-            _ => None,
-        };
-
-        let Some(construct_type) = construct_type else {
-            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
-        };
-
-        let args = new_expr
-            .arguments
-            .as_ref()
-            .map(|a| &a.nodes)
-            .map(|n| n.as_slice())
-            .unwrap_or(&[]);
-
-        let overload_signatures = match self.ctx.types.lookup(construct_type) {
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.call_signatures.len() > 1 {
-                    Some(shape.call_signatures.clone())
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(signatures) = overload_signatures.as_deref()
-            && let Some(return_type) =
-                self.resolve_overloaded_call_with_signatures(args, signatures)
-        {
-            return return_type;
-        }
-
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, construct_type);
-        let check_excess_properties = overload_signatures.is_none();
-        let arg_types = self.collect_call_argument_types_with_context(
-            args,
-            |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
-            check_excess_properties,
-        );
-
-        self.ensure_application_symbols_resolved(construct_type);
-        for &arg_type in &arg_types {
-            self.ensure_application_symbols_resolved(arg_type);
-        }
-        let result = {
-            let env = self.ctx.type_env.borrow();
-            let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            checker.set_strict_null_checks(self.ctx.strict_null_checks());
-            let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            evaluator.resolve_call(construct_type, &arg_types)
-        };
-
-        match result {
-            CallResult::Success(return_type) => return_type,
-            CallResult::NotCallable { .. } => {
-                self.error_not_callable_at(constructor_type, new_expr.expression);
-                TypeId::ERROR
-            }
-            CallResult::ArgumentCountMismatch {
-                expected_min,
-                expected_max,
-                actual,
-            } => {
-                // Determine which error to emit:
-                // - TS2555: "Expected at least N arguments" when got < min and there's a range
-                // - TS2554: "Expected N arguments" otherwise
-                if actual < expected_min && expected_max.is_some_and(|max| max != expected_min) {
-                    // Too few arguments with optional parameters - use TS2555
-                    self.error_expected_at_least_arguments_at(expected_min, actual, idx);
-                } else {
-                    // Either too many, or exact count expected - use TS2554
-                    let expected = expected_max.unwrap_or(expected_min);
-                    self.error_argument_count_mismatch_at(expected, actual, idx);
-                }
-                TypeId::ERROR
-            }
-            CallResult::ArgumentTypeMismatch {
-                index,
-                expected,
-                actual,
-            } => {
-                if index < args.len() {
-                    let arg_idx = args[index];
-                    if !(check_excess_properties
-                        && self.should_skip_weak_union_error(actual, expected, arg_idx))
-                    {
-                        self.error_argument_not_assignable_at(actual, expected, arg_idx);
-                    }
-                }
-                TypeId::ERROR
-            }
-            CallResult::NoOverloadMatch { failures, .. } => {
-                self.error_no_overload_matches_at(idx, &failures);
-                TypeId::ERROR
-            }
-        }
-    }
-
-    /// Check if a type contains any abstract class constructors.
-    /// This handles union types like `typeof AbstractA | typeof ConcreteB`.
-    fn type_contains_abstract_class(&self, type_id: TypeId) -> bool {
-        use crate::binder::SymbolId;
-        use crate::solver::{SymbolRef, TypeKey};
-
-        let Some(type_key) = self.ctx.types.lookup(type_id) else {
-            return false;
-        };
-
-        match type_key {
-            // TypeQuery is `typeof ClassName` - check if the symbol is abstract
-            // Since get_type_from_type_query now uses real SymbolIds, we can directly look up
-            TypeKey::TypeQuery(SymbolRef(sym_id)) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_id))
-                    && symbol.flags & symbol_flags::ABSTRACT != 0
-                {
-                    return true;
-                }
-                false
-            }
-            // Union type - check if ANY constituent is abstract
-            TypeKey::Union(members) => {
-                let members = self.ctx.types.type_list(members);
-                members
-                    .iter()
-                    .any(|&member| self.type_contains_abstract_class(member))
-            }
-            // Intersection type - check if ANY constituent is abstract
-            TypeKey::Intersection(members) => {
-                let members = self.ctx.types.type_list(members);
-                members
-                    .iter()
-                    .any(|&member| self.type_contains_abstract_class(member))
-            }
-            _ => false,
-        }
-    }
-
     fn enum_member_type_for_name(&self, sym_id: SymbolId, property_name: &str) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::ENUM == 0 {
@@ -9684,7 +9423,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if:
     /// 1. It's a weak union violation (TypeScript shows excess property error instead)
     /// 2. OR if the object literal has excess properties (TypeScript prioritizes TS2353 over TS2345/TS2322)
-    fn should_skip_weak_union_error(
+    pub(crate) fn should_skip_weak_union_error(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -11068,7 +10807,7 @@ impl<'a> CheckerState<'a> {
 
     /// Ensure all symbols referenced in Application types are resolved in the type_env.
     /// This walks the type structure and calls get_type_of_symbol for any Application base symbols.
-    fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
+    pub(crate) fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
         use std::collections::HashSet;
 
         let mut visited: HashSet<TypeId> = HashSet::new();
@@ -13884,7 +13623,7 @@ impl<'a> CheckerState<'a> {
 
     /// Validate explicit type arguments against their constraints for new expressions.
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
-    fn validate_new_expression_type_arguments(
+    pub(crate) fn validate_new_expression_type_arguments(
         &mut self,
         constructor_type: TypeId,
         type_args_list: &crate::parser::NodeList,
