@@ -22139,41 +22139,6 @@ impl<'a> CheckerState<'a> {
     /// Check setter parameter constraints (1052, 1053).
     /// - A 'set' accessor parameter cannot have an initializer
     /// - A 'set' accessor cannot have rest parameter
-    fn check_setter_parameter(&mut self, parameters: &[NodeIndex]) {
-        use crate::checker::types::diagnostics::diagnostic_codes;
-
-        for &param_idx in parameters {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-
-            // Check for initializer (error 1052)
-            if !param.initializer.is_none() {
-                self.error_at_node(
-                    param.name,
-                    "A 'set' accessor parameter cannot have an initializer.",
-                    diagnostic_codes::SETTER_PARAMETER_CANNOT_HAVE_INITIALIZER,
-                );
-            }
-
-            // Check for rest parameter (error 1053)
-            if param.dot_dot_dot_token {
-                self.error_at_node(
-                    param_idx,
-                    "A 'set' accessor cannot have rest parameter.",
-                    diagnostic_codes::SETTER_CANNOT_HAVE_REST_PARAMETER,
-                );
-            }
-
-            // Check for implicit any (error 7006)
-            // Setter parameters without type annotation implicitly have 'any' type
-            self.maybe_report_implicit_any_parameter(param, false);
-        }
-    }
-
     // Promise/async type checking methods moved to promise_checker.rs
     // The lower_type_with_bindings helper remains here as it requires
     // access to private resolver methods.
