@@ -6242,4 +6242,65 @@ impl<'a> CheckerState<'a> {
         }
         None
     }
+
+    // =========================================================================
+    // Section 31: Class Hierarchy Utilities
+    // =========================================================================
+
+    /// Get the base class node index from a class declaration.
+    /// Returns None if the class doesn't extend anything.
+    pub(crate) fn get_base_class_idx(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(class_idx)?;
+        let class = self.ctx.arena.get_class(node)?;
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let &type_idx = heritage.types.nodes.first()?;
+            let type_node = self.ctx.arena.get(type_idx)?;
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+            let base_sym_id = self.resolve_heritage_symbol(expr_idx)?;
+            return self.get_class_declaration_from_symbol(base_sym_id);
+        }
+
+        None
+    }
+
+    /// Check if a derived class is derived from a base class.
+    /// Traverses the inheritance chain to check if base_idx is an ancestor of derived_idx.
+    pub(crate) fn is_class_derived_from(
+        &self,
+        derived_idx: NodeIndex,
+        base_idx: NodeIndex,
+    ) -> bool {
+        use rustc_hash::FxHashSet;
+
+        if derived_idx == base_idx {
+            return true;
+        }
+
+        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
+        let mut current = derived_idx;
+
+        while visited.insert(current) {
+            let Some(parent) = self.get_base_class_idx(current) else {
+                return false;
+            };
+            if parent == base_idx {
+                return true;
+            }
+            current = parent;
+        }
+
+        false
+    }
 }
