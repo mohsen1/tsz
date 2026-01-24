@@ -207,6 +207,8 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "ReadonlySet",
     "TemplateStringsArray",
     "TypedPropertyDescriptor",
+    // ES2015 - Additional utility types
+    "PropertyKey",
     // ES2017
     "AsyncFunction",
     "AsyncFunctionConstructor",
@@ -237,6 +239,23 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     // ES2022
     "Awaited",
     "ErrorOptions", // ES2022 error options (for Error cause)
+    // ES2015+ Typed arrays
+    "DataView",
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+    "ArrayBuffer",
+    "ArrayBufferConstructor",
+    // ES2015+ Iterable helpers
+    "IterableIterator",
+    // Additional ES2015+ types
+    "TypedArray",
 ];
 
 /// Check if a type name is an ES2015+ feature that requires specific lib support.
