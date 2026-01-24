@@ -23,8 +23,6 @@ pub mod state;
 #[cfg(test)]
 mod parser_improvement_tests;
 #[cfg(test)]
-mod parser_improvement_tests;
-#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
