@@ -283,9 +283,15 @@ pub trait SubtypeTracer {
    - **Areas**: Object subtyping, template literals, mapped/conditional types, primitives
    - **Reference**: This document, "Current Focus" section above
 
-2. **Fix Missing Error Detection** 🔴 **CRITICAL**
+2. **Fix Missing Error Detection** 🟢 **IN PROGRESS - lib.d.ts loading fixed**
    - **Focus**: TS2304/TS2318/TS2307 (symbol resolution, global types, modules)
    - **Impact**: Eliminates "Any poisoning", unlocks real type errors
+   - **Status**: ✅ lib.d.ts loading fixed in TestContext (commit 3d453efb9)
+     - Tests now load lib.d.ts by default via `TestContext::new()`
+     - Created `tests/lib/lib.d.ts` with minimal lib definitions
+     - Added `src/checker/ts2304_tests.rs` for verification
+     - `Any poisoning` eliminated - TS2304 now properly emitted when lib not loaded
+   - **Remaining**: Verify conformance test improvement, ensure WASM API loads lib by default
    - **Files**: `src/module_resolver.rs`, `src/checker/state.rs`, `src/binder/`
    - **Reference**: `PROJECT_DIRECTION.md:24-43`, `specs/DIAGNOSTICS.md:23-30`
 
