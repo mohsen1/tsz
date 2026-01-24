@@ -725,8 +725,23 @@ impl<'a> CheckerState<'a> {
                     TypeId::STRING
                 }
             }
-            k if k == SyntaxKind::TrueKeyword as u16 => self.ctx.types.literal_boolean(true),
-            k if k == SyntaxKind::FalseKeyword as u16 => self.ctx.types.literal_boolean(false),
+            // Boolean literals - preserve literal type when contextual typing expects it.
+            k if k == SyntaxKind::TrueKeyword as u16 => {
+                let literal_type = self.ctx.types.literal_boolean(true);
+                if self.contextual_literal_type(literal_type).is_some() {
+                    literal_type
+                } else {
+                    TypeId::BOOLEAN
+                }
+            }
+            k if k == SyntaxKind::FalseKeyword as u16 => {
+                let literal_type = self.ctx.types.literal_boolean(false);
+                if self.contextual_literal_type(literal_type).is_some() {
+                    literal_type
+                } else {
+                    TypeId::BOOLEAN
+                }
+            }
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
 
             // Binary expressions
