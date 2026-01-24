@@ -1,7 +1,7 @@
 //! Tests for TS2322 assignability checking
 
-use crate::checker::state::CheckerState;
 use crate::Parser;
+use crate::checker::state::CheckerState;
 
 #[test]
 fn test_assignability_checks() {

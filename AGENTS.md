@@ -35,9 +35,45 @@ Git hooks are installed automatically on first `cargo build`. They enforce code 
 
 To manually install: `./scripts/install-hooks.sh`
 
+## Type System Architecture
+
+### Use the Visitor Pattern for Type Operations
+
+**IMPORTANT**: When working with types (TypeKey, TypeId), always use the visitor pattern from `src/solver/visitor.rs` instead of writing manual match statements.
+
+```rust
+// ✅ GOOD - Use visitor functions
+use crate::solver::visitor::*;
+
+fn check_type(&self, type_id: TypeId) {
+    if is_function_type(&self.types, type_id) { ... }
+    if is_literal_type(&self.types, type_id) { ... }
+    if contains_type_parameters(&self.types, type_id) { ... }
+}
+
+// ❌ BAD - Manual match statements
+fn check_type(&self, type_id: TypeId) {
+    match self.types.lookup(type_id) {
+        Some(TypeKey::Function(_)) => { ... }
+        Some(TypeKey::Literal(_)) => { ... }
+        _ => {}
+    }
+}
+```
+
+Available visitor functions:
+- `is_literal_type`, `is_function_type`, `is_object_like_type`, `is_empty_object_type`
+- `is_union_type`, `is_intersection_type`, `is_array_type`, `is_tuple_type`
+- `is_type_parameter`, `is_conditional_type`, `is_mapped_type`
+- `contains_type_parameters`, `contains_error_type`, `contains_type_matching`
+- `collect_all_types`, `collect_referenced_types`
+
+See **docs/TYPE_VISITOR_PATTERN_GUIDE.md** for complete documentation.
+
 ## References
 
 - **PROJECT_DIRECTION.md**: Project priorities and architecture rules
+- **docs/TYPE_VISITOR_PATTERN_GUIDE.md**: How to use the visitor pattern for type operations
 - **specs/TS_UNSOUNDNESS_CATALOG.md**: Catalog of known unsoundness issues and required compat layer rules
 - **specs/SOLVER.md**: Type resolution architecture and guidelines
 - **specs/WASM_ARCHITECTURE.md**: WASM build and runtime architecture
