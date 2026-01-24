@@ -8214,11 +8214,13 @@ impl<'a> CheckerState<'a> {
         if (flags & symbol_flags::CONST_ENUM) != 0 {
             return symbol_flags::CONST_ENUM_EXCLUDES;
         }
-        if (flags & symbol_flags::VALUE_MODULE) != 0 {
-            return symbol_flags::VALUE_MODULE_EXCLUDES;
-        }
+        // Check NAMESPACE_MODULE before VALUE_MODULE since namespaces have both flags
+        // and NAMESPACE_MODULE_EXCLUDES (NONE) allows more merging than VALUE_MODULE_EXCLUDES
         if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
             return symbol_flags::NAMESPACE_MODULE_EXCLUDES;
+        }
+        if (flags & symbol_flags::VALUE_MODULE) != 0 {
+            return symbol_flags::VALUE_MODULE_EXCLUDES;
         }
         if (flags & symbol_flags::GET_ACCESSOR) != 0 {
             return symbol_flags::GET_ACCESSOR_EXCLUDES;
