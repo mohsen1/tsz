@@ -1697,6 +1697,169 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get type from a union type node (A | B).
+    ///
+    /// Parses a union type expression and creates a Union type with all members.
+    ///
+    /// ## Type Normalization:
+    /// - Empty union → NEVER (the bottom type)
+    /// - Single member → the member itself (no union wrapper)
+    /// - Multiple members → Union type with all members
+    ///
+    /// ## Member Resolution:
+    /// - Each member is resolved via `get_type_from_type_node`
+    /// - Handles nested typeof expressions and type references
+    ///
+    /// ## TypeScript Semantics:
+    /// Union types represent values that can be any of the members:
+    /// - Primitives: `string | number` accepts either
+    /// - Objects: Combines properties from all members
+    /// - Functions: Union of function signatures
+    pub(crate) fn get_type_from_union_type(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        // UnionType uses CompositeTypeData which has a types list
+        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+            let mut member_types = Vec::new();
+            for &type_idx in &composite.types.nodes {
+                // Use get_type_from_type_node to properly resolve typeof expressions via binder
+                member_types.push(self.get_type_from_type_node(type_idx));
+            }
+
+            if member_types.is_empty() {
+                return TypeId::NEVER;
+            }
+            if member_types.len() == 1 {
+                return member_types[0];
+            }
+
+            return self.ctx.types.union(member_types);
+        }
+
+        TypeId::ERROR // Missing composite type data - propagate error
+    }
+
+    /// Get type from an intersection type node (A & B).
+    ///
+    /// Parses an intersection type expression and creates an Intersection type with all members.
+    ///
+    /// ## Type Normalization:
+    /// - Empty intersection → UNKNOWN (the top type for intersections)
+    /// - Single member → the member itself (no intersection wrapper)
+    /// - Multiple members → Intersection type with all members
+    ///
+    /// ## Member Resolution:
+    /// - Each member is resolved via `get_type_from_type_node`
+    /// - Handles nested typeof expressions and type references
+    ///
+    /// ## TypeScript Semantics:
+    /// Intersection types combine multiple types into one:
+    /// - Objects: Merges properties from all members
+    /// - Primitives: Usually results in NEVER (except for any/unknown)
+    /// - Functions: Combines function signatures (overload resolution)
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// type NameAndAge = { name: string } & { age: number };
+    /// // Creates Intersection with properties { name: string; age: number }
+    ///
+    /// type Extended = BaseModel & { id: number } & Serializable;
+    /// // Combines all three types into one
+    ///
+    /// type Neverish = string & number;  // NEVER (primitives don't intersect)
+    /// ```
+    pub(crate) fn get_type_from_intersection_type(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        // IntersectionType uses CompositeTypeData which has a types list
+        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+            let mut member_types = Vec::new();
+            for &type_idx in &composite.types.nodes {
+                // Use get_type_from_type_node to properly resolve typeof expressions via binder
+                member_types.push(self.get_type_from_type_node(type_idx));
+            }
+
+            if member_types.is_empty() {
+                return TypeId::UNKNOWN; // Empty intersection is unknown
+            }
+            if member_types.len() == 1 {
+                return member_types[0];
+            }
+
+            return self.ctx.types.intersection(member_types);
+        }
+
+        TypeId::ERROR // Missing composite type data - propagate error
+    }
+
+    /// Get type from an array type node (string[]).
+    ///
+    /// Parses an array type expression and creates an Array type.
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// type Strings = string[];
+    /// // Creates Array<string> type
+    ///
+    /// type Nested = number[][];
+    /// // Creates Array<Array<number>> type
+    /// ```
+    pub(crate) fn get_type_from_array_type(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        if let Some(array_type) = self.ctx.arena.get_array_type(node) {
+            let elem_type = self.get_type_from_type_node(array_type.element_type);
+            return self.ctx.types.array(elem_type);
+        }
+
+        TypeId::ERROR // Missing array type data - propagate error
+    }
+
+    /// Get type from a type operator node (readonly T[], readonly [T, U], unique symbol).
+    ///
+    /// Handles type modifiers like:
+    /// - `readonly T[]` - Creates ReadonlyType wrapper
+    /// - `unique symbol` - Special marker for unique symbols
+    pub(crate) fn get_type_from_type_operator(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR; // Missing node - propagate error
+        };
+
+        if let Some(type_op) = self.ctx.arena.get_type_operator(node) {
+            let operator = type_op.operator;
+            let inner_type = self.get_type_from_type_node(type_op.type_node);
+
+            // Handle readonly operator
+            if operator == SyntaxKind::ReadonlyKeyword as u16 {
+                // Wrap the inner type in ReadonlyType
+                return self
+                    .ctx
+                    .types
+                    .intern(crate::solver::TypeKey::ReadonlyType(inner_type));
+            }
+
+            // Handle unique operator
+            if operator == SyntaxKind::UniqueKeyword as u16 {
+                // unique is handled differently - it's a type modifier for symbols
+                // For now, just return the inner type
+                return inner_type;
+            }
+
+            // Unknown operator - return inner type
+            inner_type
+        } else {
+            TypeId::ERROR // Missing type operator data - propagate error
+        }
+    }
+
     // =========================================================================
     // Type Relationship Queries
     // =========================================================================
