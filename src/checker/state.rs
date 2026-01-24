@@ -5960,177 +5960,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check an assignment expression, applying contextual typing to the RHS.
-    pub(crate) fn check_assignment_expression(
-        &mut self,
-        left_idx: NodeIndex,
-        right_idx: NodeIndex,
-        expr_idx: NodeIndex,
-    ) -> TypeId {
-        let left_target = self.get_type_of_assignment_target(left_idx);
-        let left_type = self.resolve_type_query_type(left_target);
-
-        let prev_context = self.ctx.contextual_type;
-        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
-            self.ctx.contextual_type = Some(left_type);
-        }
-
-        let right_raw = self.get_type_of_node(right_idx);
-        let right_type = self.resolve_type_query_type(right_raw);
-
-        self.ctx.contextual_type = prev_context;
-
-        self.ensure_application_symbols_resolved(right_type);
-        self.ensure_application_symbols_resolved(left_type);
-
-        self.check_readonly_assignment(left_idx, expr_idx);
-
-        if left_type != TypeId::ANY {
-            if let Some((source_level, target_level)) =
-                self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
-            {
-                self.error_constructor_accessibility_not_assignable(
-                    right_type,
-                    left_type,
-                    source_level,
-                    target_level,
-                    right_idx,
-                );
-            } else if !self.is_assignable_to(right_type, left_type)
-                && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
-            {
-                self.error_type_not_assignable_with_reason_at(right_type, left_type, right_idx);
-            }
-
-            if left_type != TypeId::UNKNOWN
-                && let Some(right_node) = self.ctx.arena.get(right_idx)
-                && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            {
-                self.check_object_literal_excess_properties(right_type, left_type, right_idx);
-            }
-        }
-
-        right_type
-    }
-
-    /// Check a compound assignment expression (+=, &&=, ??=, etc.).
-    pub(crate) fn check_compound_assignment_expression(
-        &mut self,
-        left_idx: NodeIndex,
-        right_idx: NodeIndex,
-        operator: u16,
-        expr_idx: NodeIndex,
-    ) -> TypeId {
-        let left_target = self.get_type_of_assignment_target(left_idx);
-        let left_type = self.resolve_type_query_type(left_target);
-
-        let prev_context = self.ctx.contextual_type;
-        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
-            self.ctx.contextual_type = Some(left_type);
-        }
-
-        let right_raw = self.get_type_of_node(right_idx);
-        let right_type = self.resolve_type_query_type(right_raw);
-
-        self.ctx.contextual_type = prev_context;
-
-        self.ensure_application_symbols_resolved(right_type);
-        self.ensure_application_symbols_resolved(left_type);
-
-        self.check_readonly_assignment(left_idx, expr_idx);
-
-        let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
-        let is_logical_assignment = matches!(
-            operator,
-            k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-        );
-        let assigned_type = if is_logical_assignment {
-            right_type
-        } else {
-            result_type
-        };
-
-        if left_type != TypeId::ANY {
-            if let Some((source_level, target_level)) =
-                self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
-            {
-                self.error_constructor_accessibility_not_assignable(
-                    assigned_type,
-                    left_type,
-                    source_level,
-                    target_level,
-                    right_idx,
-                );
-            } else if !self.is_assignable_to(assigned_type, left_type)
-                && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
-            {
-                self.error_type_not_assignable_with_reason_at(assigned_type, left_type, right_idx);
-            }
-
-            if left_type != TypeId::UNKNOWN
-                && let Some(right_node) = self.ctx.arena.get(right_idx)
-                && right_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            {
-                self.check_object_literal_excess_properties(right_type, left_type, right_idx);
-            }
-        }
-
-        result_type
-    }
-
-    fn compound_assignment_result_type(
-        &self,
-        left_type: TypeId,
-        right_type: TypeId,
-        operator: u16,
-    ) -> TypeId {
-        use crate::scanner::SyntaxKind;
-        use crate::solver::{BinaryOpEvaluator, BinaryOpResult};
-
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-        let op_str = match operator {
-            k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),
-            k if k == SyntaxKind::MinusEqualsToken as u16 => Some("-"),
-            k if k == SyntaxKind::AsteriskEqualsToken as u16 => Some("*"),
-            k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => Some("*"),
-            k if k == SyntaxKind::SlashEqualsToken as u16 => Some("/"),
-            k if k == SyntaxKind::PercentEqualsToken as u16 => Some("%"),
-            k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => Some("&&"),
-            k if k == SyntaxKind::BarBarEqualsToken as u16 => Some("||"),
-            _ => None,
-        };
-
-        if let Some(op) = op_str {
-            return match evaluator.evaluate(left_type, right_type, op) {
-                BinaryOpResult::Success(result) => result,
-                // Return ANY instead of UNKNOWN for type errors to prevent cascading errors
-                // (e.g., TS2571 "Object is of type 'unknown'" when accessing result properties)
-                BinaryOpResult::TypeError { .. } => TypeId::ANY,
-            };
-        }
-
-        if operator == SyntaxKind::QuestionQuestionEqualsToken as u16 {
-            return self.ctx.types.union2(left_type, right_type);
-        }
-
-        if matches!(
-            operator,
-            k if k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-        ) {
-            return TypeId::NUMBER;
-        }
-
-        // Return ANY for unknown binary operand types to prevent cascading errors
-        TypeId::ANY
-    }
-
     /// Get type of binary expression.
     pub(crate) fn apply_this_substitution_to_call_return(
         &mut self,
@@ -8296,7 +8125,7 @@ impl<'a> CheckerState<'a> {
         access
     }
 
-    fn constructor_accessibility_mismatch_for_assignment(
+    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
         &self,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
@@ -8348,7 +8177,7 @@ impl<'a> CheckerState<'a> {
         env_ref.get(symbol)
     }
 
-    fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
+    pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use crate::binder::SymbolId;
         use crate::solver::{SymbolRef, TypeKey};
 
@@ -11392,7 +11221,7 @@ impl<'a> CheckerState<'a> {
         self.diagnose_assignment_failure(source, target, idx);
     }
 
-    fn error_constructor_accessibility_not_assignable(
+    pub(crate) fn error_constructor_accessibility_not_assignable(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -15399,7 +15228,7 @@ impl<'a> CheckerState<'a> {
     /// Missing property errors are handled by the solver's `explain_failure` API
     /// via `error_type_not_assignable_with_reason_at`, so we only check excess
     /// properties here to avoid duplication.
-    fn check_object_literal_excess_properties(
+    pub(crate) fn check_object_literal_excess_properties(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -15488,7 +15317,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if an assignment target is a readonly property.
     /// Reports error TS2540 if trying to assign to a readonly property.
-    fn check_readonly_assignment(&mut self, target_idx: NodeIndex, _expr_idx: NodeIndex) {
+    pub(crate) fn check_readonly_assignment(&mut self, target_idx: NodeIndex, _expr_idx: NodeIndex) {
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
             return;
         };
@@ -22923,7 +22752,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn type_contains_error(&self, type_id: TypeId) -> bool {
+    pub(crate) fn type_contains_error(&self, type_id: TypeId) -> bool {
         let mut visited = Vec::new();
         self.type_contains_error_inner(type_id, &mut visited)
     }

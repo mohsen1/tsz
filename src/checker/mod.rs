@@ -51,6 +51,7 @@ pub mod state;
 pub mod statements;
 pub mod symbol_resolver;
 pub mod tuple_type;
+pub mod type_checking;
 pub mod type_computation;
 pub mod type_parameter;
 pub mod type_query;
