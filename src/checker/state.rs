@@ -3786,7 +3786,75 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Get type from a type literal node ({ x: T }).
+    /// Get type from a type literal node (anonymous object types).
+    ///
+    /// Type literals represent inline object types like `{ x: string; y: number }` or
+    /// callable types with call/construct signatures. This function parses the type
+    /// literal and creates the appropriate type representation.
+    ///
+    /// ## Type Literal Members:
+    /// - **Property Signatures**: Named properties with types (`{ x: string }`)
+    /// - **Method Signatures**: Function-typed methods (`{ method(): void }`)
+    /// - **Call Signatures**: Callable objects (`{ (): string }`)
+    /// - **Construct Signatures**: Constructor functions (`{ new(): T }`)
+    /// - **Index Signatures**: Dynamic property access (`{ [key: string]: T }`)
+    ///
+    /// ## Modifiers:
+    /// - `?`: Optional property (can be undefined)
+    /// - `readonly`: Read-only property (cannot be assigned to)
+    ///
+    /// ## Type Resolution:
+    /// - Property types are resolved via `get_type_from_type_node_in_type_literal`
+    /// - Type parameters are pushed/popped for each member
+    /// - Index signatures are tracked by key type (string or number)
+    ///
+    /// ## Result Type:
+    /// - **Callable**: If has call/construct signatures
+    /// - **ObjectWithIndex**: If has index signatures
+    /// - **Object**: Plain object type otherwise
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Plain object type
+    /// type User = { name: string; age: number };
+    /// // Creates Object type with properties
+    ///
+    /// // Optional property
+    /// type Config = { url?: string };
+    /// // Property is optional (question_token)
+    ///
+    /// // Readonly property
+    /// type ReadonlyUser = { readonly name: string };
+    /// // Property is readonly
+    ///
+    /// // Method signature
+    /// type WithMethod = { greet(): string };
+    /// // Method type is a function
+    ///
+    /// // Callable type
+    /// type Callable = { (x: number): string };
+    /// // Creates Callable type with call signature
+    ///
+    /// // Constructor type
+    /// type Constructor = { new(): T };
+    /// // Creates Callable type with construct signature
+    ///
+    /// // Index signature
+    /// type Dictionary = { [key: string]: number };
+    /// // Creates ObjectWithIndex with string index signature
+    ///
+    /// // Numeric index signature
+    /// type ArrayLike = { [index: number]: string };
+    /// // Creates ObjectWithIndex with number index signature
+    ///
+    /// // Mixed
+    /// type Mixed = {
+    ///   name: string;           // Property
+    ///   greet?(): void;         // Optional method
+    ///   [key: string]: any;     // Index signature
+    ///   (x: number): string;    // Call signature
+    /// };
+    /// ```
     fn get_type_from_type_literal(&mut self, idx: NodeIndex) -> TypeId {
         use crate::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
@@ -4293,8 +4361,89 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type of an interface declaration.
-    /// This extracts call signatures, construct signatures, and properties
-    /// to build a callable type if the interface has call signatures.
+    ///
+    /// This function processes interface declarations and builds their type representation.
+    /// Interfaces can represent object types, callable types, or constructor types depending
+    /// on their members.
+    ///
+    /// ## Interface Members:
+    /// - **Property Signatures**: Named properties with types
+    /// - **Method Signatures**: Function-typed methods
+    /// - **Call Signatures**: Makes the interface callable
+    /// - **Construct Signatures**: Makes the interface constructable
+    /// - **Index Signatures**: Dynamic property access
+    ///
+    /// ## Type Resolution:
+    /// - Pushes type parameters into scope during processing
+    /// - Resolves property and method types recursively
+    /// - Pops type parameters after processing
+    ///
+    /// ## Result Type:
+    /// - **Callable**: If interface has call/construct signatures
+    /// - **ObjectWithIndex**: If has index signatures (and no call/construct)
+    /// - **Object**: Plain object type otherwise
+    ///
+    /// ## Declaration Merging:
+    /// - Interfaces can have multiple declarations merged together
+    /// - All declarations are processed to create the final type
+    /// - Essential for extending built-in types
+    ///
+    /// ## Heritage Clauses:
+    /// - `extends T`: Interface extends other interface(s)
+    /// - Base interface members are merged into derived interface
+    /// - Supports multiple inheritance (extends A, B, C)
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Basic interface
+    /// interface User {
+    ///   name: string;
+    ///   age: number;
+    /// }
+    /// // Creates Object type with properties
+    ///
+    /// // Method signature
+    /// interface WithMethod {
+    ///   greet(): string;
+    /// }
+    /// // Method is function-typed property
+    ///
+    /// // Callable interface
+    /// interface Callable {
+    ///   (x: number): string;
+    /// }
+    /// // Creates Callable type with call signature
+    ///
+    /// // Constructor interface
+    /// interface Constructor {
+    ///   new(): T;
+    /// }
+    /// // Creates Callable type with construct signature
+    ///
+    /// // Index signature
+    /// interface Dictionary {
+    ///   [key: string]: number;
+    /// }
+    /// // Creates ObjectWithIndex with string index
+    ///
+    /// // Interface extension
+    /// interface Animal {
+    ///   name: string;
+    /// }
+    /// interface Dog extends Animal {
+    ///   bark(): void;
+    /// }
+    /// // Dog type includes both Animal and Dog members
+    ///
+    /// // Declaration merging
+    /// interface Window {
+    ///   title: string;
+    /// }
+    /// interface Window {
+    ///   alert(message: string): void;
+    /// }
+    /// // Window type has both title and alert
+    /// ```
     fn get_type_of_interface(&mut self, idx: NodeIndex) -> TypeId {
         use crate::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
