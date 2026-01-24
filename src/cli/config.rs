@@ -1,9 +1,46 @@
 use anyhow::{Context, Result, anyhow, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+
+/// Custom deserializer for boolean options that accepts both bool and string values.
+/// This handles cases where tsconfig.json contains `"strict": "true"` instead of `"strict": true`.
+fn deserialize_bool_or_string<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    // Use a helper enum to deserialize either a bool or a string
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolOrString {
+        Bool(bool),
+        String(String),
+    }
+
+    match Option::<BoolOrString>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(BoolOrString::Bool(b)) => Ok(Some(b)),
+        Some(BoolOrString::String(s)) => {
+            // Parse common string representations of boolean values
+            let normalized = s.trim().to_lowercase();
+            match normalized.as_str() {
+                "true" | "1" | "yes" | "on" => Ok(Some(true)),
+                "false" | "0" | "no" | "off" => Ok(Some(false)),
+                _ => {
+                    // Invalid boolean string - return error with helpful message
+                    Err(Error::custom(format!(
+                        "invalid boolean value: '{}'. Expected true, false, 'true', or 'false'",
+                        s
+                    )))
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -49,25 +86,25 @@ pub struct CompilerOptions {
     pub out_dir: Option<String>,
     #[serde(default)]
     pub out_file: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub declaration: Option<bool>,
     #[serde(default)]
     pub declaration_dir: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub source_map: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub declaration_map: Option<bool>,
     #[serde(default)]
     pub ts_build_info_file: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub incremental: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub strict: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit_on_error: Option<bool>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub isolated_modules: Option<bool>,
 }
 
@@ -777,4 +814,30 @@ fn remove_trailing_commas(input: &str) -> String {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_boolean_true() {
+        let json = r#"{"strict": true}"#;
+        let opts: CompilerOptions = serde_json::from_str(json).unwrap();
+        assert_eq!(opts.strict, Some(true));
+    }
+
+    #[test]
+    fn test_parse_string_true() {
+        let json = r#"{"strict": "true"}"#;
+        let opts: CompilerOptions = serde_json::from_str(json).unwrap();
+        assert_eq!(opts.strict, Some(true));
+    }
+
+    #[test]
+    fn test_parse_invalid_string() {
+        let json = r#"{"strict": "invalid"}"#;
+        let result: Result<CompilerOptions, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
 }
