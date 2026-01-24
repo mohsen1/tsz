@@ -423,6 +423,54 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Get the simple type of an interface member (without wrapping in object type).
+    ///
+    /// For property signatures: returns the property type
+    /// For method signatures: returns the function type
+    pub(crate) fn get_type_of_interface_member_simple(&mut self, member_idx: NodeIndex) -> TypeId {
+        use crate::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+        use crate::solver::FunctionShape;
+
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return TypeId::ANY;
+        };
+
+        if member_node.kind == METHOD_SIGNATURE {
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                return TypeId::ANY;
+            };
+
+            let (type_params, type_param_updates) = self.push_type_parameters(&sig.type_parameters);
+            let (params, this_type) = self.extract_params_from_signature(sig);
+            let (return_type, type_predicate) = self.return_type_and_predicate(sig.type_annotation);
+
+            let shape = FunctionShape {
+                type_params,
+                params,
+                this_type,
+                return_type,
+                type_predicate,
+                is_constructor: false,
+                is_method: true,
+            };
+            self.pop_type_parameters(type_param_updates);
+            return self.ctx.types.function(shape);
+        }
+
+        if member_node.kind == PROPERTY_SIGNATURE {
+            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                return TypeId::ANY;
+            };
+
+            if !sig.type_annotation.is_none() {
+                return self.get_type_from_type_node(sig.type_annotation);
+            }
+            return TypeId::ANY;
+        }
+
+        TypeId::ANY
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
