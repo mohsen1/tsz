@@ -134,8 +134,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use the solver's explain API to get the detailed reason
-        let mut checker = crate::solver::CompatChecker::new(self.ctx.types);
-        let reason = checker.explain_failure(source, target);
+        // Use the type environment to resolve TypeQuery and Ref types
+        let reason = {
+            let env = self.ctx.type_env.borrow();
+            let mut checker = crate::solver::CompatChecker::with_resolver(self.ctx.types, &*env);
+            checker.set_strict_null_checks(self.ctx.strict_null_checks());
+            checker.set_exact_optional_property_types(self.ctx.exact_optional_property_types());
+            checker.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
+            checker.explain_failure(source, target)
+        };
 
         match reason {
             Some(failure_reason) => {

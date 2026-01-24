@@ -1,7 +1,7 @@
 //! Parser error tests for TS1005 and TS2300 false positive reduction
 
 use crate::checker::state::CheckerState;
-use crate::parser::Parser;
+use crate::Parser;
 
 /// Test ASI (Automatic Semicolon Insertion) edge cases
 #[test]
