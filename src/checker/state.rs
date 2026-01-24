@@ -1094,8 +1094,12 @@ impl<'a> CheckerState<'a> {
                 if !is_builtin_array
                     && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
                 {
-                    if self.alias_resolves_to_value_only(sym_id)
-                        || self.symbol_is_value_only(sym_id)
+                    // Check if this is a value-only symbol (but allow type-only imports)
+                    // Type-only imports (is_type_only = true) should resolve in type positions
+                    // even if they don't have a VALUE flag
+                    if (self.alias_resolves_to_value_only(sym_id)
+                        || self.symbol_is_value_only(sym_id))
+                        && !self.symbol_is_type_only(sym_id)
                     {
                         self.error_value_only_type_at(name, type_name_idx);
                         return TypeId::ERROR;
@@ -1179,8 +1183,10 @@ impl<'a> CheckerState<'a> {
                 && name != "ReadonlyArray"
                 && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
             {
-                // Check for value-only types first
-                if self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id) {
+                // Check for value-only types first (but allow type-only imports)
+                if (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
+                    && !self.symbol_is_type_only(sym_id)
+                {
                     self.error_value_only_type_at(name, type_name_idx);
                     return TypeId::ERROR;
                 }
@@ -2858,6 +2864,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(sym_id) = sym_id
                     && (self.alias_resolves_to_value_only(sym_id)
                         || self.symbol_is_value_only(sym_id))
+                    && !self.symbol_is_type_only(sym_id)
                 {
                     self.error_value_only_type_at(name, type_name_idx);
                     return TypeId::ERROR;
@@ -2924,6 +2931,7 @@ impl<'a> CheckerState<'a> {
                 && name != "ReadonlyArray"
                 && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx)
                 && (self.alias_resolves_to_value_only(sym_id) || self.symbol_is_value_only(sym_id))
+                && !self.symbol_is_type_only(sym_id)
             {
                 self.error_value_only_type_at(name, type_name_idx);
                 return TypeId::ERROR;
@@ -6172,6 +6180,12 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
+        // If the symbol is type-only (from `import type`), it's not value-only
+        // In type positions, type-only imports should be allowed
+        if symbol.is_type_only {
+            return false;
+        }
+
         let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
         let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
         has_value && !has_type
@@ -6187,6 +6201,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // If the alias symbol itself is type-only, it doesn't resolve to value-only
+        if symbol.is_type_only {
+            return false;
+        }
+
         let mut visited = Vec::new();
         let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
             Some(target) => target,
@@ -6194,6 +6213,17 @@ impl<'a> CheckerState<'a> {
         };
 
         self.symbol_is_value_only(target)
+    }
+
+    /// Check if a symbol is type-only (from `import type`).
+    ///
+    /// This is used to allow type-only imports in type positions while
+    /// preventing their use in value positions.
+    pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId) -> bool {
+        match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol.is_type_only,
+            None => false,
+        }
     }
 
     pub(crate) fn get_type_of_private_property_access(
