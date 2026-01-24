@@ -11007,6 +11007,11 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
+            // TS2488: Check array destructuring for iterability before assigning types
+            if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                self.check_destructuring_iterability(var_decl.name, pattern_type, var_decl.initializer);
+            }
+
             // Ensure binding element identifiers get the correct inferred types.
             self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
             self.check_binding_pattern(var_decl.name, pattern_type);
@@ -11064,10 +11069,12 @@ impl<'a> CheckerState<'a> {
                 self.cache_symbol_type(sym_id, element_type);
             }
 
-            // Nested binding patterns: recurse with the element type.
-            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-            {
+            // Nested binding patterns: check iterability for array patterns, then recurse
+            if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                // Check iterability for nested array destructuring
+                self.check_destructuring_iterability(element_data.name, element_type, NodeIndex::NONE);
+                self.assign_binding_pattern_symbol_types(element_data.name, element_type);
+            } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
                 self.assign_binding_pattern_symbol_types(element_data.name, element_type);
             }
         }
