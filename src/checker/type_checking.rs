@@ -71,7 +71,9 @@ impl<'a> CheckerState<'a> {
 
         self.check_readonly_assignment(left_idx, expr_idx);
 
-        if left_type != TypeId::ANY {
+        // Perform assignability check for all non-ANY types
+        // This includes null/undefined in strict mode - they should NOT be assignable to non-nullable types
+        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
@@ -147,7 +149,8 @@ impl<'a> CheckerState<'a> {
             result_type
         };
 
-        if left_type != TypeId::ANY {
+        // Perform assignability check for all non-ANY types (including strict null checks)
+        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
             if let Some((source_level, target_level)) =
                 self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
             {
@@ -586,6 +589,7 @@ impl<'a> CheckerState<'a> {
             let declared_type = self.get_type_from_type_node(param.type_annotation);
 
             // Check if the initializer type is assignable to the declared type
+            // This includes strict null checks - null/undefined should NOT be assignable to non-nullable types
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
                 && !self.is_assignable_to(init_type, declared_type)
@@ -1315,7 +1319,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none() && element_type != TypeId::ANY {
+        if !element_data.initializer.is_none() && element_type != TypeId::ANY && !self.type_contains_error(element_type) {
             let default_value_type = self.get_type_of_node(element_data.initializer);
 
             if !self.is_assignable_to(default_value_type, element_type) {
@@ -1881,6 +1885,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if the return type is assignable to the expected type
         // Exception: Constructors allow `return;` without an expression (no assignability check)
+        // This includes strict null checks - returning null/undefined from non-nullable return type should error
         let is_constructor_return_without_expr = self
             .ctx
             .enclosing_class
@@ -1890,6 +1895,7 @@ impl<'a> CheckerState<'a> {
             && return_data.expression.is_none();
 
         if expected_type != TypeId::ANY
+            && !self.type_contains_error(expected_type)
             && !is_constructor_return_without_expr
             && !self.is_assignable_to(return_type, expected_type)
         {

@@ -842,8 +842,20 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let asserted_type = self.get_type_from_type_node(assertion.type_node);
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
-                            // `satisfies` keeps the expression type at runtime.
-                            // (Assignability checking + correct TS1360/TS1361 diagnostics are TODO.)
+                            // `satisfies` keeps the expression type at runtime, but checks assignability.
+                            // This is different from `as` which coerces the type.
+                            self.ensure_application_symbols_resolved(expr_type);
+                            self.ensure_application_symbols_resolved(asserted_type);
+                            if asserted_type != TypeId::ANY && !self.type_contains_error(asserted_type)
+                                && !self.is_assignable_to(expr_type, asserted_type)
+                                && !self.should_skip_weak_union_error(expr_type, asserted_type, assertion.expression)
+                            {
+                                self.error_type_not_assignable_with_reason_at(
+                                    expr_type,
+                                    asserted_type,
+                                    assertion.expression,
+                                );
+                            }
                             expr_type
                         } else {
                             // `expr as T` / `<T>expr` yields `T`.
@@ -10986,7 +10998,8 @@ impl<'a> CheckerState<'a> {
                     checker.ctx.contextual_type = prev_context;
 
                     // Check assignability (skip for 'any' since anything is assignable to any)
-                    if declared_type != TypeId::ANY {
+                    // This includes strict null checks - null/undefined should NOT be assignable to non-nullable types
+                    if declared_type != TypeId::ANY && !checker.type_contains_error(declared_type) {
                         if let Some((source_level, target_level)) =
                             checker.constructor_accessibility_mismatch_for_var_decl(var_decl)
                         {
@@ -13555,7 +13568,7 @@ impl<'a> CheckerState<'a> {
             let init_type = self.get_type_of_node(prop.initializer);
             self.ctx.contextual_type = prev_context;
 
-            if declared_type != TypeId::ANY && !self.is_assignable_to(init_type, declared_type) {
+            if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) && !self.is_assignable_to(init_type, declared_type) {
                 self.error_type_not_assignable_with_reason_at(
                     init_type,
                     declared_type,

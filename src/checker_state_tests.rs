@@ -540,6 +540,45 @@ const bad: Tup = arr;
 }
 
 #[test]
+fn test_satisfies_assignability_check() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+const x = { a: 1 } satisfies { a: number; b: string };
+const y = "hello" satisfies number;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let not_assignable_count = codes.iter().filter(|&&code| code == 2322).count();
+    assert_eq!(
+        not_assignable_count, 2,
+        "Expected two 2322 errors for satisfies violations, got: {:?}",
+        codes
+    );
+}
+
+#[test]
 fn test_rest_any_bivariance_in_checker() {
     use crate::parser::ParserState;
 
