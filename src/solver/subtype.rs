@@ -2601,8 +2601,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check string index signature compatibility between source and target.
     ///
     /// Validates that string index signatures are compatible, handling:
-    /// - Source has string index → must be subtype of target's index
-    /// - Source lacks string index → all source properties must be compatible with target's index
+    /// Check string index signature compatibility between source and target objects.
+    ///
+    /// Validates that string index signatures (`[key: string]: T`) are compatible
+    /// when checking if source is a subtype of target.
+    ///
+    /// ## TypeScript Soundness:
+    /// String index signatures define how objects are accessed with string keys:
+    /// - **Both have string index**: Source index must be subtype of target index
+    /// - **Only target has string index**: All source properties must be compatible with target's index
+    /// - **Only source has string index**: Compatible (target accepts string access via index)
+    /// - **Neither has string index**: Compatible (no string index constraint)
+    ///
+    /// ## Readonly Constraints:
+    /// - If target index is readonly, source index can be readonly or mutable
+    /// - If target index is mutable, source index must be mutable (readonly source not compatible)
+    /// - If target has no string index but source has readonly properties, not compatible
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Both have string index
+    /// interface A { [key: string]: number; }
+    /// interface B { [key: string]: number | string; }
+    /// let x: B = null as A;  // ✅ number <: number | string
+    ///
+    /// // Readonly constraint
+    /// interface C { readonly [key: string]: number; }
+    /// interface D { [key: string]: number; }
+    /// let y: D = null as C;  // ❌ readonly source not assignable to mutable target
+    ///
+    /// // Target has index, source doesn't
+    /// interface E { x: number; }
+    /// interface F { [key: string]: number; }
+    /// let z: F = null as E;  // ✅ E.x is compatible with F's string index
+    /// ```
     fn check_string_index_compatibility(
         &mut self,
         source: &ObjectShape,
@@ -2646,10 +2678,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check number index signature compatibility between source and target.
+    /// Check number index signature compatibility between source and target objects.
     ///
-    /// Validates that number index signatures are compatible.
-    /// Number indexing is optional, so it's OK if source lacks a number index.
+    /// Validates that number index signatures (`[key: number]: T`) are compatible
+    /// when checking if source is a subtype of target.
+    ///
+    /// ## TypeScript Soundness:
+    /// Number index signatures define how objects are accessed with numeric keys:
+    /// - **Both have number index**: Source index must be subtype of target index
+    /// - **Only target has number index**: Source properties with numeric names must be compatible
+    /// - **Only source has number index**: Compatible (target accepts numeric access via index)
+    /// - **Neither has number index**: Compatible (no numeric index constraint)
+    ///
+    /// ## Readonly Constraints:
+    /// Same as string index signatures:
+    /// - Readonly source can assign to readonly or mutable target
+    /// - Mutable source cannot assign to readonly target
+    ///
+    /// ## Number Indexing is Optional:
+    /// Unlike string indexing, number indexing is optional in TypeScript.
+    /// Objects can have numeric property names without a number index signature.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// // Both have number index
+    /// interface A { [key: number]: number; }
+    /// interface B { [key: number]: number | string; }
+    /// let x: B = null as A;  // ✅ number <: number | string
+    ///
+    /// // Target has index, source has numeric properties
+    /// interface C { 0: number; 1: string; }
+    /// interface D { [key: number]: number | string; }
+    /// let y: D = null as C;  // ✅ C's numeric properties match D's index
+    ///
+    /// // Readonly constraint
+    /// interface E { readonly [key: number]: number; }
+    /// interface F { [key: number]: number; }
+    /// let z: F = null as E;  // ❌ readonly source not assignable to mutable target
+    /// ```
     fn check_number_index_compatibility(
         &mut self,
         source: &ObjectShape,
