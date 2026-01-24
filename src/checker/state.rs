@@ -6977,7 +6977,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
-        use crate::solver::CompatChecker;
+        use crate::solver::{CompatChecker, TypeKey};
 
         let Some(node) = self.ctx.arena.get(source_idx) else {
             return false;
@@ -7000,9 +7000,66 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check if the object literal has excess properties.
-        // If so, TypeScript only shows TS2353 (excess property), not the general assignability error.
-        self.object_literal_has_excess_properties(source, target)
+        // Check if there are excess properties.
+        // If so, we need to verify that all required properties match before skipping TS2322.
+        // TypeScript shows TS2353 only when required properties match but there are excess properties.
+        // If required properties don't match, it shows TS2322 instead.
+        if !self.object_literal_has_excess_properties(source, target) {
+            return false;
+        }
+
+        // There are excess properties. Check if all matching properties have compatible types.
+        // If any property in source exists in target but has wrong type, we should show TS2322.
+        let source_shape = match self.ctx.types.lookup(source) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                self.ctx.types.object_shape(shape_id)
+            }
+            _ => return true, // Should have excess properties if we reach here
+        };
+
+        let resolved_target = self.resolve_type_for_property_access(target);
+        let target_shape = match self.ctx.types.lookup(resolved_target) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                self.ctx.types.object_shape(shape_id)
+            }
+            _ => return true,
+        };
+
+        let source_props = source_shape.properties.as_slice();
+        let target_props = target_shape.properties.as_slice();
+
+        // Check if any source property that exists in target has a wrong type
+        for source_prop in source_props {
+            if let Some(target_prop) = target_props.iter().find(|p| p.name == source_prop.name) {
+                // Property exists in both source and target - check if types are assignable
+                // Use assignability check to handle optional properties correctly
+                let source_prop_type = source_prop.type_id;
+                let target_prop_type = target_prop.type_id;
+
+                // For optional target properties, undefined should be assignable
+                let effective_target_type = if target_prop.optional {
+                    self.ctx.types.union(vec![target_prop_type, TypeId::UNDEFINED])
+                } else {
+                    target_prop_type
+                };
+
+                let is_assignable = {
+                    let env = self.ctx.type_env.borrow();
+                    let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+                    checker.set_strict_null_checks(self.ctx.strict_null_checks());
+                    checker.is_assignable(source_prop_type, effective_target_type)
+                };
+
+                if !is_assignable {
+                    // Type mismatch on existing property - show TS2322, not TS2353
+                    return false;
+                }
+            }
+        }
+
+        // All matching properties have correct types, only issue is excess properties
+        // Skip TS2322 and let TS2353 be shown instead
+        true
     }
 
     /// Check if source object literal has properties that don't exist in target.
