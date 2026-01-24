@@ -1,7 +1,7 @@
 //! Tests for TS2488 iterability checking
 
 use crate::checker::state::CheckerState;
-use crate::parser::Parser;
+use crate::Parser;
 
 #[test]
 fn test_array_destructuring_non_iterable() {
