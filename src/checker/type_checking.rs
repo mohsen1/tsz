@@ -4687,11 +4687,13 @@ impl<'a> CheckerState<'a> {
 
                     // Skip conflict check if declarations are in different files
                     // (external modules are isolated, same-name declarations don't conflict)
-                    // Check by comparing if both nodes exist in our arena
-                    let both_in_same_file = self.ctx.arena.get(decl_idx).is_some()
+                    // We check if both declarations are in the current file's arena
+                    let both_in_current_file = self.ctx.arena.get(decl_idx).is_some()
                         && self.ctx.arena.get(other_idx).is_some();
 
-                    if !both_in_same_file {
+                    // If either declaration is not in the current file's arena, they can't conflict
+                    // This handles external modules where declarations in different files are isolated
+                    if !both_in_current_file {
                         continue;
                     }
 
@@ -4726,6 +4728,20 @@ impl<'a> CheckerState<'a> {
                         && (other_flags & symbol_flags::INTERFACE) != 0;
                     if both_interfaces {
                         continue; // Interface merging is always allowed
+                    }
+
+                    // Check for type alias merging - multiple type alias declarations are allowed
+                    let both_type_aliases = (decl_flags & symbol_flags::TYPE_ALIAS) != 0
+                        && (other_flags & symbol_flags::TYPE_ALIAS) != 0;
+                    if both_type_aliases {
+                        continue; // Type alias merging is always allowed
+                    }
+
+                    // Check for enum merging - multiple enum declarations are allowed
+                    let both_enums = (decl_flags & symbol_flags::ENUM) != 0
+                        && (other_flags & symbol_flags::ENUM) != 0;
+                    if both_enums {
+                        continue; // Enum merging is always allowed
                     }
 
                     // Check for namespace merging - namespaces can merge with functions, classes, and each other
@@ -8143,6 +8159,17 @@ impl<'a> CheckerState<'a> {
         }
         if (flags & symbol_flags::REGULAR_ENUM) != 0 {
             return symbol_flags::REGULAR_ENUM_EXCLUDES;
+        }
+        if (flags & symbol_flags::CONST_ENUM) != 0 {
+            return symbol_flags::CONST_ENUM_EXCLUDES;
+        }
+        // Check NAMESPACE_MODULE before VALUE_MODULE since namespaces have both flags
+        // and NAMESPACE_MODULE_EXCLUDES (NONE) allows more merging than VALUE_MODULE_EXCLUDES
+        if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+            return symbol_flags::NAMESPACE_MODULE_EXCLUDES;
+        }
+        if (flags & symbol_flags::VALUE_MODULE) != 0 {
+            return symbol_flags::VALUE_MODULE_EXCLUDES;
         }
         if (flags & symbol_flags::GET_ACCESSOR) != 0 {
             return symbol_flags::GET_ACCESSOR_EXCLUDES;

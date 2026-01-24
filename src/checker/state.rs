@@ -9482,7 +9482,21 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::CLASS_DECLARATION => Some(symbol_flags::CLASS),
             syntax_kind_ext::INTERFACE_DECLARATION => Some(symbol_flags::INTERFACE),
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some(symbol_flags::TYPE_ALIAS),
-            syntax_kind_ext::ENUM_DECLARATION => Some(symbol_flags::REGULAR_ENUM),
+            syntax_kind_ext::ENUM_DECLARATION => {
+                // Check if this is a const enum
+                let is_const_enum = self.ctx.arena.get_enum_decl(node)
+                    .map(|enum_decl| enum_decl.const_enum)
+                    .unwrap_or(false);
+                if is_const_enum {
+                    Some(symbol_flags::CONST_ENUM)
+                } else {
+                    Some(symbol_flags::REGULAR_ENUM)
+                }
+            }
+            syntax_kind_ext::MODULE_DECLARATION => {
+                // Namespaces (module declarations) can merge with functions, classes, enums
+                Some(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)
+            }
             syntax_kind_ext::GET_ACCESSOR => {
                 let mut flags = symbol_flags::GET_ACCESSOR;
                 if let Some(accessor) = self.ctx.arena.get_accessor(node)
