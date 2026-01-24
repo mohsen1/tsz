@@ -6751,4 +6751,69 @@ impl<'a> CheckerState<'a> {
             *target = Some(incoming);
         }
     }
+
+    // =========================================================================
+    // Section 39: Type Parameter Scope Utilities
+    // =========================================================================
+
+    /// Pop type parameters from scope, restoring previous values.
+    /// Used to restore the type parameter scope after exiting a generic context.
+    pub(crate) fn pop_type_parameters(&mut self, updates: Vec<(String, Option<TypeId>)>) {
+        for (name, previous) in updates.into_iter().rev() {
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
+        }
+    }
+
+    /// Collect all `infer` type parameter names from a type node.
+    /// This is used to add inferred type parameters to the scope when checking conditional types.
+    pub(crate) fn collect_infer_type_parameters(&self, type_idx: NodeIndex) -> Vec<String> {
+        let mut params = Vec::new();
+        self.collect_infer_type_parameters_inner(type_idx, &mut params);
+        params
+    }
+
+    /// Inner implementation for collecting infer type parameters.
+    /// Recursively walks the type node to find all infer type parameter names.
+    fn collect_infer_type_parameters_inner(&self, type_idx: NodeIndex, params: &mut Vec<String>) {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::INFER_TYPE => {
+                if let Some(infer) = self.ctx.arena.get_infer_type(node)
+                    && let Some(param_node) = self.ctx.arena.get(infer.type_parameter)
+                    && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
+                    && let Some(name_node) = self.ctx.arena.get(param.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    let name = ident.escaped_text.clone();
+                    if !params.contains(&name) {
+                        params.push(name);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(ref args) = type_ref.type_arguments
+                {
+                    for &arg_idx in &args.nodes {
+                        self.collect_infer_type_parameters_inner(arg_idx, params);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                    for &member_idx in &composite.types.nodes {
+                        self.collect_infer_type_parameters_inner(member_idx, params);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
