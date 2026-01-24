@@ -81,41 +81,39 @@ fn is_subtype_of(db: &dyn SolverDatabase, source: TypeId, target: TypeId) -> boo
 ///
 /// This struct wraps the Salsa runtime and provides the TypeDatabase trait
 /// for compatibility with existing solver code.
-#[derive(Clone)]
 pub struct SalsaDatabase {
     /// The underlying Salsa database runtime
-    runtime: salsa::Runtime<SolverDatabaseStruct>,
+    storage: salsa::Storage<SolverDatabaseStruct>,
 }
 
 impl SalsaDatabase {
     /// Create a new Salsa database with the given interner.
     pub fn new(interner: Arc<TypeInterner>) -> Self {
-        let mut runtime = salsa::Runtime::default();
-        runtime.run(|db| db.set_interner_ref(interner));
-        SalsaDatabase { runtime }
+        let mut storage = salsa::Storage::default();
+        storage.set_interner_ref(interner);
+        SalsaDatabase { storage }
     }
 
     /// Get the underlying Salsa database for direct query access.
     pub fn salsa_db(&self) -> &SolverDatabaseStruct {
-        &self.runtime
+        &self.storage
     }
 
     /// Clear all cached query results and reset with a new interner.
     pub fn clear(&mut self, interner: Arc<TypeInterner>) {
-        let mut runtime = salsa::Runtime::default();
-        runtime.run(|db| db.set_interner_ref(interner));
-        self.runtime = runtime;
+        self.storage = salsa::Storage::default();
+        self.storage.set_interner_ref(interner);
     }
 }
 
-/// Implement salsa::Database for our runtime.
+/// Implement salsa::Database for our storage.
 impl salsa::Database for SalsaDatabase {
-    fn salsa_runtime(&self) -> &salsa::Runtime<SolverDatabaseStruct> {
-        &self.runtime
+    fn salsa_storage(&self) -> &salsa::Storage<SolverDatabaseStruct> {
+        &self.storage
     }
 
-    fn salsa_runtime_mut(&mut self) -> &mut salsa::Runtime<SolverDatabaseStruct> {
-        &mut self.runtime
+    fn salsa_storage_mut(&mut self) -> &mut salsa::Storage<SolverDatabaseStruct> {
+        &mut self.storage
     }
 }
 
@@ -125,153 +123,153 @@ impl salsa::Database for SalsaDatabase {
 /// enabling gradual migration from the legacy TypeInterner to Salsa.
 impl crate::solver::db::TypeDatabase for SalsaDatabase {
     fn intern(&self, key: TypeKey) -> TypeId {
-        self.runtime.interner_ref().intern(key)
+        self.storage.interner_ref().intern(key)
     }
 
     fn lookup(&self, id: TypeId) -> Option<TypeKey> {
-        self.runtime.lookup(id)
+        self.storage.lookup(id)
     }
 
     fn intern_string(&self, s: &str) -> Atom {
-        self.runtime.intern_string_query(s.to_string())
+        self.storage.intern_string_query(s.to_string())
     }
 
     fn resolve_atom(&self, atom: Atom) -> String {
-        self.runtime.resolve_atom(atom)
+        self.storage.resolve_atom(atom)
     }
 
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
-        self.runtime.interner_ref().resolve_atom_ref(atom)
+        self.storage.interner_ref().resolve_atom_ref(atom)
     }
 
     fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
-        self.runtime.type_list_query(id)
+        self.storage.type_list_query(id)
     }
 
     fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
-        self.runtime.interner_ref().tuple_list(id)
+        self.storage.interner_ref().tuple_list(id)
     }
 
     fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
-        self.runtime.interner_ref().template_list(id)
+        self.storage.interner_ref().template_list(id)
     }
 
     fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
-        self.runtime.interner_ref().object_shape(id)
+        self.storage.interner_ref().object_shape(id)
     }
 
     fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
-        self.runtime.interner_ref().object_property_index(shape_id, name)
+        self.storage.interner_ref().object_property_index(shape_id, name)
     }
 
     fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
-        self.runtime.interner_ref().function_shape(id)
+        self.storage.interner_ref().function_shape(id)
     }
 
     fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
-        self.runtime.interner_ref().callable_shape(id)
+        self.storage.interner_ref().callable_shape(id)
     }
 
     fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
-        self.runtime.interner_ref().conditional_type(id)
+        self.storage.interner_ref().conditional_type(id)
     }
 
     fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
-        self.runtime.interner_ref().mapped_type(id)
+        self.storage.interner_ref().mapped_type(id)
     }
 
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
-        self.runtime.interner_ref().type_application(id)
+        self.storage.interner_ref().type_application(id)
     }
 
     fn literal_string(&self, value: &str) -> TypeId {
-        self.runtime.interner_ref().literal_string(value)
+        self.storage.interner_ref().literal_string(value)
     }
 
     fn literal_number(&self, value: f64) -> TypeId {
-        self.runtime.interner_ref().literal_number(value)
+        self.storage.interner_ref().literal_number(value)
     }
 
     fn literal_boolean(&self, value: bool) -> TypeId {
-        self.runtime.interner_ref().literal_boolean(value)
+        self.storage.interner_ref().literal_boolean(value)
     }
 
     fn literal_bigint(&self, value: &str) -> TypeId {
-        self.runtime.interner_ref().literal_bigint(value)
+        self.storage.interner_ref().literal_bigint(value)
     }
 
     fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
-        self.runtime
+        self.storage
             .interner_ref()
             .literal_bigint_with_sign(negative, digits)
     }
 
     fn union(&self, members: Vec<TypeId>) -> TypeId {
-        self.runtime.interner_ref().union(members)
+        self.storage.interner_ref().union(members)
     }
 
     fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
-        self.runtime.interner_ref().union2(left, right)
+        self.storage.interner_ref().union2(left, right)
     }
 
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
-        self.runtime
+        self.storage
             .interner_ref()
             .union3(first, second, third)
     }
 
     fn intersection(&self, members: Vec<TypeId>) -> TypeId {
-        self.runtime.interner_ref().intersection(members)
+        self.storage.interner_ref().intersection(members)
     }
 
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
-        self.runtime
+        self.storage
             .interner_ref()
             .intersection2(left, right)
     }
 
     fn array(&self, element: TypeId) -> TypeId {
-        self.runtime.interner_ref().array(element)
+        self.storage.interner_ref().array(element)
     }
 
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
-        self.runtime.interner_ref().tuple(elements)
+        self.storage.interner_ref().tuple(elements)
     }
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
-        self.runtime.interner_ref().object(properties)
+        self.storage.interner_ref().object(properties)
     }
 
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {
-        self.runtime.interner_ref().object_with_index(shape)
+        self.storage.interner_ref().object_with_index(shape)
     }
 
     fn function(&self, shape: FunctionShape) -> TypeId {
-        self.runtime.interner_ref().function(shape)
+        self.storage.interner_ref().function(shape)
     }
 
     fn callable(&self, shape: CallableShape) -> TypeId {
-        self.runtime.interner_ref().callable(shape)
+        self.storage.interner_ref().callable(shape)
     }
 
     fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
-        self.runtime.interner_ref().template_literal(spans)
+        self.storage.interner_ref().template_literal(spans)
     }
 
     fn conditional(&self, conditional: ConditionalType) -> TypeId {
-        self.runtime.interner_ref().conditional(conditional)
+        self.storage.interner_ref().conditional(conditional)
     }
 
     fn mapped(&self, mapped: MappedType) -> TypeId {
-        self.runtime.interner_ref().mapped(mapped)
+        self.storage.interner_ref().mapped(mapped)
     }
 
     fn reference(&self, symbol: SymbolRef) -> TypeId {
-        self.runtime.interner_ref().reference(symbol)
+        self.storage.interner_ref().reference(symbol)
     }
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
-        self.runtime.interner_ref().application(base, args)
+        self.storage.interner_ref().application(base, args)
     }
 }
 
@@ -282,11 +280,11 @@ impl crate::solver::db::QueryDatabase for SalsaDatabase {
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
-        self.runtime.evaluate_type(type_id)
+        self.storage.evaluate_type(type_id)
     }
 
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        self.runtime.is_subtype_of(source, target)
+        self.storage.is_subtype_of(source, target)
     }
 }
 
