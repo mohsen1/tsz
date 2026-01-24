@@ -1763,9 +1763,10 @@ impl<'a> CheckerState<'a> {
             } => {
                 if index < args.len() {
                     let arg_idx = args[index];
-                    if !(check_excess_properties
-                        && self.should_skip_weak_union_error(actual, expected, arg_idx))
-                    {
+                    // Check if this is a weak union violation or excess property case
+                    // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
+                    // We should skip the TS2322 error regardless of check_excess_properties flag
+                    if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
                         self.error_argument_not_assignable_at(actual, expected, arg_idx);
                     }
                 }
@@ -2492,17 +2493,15 @@ impl<'a> CheckerState<'a> {
                 // When spread arguments are expanded, the index may exceed args.len()
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
-                    if !(check_excess_properties
-                        && self.should_skip_weak_union_error(actual, expected, arg_idx))
-                    {
+                    // Check if this is a weak union violation or excess property case
+                    // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
+                    if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
                         self.error_argument_not_assignable_at(actual, expected, arg_idx);
                     }
                 } else if !args.is_empty() {
                     // Fall back to the last argument (typically the spread) if mapping fails
                     let last_arg = args[args.len() - 1];
-                    if !(check_excess_properties
-                        && self.should_skip_weak_union_error(actual, expected, last_arg))
-                    {
+                    if !self.should_skip_weak_union_error(actual, expected, last_arg) {
                         self.error_argument_not_assignable_at(actual, expected, last_arg);
                     }
                 }
