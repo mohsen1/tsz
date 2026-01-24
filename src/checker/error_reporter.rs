@@ -1547,7 +1547,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a union type containing string
         if let Some(TypeKey::Union(members)) = self.ctx.types.lookup(type_id) {
-            let member_list = self.ctx.types.union_list(members);
+            let member_list = self.ctx.types.type_list(members);
             for &member in member_list.iter() {
                 if member == TypeId::STRING {
                     return true;

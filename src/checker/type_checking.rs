@@ -34,6 +34,33 @@ use rustc_hash::FxHashSet;
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
+    // Utility Methods
+    // =========================================================================
+
+    /// Check if a token is an assignment operator (=, +=, -=, etc.)
+    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
+        matches!(
+            operator,
+            k if k == SyntaxKind::EqualsToken as u16
+                || k == SyntaxKind::PlusEqualsToken as u16
+                || k == SyntaxKind::MinusEqualsToken as u16
+                || k == SyntaxKind::AsteriskEqualsToken as u16
+                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+                || k == SyntaxKind::SlashEqualsToken as u16
+                || k == SyntaxKind::PercentEqualsToken as u16
+                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::AmpersandEqualsToken as u16
+                || k == SyntaxKind::BarEqualsToken as u16
+                || k == SyntaxKind::BarBarEqualsToken as u16
+                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
+                || k == SyntaxKind::CaretEqualsToken as u16
+        )
+    }
+
+    // =========================================================================
     // Assignment and Expression Checking
     // =========================================================================
 
@@ -3826,7 +3853,7 @@ impl<'a> CheckerState<'a> {
         if type_args.len() > base_type_params.len() {
             type_args.truncate(base_type_params.len());
         }
-        let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
         // Get the derived class name for the error message
         let derived_class_name = if !class_data.name.is_none() {
@@ -3976,8 +4003,8 @@ impl<'a> CheckerState<'a> {
                 // Resolve TypeQuery types (typeof) before comparison
                 // If member_type is `typeof y` and base_type is `typeof x`,
                 // we need to compare the actual types of y and x
-                let resolved_member_type = self.resolve_type_query_to_structural(member_type);
-                let resolved_base_type = self.resolve_type_query_to_structural(base_type);
+                let resolved_member_type = self.resolve_type_query_type(member_type);
+                let resolved_base_type = self.resolve_type_query_type(base_type);
 
                 // Check type compatibility - derived type must be assignable to base type
                 if !self.is_assignable_to(resolved_member_type, resolved_base_type) {
@@ -4163,7 +4190,7 @@ impl<'a> CheckerState<'a> {
                     type_args.truncate(base_type_params.len());
                 }
 
-                let substitution = TypeSubstitution::from_args(&base_type_params, &type_args);
+                let substitution = TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
                 for (member_name, member_type) in &derived_members {
                     let mut found = false;
