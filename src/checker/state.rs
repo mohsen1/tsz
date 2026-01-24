@@ -14,9 +14,9 @@
 //!
 //! Phase 7.5 integration - using solver type system for type checking.
 
-use crate::Arc;
 use crate::binder::BinderState;
 use crate::binder::{SymbolId, symbol_flags};
+use crate::Arc;
 use crate::checker::context::CheckerOptions;
 use crate::checker::{CheckerContext, EnclosingClassInfo};
 use crate::interner::Atom;
@@ -861,14 +861,9 @@ impl<'a> CheckerState<'a> {
                             // This is different from `as` which coerces the type.
                             self.ensure_application_symbols_resolved(expr_type);
                             self.ensure_application_symbols_resolved(asserted_type);
-                            if asserted_type != TypeId::ANY
-                                && !self.type_contains_error(asserted_type)
+                            if asserted_type != TypeId::ANY && !self.type_contains_error(asserted_type)
                                 && !self.is_assignable_to(expr_type, asserted_type)
-                                && !self.should_skip_weak_union_error(
-                                    expr_type,
-                                    asserted_type,
-                                    assertion.expression,
-                                )
+                                && !self.should_skip_weak_union_error(expr_type, asserted_type, assertion.expression)
                             {
                                 self.error_type_not_assignable_with_reason_at(
                                     expr_type,
@@ -1539,11 +1534,7 @@ impl<'a> CheckerState<'a> {
                         // Follow the alias
                         if let Some(ref import_module) = symbol.import_module {
                             let export_name = symbol.import_name.as_deref().unwrap_or(member_name);
-                            return self.resolve_reexported_member(
-                                import_module,
-                                export_name,
-                                lib_binders,
-                            );
+                            return self.resolve_reexported_member(import_module, export_name, lib_binders);
                         }
                     }
                 }
@@ -1562,9 +1553,7 @@ impl<'a> CheckerState<'a> {
         // Check for wildcard re-exports: `export * from 'bar'`
         if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
             for source_module in source_modules {
-                if let Some(sym_id) =
-                    self.resolve_reexported_member(source_module, member_name, lib_binders)
-                {
+                if let Some(sym_id) = self.resolve_reexported_member(source_module, member_name, lib_binders) {
                     return Some(sym_id);
                 }
             }
@@ -1582,19 +1571,13 @@ impl<'a> CheckerState<'a> {
             if let Some(file_reexports) = lib_binder.reexports.get(module_specifier) {
                 if let Some((source_module, original_name)) = file_reexports.get(member_name) {
                     let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                    return self.resolve_reexported_member(
-                        source_module,
-                        name_to_lookup,
-                        lib_binders,
-                    );
+                    return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
                 }
             }
             // Then check lib binder's wildcard re-exports
             if let Some(source_modules) = lib_binder.wildcard_reexports.get(module_specifier) {
                 for source_module in source_modules {
-                    if let Some(sym_id) =
-                        self.resolve_reexported_member(source_module, member_name, lib_binders)
-                    {
+                    if let Some(sym_id) = self.resolve_reexported_member(source_module, member_name, lib_binders) {
                         return Some(sym_id);
                     }
                 }
@@ -1972,9 +1955,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(parent_node) = self.ctx.arena.get(parent) {
                             if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
                                 if let Some(import) = self.ctx.arena.get_import_decl(parent_node) {
-                                    if let Some(module_node) =
-                                        self.ctx.arena.get(import.module_specifier)
-                                    {
+                                    if let Some(module_node) = self.ctx.arena.get(import.module_specifier) {
                                         // Found the module specifier node - use its span
                                         (module_node.pos, module_node.end - module_node.pos)
                                     } else {
@@ -2015,6 +1996,51 @@ impl<'a> CheckerState<'a> {
             format!("Cannot find module '{}'", module_specifier),
             diagnostic_codes::CANNOT_FIND_MODULE,
         );
+    }
+
+    pub(crate) fn heritage_name_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone());
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            return self.entity_name_text(idx);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            let left = self.heritage_name_text(access.expression)?;
+            let right = self
+                .ctx
+                .arena
+                .get(access.name_or_argument)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.clone())?;
+            let mut combined = String::with_capacity(left.len() + 1 + right.len());
+            combined.push_str(&left);
+            combined.push('.');
+            combined.push_str(&right);
+            return Some(combined);
+        }
+
+        // Handle keyword literals in heritage clauses (e.g., extends null, extends true)
+        match node.kind {
+            k if k == SyntaxKind::NullKeyword as u16 => return Some("null".to_string()),
+            k if k == SyntaxKind::TrueKeyword as u16 => return Some("true".to_string()),
+            k if k == SyntaxKind::FalseKeyword as u16 => return Some("false".to_string()),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => return Some("undefined".to_string()),
+            k if k == SyntaxKind::NumericLiteral as u16 => return Some("0".to_string()),
+            k if k == SyntaxKind::StringLiteral as u16 => return Some("0".to_string()),
+            _ => {}
+        }
+
+        None
     }
 
     pub(crate) fn apply_type_arguments_to_constructor_type(
@@ -2656,9 +2682,11 @@ impl<'a> CheckerState<'a> {
                 // Check if this symbol has an import_module (it's an imported namespace)
                 if let Some(ref module_specifier) = symbol.import_module {
                     // Try to resolve the member through the re-export chain
-                    if let Some(reexported_sym_id) =
-                        self.resolve_reexported_member(module_specifier, &right_name, &lib_binders)
-                    {
+                    if let Some(reexported_sym_id) = self.resolve_reexported_member(
+                        module_specifier,
+                        &right_name,
+                        &lib_binders
+                    ) {
                         member_sym_id_from_symbol = Some(reexported_sym_id);
                     }
                 }
@@ -2703,9 +2731,11 @@ impl<'a> CheckerState<'a> {
             if member_sym_id.is_none() {
                 // The symbol might be an imported namespace - check if it has an import_module
                 if let Some(ref module_specifier) = symbol.import_module {
-                    if let Some(reexported_sym_id) =
-                        self.resolve_reexported_member(module_specifier, &right_name, &lib_binders)
-                    {
+                    if let Some(reexported_sym_id) = self.resolve_reexported_member(
+                        module_specifier,
+                        &right_name,
+                        &lib_binders
+                    ) {
                         member_sym_id = Some(reexported_sym_id);
                     }
                 }
@@ -3972,6 +4002,9 @@ impl<'a> CheckerState<'a> {
     // Type Resolution - Specific Node Types
     // =========================================================================
 
+
+
+
     /// Get type of a symbol with caching and circular reference detection.
     ///
     /// This is the main entry point for resolving the type of symbols (variables,
@@ -4445,6 +4478,26 @@ impl<'a> CheckerState<'a> {
         (TypeId::ANY, Vec::new())
     }
 
+    pub(crate) fn is_catch_clause_variable_declaration(&self, var_decl_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(var_decl_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::CATCH_CLAUSE {
+            return false;
+        }
+        let Some(catch) = self.ctx.arena.get_catch_clause(parent_node) else {
+            return false;
+        };
+        catch.variable_declaration == var_decl_idx
+    }
+
     /// Infer a literal type from an initializer expression.
     ///
     /// This function attempts to infer the most specific literal type from an
@@ -4466,8 +4519,65 @@ impl<'a> CheckerState<'a> {
     /// - `let y = "hello"` infers type `string` (widened)
     /// - This function enables the const behavior
     ///
+    pub(crate) fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
+        use crate::scanner::SyntaxKind;
 
-    pub(crate) fn contextual_type_allows_literal(&mut self, ctx_type: TypeId, literal_type: TypeId) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return None;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(node)?;
+                Some(self.ctx.types.literal_string(&lit.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.ctx.arena.get_literal(node)?;
+                lit.value.map(|value| self.ctx.types.literal_number(value))
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(self.ctx.types.literal_boolean(true)),
+            k if k == SyntaxKind::FalseKeyword as u16 => {
+                Some(self.ctx.types.literal_boolean(false))
+            }
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.ctx.arena.get_unary_expr(node)?;
+                let op = unary.operator;
+                if op != SyntaxKind::MinusToken as u16 && op != SyntaxKind::PlusToken as u16 {
+                    return None;
+                }
+                let operand = unary.operand;
+                let Some(operand_node) = self.ctx.arena.get(operand) else {
+                    return None;
+                };
+                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return None;
+                }
+                let lit = self.ctx.arena.get_literal(operand_node)?;
+                let value = lit.value?;
+                let value = if op == SyntaxKind::MinusToken as u16 {
+                    -value
+                } else {
+                    value
+                };
+                Some(self.ctx.types.literal_number(value))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
+        let ctx_type = self.ctx.contextual_type?;
+        if self.contextual_type_allows_literal(ctx_type, literal_type) {
+            Some(literal_type)
+        } else {
+            None
+        }
+    }
+
+    fn contextual_type_allows_literal(&mut self, ctx_type: TypeId, literal_type: TypeId) -> bool {
         let mut visited = FxHashSet::default();
         self.contextual_type_allows_literal_inner(ctx_type, literal_type, &mut visited)
     }
@@ -5375,6 +5485,75 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn namespace_has_type_only_member(
+        &self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> bool {
+        use crate::solver::{SymbolRef, TypeKey};
+
+        let Some(TypeKey::Ref(SymbolRef(sym_id))) = self.ctx.types.lookup(object_type) else {
+            return false;
+        };
+
+        let symbol = match self.ctx.binder.get_symbol(SymbolId(sym_id)) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        if symbol.flags & symbol_flags::MODULE == 0 {
+            return false;
+        }
+
+        let exports = match symbol.exports.as_ref() {
+            Some(exports) => exports,
+            None => return false,
+        };
+
+        let member_id = match exports.get(property_name) {
+            Some(member_id) => member_id,
+            None => return false,
+        };
+
+        let member_symbol = match self.ctx.binder.get_symbol(member_id) {
+            Some(member_symbol) => member_symbol,
+            None => return false,
+        };
+
+        let has_value = (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
+        let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+        has_type && !has_value
+    }
+
+    pub(crate) fn alias_resolves_to_type_only(&self, sym_id: SymbolId) -> bool {
+        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol,
+            None => return false,
+        };
+
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return false;
+        }
+        if symbol.is_type_only {
+            return true;
+        }
+
+        let mut visited = Vec::new();
+        let target = match self.resolve_alias_symbol(sym_id, &mut visited) {
+            Some(target) => target,
+            None => return false,
+        };
+
+        let target_symbol = match self.ctx.binder.get_symbol(target) {
+            Some(target_symbol) => target_symbol,
+            None => return false,
+        };
+
+        let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
+        let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
+        has_type && !has_value
+    }
+
     fn symbol_is_value_only(&self, sym_id: SymbolId) -> bool {
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(symbol) => symbol,
@@ -5414,6 +5593,17 @@ impl<'a> CheckerState<'a> {
         };
 
         self.symbol_is_value_only(target)
+    }
+
+    /// Check if a symbol is type-only (from `import type`).
+    ///
+    /// This is used to allow type-only imports in type positions while
+    /// preventing their use in value positions.
+    pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId) -> bool {
+        match self.ctx.binder.get_symbol(sym_id) {
+            Some(symbol) => symbol.is_type_only,
+            None => false,
+        }
     }
 
     pub(crate) fn get_type_of_private_property_access(
@@ -5649,6 +5839,110 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .any(|member| self.is_array_like_type(*member))
             }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn should_report_no_index_signature(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> bool {
+        use crate::solver::TypeKey;
+
+        if object_type == TypeId::ANY
+            || object_type == TypeId::UNKNOWN
+            || object_type == TypeId::ERROR
+        {
+            return false;
+        }
+
+        if index_type == TypeId::ANY || index_type == TypeId::UNKNOWN {
+            return false;
+        }
+
+        let index_key_kind = self.get_index_key_kind(index_type);
+        let wants_number = literal_index.is_some()
+            || index_key_kind
+                .as_ref()
+                .is_some_and(|(_, wants_number)| *wants_number);
+        let wants_string = index_key_kind
+            .as_ref()
+            .is_some_and(|(wants_string, _)| *wants_string);
+        if !wants_number && !wants_string {
+            return false;
+        }
+
+        let object_key = match self.ctx.types.lookup(object_type) {
+            Some(TypeKey::ReadonlyType(inner)) => self.ctx.types.lookup(inner),
+            other => other,
+        };
+
+        !self.is_element_indexable_key(&object_key, wants_string, wants_number)
+    }
+
+    fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
+        use crate::solver::{IntrinsicKind, TypeKey};
+
+        // Use utility methods for literal type checks
+        if self.is_string_literal_type(index_type) {
+            return Some((true, false));
+        }
+        if self.is_number_literal_type(index_type) {
+            return Some((false, true));
+        }
+
+        match self.ctx.types.lookup(index_type)? {
+            TypeKey::Intrinsic(IntrinsicKind::String) => Some((true, false)),
+            TypeKey::Intrinsic(IntrinsicKind::Number) => Some((false, true)),
+            TypeKey::Union(_) => {
+                let members = self.get_union_members(index_type);
+                let mut wants_string = false;
+                let mut wants_number = false;
+                for member in members {
+                    let (member_string, member_number) = self.get_index_key_kind(member)?;
+                    wants_string |= member_string;
+                    wants_number |= member_number;
+                }
+                Some((wants_string, wants_number))
+            }
+            _ => None,
+        }
+    }
+
+    fn is_element_indexable_key(
+        &self,
+        object_key: &Option<crate::solver::TypeKey>,
+        wants_string: bool,
+        wants_number: bool,
+    ) -> bool {
+        use crate::solver::{IntrinsicKind, LiteralValue, TypeKey};
+
+        match object_key {
+            Some(TypeKey::Array(_)) | Some(TypeKey::Tuple(_)) => wants_number,
+            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(*shape_id);
+                let has_string = shape.string_index.is_some();
+                let has_number = shape.number_index.is_some();
+                (wants_string && has_string) || (wants_number && (has_number || has_string))
+            }
+            Some(TypeKey::Union(members)) => {
+                let members = self.ctx.types.type_list(*members);
+                members.iter().all(|member| {
+                    let key = self.ctx.types.lookup(*member);
+                    self.is_element_indexable_key(&key, wants_string, wants_number)
+                })
+            }
+            Some(TypeKey::Intersection(members)) => {
+                let members = self.ctx.types.type_list(*members);
+                members.iter().any(|member| {
+                    let key = self.ctx.types.lookup(*member);
+                    self.is_element_indexable_key(&key, wants_string, wants_number)
+                })
+            }
+            Some(TypeKey::Literal(LiteralValue::String(_))) => wants_number,
+            Some(TypeKey::Intrinsic(IntrinsicKind::String)) => wants_number,
             _ => false,
         }
     }
@@ -6042,6 +6336,59 @@ impl<'a> CheckerState<'a> {
         self.constructor_access_level(type_id, env, &mut visited)
     }
 
+    /// Check if there's a constructor accessibility mismatch between source and target types.
+    pub(crate) fn constructor_accessibility_mismatch(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        env: Option<&crate::solver::TypeEnvironment>,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_level = self.constructor_access_level_for_type(source, env);
+        let target_level = self.constructor_access_level_for_type(target, env);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level) {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    /// Check constructor accessibility mismatch for assignment expressions.
+    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
+        &self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        let source_sym = self.class_symbol_from_expression(right_idx)?;
+        let target_sym = self.class_symbol_from_type_node_from_expr(left_idx)?;
+        let source_level = self.class_constructor_access_level(source_sym);
+        let target_level = self.class_constructor_access_level(target_sym);
+        if source_level.is_none() && target_level.is_none() {
+            return None;
+        }
+        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level) {
+            return Some((source_level, target_level));
+        }
+        None
+    }
+
+    /// Get class symbol from type node of an expression.
+    fn class_symbol_from_type_node_from_expr(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return None;
+        };
+        let identifier_kind = SyntaxKind::Identifier as u16;
+        if node.kind == identifier_kind {
+            let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if symbol.flags & symbol_flags::CLASS != 0 {
+                return Some(sym_id);
+            }
+        }
+        None
+    }
+
     fn constructor_accessibility_override(
         &self,
         source: TypeId,
@@ -6085,6 +6432,64 @@ impl<'a> CheckerState<'a> {
         self.class_symbol_from_expression(query.expr_name)
     }
 
+    /// Get the name for a constructor access level.
+    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
+        match level {
+            Some(MemberAccessLevel::Private) => "private",
+            Some(MemberAccessLevel::Protected) => "protected",
+            None => "public",
+        }
+    }
+
+    /// Check if a token is an assignment operator.
+    pub(crate) fn is_assignment_operator(&self, token: u16) -> bool {
+        use crate::scanner::SyntaxKind;
+        token == SyntaxKind::EqualsToken as u16
+            || token == SyntaxKind::PlusEqualsToken as u16
+            || token == SyntaxKind::MinusEqualsToken as u16
+            || token == SyntaxKind::AsteriskEqualsToken as u16
+            || token == SyntaxKind::SlashEqualsToken as u16
+            || token == SyntaxKind::PercentEqualsToken as u16
+            || token == SyntaxKind::LessThanLessThanEqualsToken as u16
+            || token == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+            || token == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+            || token == SyntaxKind::AmpersandEqualsToken as u16
+            || token == SyntaxKind::BarEqualsToken as u16
+            || token == SyntaxKind::CaretEqualsToken as u16
+            || token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || token == SyntaxKind::BarBarEqualsToken as u16
+            || token == SyntaxKind::QuestionQuestionEqualsToken as u16
+    }
+
+    /// Get literal key union from a type (for index access type checking).
+    pub(crate) fn get_literal_key_union_from_type(
+        &self,
+        _type_id: TypeId,
+    ) -> Option<(Vec<String>, Vec<f64>)> {
+        // TODO: Implement proper literal key extraction
+        None
+    }
+
+    /// Get element access type for literal string keys.
+    pub(crate) fn get_element_access_type_for_literal_keys(
+        &self,
+        _obj_type: TypeId,
+        _keys: &[String],
+    ) -> Option<TypeId> {
+        // TODO: Implement proper literal key element access
+        None
+    }
+
+    /// Get element access type for literal number keys.
+    pub(crate) fn get_element_access_type_for_literal_number_keys(
+        &self,
+        _obj_type: TypeId,
+        _keys: &[f64],
+    ) -> Option<TypeId> {
+        // TODO: Implement proper literal number key element access
+        None
+    }
+
     pub(crate) fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
         let Some(node) = self.ctx.arena.get(left_idx) else {
             return None;
@@ -6122,10 +6527,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(crate) fn class_constructor_access_level(
-        &self,
-        sym_id: SymbolId,
-    ) -> Option<MemberAccessLevel> {
+    pub(crate) fn class_constructor_access_level(&self, sym_id: SymbolId) -> Option<MemberAccessLevel> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
@@ -8421,6 +8823,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.intersection(types)
     }
 
+
     // =========================================================================
     // Type Node Resolution
     // =========================================================================
@@ -9496,26 +9899,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let has_type_annotation = !var_decl.type_annotation.is_none();
-            let declared = if has_type_annotation {
+            let declared = if !var_decl.type_annotation.is_none() {
                 self.get_type_from_type_node(var_decl.type_annotation)
             } else {
                 element_type
             };
-
-            // Check assignability when there's a type annotation
-            // The element_type must be assignable to the declared type
-            if has_type_annotation && !self.type_contains_error(declared) {
-                if !self.is_assignable_to(element_type, declared)
-                    && !self.should_skip_weak_union_error(element_type, declared, var_decl.name)
-                {
-                    self.error_type_not_assignable_with_reason_at(
-                        element_type,
-                        declared,
-                        var_decl.name,
-                    );
-                }
-            }
 
             // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
             if let Some(name_node) = self.ctx.arena.get(var_decl.name)
@@ -10256,8 +10644,8 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use crate::parser::syntax_kind_ext;
         use crate::solver::TypeKey;
+        use crate::parser::syntax_kind_ext;
 
         // Only check if target is a tuple type
         let target_elements = match self.ctx.types.lookup(target) {
@@ -10308,11 +10696,7 @@ impl<'a> CheckerState<'a> {
 
             // Check if the element is assignable to the target tuple element type
             if !self.is_assignable_to(elem_type, target_elem.type_id)
-                && !self.should_skip_weak_union_error(
-                    elem_type,
-                    target_elem.type_id,
-                    array_elem_idx,
-                )
+                && !self.should_skip_weak_union_error(elem_type, target_elem.type_id, array_elem_idx)
             {
                 self.error_type_not_assignable_with_reason_at(
                     elem_type,
@@ -10344,15 +10728,8 @@ impl<'a> CheckerState<'a> {
     /// - `elem_type`: The type of the excess element
     /// - `target_type`: The target tuple type
     /// - `idx`: The node index for error reporting
-    fn error_excess_array_literal_element_at(
-        &mut self,
-        elem_type: TypeId,
-        target_type: TypeId,
-        idx: NodeIndex,
-    ) {
-        use crate::checker::types::diagnostics::{
-            diagnostic_codes, diagnostic_messages, format_message,
-        };
+    fn error_excess_array_literal_element_at(&mut self, elem_type: TypeId, target_type: TypeId, idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let elem_str = self.format_type(elem_type);
         let target_str = self.format_type(target_type);
@@ -10420,10 +10797,9 @@ impl<'a> CheckerState<'a> {
                 let shape = self.ctx.types.object_shape(shape_id);
 
                 // Check if property exists
-                let property_exists = shape
-                    .properties
-                    .iter()
-                    .any(|p| self.ctx.types.resolve_atom(p.name) == *prop_name);
+                let property_exists = shape.properties.iter().any(|p| {
+                    self.ctx.types.resolve_atom(p.name).as_str() == prop_name
+                });
 
                 // If property doesn't exist and there's no string index signature,
                 // this might be an error (but we skip it here to avoid duplicate errors)
@@ -10696,9 +11072,8 @@ impl<'a> CheckerState<'a> {
 
         if let Some((string_keys, number_keys)) = self.get_literal_key_union_from_type(index_type) {
             for key in string_keys {
-                let name = self.ctx.types.resolve_atom(key);
-                if self.is_property_readonly(object_type, &name) {
-                    return Some(name);
+                if self.is_property_readonly(object_type, &key) {
+                    return Some(key);
                 }
             }
 
@@ -12424,10 +12799,7 @@ impl<'a> CheckerState<'a> {
             let init_type = self.get_type_of_node(prop.initializer);
             self.ctx.contextual_type = prev_context;
 
-            if declared_type != TypeId::ANY
-                && !self.type_contains_error(declared_type)
-                && !self.is_assignable_to(init_type, declared_type)
-            {
+            if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) && !self.is_assignable_to(init_type, declared_type) {
                 self.error_type_not_assignable_with_reason_at(
                     init_type,
                     declared_type,
