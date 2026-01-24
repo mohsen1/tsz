@@ -109,6 +109,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
             }
+            // Optimization: For union sources, check if any member matches directly
+            // This can help reduce false positives when checking (A | B) <: (A | B | C)
+            if let TypeKey::Union(source_members) = source_key {
+                let source_members_list = self.interner.type_list(*source_members);
+                if source_members_list.iter().any(|&m| m == member) {
+                    return SubtypeResult::True;
+                }
+            }
             if self.check_subtype(source, member).is_true() {
                 return SubtypeResult::True;
             }
