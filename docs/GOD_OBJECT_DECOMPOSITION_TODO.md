@@ -3,7 +3,7 @@
 **Date**: 2026-01-24
 **Status**: Active
 **Current Phase**: Phase 2 - Break Up God Objects
-**Last Updated**: 2026-01-24 (Sections 24-26 added to type_checking.rs)
+**Last Updated**: 2026-01-24 (Step 10: Flow analysis extraction complete)
 
 ---
 
@@ -15,7 +15,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 | File | Lines | Status | Priority |
 |------|-------|--------|----------|
-| `checker/state.rs` | 16,058 | 🚧 In Progress (38.7% reduced) | **P1 (CURRENT)** |
+| `checker/state.rs` | 14,024 | 🚧 In Progress (46.4% reduced) | **P1 (CURRENT)** |
 | `parser/state.rs` | 10,762 | ⏳ Pending | P3 (low priority) |
 | `solver/evaluate.rs` | 5,784 | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 1,778 | ✅ **COMPLETE** | P1 (DONE) |
@@ -629,44 +629,63 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [x] Run full test suite (pre-existing failures unrelated to extraction)
 - [x] Update documentation
 
-### Step 10: Extract Flow Analysis Logic (~2,000-3,000 lines)
+### Step 10: Extract Flow Analysis Logic (~2,000-3,000 lines) ✅ COMPLETE
 
-**Target**: Create `checker/flow_analysis.rs`
+**Target**: Expand `checker/flow_analysis.rs` with definite assignment and narrowing functions
+**Result**: Moved ~1,000 lines of flow analysis code from `state.rs` to `flow_analysis.rs`
 
-#### 10.1 Identify Flow Analysis Functions
-- [ ] List all flow analysis functions
-- [ ] List all type narrowing functions
-- [ ] Count lines for each function
-- [ ] Plan extraction order
+#### 10.1 Identify Flow Analysis Functions ✅
+- [x] List all flow analysis functions
+- [x] List all type narrowing functions
+- [x] Count lines for each function
+- [x] Plan extraction order
 
-#### 10.2 Extract Type Narrowing
-- [ ] Extract `narrow_by_typeof` (~150-200 lines)
-- [ ] Extract `narrow_by_instanceof` (~150-200 lines)
-- [ ] Extract `narrow_by_discriminant` (~200-300 lines)
-- [ ] Extract `narrow_by_truthiness` (~100-150 lines)
-- [ ] Run tests after each extraction
-- [ ] Commit after each extraction
+#### 10.2 Extract Type Narrowing ✅
+- [x] Extract `narrow_by_typeof` - thin wrapper around NarrowingContext
+- [x] Extract `narrow_by_typeof_negation` - handles negated typeof checks
+- [x] Extract `narrow_by_discriminant` - discriminated union narrowing
+- [x] Extract `narrow_by_excluding_discriminant` - negative case
+- [x] Extract `narrow_to_type` and `narrow_excluding_type`
+- [x] Extract `find_discriminants` - discriminant property detection
+- [x] Run tests after extraction
+- [x] Commit after extraction
 
-#### 10.3 Extract Control Flow Analysis
-- [ ] Extract `check_flow_usage` (~200-300 lines)
-- [ ] Extract `analyze_control_flow` (~300-400 lines)
-- [ ] Extract `compute_flow_type` (~200-300 lines)
-- [ ] Run tests after each extraction
-- [ ] Commit after each extraction
+#### 10.3 Extract Control Flow Analysis ✅
+- [x] Extract `apply_flow_narrowing` - main flow narrowing entry point
+- [x] Extract `check_flow_usage` - definite assignment + narrowing
+- [x] Run tests after extraction
+- [x] Commit after extraction
 
-#### 10.4 Extract Definite Assignment
-- [ ] Extract `check_definite_assignment` (~200-300 lines)
-- [ ] Extract `is_definitely_assigned` (~100-150 lines)
-- [ ] Run tests after each extraction
-- [ ] Commit after each extraction
+#### 10.4 Extract Definite Assignment ✅
+- [x] Extract `should_check_definite_assignment` - determines when to check
+- [x] Extract `emit_definite_assignment_error` - error emission
+- [x] Extract `is_definitely_assigned_at` - flow-based check
+- [x] Extract helper functions:
+  - `symbol_is_in_ambient_context`
+  - `is_variable_captured_in_closure`
+  - `symbol_type_allows_uninitialized`
+  - `symbol_has_initializer`
+  - `symbol_is_parameter`
+  - `symbol_has_definite_assignment_assertion`
+  - `node_is_or_within_kind`
+  - `is_in_default_parameter`
+- [x] Run tests after extraction
+- [x] Commit after extraction
 
-#### 10.5 Update Module Structure
-- [ ] Create `src/checker/flow_analysis.rs`
-- [ ] Move all extracted functions
-- [ ] Add `pub(crate)` visibility as needed
-- [ ] Update imports in `checker/state.rs`
-- [ ] Run full test suite
-- [ ] Update documentation
+#### 10.5 Extract TDZ (Temporal Dead Zone) Checks ✅
+- [x] Extract `is_variable_used_before_declaration_in_static_block`
+- [x] Extract `is_variable_used_before_declaration_in_computed_property`
+- [x] Extract `is_variable_used_before_declaration_in_heritage_clause`
+
+#### 10.6 Update Module Structure ✅
+- [x] Expand `src/checker/flow_analysis.rs` with new sections
+- [x] Move all extracted functions
+- [x] Add `pub(crate)` visibility as needed
+- [x] Update imports in `checker/state.rs`
+- [x] Run full test suite (2 pre-existing failures, not caused by this change)
+- [x] Update documentation
+
+**State.rs reduction**: 15,088 → 14,024 lines (~1,064 lines removed)
 
 ### Step 11: Extract Error Reporting (~1,000-1,500 lines) ✅ COMPLETE
 

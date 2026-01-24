@@ -3007,6 +3007,7 @@ impl<'a> CheckerState<'a> {
     /// - `func_idx`: The function node index
     ///
     /// Returns true if the function is inside a class declaration.
+    #[allow(dead_code)]
     pub(crate) fn is_class_method(&self, func_idx: NodeIndex) -> bool {
         // Walk up the parent chain looking for ClassDeclaration nodes
         let mut current = func_idx;
@@ -3072,6 +3073,7 @@ impl<'a> CheckerState<'a> {
     /// - `var_idx`: The variable declaration node index
     ///
     /// Returns true if the declaration is in an ambient context.
+    #[allow(dead_code)]
     pub(crate) fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
         use crate::parser::node_flags;
 
@@ -5065,6 +5067,7 @@ impl<'a> CheckerState<'a> {
     /// - `func_idx`: The function node to check
     ///
     /// Returns true if async validation should be performed.
+    #[allow(dead_code)]
     pub(crate) fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
         // Enhanced validation to catch more TS2705 cases (we have 34 missing)
         // Need to be more liberal while maintaining precision
@@ -5117,6 +5120,7 @@ impl<'a> CheckerState<'a> {
     /// considered a module if it contains any import or export declarations.
     ///
     /// Returns true if the file is a module.
+    #[allow(dead_code)]
     pub(crate) fn is_file_module(&self) -> bool {
         // Get the root source file node
         let Some(root_node) = self.ctx.arena.nodes.last() else {
@@ -5176,6 +5180,7 @@ impl<'a> CheckerState<'a> {
     /// - `node`: The node to check (must be a declaration with modifiers)
     ///
     /// Returns true if the node has an export modifier.
+    #[allow(dead_code)]
     pub(crate) fn has_export_modifier_on_modifiers(
         &self,
         node: &crate::parser::node::Node,
@@ -7406,250 +7411,4 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // Section 44: Definite Assignment Utilities
-    // ------------------------------------------
-
-    /// Check if a variable is definitely assigned at a given node.
-    pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
-        let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => return false, // No flow info means variable is not definitely assigned
-        };
-        let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types);
-        analyzer.is_definitely_assigned(idx, flow_node)
-    }
-
-    /// Check if a node is within a parameter's default value initializer.
-    /// This is used to detect `await` used in default parameter values (TS2524).
-    pub(crate) fn is_in_default_parameter(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            let ext = match self.ctx.arena.get_extended(current) {
-                Some(ext) => ext,
-                None => return false,
-            };
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                return false;
-            }
-
-            // Check if parent is a parameter and we're in its initializer
-            if let Some(parent_node) = self.ctx.arena.get(parent_idx) {
-                if parent_node.kind == syntax_kind_ext::PARAMETER
-                    && let Some(param) = self.ctx.arena.get_parameter(parent_node)
-                {
-                    // Check if current node is within the initializer
-                    if !param.initializer.is_none() {
-                        let init_idx = param.initializer;
-                        // Check if idx is within the initializer subtree
-                        if self.is_node_within(idx, init_idx) {
-                            return true;
-                        }
-                    }
-                }
-                // If we've reached a function/class body, stop searching
-                // (we're no longer in a parameter initializer)
-                if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
-                    || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
-                {
-                    return false;
-                }
-            }
-
-            current = parent_idx;
-        }
-    }
-
-    // Section 45: Element Access Utilities
-    // -------------------------------------
-
-    /// Get literal key union from a type (string and/or number literals).
-    pub(crate) fn get_literal_key_union_from_type(
-        &self,
-        index_type: TypeId,
-    ) -> Option<(Vec<Atom>, Vec<f64>)> {
-        use crate::solver::{LiteralValue, TypeKey};
-
-        match self.ctx.types.lookup(index_type)? {
-            TypeKey::Literal(LiteralValue::String(atom)) => Some((vec![atom], Vec::new())),
-            TypeKey::Literal(LiteralValue::Number(num)) => Some((Vec::new(), vec![num.0])),
-            TypeKey::Union(members) => {
-                let members = self.ctx.types.type_list(members);
-                let mut string_keys = Vec::with_capacity(members.len());
-                let mut number_keys = Vec::new();
-                for &member in members.iter() {
-                    match self.ctx.types.lookup(member) {
-                        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
-                            string_keys.push(atom)
-                        }
-                        Some(TypeKey::Literal(LiteralValue::Number(num))) => {
-                            number_keys.push(num.0)
-                        }
-                        _ => return None,
-                    }
-                }
-                Some((string_keys, number_keys))
-            }
-            _ => None,
-        }
-    }
-
-    /// Get element access type for literal string keys.
-    pub(crate) fn get_element_access_type_for_literal_keys(
-        &mut self,
-        object_type: TypeId,
-        keys: &[Atom],
-    ) -> Option<TypeId> {
-        use crate::solver::{PropertyAccessResult, QueryDatabase};
-
-        if keys.is_empty() {
-            return None;
-        }
-
-        let numeric_as_index = self.is_array_like_type(object_type);
-        let mut types = Vec::with_capacity(keys.len());
-
-        for &key in keys {
-            let name = self.ctx.types.resolve_atom(key);
-            if numeric_as_index && let Some(index) = self.get_numeric_index_from_string(&name) {
-                let element_type =
-                    self.get_element_access_type(object_type, TypeId::NUMBER, Some(index));
-                types.push(element_type);
-                continue;
-            }
-
-            match self.ctx.types.property_access_type(object_type, &name) {
-                PropertyAccessResult::Success { type_id, .. } => types.push(type_id),
-                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                    types.push(property_type.unwrap_or(TypeId::UNKNOWN));
-                }
-                PropertyAccessResult::IsUnknown => return None,
-                PropertyAccessResult::PropertyNotFound { .. } => return None,
-            }
-        }
-
-        if types.len() == 1 {
-            Some(types[0])
-        } else {
-            Some(self.ctx.types.union(types))
-        }
-    }
-
-    /// Get element access type for literal number keys.
-    pub(crate) fn get_element_access_type_for_literal_number_keys(
-        &mut self,
-        object_type: TypeId,
-        keys: &[f64],
-    ) -> Option<TypeId> {
-        if keys.is_empty() {
-            return None;
-        }
-
-        let mut types = Vec::with_capacity(keys.len());
-        for &value in keys {
-            if let Some(index) = self.get_numeric_index_from_number(value) {
-                types.push(self.get_element_access_type(object_type, TypeId::NUMBER, Some(index)));
-            } else {
-                return Some(self.get_element_access_type(object_type, TypeId::NUMBER, None));
-            }
-        }
-
-        if types.len() == 1 {
-            Some(types[0])
-        } else {
-            Some(self.ctx.types.union(types))
-        }
-    }
-
-    // Section 46: Constructor Accessibility Utilities
-    // ----------------------------------------------
-
-    /// Get the access name for a constructor level.
-    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
-        match level {
-            Some(MemberAccessLevel::Private) => "private",
-            Some(MemberAccessLevel::Protected) => "protected",
-            None => "public",
-        }
-    }
-
-    /// Check if there's a constructor accessibility mismatch.
-    pub(crate) fn constructor_accessibility_mismatch(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        env: Option<&crate::solver::TypeEnvironment>,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_level = self.constructor_access_level_for_type(source, env);
-        let target_level = self.constructor_access_level_for_type(target, env);
-
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-
-        let source_rank = Self::constructor_access_rank(source_level);
-        let target_rank = Self::constructor_access_rank(target_level);
-        if source_rank > target_rank {
-            return Some((source_level, target_level));
-        }
-        None
-    }
-
-    /// Check if there's a constructor accessibility mismatch for assignment.
-    pub(crate) fn constructor_accessibility_mismatch_for_assignment(
-        &self,
-        left_idx: NodeIndex,
-        right_idx: NodeIndex,
-    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        let source_sym = self.class_symbol_from_expression(right_idx)?;
-        let target_sym = self.assignment_target_class_symbol(left_idx)?;
-        let source_level = self.class_constructor_access_level(source_sym);
-        let target_level = self.class_constructor_access_level(target_sym);
-        if source_level.is_none() && target_level.is_none() {
-            return None;
-        }
-        if Self::constructor_access_rank(source_level) > Self::constructor_access_rank(target_level)
-        {
-            return Some((source_level, target_level));
-        }
-        None
-    }
-
-    // Section 47: Node Checking Utilities
-    // ----------------------------------
-
-    /// Check if an operator token is an assignment operator.
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
-        matches!(
-            operator,
-            k if k == SyntaxKind::EqualsToken as u16
-                || k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-        )
-    }
 }
