@@ -130,6 +130,62 @@ impl<'a> CheckerState<'a> {
         right_type
     }
 
+    /// Check if an operand type is valid for arithmetic operations.
+    ///
+    /// Returns true if the type is number, bigint, any, or an enum type.
+    /// This is used to validate operands for TS2362/TS2363 errors.
+    fn is_arithmetic_operand(&self, type_id: TypeId) -> bool {
+        use crate::solver::BinaryOpEvaluator;
+        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+        evaluator.is_arithmetic_operand(type_id)
+    }
+
+    /// Check and emit TS2362/TS2363 errors for arithmetic operations.
+    ///
+    /// For operators like -, *, /, %, **, -=, *=, /=, %=, **=,
+    /// validates that operands are of type number, bigint, any, or enum.
+    /// Emits appropriate errors when operands are invalid.
+    fn check_arithmetic_operands(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        left_type: TypeId,
+        right_type: TypeId,
+    ) {
+        use crate::checker::types::diagnostics::diagnostic_codes;
+
+        let left_is_valid = self.is_arithmetic_operand(left_type);
+        let right_is_valid = self.is_arithmetic_operand(right_type);
+
+        if !left_is_valid {
+            if let Some(loc) = self.get_source_location(left_idx) {
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                    category: DiagnosticCategory::Error,
+                    message_text: "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+            }
+        }
+
+        if !right_is_valid {
+            if let Some(loc) = self.get_source_location(right_idx) {
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::RIGHT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                    category: DiagnosticCategory::Error,
+                    message_text: "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+            }
+        }
+    }
+
     /// Check a compound assignment expression (+=, &&=, ??=, etc.).
     ///
     /// Compound assignments have special type computation rules:
@@ -164,6 +220,34 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(left_type);
 
         self.check_readonly_assignment(left_idx, expr_idx);
+
+        // Check arithmetic operands for compound arithmetic assignments
+        // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
+        let is_arithmetic_compound = matches!(
+            operator,
+            k if k == SyntaxKind::MinusEqualsToken as u16
+                || k == SyntaxKind::AsteriskEqualsToken as u16
+                || k == SyntaxKind::SlashEqualsToken as u16
+                || k == SyntaxKind::PercentEqualsToken as u16
+                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+        );
+        if is_arithmetic_compound {
+            self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+        }
+
+        // Check bitwise compound assignments: &=, |=, ^=, <<=, >>=, >>>=
+        let is_bitwise_compound = matches!(
+            operator,
+            k if k == SyntaxKind::AmpersandEqualsToken as u16
+                || k == SyntaxKind::BarEqualsToken as u16
+                || k == SyntaxKind::CaretEqualsToken as u16
+                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
+        );
+        if is_bitwise_compound {
+            self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
+        }
 
         let result_type = self.compound_assignment_result_type(left_type, right_type, operator);
         let is_logical_assignment = matches!(
