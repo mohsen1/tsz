@@ -20,6 +20,9 @@ use std::cell::RefCell;
 #[cfg(test)]
 use crate::solver::TypeInterner;
 
+/// Maximum number of type lowering operations to prevent infinite loops
+const MAX_LOWERING_OPERATIONS: u32 = 100_000;
+
 /// Type lowering context.
 /// Converts AST type nodes into interned TypeIds.
 pub struct TypeLowering<'a> {
@@ -31,10 +34,10 @@ pub struct TypeLowering<'a> {
     /// Optional value resolver for typeof queries.
     value_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
     type_param_scopes: RefCell<Vec<Vec<(Atom, TypeId)>>>,
-    /// Current recursion depth for type resolution.
-    depth: RefCell<u32>,
-    /// Whether depth limit was exceeded.
-    depth_exceeded: RefCell<bool>,
+    /// Operation counter to prevent infinite loops
+    operations: RefCell<u32>,
+    /// Whether the operation limit has been exceeded
+    limit_exceeded: RefCell<bool>,
 }
 
 struct InterfaceParts {
@@ -177,9 +180,6 @@ impl InterfaceParts {
 }
 
 impl<'a> TypeLowering<'a> {
-    /// Maximum depth for recursive type lowering to prevent stack overflow.
-    const MAX_TYPE_LOWERING_DEPTH: u32 = 100;
-
     /// Maximum iterations for tree-walking loops to prevent infinite loops.
     const MAX_TREE_WALK_ITERATIONS: usize = 10_000;
 
@@ -190,8 +190,8 @@ impl<'a> TypeLowering<'a> {
             type_resolver: None,
             value_resolver: None,
             type_param_scopes: RefCell::new(Vec::new()),
-            depth: RefCell::new(0),
-            depth_exceeded: RefCell::new(false),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
         }
     }
 
@@ -208,8 +208,8 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(resolver),
             value_resolver: Some(resolver),
             type_param_scopes: RefCell::new(Vec::new()),
-            depth: RefCell::new(0),
-            depth_exceeded: RefCell::new(false),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
         }
     }
 
@@ -226,43 +226,30 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(type_resolver),
             value_resolver: Some(value_resolver),
             type_param_scopes: RefCell::new(Vec::new()),
-            depth: RefCell::new(0),
-            depth_exceeded: RefCell::new(false),
+            operations: RefCell::new(0),
+            limit_exceeded: RefCell::new(false),
         }
     }
 
-    /// Initialize with existing type parameter bindings.
-    /// These are added to a new scope that persists for the lifetime of the TypeLowering.
-    pub fn with_type_param_bindings(mut self, bindings: Vec<(Atom, TypeId)>) -> Self {
-        if !bindings.is_empty() {
-            self.type_param_scopes = RefCell::new(vec![bindings]);
+    /// Check if the operation limit has been exceeded
+    fn check_limit(&self) -> bool {
+        if *self.limit_exceeded.borrow() {
+            return true;
         }
-        self
+        let mut ops = self.operations.borrow_mut();
+        *ops += 1;
+        if *ops > MAX_LOWERING_OPERATIONS {
+            *self.limit_exceeded.borrow_mut() = true;
+            return true;
+        }
+        false
     }
 
-    /// Increment the recursion depth and check if limit exceeded.
-    /// Returns true if depth is still within limits, false if exceeded.
-    fn increment_depth(&self) -> bool {
-        let mut depth = self.depth.borrow_mut();
-        if *depth >= Self::MAX_TYPE_LOWERING_DEPTH {
-            *self.depth_exceeded.borrow_mut() = true;
-            return false;
-        }
-        *depth += 1;
-        true
-    }
-
-    /// Decrement the recursion depth.
-    fn decrement_depth(&self) {
-        let mut depth = self.depth.borrow_mut();
-        if *depth > 0 {
-            *depth -= 1;
-        }
-    }
-
-    /// Check if depth limit was exceeded.
-    fn is_depth_exceeded(&self) -> bool {
-        *self.depth_exceeded.borrow()
+    /// Reset the operation counter (for testing purposes)
+    #[cfg(test)]
+    fn reset_operations(&self) {
+        *self.operations.borrow_mut() = 0;
+        *self.limit_exceeded.borrow_mut() = false;
     }
 
     pub fn seed_type_params(&self, params: &[(Atom, TypeId)]) {
@@ -273,6 +260,15 @@ impl<'a> TypeLowering<'a> {
         for (name, type_id) in params {
             self.add_type_param_binding(*name, *type_id);
         }
+    }
+
+    /// Initialize with existing type parameter bindings.
+    /// These are added to a new scope that persists for the lifetime of the TypeLowering.
+    pub fn with_type_param_bindings(mut self, bindings: Vec<(Atom, TypeId)>) -> Self {
+        if !bindings.is_empty() {
+            self.type_param_scopes = RefCell::new(vec![bindings]);
+        }
+        self
     }
 
     /// Resolve a node to a type symbol ID if a resolver is provided.
@@ -332,6 +328,11 @@ impl<'a> TypeLowering<'a> {
     /// Lower a type node to a TypeId.
     /// This is the main entry point for type synthesis.
     pub fn lower_type(&self, node_idx: NodeIndex) -> TypeId {
+        // Check operation limit to prevent infinite loops
+        if self.check_limit() {
+            return TypeId::ERROR;
+        }
+
         if node_idx == NodeIndex::NONE {
             // Return ERROR for missing type annotations to prevent "Any poisoning".
             // This forces explicit type annotations and surfaces bugs early instead
@@ -340,26 +341,11 @@ impl<'a> TypeLowering<'a> {
             return TypeId::ERROR;
         }
 
-        // Check depth limit before proceeding
-        if self.is_depth_exceeded() || !self.increment_depth() {
-            return TypeId::ERROR;
-        }
-
         let node = match self.arena.get(node_idx) {
             Some(n) => n,
-            None => {
-                self.decrement_depth();
-                return TypeId::ERROR;
-            }
+            None => return TypeId::ERROR,
         };
 
-        let result = self.lower_type_inner(node_idx, node);
-        self.decrement_depth();
-        result
-    }
-
-    /// Inner implementation of lower_type after depth tracking.
-    fn lower_type_inner(&self, node_idx: NodeIndex, node: &crate::parser::node::Node) -> TypeId {
         match node.kind {
             // =========================================================================
             // Keyword types
