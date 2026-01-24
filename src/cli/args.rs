@@ -498,6 +498,10 @@ pub struct CliArgs {
     #[arg(long = "traceResolution", alias = "trace-resolution")]
     pub trace_resolution: bool,
 
+    /// Log all dependencies that were resolved during compilation.
+    #[arg(long = "traceDependencies", alias = "trace-dependencies")]
+    pub trace_dependencies: bool,
+
     /// Generates an event trace and a list of types.
     #[arg(long = "generateTrace", alias = "generate-trace")]
     pub generate_trace: Option<PathBuf>,

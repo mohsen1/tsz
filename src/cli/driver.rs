@@ -35,6 +35,7 @@ use rustc_hash::FxHasher;
 pub struct CompilationResult {
     pub diagnostics: Vec<Diagnostic>,
     pub emitted_files: Vec<PathBuf>,
+    pub files_read: Vec<PathBuf>,
 }
 
 #[derive(Default)]
@@ -269,7 +270,21 @@ pub(crate) fn compile_with_cache_and_changes(
         return Ok(result);
     }
 
-    let dependents = cache.collect_dependents(canonical_paths.iter().cloned());
+    // If --assumeChangesOnlyAffectDirectDependencies is set, only recompile direct dependents
+    let dependents = if args.assume_changes_only_affect_direct_dependencies {
+        // Only get direct dependents (one level deep)
+        let mut direct_dependents = HashSet::new();
+        for path in &canonical_paths {
+            if let Some(deps) = cache.reverse_dependencies.get(path) {
+                direct_dependents.extend(deps.iter().cloned());
+            }
+        }
+        direct_dependents
+    } else {
+        // Get all transitive dependents (default behavior)
+        cache.collect_dependents(canonical_paths.iter().cloned())
+    };
+
     cache.invalidate_paths_with_dependents_symbols(canonical_paths);
     compile_inner(
         args,
@@ -369,6 +384,10 @@ fn compile_inner(
         cache.update_dependencies(dependencies);
     }
 
+    // Collect all files that were read (including dependencies) before sources is moved
+    let mut files_read: Vec<PathBuf> = sources.iter().map(|s| s.path.clone()).collect();
+    files_read.sort();
+
     let (program, dirty_paths) = if let Some(cache) = cache.as_deref_mut() {
         let result = build_program_with_cache(sources, cache);
         (result.program, Some(result.dirty_paths))
@@ -433,6 +452,7 @@ fn compile_inner(
     Ok(CompilationResult {
         diagnostics,
         emitted_files,
+        files_read,
     })
 }
 

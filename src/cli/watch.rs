@@ -127,6 +127,12 @@ impl WatchState {
             driver::compile_with_cache(args, cwd, &mut self.type_cache)
         };
 
+        // Clear console unless --preserveWatchOutput is set
+        if !args.preserve_watch_output {
+            // Clear screen (ANSI escape sequence)
+            print!("\x1B[2J\x1B[H");
+        }
+
         match result {
             Ok(result) => {
                 if !result.diagnostics.is_empty() {
