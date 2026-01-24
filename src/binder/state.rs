@@ -1427,7 +1427,27 @@ impl BinderState {
             // Export assignment - bind the assigned expression
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
                 if let Some(assign) = arena.get_export_assignment(node) {
+                    // export = expr; exports all members of expr as module exports
+                    // For example: export = Utils; makes all Utils exports available
                     self.bind_node(arena, assign.expression);
+
+                    // If the expression is an identifier, resolve it and copy its exports
+                    if let Some(name) = self.get_identifier_name(arena, assign.expression) {
+                        if let Some(sym_id) = self.current_scope.get(name)
+                            .or_else(|| self.file_locals.get(name))
+                        {
+                            // Copy the symbol's exports to the current module's exports
+                            // This makes export = Namespace; work correctly
+                            if let Some(symbol) = self.symbols.get(sym_id) {
+                                if let Some(ref exports) = symbol.exports {
+                                    // Add all exports from the target symbol to file_locals
+                                    for (export_name, &export_sym_id) in exports.iter() {
+                                        self.file_locals.set(export_name.clone(), export_sym_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -3390,7 +3410,25 @@ impl BinderState {
                         }
                     } else {
                         // Regular export { foo, bar } without 'from' clause
-                        // Bind each export specifier as an EXPORT_VALUE
+                        // This can be either:
+                        // 1. Top-level exports from a module
+                        // 2. Namespace member re-exports: namespace N { export { x } }
+                        //
+                        // For namespaces, we need to add the exported symbols to the namespace's exports table
+                        // so they can be accessed as N.x
+
+                        // Check if we're inside a namespace
+                        let current_namespace_sym_id = self.scope_chain
+                            .get(self.current_scope_idx)
+                            .and_then(|ctx| {
+                                if ctx.container_kind == ContainerKind::Module {
+                                    Some(ctx.container_node)
+                                } else {
+                                    None
+                                }
+                            })
+                            .and_then(|container_idx| self.node_symbols.get(&container_idx.0).copied());
+
                         for &spec_idx in &named.elements.nodes {
                             if let Some(spec_node) = arena.get(spec_idx)
                                 && let Some(spec) = arena.get_specifier(spec_node)
@@ -3401,24 +3439,44 @@ impl BinderState {
 
                                 // For export { foo }, property_name is NONE, name is "foo"
                                 // For export { foo as bar }, property_name is "foo", name is "bar"
+                                let original_name = if !spec.property_name.is_none() {
+                                    self.get_identifier_name(arena, spec.property_name)
+                                } else {
+                                    self.get_identifier_name(arena, spec.name)
+                                };
+
                                 let exported_name = if !spec.name.is_none() {
                                     self.get_identifier_name(arena, spec.name)
                                 } else {
-                                    self.get_identifier_name(arena, spec.property_name)
+                                    original_name
                                 };
 
-                                if let Some(name) = exported_name {
-                                    // Create export symbol (EXPORT_VALUE for value exports)
-                                    // This marks the name as exported from this module
-                                    let sym_id = self
-                                        .symbols
-                                        .alloc(symbol_flags::EXPORT_VALUE, name.to_string());
-                                    // Set is_type_only and is_exported on the symbol
-                                    if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                        sym.is_exported = true;
-                                        sym.is_type_only = spec_type_only;
+                                if let (Some(orig), Some(exp)) = (original_name, exported_name) {
+                                    // Resolve the original symbol in the current scope
+                                    let resolved_sym_id = self.current_scope.get(orig)
+                                        .or_else(|| self.file_locals.get(orig));
+
+                                    if let Some(sym_id) = resolved_sym_id {
+                                        // Create export symbol (EXPORT_VALUE for value exports)
+                                        let export_sym_id = self
+                                            .symbols
+                                            .alloc(symbol_flags::EXPORT_VALUE, exp.to_string());
+                                        // Set is_type_only and is_exported on the symbol
+                                        if let Some(sym) = self.symbols.get_mut(export_sym_id) {
+                                            sym.is_exported = true;
+                                            sym.is_type_only = spec_type_only;
+                                            // Store the target symbol for re-exports within namespaces
+                                            if let Some(ns_sym_id) = current_namespace_sym_id {
+                                                // This is a namespace re-export - add to namespace's exports
+                                                if let Some(ns_sym) = self.symbols.get_mut(ns_sym_id) {
+                                                    let exports = ns_sym.exports
+                                                        .get_or_insert_with(|| Box::new(SymbolTable::new()));
+                                                    exports.set(exp.to_string(), sym_id);
+                                                }
+                                            }
+                                        }
+                                        self.node_symbols.insert(spec_idx.0, export_sym_id);
                                     }
-                                    self.node_symbols.insert(spec_idx.0, sym_id);
                                 }
                             }
                         }
