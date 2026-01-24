@@ -5244,4 +5244,166 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    // 25. AST Traversal Utilities (11 functions)
+
+    /// Find the enclosing function-like node for a given node.
+    ///
+    /// Traverses up the AST to find the first parent that is a function-like
+    /// construct (function declaration, function expression, arrow function, method, constructor).
+    ///
+    /// ## Parameters
+    /// - `idx`: The node index to start from
+    ///
+    /// Returns Some(NodeIndex) if inside a function, None if at module/global scope.
+    pub(crate) fn find_enclosing_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        let mut iterations = 0;
+        while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return None to prevent infinite loop
+                return None;
+            }
+            if let Some(node) = self.ctx.arena.get(current)
+                && node.is_function_like()
+            {
+                return Some(current);
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
+    /// Find the enclosing NON-ARROW function for a given node.
+    ///
+    /// Returns Some(NodeIndex) if inside a non-arrow function (function declaration/expression),
+    /// None if at module/global scope or only inside arrow functions.
+    ///
+    /// This is used for `this` type checking: arrow functions capture `this` from their
+    /// enclosing scope, so we need to skip past them to find the actual function that
+    /// defines the `this` context.
+    pub(crate) fn find_enclosing_non_arrow_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use crate::parser::syntax_kind_ext::*;
+        let mut current = idx;
+        let mut iterations = 0;
+        while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return None to prevent infinite loop
+                return None;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check for non-arrow functions that define their own `this` context
+                if node.kind == FUNCTION_DECLARATION
+                    || node.kind == FUNCTION_EXPRESSION
+                    || node.kind == METHOD_DECLARATION
+                    || node.kind == CONSTRUCTOR
+                    || node.kind == GET_ACCESSOR
+                    || node.kind == SET_ACCESSOR
+                {
+                    return Some(current);
+                }
+                // Skip arrow functions - they don't define their own `this` context
+                // but continue traversal to find enclosing non-arrow function
+                if node.kind == ARROW_FUNCTION {
+                    // Continue searching - arrow functions inherit `this`
+                }
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
+    /// Find the enclosing variable statement for a given node.
+    ///
+    /// Traverses up the AST to find a VARIABLE_STATEMENT.
+    ///
+    /// ## Parameters
+    /// - `idx`: The node index to start from
+    ///
+    /// Returns Some(NodeIndex) if a variable statement is found, None otherwise.
+    pub(crate) fn find_enclosing_variable_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        let mut iterations = 0;
+        while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                // Safety limit reached - return None to prevent infinite loop
+                return None;
+            }
+            if let Some(node) = self.ctx.arena.get(current)
+                && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            {
+                return Some(current);
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
+    /// Find the enclosing variable declaration for a given node.
+    ///
+    /// Traverses up the AST to find a VARIABLE_DECLARATION.
+    ///
+    /// ## Parameters
+    /// - `idx`: The node index to start from
+    ///
+    /// Returns Some(NodeIndex) if a variable declaration is found, None otherwise.
+    pub(crate) fn find_enclosing_variable_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return None;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return Some(current);
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
+    }
+
+    /// Find the enclosing source file for a given node.
+    ///
+    /// Traverses up the AST to find the SOURCE_FILE node.
+    ///
+    /// ## Parameters
+    /// - `idx`: The node index to start from
+    ///
+    /// Returns Some(NodeIndex) if a source file is found, None otherwise.
+    pub(crate) fn find_enclosing_source_file(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current)
+                && node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                return Some(current);
+            }
+            if let Some(ext) = self.ctx.arena.get_extended(current) {
+                current = ext.parent;
+            } else {
+                break;
+            }
+        }
+        None
+    }
 }

@@ -4402,74 +4402,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Find the enclosing function-like node for a given node.
-    /// Returns Some(NodeIndex) if inside a function, None if at module/global scope.
-    fn find_enclosing_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        while !current.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                // Safety limit reached - return None to prevent infinite loop
-                return None;
-            }
-            if let Some(node) = self.ctx.arena.get(current)
-                && node.is_function_like()
-            {
-                return Some(current);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
-    /// Find the enclosing NON-ARROW function for a given node.
-    /// Returns Some(NodeIndex) if inside a non-arrow function (function declaration/expression),
-    /// None if at module/global scope or only inside arrow functions.
-    ///
-    /// This is used for `this` type checking: arrow functions capture `this` from their
-    /// enclosing scope, so we need to skip past them to find the actual function that
-    /// defines the `this` context.
-    fn find_enclosing_non_arrow_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        use crate::parser::syntax_kind_ext::*;
-        let mut current = idx;
-        let mut iterations = 0;
-        while !current.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                // Safety limit reached - return None to prevent infinite loop
-                return None;
-            }
-            if let Some(node) = self.ctx.arena.get(current) {
-                // Check for non-arrow functions that define their own `this` context
-                if node.kind == FUNCTION_DECLARATION
-                    || node.kind == FUNCTION_EXPRESSION
-                    || node.kind == METHOD_DECLARATION
-                    || node.kind == CONSTRUCTOR
-                    || node.kind == GET_ACCESSOR
-                    || node.kind == SET_ACCESSOR
-                {
-                    return Some(current);
-                }
-                // Skip arrow functions - they don't define their own `this` context
-                // but continue traversal to find enclosing non-arrow function
-                if node.kind == ARROW_FUNCTION {
-                    // Continue searching - arrow functions inherit `this`
-                }
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
     /// Check if a variable symbol can be used without initialization.
     /// This includes:
     /// 1. Literal types (e.g., `let key: "a"`)
@@ -4536,29 +4468,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find the enclosing variable statement for a node.
-    fn find_enclosing_variable_statement(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        while !current.is_none() {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                // Safety limit reached - return None to prevent infinite loop
-                return None;
-            }
-            if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            {
-                return Some(current);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
-        None
-    }
-
     /// Check if a variable symbol's declaration has an initializer.
     fn symbol_has_initializer(&self, sym_id: SymbolId) -> bool {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -4625,26 +4534,6 @@ impl<'a> CheckerState<'a> {
         }
 
         false
-    }
-
-    fn find_enclosing_variable_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return None;
-            }
-            let node = self.ctx.arena.get(current)?;
-            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                return Some(current);
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
     }
 
     fn node_is_or_within_kind(&self, idx: NodeIndex, kind: u16) -> bool {
@@ -7883,23 +7772,6 @@ impl<'a> CheckerState<'a> {
             }
             _ => type_id,
         }
-    }
-
-    fn find_enclosing_source_file(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        let mut current = idx;
-        while !current.is_none() {
-            if let Some(node) = self.ctx.arena.get(current)
-                && node.kind == syntax_kind_ext::SOURCE_FILE
-            {
-                return Some(current);
-            }
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-        None
     }
 
     fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
