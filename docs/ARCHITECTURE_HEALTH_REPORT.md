@@ -244,10 +244,24 @@ impl SubtypeTracer for DiagnosticTracer {
 
 **Status** (`docs/ARCHITECTURE_AUDIT_REPORT.md:207-278`):
 - **Critical Duplicates**: Mostly addressed (Phase 1)
-- **Pattern Duplication**: 48+ `match node.kind` statements (Type Visitor needed)
+- **Pattern Duplication**: 130 `match node.kind` statements (reduced from 135, 4% improvement)
 - **Save/Restore Scanner**: 60+ instances (300+ redundant lines)
+- **AST Traversal Helpers**: 12 helper functions added in type_checking.rs (commit 05f7010ad)
 
-**Assessment**: Phase 1 eliminated worst duplicates. Remaining duplication is structural (needs abstractions).
+**Recent Progress (2026-01-24)**:
+- ✅ Created `get_declaration_modifiers()` - Extract modifiers from any declaration node
+- ✅ Created `get_member_modifiers()` - Extract modifiers from class member nodes
+- ✅ Created `get_member_name_node()` - Get name node from class member nodes
+- ✅ Created `get_declaration_name()` - Get name node from declaration nodes
+- ✅ Created `has_modifier_kind()` - Generic modifier checking helper
+- ✅ Created `for_each_binary_child()` - Traverse binary expression children
+- ✅ Created `for_each_conditional_child()` - Traverse conditional expression children
+- ✅ Created `for_each_call_child()` - Traverse call expression children
+- ✅ Created `for_each_parenthesized_child()` - Traverse parenthesized expressions
+- ✅ Refactored 9 functions to use new helpers (~160 lines eliminated)
+
+**Assessment**: Phase 1 eliminated worst duplicates. AST traversal deduplication started with helper functions.
+Target: Continue reducing `match node.kind` statements to < 20 total.
 
 ### 5.3 Error Handling ⚠️ **CONCERNING**
 
