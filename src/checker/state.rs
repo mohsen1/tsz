@@ -6540,7 +6540,7 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
-    fn is_array_like_type(&self, object_type: TypeId) -> bool {
+    pub(crate) fn is_array_like_type(&self, object_type: TypeId) -> bool {
         use crate::solver::TypeKey;
 
         // Check for array/tuple types directly

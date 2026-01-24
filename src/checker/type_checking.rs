@@ -17,6 +17,7 @@ use crate::checker::FlowAnalyzer;
 use crate::checker::state::{
     CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel, PropertyKey,
 };
+use crate::interner::Atom;
 use crate::parser::NodeIndex;
 use crate::parser::node::ImportDeclData;
 use crate::parser::syntax_kind_ext;
