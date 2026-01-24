@@ -1,7 +1,7 @@
 # God Object Decomposition: Step-by-Step Guide
 
-**Date**: 2026-01-24  
-**Status**: Active  
+**Date**: 2026-01-24
+**Status**: Active
 **Current Phase**: Phase 2 - Break Up God Objects
 
 ---
@@ -14,64 +14,99 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 | File | Lines | Status | Priority |
 |------|-------|--------|----------|
-| `checker/state.rs` | 27,525 | ⏳ Pending | P2 (after solver) |
+| `checker/state.rs` | ~28,000 | 🚧 In Progress | **P1 (CURRENT)** |
 | `parser/state.rs` | 10,762 | ⏳ Pending | P3 (low priority) |
-| `solver/evaluate.rs` | 5,784 | ⏳ Pending | P2 (after solver) |
-| `solver/subtype.rs` | 4,734 → ~2,214 | 🚧 In Progress | **P1 (CURRENT)** |
-| `solver/operations.rs` | 3,416 | ⏳ Pending | P2 (after solver) |
+| `solver/evaluate.rs` | 5,784 | ⏳ Pending | P2 (after checker) |
+| `solver/subtype.rs` | 1,778 | ✅ **COMPLETE** | P1 (DONE) |
+| `solver/operations.rs` | 3,416 | ⏳ Pending | P2 (after checker) |
 | `emitter/mod.rs` | 2,040 | ⏳ Pending | P3 (acceptable) |
 
 ---
 
-## Priority 1: solver/subtype.rs (CURRENT FOCUS)
+## Priority 1: solver/subtype.rs ✅ COMPLETE
 
-**Goal**: Reduce `check_subtype_inner` from ~2,214 lines to ~500 lines (coordinator)  
-**Progress**: 9% complete (7 helper methods extracted, ~223 lines)  
-**Remaining**: ~1,700+ lines to extract
+**Goal**: Reduce `check_subtype_inner` from ~2,214 lines to ~500 lines (coordinator)
+**Progress**: ✅ **COMPLETE** (~317 lines coordinator, ~3,781 lines in subtype_rules modules)
 
-### Step 1: Extract Object Subtyping Logic (~400-600 lines)
+### Module Structure Created ✅
 
-**Target Extraction**: 400-600 lines
+| Module | Lines | Purpose |
+|--------|-------|---------|
+| `intrinsics.rs` | 338 | Primitive/intrinsic type compatibility |
+| `literals.rs` | 587 | Literal types and template literal matching |
+| `unions.rs` | 361 | Union and intersection type logic |
+| `tuples.rs` | 379 | Array and tuple compatibility |
+| `objects.rs` | 544 | Object property matching and index signatures |
+| `functions.rs` | 992 | Function/callable signature compatibility |
+| `generics.rs` | 425 | Type parameters, references, and applications |
+| `conditionals.rs` | 133 | Conditional type checking |
+| **Total** | **3,781** | **Focused, maintainable code** |
 
-#### 1.1 Identify Object Subtyping Code
-- [ ] Read `check_subtype_inner` and locate all object subtyping logic
-- [ ] Look for code handling `TypeKey::Object` in both source and target
-- [ ] Identify property matching logic
-- [ ] Identify index signature checking
-- [ ] Identify excess property checking
-- [ ] Identify freshness handling
+### All Helper Methods Extracted ✅
 
-#### 1.2 Extract Property Matching Helper
-- [ ] Create `check_object_properties` helper method (~150-200 lines)
-- [ ] Move property-by-property comparison logic
-- [ ] Handle required vs optional properties
-- [ ] Handle readonly modifiers
-- [ ] Run tests: `cargo test --lib`
-- [ ] Run clippy: `cargo clippy -- -D warnings`
-- [ ] Commit: `refactor(solver): Extract object property matching into helper method`
+**Step 1: Object Subtyping Logic** ✅ COMPLETE
+- ✅ `check_object_subtype` - Core object property matching
+- ✅ `check_property_compatibility` - Optional/readonly/type checking
+- ✅ `check_string_index_compatibility` - String index signatures
+- ✅ `check_number_index_compatibility` - Number index signatures
+- ✅ `check_object_with_index_subtype` - Full object with index checking
+- ✅ `check_object_to_indexed` - Simple object to indexed object
+- ✅ `check_missing_property_against_index_signatures` - Index satisfaction
 
-#### 1.3 Extract Index Signature Helper
-- [ ] Create `check_object_index_signatures` helper method (~100-150 lines)
-- [ ] Move string index signature checking
-- [ ] Move number index signature checking
-- [ ] Handle readonly index signatures
-- [ ] Run tests: `cargo test --lib`
-- [ ] Run clippy: `cargo clippy -- -D warnings`
-- [ ] Commit: `refactor(solver): Extract index signature checking into helper method`
+**Step 2: Template Literal Type Checking** ✅ COMPLETE
+- ✅ `check_literal_to_intrinsic` - Literal to intrinsic conversion
+- ✅ `check_literal_matches_template_literal` - Template literal pattern matching
+- ✅ `match_template_literal_recursive` - Backtracking algorithm
+- ✅ All `match_*_pattern` helper functions
 
-#### 1.4 Extract Excess Property Checking
-- [ ] Create `check_excess_properties` helper method (~80-120 lines)
-- [ ] Move excess property detection logic
-- [ ] Handle freshness tracking
-- [ ] Integrate with FreshnessTracker
-- [ ] Run tests: `cargo test --lib`
-- [ ] Run clippy: `cargo clippy -- -D warnings`
-- [ ] Commit: `refactor(solver): Extract excess property checking into helper method`
+**Step 3: Mapped/Conditional Type Evaluation** ✅ COMPLETE
+- ✅ `check_conditional_subtype` - Conditional type checking
+- ✅ `conditional_branches_subtype` - Source conditional distribution
+- ✅ `subtype_of_conditional_target` - Target conditional handling
 
-#### 1.5 Update Documentation
-- [ ] Update ARCHITECTURE_AUDIT_REPORT.md with progress
-- [ ] Update line count metrics
-- [ ] Document extracted helpers
+**Step 4: Primitive/Intrinsic Type Checking** ✅ COMPLETE
+- ✅ `check_intrinsic_subtype` - Intrinsic type hierarchy
+- ✅ `is_object_keyword_type` - Object keyword detection
+- ✅ `is_callable_type` - Callable type detection
+- ✅ `apparent_primitive_shape_for_key` - Apparent type handling
+
+**Step 5: Union/Intersection/TypeParameter** ✅ COMPLETE
+- ✅ `check_union_source_subtype` - Union source checking
+- ✅ `check_union_target_subtype` - Union target checking
+- ✅ `check_intersection_source_subtype` - Intersection source checking
+- ✅ `check_intersection_target_subtype` - Intersection target checking
+- ✅ `check_type_parameter_subtype` - Type parameter constraints
+- ✅ `check_subtype_with_method_variance` - Method variance handling
+
+**Step 6: Tuple/Array Checking** ✅ COMPLETE
+- ✅ `check_tuple_subtype` - Tuple to tuple checking
+- ✅ `check_tuple_to_array_subtype` - Tuple to array conversion
+- ✅ `check_array_to_tuple_subtype` - Array to tuple conversion
+
+**Step 7: Function/Callable Checking** ✅ COMPLETE
+- ✅ `check_function_subtype` - Function signature compatibility
+- ✅ `check_callable_subtype` - Overloaded callable checking
+- ✅ `check_function_to_callable_subtype` - Single to overloaded
+- ✅ `check_callable_to_function_subtype` - Overloaded to single
+- ✅ `check_call_signature_subtype` - Call signature compatibility
+
+**Step 8: Reference/Application/Mapped Types** ✅ COMPLETE
+- ✅ `check_ref_ref_subtype` - Ref to ref checking
+- ✅ `check_ref_subtype` - Ref to structural
+- ✅ `check_to_ref_subtype` - Structural to ref
+- ✅ `check_application_to_application_subtype` - Application checking
+- ✅ `check_application_expansion_target` - Application expansion
+- ✅ `check_source_to_application_expansion` - Application expansion source
+- ✅ `check_mapped_expansion_target` - Mapped type expansion
+- ✅ `check_source_to_mapped_expansion` - Mapped expansion source
+
+### Coordinator Status ✅
+
+**check_subtype_inner**: ~317 lines
+- Clean dispatcher that delegates to specialized helper methods
+- All complex logic extracted to `subtype_rules/` modules
+- Maintains 100% test pass rate
+- All clippy warnings resolved
 
 ### Step 2: Extract Template Literal Type Checking (~200-300 lines)
 
@@ -176,74 +211,75 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [ ] Update ARCHITECTURE_AUDIT_REPORT.md with progress
 - [ ] Update line count metrics
 
-### Step 5: Verify and Assess Progress
+### Step 5: Verification and Assessment ✅ COMPLETE
 
-#### 5.1 Verification
-- [ ] Run full test suite: `cargo test --lib`
-- [ ] Run clippy: `cargo clippy -- -D warnings`
-- [ ] Check line count: `wc -l src/solver/subtype.rs`
-- [ ] Verify `check_subtype_inner` is now ~500-700 lines
+#### 5.1 Verification ✅
+- ✅ Run full test suite: `cargo test --lib` - All tests pass
+- ✅ Run clippy: `cargo clippy -- -D warnings` - No warnings
+- ✅ Check line count: `wc -l src/solver/subtype.rs` = 1,778 lines
+- ✅ Verify `check_subtype_inner` is now ~317 lines (exceeds goal!)
 
-#### 5.2 Assessment
-- [ ] Calculate extraction percentage
-- [ ] Identify any remaining large sections
-- [ ] Update ARCHITECTURE_WORK_SUMMARY.md with metrics
-- [ ] Create deep analysis report for commits
+#### 5.2 Assessment ✅
+- ✅ Module hierarchy created with 9 focused modules
+- ✅ ~3,781 lines of extracted logic organized by type category
+- ✅ ARCHITECTURE_WORK_SUMMARY.md updated with metrics
+- ✅ All helper methods are testable and documented
 
-#### 5.3 Decide Next Steps
-- [ ] If `check_subtype_inner` > 700 lines: Continue extraction
-- [ ] If `check_subtype_inner` < 700 lines: Move to module restructure (Step 6)
+#### 5.3 Next Steps ✅
+- ✅ Move to checker/state.rs decomposition (Priority 2)
 
-### Step 6: Restructure into Module Hierarchy (FINAL)
+### Step 6: Module Hierarchy ✅ COMPLETE
 
 **Target**: Create `solver/subtype_rules/` module structure
 
-#### 6.1 Create Module Structure
-- [ ] Create `src/solver/subtype_rules/` directory
-- [ ] Create `src/solver/subtype_rules/mod.rs`
-- [ ] Plan module organization:
-  - `intrinsics.rs` — Primitive types
-  - `literals.rs` — Literal types
-  - `unions.rs` — Union/intersection logic
-  - `tuples.rs` — Array/tuple checking
-  - `objects.rs` — Object property matching
-  - `functions.rs` — Callable signatures
-  - `templates.rs` — Template literal types
-  - `generics.rs` — Type params, applications, mapped types
+#### 6.1 Module Structure ✅
+- ✅ Created `src/solver/subtype_rules/` directory
+- ✅ Created `src/solver/subtype_rules/mod.rs`
+- ✅ Module organization complete:
+  - `intrinsics.rs` — Primitive types (338 lines)
+  - `literals.rs` — Literal types (587 lines)
+  - `unions.rs` — Union/intersection logic (361 lines)
+  - `tuples.rs` — Array/tuple checking (379 lines)
+  - `objects.rs` — Object property matching (544 lines)
+  - `functions.rs` — Callable signatures (992 lines)
+  - `generics.rs` — Type params, applications, mapped types (425 lines)
+  - `conditionals.rs` — Conditional type checking (133 lines)
+  - `mod.rs` — Module exports (22 lines)
 
-#### 6.2 Move Helpers to Modules
-- [ ] Move intrinsic helpers to `intrinsics.rs`
-- [ ] Move literal helpers to `literals.rs`
-- [ ] Move union/intersection helpers to `unions.rs`
-- [ ] Move tuple helpers to `tuples.rs`
-- [ ] Move object helpers to `objects.rs`
-- [ ] Move function helpers to `functions.rs`
-- [ ] Move template literal helpers to `templates.rs`
-- [ ] Move mapped/conditional helpers to `generics.rs`
+#### 6.2 Helpers Moved to Modules ✅
+- ✅ All intrinsic helpers moved to `intrinsics.rs`
+- ✅ All literal helpers moved to `literals.rs`
+- ✅ All union/intersection helpers moved to `unions.rs`
+- ✅ All tuple helpers moved to `tuples.rs`
+- ✅ All object helpers moved to `objects.rs`
+- ✅ All function helpers moved to `functions.rs`
+- ✅ All template literal helpers moved to `literals.rs`
+- ✅ All mapped/conditional helpers moved to `generics.rs` and `conditionals.rs`
 
-#### 6.3 Update Imports
-- [ ] Update `src/solver/subtype.rs` to import from `subtype_rules`
-- [ ] Update module exports in `subtype_rules/mod.rs`
-- [ ] Make helpers `pub(crate)` as needed
+#### 6.3 Imports Updated ✅
+- ✅ Module enabled in `solver/mod.rs`
+- ✅ All imports work correctly
+- ✅ Helpers use `pub(crate)` visibility as needed
 
-#### 6.4 Verify Module Structure
-- [ ] Run full test suite: `cargo test --lib`
-- [ ] Run clippy: `cargo clippy -- -D warnings`
-- [ ] Verify all imports work correctly
+#### 6.4 Module Structure Verified ✅
+- ✅ Full test suite passes: `cargo test --lib`
+- ✅ Clippy passes: `cargo clippy -- -D warnings`
+- ✅ All imports work correctly
+- ✅ Code compiles without errors
 
-#### 6.5 Final Documentation
-- [ ] Update ARCHITECTURE_AUDIT_REPORT.md with final structure
-- [ ] Update ARCHITECTURE_WORK_SUMMARY.md
-- [ ] Mark solver/subtype.rs as ✅ Complete in tracking docs
-- [ ] Commit: `refactor(solver): Restructure subtype checking into module hierarchy`
+#### 6.5 Final Documentation ✅
+- ✅ ARCHITECTURE_AUDIT_REPORT.md updated with final structure
+- ✅ ARCHITECTURE_WORK_SUMMARY.md updated
+- ✅ solver/subtype.rs marked as ✅ Complete in tracking docs
+- ✅ README.md created in subtype_rules/ directory
 
 ---
 
-## Priority 2: checker/state.rs
+## Priority 1: checker/state.rs 🚧 CURRENT FOCUS
 
-**Goal**: Reduce from 27,525 lines to ~2,000 lines (coordinator)  
-**Progress**: 660 lines extracted (promise, iterable modules)  
-**Status**: ⏳ Pending (start after solver/subtype.rs complete)
+**Goal**: Reduce from ~28,000 lines to ~2,000 lines (coordinator)
+**Progress**: 660 lines extracted (promise, iterable modules)
+**Status**: 🚧 In Progress (PRIORITY #1)
 
 ### Step 7: Extract Type Computation Logic (~3,000-4,000 lines)
 
