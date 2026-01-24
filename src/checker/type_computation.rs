@@ -1531,7 +1531,13 @@ impl<'a> CheckerState<'a> {
             Some(TypeKey::Callable(shape_id)) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.construct_signatures.is_empty() {
-                    None
+                    // Functions with a prototype property are constructable
+                    // This handles cases like `function Foo() {}` where `Foo.prototype` exists
+                    if self.type_has_prototype_property(constructor_type) {
+                        Some(constructor_type)
+                    } else {
+                        None
+                    }
                 } else {
                     Some(self.ctx.types.callable(CallableShape {
                         call_signatures: shape.construct_signatures.clone(),
