@@ -2132,7 +2132,8 @@ impl ParserState {
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
-                // Check if there's another parameter without comma - this is a TS1005 error
+                // Trailing commas are allowed in parameter lists
+                // Only emit an error if we have another parameter without a comma
                 if !self.is_token(SyntaxKind::CloseParenToken) && self.is_parameter_start() {
                     // Emit TS1005 for missing comma between parameters: f(a b)
                     self.error_comma_expected();
