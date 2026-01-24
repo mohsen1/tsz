@@ -6304,7 +6304,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check an assignment expression, applying contextual typing to the RHS.
-    fn check_assignment_expression(
+    pub(crate) fn check_assignment_expression(
         &mut self,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
@@ -6357,7 +6357,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a compound assignment expression (+=, &&=, ??=, etc.).
-    fn check_compound_assignment_expression(
+    pub(crate) fn check_compound_assignment_expression(
         &mut self,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
@@ -6475,156 +6475,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type of binary expression.
-    fn get_type_of_binary_expression(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::solver::{BinaryOpEvaluator, BinaryOpResult};
-
-        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-        let mut stack = vec![(idx, false)];
-        let mut type_stack: Vec<TypeId> = Vec::new();
-
-        while let Some((node_idx, visited)) = stack.pop() {
-            let Some(node) = self.ctx.arena.get(node_idx) else {
-                // Return UNKNOWN instead of ANY when node cannot be found
-                type_stack.push(TypeId::UNKNOWN);
-                continue;
-            };
-
-            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-                type_stack.push(self.get_type_of_node(node_idx));
-                continue;
-            }
-
-            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
-                // Return UNKNOWN instead of ANY when binary expression cannot be extracted
-                type_stack.push(TypeId::UNKNOWN);
-                continue;
-            };
-
-            let left_idx = binary.left;
-            let right_idx = binary.right;
-            let op_kind = binary.operator_token;
-
-            if !visited {
-                if self.is_assignment_operator(op_kind) {
-                    let assign_type = if op_kind == SyntaxKind::EqualsToken as u16 {
-                        self.check_assignment_expression(left_idx, right_idx, node_idx)
-                    } else {
-                        self.check_compound_assignment_expression(
-                            left_idx, right_idx, op_kind, node_idx,
-                        )
-                    };
-                    type_stack.push(assign_type);
-                    continue;
-                }
-
-                stack.push((node_idx, true));
-                stack.push((right_idx, false));
-                stack.push((left_idx, false));
-                continue;
-            }
-
-            // Return UNKNOWN instead of ANY when type_stack is empty
-            let right_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
-            let left_type = type_stack.pop().unwrap_or(TypeId::UNKNOWN);
-            if op_kind == SyntaxKind::CommaToken as u16 {
-                if self.is_side_effect_free(left_idx)
-                    && !self.is_indirect_call(node_idx, left_idx, right_idx)
-                {
-                    use crate::checker::types::diagnostics::{
-                        diagnostic_codes, diagnostic_messages,
-                    };
-                    self.error_at_node(
-                        left_idx,
-                        diagnostic_messages::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS,
-                        diagnostic_codes::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS,
-                    );
-                }
-                type_stack.push(right_type);
-                continue;
-            }
-            if op_kind == SyntaxKind::InKeyword as u16 {
-                if let Some(left_node) = self.ctx.arena.get(left_idx)
-                    && left_node.kind == SyntaxKind::PrivateIdentifier as u16
-                {
-                    self.check_private_identifier_in_expression(left_idx, right_type);
-                }
-                type_stack.push(TypeId::BOOLEAN);
-                continue;
-            }
-
-            // Nullish coalescing: `a ?? b`
-            //
-            // TypeScript semantics (simplified):
-            // - If `a` is not nullish, result is `a`
-            // - Otherwise, result is `b`
-            // Type is `(NonNullable<Left>) | Right` when Left is possibly nullish,
-            // otherwise just Left.
-            if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
-                // Propagate error types (don't collapse to unknown)
-                if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
-                    type_stack.push(TypeId::ERROR);
-                    continue;
-                }
-
-                let (non_nullish, cause) = self.split_nullish_type(left_type);
-                if cause.is_none() {
-                    type_stack.push(left_type);
-                } else {
-                    let result = match non_nullish {
-                        None => right_type,
-                        Some(non_nullish) => self.ctx.types.union2(non_nullish, right_type),
-                    };
-                    type_stack.push(result);
-                }
-                continue;
-            }
-            let op_str = match op_kind {
-                k if k == SyntaxKind::PlusToken as u16 => "+",
-                k if k == SyntaxKind::MinusToken as u16 => "-",
-                k if k == SyntaxKind::AsteriskToken as u16 => "*",
-                k if k == SyntaxKind::SlashToken as u16 => "/",
-                k if k == SyntaxKind::PercentToken as u16 => "%",
-                k if k == SyntaxKind::LessThanToken as u16 => "<",
-                k if k == SyntaxKind::GreaterThanToken as u16 => ">",
-                k if k == SyntaxKind::LessThanEqualsToken as u16 => "<=",
-                k if k == SyntaxKind::GreaterThanEqualsToken as u16 => ">=",
-                k if k == SyntaxKind::EqualsEqualsToken as u16 => "==",
-                k if k == SyntaxKind::ExclamationEqualsToken as u16 => "!=",
-                k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => "===",
-                k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => "!==",
-                k if k == SyntaxKind::AmpersandAmpersandToken as u16 => "&&",
-                k if k == SyntaxKind::BarBarToken as u16 => "||",
-                k if k == SyntaxKind::AmpersandToken as u16
-                    || k == SyntaxKind::BarToken as u16
-                    || k == SyntaxKind::CaretToken as u16
-                    || k == SyntaxKind::LessThanLessThanToken as u16
-                    || k == SyntaxKind::GreaterThanGreaterThanToken as u16
-                    || k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 =>
-                {
-                    type_stack.push(TypeId::NUMBER);
-                    continue;
-                }
-                _ => {
-                    type_stack.push(TypeId::UNKNOWN);
-                    continue;
-                }
-            };
-
-            let result = evaluator.evaluate(left_type, right_type, op_str);
-            let result_type = match result {
-                BinaryOpResult::Success(result_type) => result_type,
-                BinaryOpResult::TypeError { left, right, op } => {
-                    // Emit appropriate error for arithmetic type mismatch
-                    self.emit_binary_operator_error(node_idx, left_idx, right_idx, left, right, op);
-                    TypeId::UNKNOWN
-                }
-            };
-            type_stack.push(result_type);
-        }
-
-        type_stack.pop().unwrap_or(TypeId::UNKNOWN)
-    }
-
     fn apply_this_substitution_to_call_return(
         &mut self,
         return_type: TypeId,
@@ -8199,7 +8049,7 @@ impl<'a> CheckerState<'a> {
         self.apply_flow_narrowing(idx, result_type)
     }
 
-    fn check_private_identifier_in_expression(&mut self, name_idx: NodeIndex, rhs_type: TypeId) {
+    pub(crate) fn check_private_identifier_in_expression(&mut self, name_idx: NodeIndex, rhs_type: TypeId) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
         };
@@ -8574,7 +8424,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Split a type into its non-nullable part and its nullable cause.
-    fn split_nullish_type(&mut self, type_id: TypeId) -> (Option<TypeId>, Option<TypeId>) {
+    pub(crate) fn split_nullish_type(&mut self, type_id: TypeId) -> (Option<TypeId>, Option<TypeId>) {
         use crate::solver::{IntrinsicKind, TypeKey};
 
         let Some(key) = self.ctx.types.lookup(type_id) else {
@@ -13503,7 +13353,7 @@ impl<'a> CheckerState<'a> {
 
     /// Emit errors for binary operator type mismatches.
     /// Emits TS2362 for left-hand side, TS2363 for right-hand side, or TS2365 for general operator errors.
-    fn emit_binary_operator_error(
+    pub(crate) fn emit_binary_operator_error(
         &mut self,
         node_idx: NodeIndex,
         left_idx: NodeIndex,
@@ -20045,7 +19895,7 @@ impl<'a> CheckerState<'a> {
         Some(format!("{}.{}", base_name, ident.escaped_text))
     }
 
-    fn is_assignment_operator(&self, operator: u16) -> bool {
+    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
         matches!(
             operator,
             k if k == SyntaxKind::EqualsToken as u16
@@ -20080,7 +19930,7 @@ impl<'a> CheckerState<'a> {
         expr_idx
     }
 
-    fn is_side_effect_free(&self, expr_idx: NodeIndex) -> bool {
+    pub(crate) fn is_side_effect_free(&self, expr_idx: NodeIndex) -> bool {
         use crate::scanner::SyntaxKind;
 
         let expr_idx = self.skip_parenthesized_expression(expr_idx);
@@ -20177,7 +20027,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn is_indirect_call(&self, comma_idx: NodeIndex, left: NodeIndex, right: NodeIndex) -> bool {
+    pub(crate) fn is_indirect_call(&self, comma_idx: NodeIndex, left: NodeIndex, right: NodeIndex) -> bool {
         use crate::scanner::SyntaxKind;
 
         let parent = self
