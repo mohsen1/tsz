@@ -3,14 +3,14 @@
 //! Handles TypeScript's keyof operator: `keyof T`
 
 use crate::interner::Atom;
+use crate::solver::TypeDatabase;
 use crate::solver::subtype::TypeResolver;
 use crate::solver::types::*;
-use crate::solver::TypeDatabase;
 use rustc_hash::FxHashSet;
 
 use super::super::evaluate::{
-    TypeEvaluator, ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN,
-    ARRAY_METHODS_RETURN_NUMBER, ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID,
+    ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
+    ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
 
 /// Tracks the types of keys found during keyof evaluation.
