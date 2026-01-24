@@ -6002,10 +6002,19 @@ impl<'a> CheckerState<'a> {
                 && expected != TypeId::ANY
                 && expected != TypeId::UNKNOWN
                 && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-                && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
             {
                 let arg_type = arg_types.get(i).copied().unwrap_or(TypeId::UNKNOWN);
-                self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
+
+                // Check object literals for excess/missing properties
+                if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                    self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
+                    self.check_object_literal_missing_properties(arg_type, expected, arg_idx);
+                }
+
+                // Check array literals for tuple element assignability
+                if arg_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                    self.check_array_literal_tuple_assignability(arg_type, expected, arg_idx);
+                }
             }
         }
     }
