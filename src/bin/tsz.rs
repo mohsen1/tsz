@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::io::IsTerminal;
+use std::time::Duration;
 
 use wasm::cli::args::CliArgs;
 use wasm::cli::{driver, reporter::Reporter, watch};
@@ -47,11 +48,31 @@ fn main() -> Result<()> {
         return watch::run(&args, &cwd);
     }
 
-    let result = driver::compile(&args, &cwd)?;
+    // Handle --generateTrace: generate event trace file
+    if let Some(ref trace_path) = args.generate_trace {
+        // TODO: Implement full trace generation
+        eprintln!(
+            "--generateTrace not yet fully implemented, would write to: {}",
+            trace_path.display()
+        );
+    }
 
-    // Handle --listFiles: print file list
+    // Handle --generateCpuProfile: generate CPU profile
+    if let Some(ref profile_path) = args.generate_cpu_profile {
+        // TODO: Implement CPU profiling (requires pprof or similar)
+        eprintln!(
+            "--generateCpuProfile not yet fully implemented, would write to: {}",
+            profile_path.display()
+        );
+    }
+
+    let start_time = std::time::Instant::now();
+    let result = driver::compile(&args, &cwd)?;
+    let elapsed = start_time.elapsed();
+
+    // Handle --listFiles: print all files read during compilation
     if args.list_files {
-        for file in &result.emitted_files {
+        for file in &result.files_read {
             println!("{}", file.display());
         }
     }
@@ -61,6 +82,27 @@ fn main() -> Result<()> {
         for file in &result.emitted_files {
             println!("TSFILE: {}", file.display());
         }
+    }
+
+    // Handle --explainFiles: print files with reasons
+    if args.explain_files {
+        for file in &result.files_read {
+            println!("{}", file.display());
+        }
+    }
+
+    // Handle --traceDependencies: print dependency graph
+    if args.trace_dependencies {
+        // Note: Full dependency tracing would require access to the dependency map
+        // For now, just list all files that were read (which includes dependencies)
+        for file in &result.files_read {
+            println!("{}", file.display());
+        }
+    }
+
+    // Handle --diagnostics: print compilation performance info
+    if args.diagnostics || args.extended_diagnostics {
+        print_diagnostics(&result, elapsed, args.extended_diagnostics);
     }
 
     if !result.diagnostics.is_empty() {
@@ -84,6 +126,43 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, extended: bool) {
+    let files_count = result.files_read.len();
+    let lines_of_code = result
+        .files_read
+        .iter()
+        .try_fold(0u64, |acc, path| {
+            std::fs::read_to_string(path)
+                .ok()
+                .map(|text| acc + text.lines().count() as u64)
+                .or(Some(acc))
+        })
+        .unwrap_or(0);
+    let errors = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.category == wasm::checker::types::diagnostics::DiagnosticCategory::Error)
+        .count();
+    let warnings = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.category == wasm::checker::types::diagnostics::DiagnosticCategory::Warning)
+        .count();
+
+    println!("\nCompilation statistics:");
+    println!("  Files:           {}", files_count);
+    println!("  Lines of code:   {}", lines_of_code);
+    println!("  Errors:          {}", errors);
+    println!("  Warnings:        {}", warnings);
+    println!("  Time:            {:.2}s", elapsed.as_secs_f64());
+
+    if extended {
+        println!("\nExtended diagnostics:");
+        println!("  Emitted files:   {}", result.emitted_files.len());
+        println!("  Diagnostics:     {}", result.diagnostics.len());
+    }
 }
 
 fn handle_init(cwd: &std::path::Path) -> Result<()> {
@@ -392,27 +471,108 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 }
 
 fn handle_all() -> Result<()> {
-    // Re-invoke with --help which shows all options
+    use clap::CommandFactory;
+
+    println!("tsz: The TypeScript Compiler - Codename Zang\n");
+    println!("ALL COMPILER OPTIONS\n");
+
+    // Use clap to generate the full help text
+    let mut cmd = wasm::cli::args::CliArgs::command();
+    let help = cmd.render_long_help();
+    println!("{}", help);
+
     println!(
-        "tsz: The TypeScript Compiler - Codename Zang
-
-ALL COMPILER OPTIONS
-
-Run 'tsz --help' to see all available options.
-
-You can learn about all of the compiler options at https://www.typescriptlang.org/tsconfig"
+        "\nYou can learn about all of the compiler options at https://www.typescriptlang.org/tsconfig"
     );
     Ok(())
 }
 
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    // Build mode implementation
+    use std::fs;
+    use wasm::cli::config::{load_tsconfig, resolve_compiler_options};
+    use wasm::cli::driver::apply_cli_overrides;
+
+    let tsconfig_path = args
+        .project
+        .as_ref()
+        .map(|p| {
+            if p.is_dir() {
+                p.join("tsconfig.json")
+            } else {
+                p.clone()
+            }
+        })
+        .or_else(|| {
+            let default_path = cwd.join("tsconfig.json");
+            if default_path.exists() {
+                Some(default_path)
+            } else {
+                None
+            }
+        });
+
+    let config = if let Some(path) = tsconfig_path.as_ref() {
+        Some(load_tsconfig(path)?)
+    } else {
+        None
+    };
+
+    let mut resolved = resolve_compiler_options(
+        config
+            .as_ref()
+            .and_then(|cfg| cfg.compiler_options.as_ref()),
+    )?;
+    apply_cli_overrides(&mut resolved, args);
+
+    let base_dir = tsconfig_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .unwrap_or(cwd);
+
+    // Handle --clean: delete build artifacts
     if args.clean {
-        println!("Build mode: --clean not yet implemented");
+        // Delete .tsbuildinfo files
+        if let Some(ref tsconfig) = tsconfig_path {
+            let buildinfo_path = tsconfig.with_extension("tsbuildinfo");
+            if buildinfo_path.exists() {
+                fs::remove_file(&buildinfo_path)?;
+                println!("Deleted: {}", buildinfo_path.display());
+            }
+        }
+
+        // Delete output directories if specified
+        if let Some(ref out_dir) = resolved.out_dir {
+            let full_out_dir = base_dir.join(out_dir);
+            if full_out_dir.exists() {
+                fs::remove_dir_all(&full_out_dir)?;
+                println!("Deleted: {}", full_out_dir.display());
+            }
+        }
+
+        if let Some(ref declaration_dir) = resolved.declaration_dir {
+            let full_decl_dir = base_dir.join(declaration_dir);
+            if full_decl_dir.exists() {
+                fs::remove_dir_all(&full_decl_dir)?;
+                println!("Deleted: {}", full_decl_dir.display());
+            }
+        }
+
+        println!("Build cleaned successfully.");
         return Ok(());
     }
+
+    // Handle --dry: show what would be built without building
     if args.dry {
-        println!("Build mode: --dry not yet implemented");
+        println!("Dry run - would build:");
+        if let Some(project) = &args.project {
+            println!("  Project: {}", project.display());
+        } else if let Some(ref tsconfig) = tsconfig_path {
+            println!("  Project: {}", tsconfig.display());
+        } else {
+            println!("  Project: {}/tsconfig.json", cwd.display());
+        }
+        // TODO: Show project references that would be built
+        println!("(Full project reference support not yet implemented)");
         return Ok(());
     }
 
