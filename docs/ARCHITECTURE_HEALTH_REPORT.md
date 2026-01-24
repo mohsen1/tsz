@@ -236,9 +236,62 @@ pub trait SubtypeTracer {
 
 ## 6. Recommendations
 
+### 🎯 Strategic Pivot: Accelerated Extraction (2026-01-24)
+
+**New Approach**: Shift from incremental documentation to accelerated code extraction
+
+**Why This Change?**
+- Documentation phase (commits 61-79) successfully documented 60+ functions
+- Current rate: ~8.3 lines/commit is too slow (660 lines / 79 commits)
+- At current rate: Need ~3,200 more commits to reach target
+- **Solution**: Extract 500-1,000 lines per commit (60-120x faster)
+
+**First Target: Class/Interface Type Checking**
+- **Cohesive domain**: All related to object-oriented type checking
+- **Clear boundaries**: Well-defined interfaces with rest of type checker
+- **Large extractable block**: ~1,500-2,200 lines in 2-3 commits
+- **Minimal dependencies**: Mostly self-contained
+
+**Extraction Modules to Create**:
+1. `checker/class_checker.rs` (~800 lines)
+   - `get_type_of_class_declaration`
+   - `check_class_heritage_compatibility`
+   - `check_class_member_accessibility`
+   - Related class checking functions
+
+2. `checker/interface_checker.rs` (~600 lines)
+   - `get_type_of_interface_declaration`
+   - `check_interface_heritage_compatibility`
+   - `merge_interface_declarations`
+   - Related interface checking functions
+
+3. `checker/inheritance.rs` or shared utilities (~400 lines)
+   - `check_property_inheritance_compatibility`
+   - `check_index_signature_compatibility`
+   - Shared inheritance logic
+
+**Expected Impact**:
+- `checker/state.rs`: 28,500 → ~26,500 lines in 2-3 commits
+- Establish pattern for accelerated extraction
+- Enable continued large-scale extraction
+
+**Documentation Strategy**:
+- Doc comments on public APIs only
+- Do NOT make documentation the primary goal
+- Focus on code reduction and modularity
+
+---
+
 ### 6.1 Immediate Priorities (Next 2-4 Weeks)
 
-1. **Fix Missing Error Detection** 🔴 **CRITICAL**
+1. **🎯 Accelerated Extraction: Class/Interface Checking** 🔴 **CRITICAL**
+   - **Focus**: Extract 1,500-2,200 lines to new modules
+   - **Impact**: Establish accelerated extraction pattern, reduce god object
+   - **Files**: Create `checker/class_checker.rs`, `checker/interface_checker.rs`
+   - **Target**: 500-1,000 lines per commit (not ~8 lines/commit)
+   - **Reference**: This document, "Strategic Pivot" section above
+
+2. **Fix Missing Error Detection** 🔴 **CRITICAL**
    - **Focus**: TS2304/TS2318/TS2307 (symbol resolution, global types, modules)
    - **Impact**: Eliminates "Any poisoning", unlocks real type errors
    - **Files**: `src/module_resolver.rs`, `src/checker/state.rs`, `src/binder/`
