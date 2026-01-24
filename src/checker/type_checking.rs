@@ -6303,4 +6303,30 @@ impl<'a> CheckerState<'a> {
 
         false
     }
+
+    // =========================================================================
+    // Section 32: Context and Expression Utilities
+    // =========================================================================
+
+    /// Get the current `this` type from the type stack.
+    /// Returns None if there's no current `this` type in scope.
+    pub(crate) fn current_this_type(&self) -> Option<TypeId> {
+        self.ctx.this_type_stack.last().copied()
+    }
+
+    /// Check if a node is a `super` expression.
+    pub(crate) fn is_super_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::SuperKeyword as u16
+    }
+
+    /// Check if a call expression is a dynamic import (`import('...')`).
+    pub(crate) fn is_dynamic_import(&self, call: &crate::parser::node::CallExprData) -> bool {
+        let Some(node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        node.kind == SyntaxKind::ImportKeyword as u16
+    }
 }

@@ -10073,30 +10073,6 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
-    pub(crate) fn current_this_type(&self) -> Option<TypeId> {
-        self.ctx.this_type_stack.last().copied()
-    }
-
-    /// Check if a node is a `super` expression.
-    pub(crate) fn is_super_expression(&self, idx: NodeIndex) -> bool {
-        use crate::scanner::SyntaxKind;
-        if let Some(node) = self.ctx.arena.get(idx) {
-            node.kind == SyntaxKind::SuperKeyword as u16
-        } else {
-            false
-        }
-    }
-
-    /// Check if a call expression is a dynamic import (`import('...')`).
-    pub(crate) fn is_dynamic_import(&self, call: &crate::parser::node::CallExprData) -> bool {
-        use crate::scanner::SyntaxKind;
-        if let Some(node) = self.ctx.arena.get(call.expression) {
-            node.kind == SyntaxKind::ImportKeyword as u16
-        } else {
-            false
-        }
-    }
-
     /// Validate explicit type arguments against their constraints for call expressions.
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
     pub(crate) fn validate_call_type_arguments(
