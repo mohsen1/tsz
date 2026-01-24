@@ -477,17 +477,60 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Push an expected return type onto the stack (when entering a function).
+    /// Push an expected return type onto the stack when entering a function.
+    ///
+    /// This function is called when entering a function to track the expected
+    /// return type. The stack is used to validate that all return statements
+    /// are compatible with the function's declared return type.
+    ///
+    /// **Return Type Stack:**
+    /// - Functions can be nested (inner functions, closures)
+    /// - Stack tracks return type for each nesting level
+    /// - Pushed when entering function, popped when exiting
+    ///
+    /// **Use Cases:**
+    /// - Function declarations: `function foo(): string {}`
+    /// - Function expressions: `const f = function(): number {}`
+    /// - Arrow functions: `const f = (): boolean => {}`
+    /// - Method declarations
+    ///
+    /// **Validation:**
+    /// - Return statements are checked against the top of stack
+    /// - Enables early error detection for mismatched return types
+    ///
     pub fn push_return_type(&mut self, return_type: TypeId) {
         self.ctx.push_return_type(return_type);
     }
 
-    /// Pop an expected return type from the stack (when exiting a function).
+    /// Pop an expected return type from the stack when exiting a function.
+    ///
+    /// This function is called when exiting a function to remove the expected
+    /// return type from the stack. This restores the previous return type for
+    /// nested functions.
+    ///
+    /// **Stack Management:**
+    /// - Pops the most recently pushed return type
+    /// - Restores previous return type (for nested functions)
+    /// - Must be called once per push (balanced push/pop)
+    ///
     pub fn pop_return_type(&mut self) {
         self.ctx.pop_return_type();
     }
 
-    /// Get the current expected return type (if in a function).
+    /// Get the current expected return type if in a function.
+    ///
+    /// Returns the return type at the top of the return type stack.
+    /// Returns None if not inside a function (stack is empty).
+    ///
+    /// **Use Cases:**
+    /// - Validating return statements: `return value;`
+    /// - Checking function body completeness
+    /// - Contextual typing for return expressions
+    ///
+    /// **Nesting:**
+    /// - Returns the innermost function's return type
+    /// - Handles nested functions and closures correctly
+    ///
     pub fn current_return_type(&self) -> Option<TypeId> {
         self.ctx.current_return_type()
     }
