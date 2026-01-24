@@ -19,7 +19,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 | `parser/state.rs` | 10,762 | 10,762 | 0% | ⏳ Pending | P3 (low priority) |
 | `solver/evaluate.rs` | 5,784 | 5,784 | 0% | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 5,000+ | 1,778 | 64% | ✅ **COMPLETE** | P1 (DONE) |
-| `solver/operations.rs` | 3,416 | 3,416 | 0% | ⏳ Pending | P2 (after checker) |
+| `solver/operations.rs` | 3,538 | **3,228** | **310 (9%)** | 🚧 In Progress | P2 (after checker) |
 | `emitter/mod.rs` | 2,040 | 2,040 | 0% | ⏳ Pending | P3 (acceptable) |
 
 **Overall Progress**: 12,749 lines extracted from checker/state.rs, reducing it by 48.6%
@@ -835,7 +835,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 ## Priority 4: solver/operations.rs
 
 **Goal**: Reduce from 3,538 lines to ~200 lines (coordinator)
-**Status**: 🚧 In Progress (Step 14 analysis complete)
+**Status**: 🚧 In Progress (Step 14.1 complete)
 
 ### Step 14: solver/operations.rs Decomposition
 
@@ -949,6 +949,50 @@ solver/
 - Update ARCHITECTURE_WORK_SUMMARY.md with progress
 - Update line count metrics regularly
 - Create deep analysis reports for commit batches
+
+---
+
+## Recent Work: Step 14.1 - Binary Operations (2026-01-24)
+
+### Overview
+Extracted binary operation evaluation from `operations.rs` to `binary_ops.rs`, reducing operations.rs from 3,538 to 3,228 lines (-310 lines).
+
+### Step 14.1: Extract BinaryOpEvaluator ✅ COMPLETE
+
+**Lines Extracted**: ~330 lines
+**New Module**: `src/solver/binary_ops.rs` (304 lines)
+**operations.rs Reduction**: 3,538 → 3,228 lines (-310 lines, -9%)
+
+**Functions Extracted**:
+- `BinaryOpEvaluator` struct and impl
+- `BinaryOpResult` enum
+- `PrimitiveClass` enum
+- `evaluate()` - Main binary operation evaluation
+- `evaluate_plus()` - String concatenation and addition
+- `evaluate_arithmetic()` -, *, /, %, ** operations
+- `evaluate_comparison()` - Comparison operators
+- `evaluate_logical()` - && and || operators
+- `is_arithmetic_operand()` - Arithmetic operand validation (public)
+- `is_number_like()` - Number type predicate
+- `is_string_like()` - String type predicate
+- `is_bigint_like()` - BigInt type predicate
+- `has_overlap()` - Type overlap detection (public)
+- `primitive_classes_disjoint()` - Disjoint primitive check
+- `primitive_class()` - Primitive class getter
+
+**Benefits**:
+- Better separation of concerns
+- Binary operation logic is independently testable
+- Reduced god object size by ~9%
+- operations.rs is now more focused on call resolution and property access
+
+**Commit**: `c0fa9cd8f` - "refactor(solver): Extract binary_ops.rs from operations.rs (Step 14.1)"
+
+### Next Steps
+
+- Step 14.2: Extract `PropertyAccessEvaluator` → `solver/property_access.rs` (~1,300 lines)
+- Step 14.3: Extract `CallEvaluator` → `solver/call_resolution.rs` (~1,700 lines)
+- Step 14.4: Update documentation with final metrics
 
 ---
 
