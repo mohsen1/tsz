@@ -220,4 +220,115 @@ impl<'a> CheckerState<'a> {
         // Return ANY for unknown binary operand types to prevent cascading errors
         TypeId::ANY
     }
+
+    // =========================================================================
+    // Member and Declaration Validation
+    // =========================================================================
+
+    /// Check a computed property name for type errors.
+    ///
+    /// This function validates that the expression used for a computed
+    /// property name is well-formed. It computes the type of the expression
+    /// to ensure any type errors are reported.
+    pub(crate) fn check_computed_property_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.kind != crate::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return;
+        }
+
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return;
+        };
+
+        let _ = self.get_type_of_node(computed.expression);
+    }
+
+    /// Check a class member name for computed property validation.
+    ///
+    /// This dispatches to check_computed_property_name for properties,
+    /// methods, and accessors that use computed names.
+    pub(crate) fn check_class_member_name(&mut self, member_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+
+        match node.kind {
+            k if k == crate::parser::syntax_kind_ext::PROPERTY_DECLARATION => {
+                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+                    self.check_computed_property_name(prop.name);
+                }
+            }
+            k if k == crate::parser::syntax_kind_ext::METHOD_DECLARATION => {
+                if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    self.check_computed_property_name(method.name);
+                }
+            }
+            k if k == crate::parser::syntax_kind_ext::GET_ACCESSOR
+                || k == crate::parser::syntax_kind_ext::SET_ACCESSOR =>
+            {
+                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    self.check_computed_property_name(accessor.name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check for duplicate enum member names.
+    ///
+    /// This function validates that all enum members have unique names.
+    /// If duplicates are found, it emits TS2308 errors for each duplicate.
+    ///
+    /// ## Duplicate Detection:
+    /// - Collects all member names into a HashSet
+    /// - Reports error for each name that appears more than once
+    /// - Error TS2308: "Duplicate identifier '{name}'"
+    pub(crate) fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex) {
+        use crate::checker::types::diagnostics::{
+            diagnostic_codes, diagnostic_messages, format_message,
+        };
+
+        let Some(enum_node) = self.ctx.arena.get(enum_idx) else {
+            return;
+        };
+        let Some(enum_decl) = self.ctx.arena.get_enum(enum_node) else {
+            return;
+        };
+
+        let mut seen_names = rustc_hash::FxHashSet::default();
+        for &member_idx in &enum_decl.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+                continue;
+            };
+
+            // Get the member name
+            let Some(name_node) = self.ctx.arena.get(member.name) else {
+                continue;
+            };
+            let name_text = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                ident.escaped_text.clone()
+            } else {
+                continue;
+            };
+
+            // Check for duplicate
+            if seen_names.contains(&name_text) {
+                let message =
+                    format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name_text]);
+                self.error_at_node(
+                    member.name,
+                    &message,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                );
+            } else {
+                seen_names.insert(name_text);
+            }
+        }
+    }
 }
