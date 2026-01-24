@@ -6649,22 +6649,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
-        match level {
-            Some(MemberAccessLevel::Private) => 2,
-            Some(MemberAccessLevel::Protected) => 1,
-            None => 0,
-        }
-    }
-
-    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
-        match level {
-            Some(MemberAccessLevel::Private) => "private",
-            Some(MemberAccessLevel::Protected) => "protected",
-            None => "public",
-        }
-    }
-
     fn constructor_access_level(
         &self,
         type_id: TypeId,
