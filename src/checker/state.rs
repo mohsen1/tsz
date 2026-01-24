@@ -4531,65 +4531,8 @@ impl<'a> CheckerState<'a> {
     /// - `let y = "hello"` infers type `string` (widened)
     /// - This function enables the const behavior
     ///
-    pub(crate) fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
-        use crate::scanner::SyntaxKind;
 
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
-
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                let lit = self.ctx.arena.get_literal(node)?;
-                Some(self.ctx.types.literal_string(&lit.text))
-            }
-            k if k == SyntaxKind::NumericLiteral as u16 => {
-                let lit = self.ctx.arena.get_literal(node)?;
-                lit.value.map(|value| self.ctx.types.literal_number(value))
-            }
-            k if k == SyntaxKind::TrueKeyword as u16 => Some(self.ctx.types.literal_boolean(true)),
-            k if k == SyntaxKind::FalseKeyword as u16 => {
-                Some(self.ctx.types.literal_boolean(false))
-            }
-            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                let unary = self.ctx.arena.get_unary_expr(node)?;
-                let op = unary.operator;
-                if op != SyntaxKind::MinusToken as u16 && op != SyntaxKind::PlusToken as u16 {
-                    return None;
-                }
-                let operand = unary.operand;
-                let Some(operand_node) = self.ctx.arena.get(operand) else {
-                    return None;
-                };
-                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
-                    return None;
-                }
-                let lit = self.ctx.arena.get_literal(operand_node)?;
-                let value = lit.value?;
-                let value = if op == SyntaxKind::MinusToken as u16 {
-                    -value
-                } else {
-                    value
-                };
-                Some(self.ctx.types.literal_number(value))
-            }
-            _ => None,
-        }
-    }
-
-    pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
-        let ctx_type = self.ctx.contextual_type?;
-        if self.contextual_type_allows_literal(ctx_type, literal_type) {
-            Some(literal_type)
-        } else {
-            None
-        }
-    }
-
-    fn contextual_type_allows_literal(&mut self, ctx_type: TypeId, literal_type: TypeId) -> bool {
+    pub(crate) fn contextual_type_allows_literal(&mut self, ctx_type: TypeId, literal_type: TypeId) -> bool {
         let mut visited = FxHashSet::default();
         self.contextual_type_allows_literal_inner(ctx_type, literal_type, &mut visited)
     }
