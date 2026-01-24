@@ -17945,21 +17945,19 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-
-// ============================================================================
-// Iterable/Iterator Type Checking Methods
-// ============================================================================
-// The following methods have been extracted to src/checker/iterable_checker.rs:
-// - is_iterable_type
-// - is_async_iterable_type
-// - for_of_element_type
-// - check_for_of_iterability
-// - check_spread_iterability
-//
-// These methods are now provided via a separate impl block in iterable_checker.rs
-// as part of Phase 2 architecture refactoring to break up the state.rs god object.
-// ============================================================================
-
+    // ============================================================================
+    // Iterable/Iterator Type Checking Methods
+    // ============================================================================
+    // The following methods have been extracted to src/checker/iterable_checker.rs:
+    // - is_iterable_type
+    // - is_async_iterable_type
+    // - for_of_element_type
+    // - check_for_of_iterability
+    // - check_spread_iterability
+    //
+    // These methods are now provided via a separate impl block in iterable_checker.rs
+    // as part of Phase 2 architecture refactoring to break up the state.rs god object.
+    // ============================================================================
 
     /// Assign the inferred loop-variable type for `for-in` / `for-of` initializers.
     ///
@@ -19202,11 +19200,12 @@ impl<'a> CheckerState<'a> {
         index_expr: NodeIndex,
         index_type: TypeId,
     ) -> Option<String> {
+        // First check for literal string/number properties that are readonly
         if let Some(name) = self.get_literal_string_from_node(index_expr) {
             if self.is_property_readonly(object_type, &name) {
                 return Some(name);
             }
-            return None;
+            // Don't return yet - the literal might access a readonly index signature
         }
 
         if let Some(index) = self.get_literal_index_from_node(index_expr) {
@@ -19214,7 +19213,7 @@ impl<'a> CheckerState<'a> {
             if self.is_property_readonly(object_type, &name) {
                 return Some(name);
             }
-            return None;
+            // Don't return yet - the literal might access a readonly index signature
         }
 
         if let Some((string_keys, number_keys)) = self.get_literal_key_union_from_type(index_type) {
@@ -19231,9 +19230,10 @@ impl<'a> CheckerState<'a> {
                     return Some(name);
                 }
             }
-            return None;
+            // Don't return yet - check for readonly index signatures
         }
 
+        // Finally check for readonly index signatures
         if let Some((wants_string, wants_number)) = self.get_index_key_kind(index_type)
             && self.is_readonly_index_signature(object_type, wants_string, wants_number)
         {

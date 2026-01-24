@@ -13,7 +13,7 @@
 
 use crate::checker::state::CheckerState;
 use crate::parser::NodeIndex;
-use crate::solver::TypeId;
+use crate::solver::{TypeId, TypeKey};
 
 // =============================================================================
 // Type Computation Methods
@@ -276,102 +276,9 @@ impl<'a> CheckerState<'a> {
     // Type Construction Utilities
     // =========================================================================
 
-    /// Create a union type from multiple types.
-    ///
-    /// This is a convenience wrapper that automatically normalizes:
-    /// - Flattens nested unions
-    /// - Deduplicates members
-    /// - Sorts for canonical representation
-    ///
-    /// ## Example:
-    /// ```typescript
-    /// // union([number, string, number]) => number | string
-    /// ```
-    pub fn get_union_type(&self, types: Vec<TypeId>) -> TypeId {
-        self.ctx.types.union(types)
-    }
-
-    /// Create an intersection type from multiple types.
-    ///
-    /// This is a convenience wrapper that automatically normalizes:
-    /// - Flattens nested intersections
-    /// - Deduplicates members
-    /// - Sorts for canonical representation
-    ///
-    /// ## Example:
-    /// ```typescript
-    /// // intersection([{ name: string }, { age: number }])
-    /// // => { name: string } & { age: number }
-    /// ```
-    pub fn get_intersection_type(&self, types: Vec<TypeId>) -> TypeId {
-        self.ctx.types.intersection(types)
-    }
-
-    /// Check if a type is a subtype of another type.
-    ///
-    /// This is a convenience wrapper around `is_subtype_of`.
-    ///
-    /// ## Stricter than Assignability:
-    /// Subtyping is stricter than assignability and uses coinductive semantics
-    /// for recursive types.
-    pub fn check_is_subtype(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.is_subtype_of(source, target)
-    }
-
-    /// Get the string representation of a type.
-    ///
-    /// This is a convenience wrapper for type display in error messages.
-    pub fn type_to_string(&self, ty: TypeId) -> String {
-        self.format_type(ty)
-    }
-
-    // =========================================================================
-    // Type Narrowing Utilities
-    // =========================================================================
-
-    /// Narrow a type by a typeof guard.
-    ///
-    /// This is a convenience wrapper around `narrow_by_typeof` that provides
-    /// cleaner access to type narrowing functionality.
-    ///
-    /// ## Example:
-    /// ```typescript
-    /// // typeof x === "string" narrows string | number to string
-    /// ```
-    pub fn narrow_by_typeof(&self, source: TypeId, typeof_result: &str) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_by_typeof(source, typeof_result)
-    }
-
-    /// Narrow a type to include only members assignable to target.
-    ///
-    /// This is a convenience wrapper around `narrow_to_type` for type narrowing.
-    pub fn narrow_to_type(&self, source: TypeId, target: TypeId) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_to_type(source, target)
-    }
-
-    /// Narrow a type to exclude members assignable to a specific type.
-    ///
-    /// This is a convenience wrapper around `narrow_excluding_type`.
-    pub fn narrow_excluding_type(&self, source: TypeId, excluded: TypeId) -> TypeId {
-        use crate::solver::NarrowingContext;
-        let ctx = NarrowingContext::new(self.ctx.types);
-        ctx.narrow_excluding_type(source, excluded)
-    }
-
     // =========================================================================
     // Type Manipulation Utilities
     // =========================================================================
-
-    /// Create a readonly wrapper type.
-    ///
-    /// Wraps a type as readonly, used for type checking of readonly properties.
-    pub fn make_readonly(&self, ty: TypeId) -> TypeId {
-        self.ctx.types.readonly(ty)
-    }
 
     /// Create an array type from an element type.
     ///
@@ -384,7 +291,17 @@ impl<'a> CheckerState<'a> {
     ///
     /// Creates a type representing a tuple with the given elements.
     pub fn make_tuple_type(&self, elem_types: Vec<TypeId>) -> TypeId {
-        self.ctx.types.tuple(elem_types)
+        use crate::solver::TupleElement;
+        let elements: Vec<TupleElement> = elem_types
+            .into_iter()
+            .map(|type_id| TupleElement {
+                type_id,
+                name: None,
+                optional: false,
+                rest: false,
+            })
+            .collect();
+        self.ctx.types.tuple(elements)
     }
 
     /// Create a function type with parameters and return type.
@@ -395,15 +312,13 @@ impl<'a> CheckerState<'a> {
         params: Vec<crate::solver::ParamInfo>,
         return_type: TypeId,
     ) -> TypeId {
-        use crate::solver::{CallSignature, CallableShape, FunctionShape};
-        let sig = CallSignature {
-            params,
-            return_type,
-            this_type: None,
-            type_params: vec![],
-        };
+        use crate::solver::FunctionShape;
         let func_shape = FunctionShape {
-            signature: sig,
+            type_params: vec![],
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
             is_constructor: false,
             is_method: false,
         };
@@ -444,7 +359,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// Recursively checks if the type (or any nested type) is a type parameter.
     pub fn contains_type_parameter(&self, ty: TypeId) -> bool {
-        use crate::solver::TypeKey;
         let mut visited = std::collections::HashSet::new();
         self.contains_type_parameter_inner(ty, &mut visited)
     }
@@ -463,22 +377,30 @@ impl<'a> CheckerState<'a> {
             Some(TypeKey::Array(elem)) => self.contains_type_parameter_inner(elem, visited),
             Some(TypeKey::Tuple(list_id)) => {
                 let elems = self.ctx.types.tuple_list(list_id);
-                elems.iter().any(|e| self.contains_type_parameter_inner(e.type_id, visited))
+                elems
+                    .iter()
+                    .any(|e| self.contains_type_parameter_inner(e.type_id, visited))
             }
             Some(TypeKey::Union(list_id)) => {
                 let members = self.ctx.types.type_list(list_id);
-                members.iter().any(|m| self.contains_type_parameter_inner(*m, visited))
+                members
+                    .iter()
+                    .any(|m| self.contains_type_parameter_inner(*m, visited))
             }
             Some(TypeKey::Intersection(list_id)) => {
                 let members = self.ctx.types.type_list(list_id);
-                members.iter().any(|m| self.contains_type_parameter_inner(*m, visited))
+                members
+                    .iter()
+                    .any(|m| self.contains_type_parameter_inner(*m, visited))
             }
             Some(TypeKey::Application(app)) => {
                 let app = self.ctx.types.type_application(app);
                 if self.contains_type_parameter_inner(app.base, visited) {
                     return true;
                 }
-                app.args.iter().any(|a| self.contains_type_parameter_inner(*a, visited))
+                app.args
+                    .iter()
+                    .any(|a| self.contains_type_parameter_inner(*a, visited))
             }
             _ => false,
         }
@@ -495,12 +417,15 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns how deeply nested the type structure is (useful for complexity analysis).
     pub fn type_depth(&self, ty: TypeId) -> usize {
-        use crate::solver::TypeKey;
         let mut visited = std::collections::HashSet::new();
         self.type_depth_inner(ty, &mut visited)
     }
 
-    fn type_depth_inner(&self, ty: TypeId, visited: &mut std::collections::HashSet<TypeId>) -> usize {
+    fn type_depth_inner(
+        &self,
+        ty: TypeId,
+        visited: &mut std::collections::HashSet<TypeId>,
+    ) -> usize {
         if !visited.insert(ty) {
             return 0;
         }
@@ -515,7 +440,7 @@ impl<'a> CheckerState<'a> {
                     .max()
                     .unwrap_or(0)
             }
-            Some(TypeKey::Union(list_id) | Some(TypeKey::Intersection(list_id)) => {
+            Some(TypeKey::Union(list_id) | TypeKey::Intersection(list_id)) => {
                 let members = self.ctx.types.type_list(list_id);
                 1 + members
                     .iter()
