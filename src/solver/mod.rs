@@ -36,6 +36,7 @@ mod types;
 pub mod unsoundness_audit;
 mod utils;
 pub mod visitor;
+pub use visitor::*;
 
 pub(crate) use apparent::*;
 pub use binary_ops::*;
@@ -98,3 +99,5 @@ mod type_law_tests;
 mod types_tests;
 #[cfg(test)]
 mod union_tests;
+#[cfg(test)]
+mod visitor_tests;
