@@ -14,7 +14,7 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 
 | File | Lines | Status | Priority |
 |------|-------|--------|----------|
-| `checker/state.rs` | ~28,000 | 🚧 In Progress | **P1 (CURRENT)** |
+| `checker/state.rs` | ~19,584 | 🚧 In Progress | **P1 (CURRENT)** |
 | `parser/state.rs` | 10,762 | ⏳ Pending | P3 (low priority) |
 | `solver/evaluate.rs` | 5,784 | ⏳ Pending | P2 (after checker) |
 | `solver/subtype.rs` | 1,778 | ✅ **COMPLETE** | P1 (DONE) |
@@ -533,27 +533,37 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [ ] Run full test suite
 - [ ] Update documentation
 
-### Step 11: Extract Error Reporting (~1,000-1,500 lines)
+### Step 11: Extract Error Reporting (~1,000-1,500 lines) ✅ COMPLETE
 
 **Target**: Expand `checker/error_reporter.rs`
+**Result**: Moved ~1,450 lines from `state.rs` to `error_reporter.rs`
 
-#### 11.1 Identify Error Functions
-- [ ] List all `error_*` functions (~33 functions)
-- [ ] Count lines for each function
-- [ ] Verify ErrorHandler trait coverage
+#### 11.1 Identify Error Functions ✅
+- [x] List all `error_*` functions (~38 functions)
+- [x] Count lines for each function
+- [x] Verify ErrorHandler trait coverage
 
-#### 11.2 Extract Error Emission
-- [ ] Move all `error_*` functions to `error_reporter.rs`
-- [ ] Ensure trait implementation is complete
-- [ ] Run tests after each extraction
-- [ ] Commit after each extraction
+#### 11.2 Extract Error Emission ✅
+- [x] Move all `error_*` functions to `error_reporter.rs`
+- [x] Move supporting helper functions:
+  - `diagnose_assignment_failure`, `render_failure_reason`
+  - `find_similar_identifiers`, `calculate_string_similarity`, `levenshtein_distance`
+  - `create_diagnostic_collector`, `merge_diagnostics`
+- [x] Move `is_class_constructor_type` to `constructor_checker.rs`
+- [x] Run tests after extraction
+- [x] Commit changes
 
-#### 11.3 Update Module Structure
-- [ ] Ensure `checker/error_reporter.rs` has all error functions
-- [ ] Add `pub(crate)` visibility as needed
-- [ ] Update imports in `checker/state.rs`
-- [ ] Run full test suite
-- [ ] Update documentation
+#### 11.3 Update Module Structure ✅
+- [x] Ensure `checker/error_reporter.rs` has all error functions
+- [x] Add `pub(crate)` visibility for helper functions:
+  - `constructor_access_name`
+  - `constructor_accessibility_mismatch`
+  - `private_brand_mismatch_error`
+- [x] Update imports in `checker/state.rs`
+- [x] Run full test suite (4 pre-existing failures, not caused by this change)
+- [x] Update documentation
+
+**State.rs reduction**: 21,032 → 19,584 lines (~1,448 lines removed)
 
 ### Step 12: Create Orchestration Layer (~2,000 lines)
 
