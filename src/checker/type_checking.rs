@@ -5837,4 +5837,167 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    // =========================================================================
+    // Section 28: Expression Analysis Utilities
+    // =========================================================================
+
+    /// Skip parenthesized expressions to get to the underlying expression.
+    pub(crate) fn skip_parenthesized_expression(&self, mut expr_idx: NodeIndex) -> NodeIndex {
+        while let Some(node) = self.ctx.arena.get(expr_idx) {
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                break;
+            }
+            let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                break;
+            };
+            expr_idx = paren.expression;
+        }
+        expr_idx
+    }
+
+    /// Check if an expression is side-effect free.
+    /// Side-effect free expressions include literals, identifiers, and certain expressions.
+    pub(crate) fn is_side_effect_free(&self, expr_idx: NodeIndex) -> bool {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::RegularExpressionLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::UndefinedKeyword as u16 =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::TYPE_OF_EXPRESSION
+                || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                || k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                || k == syntax_kind_ext::JSX_ELEMENT =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                let Some(cond) = self.ctx.arena.get_conditional_expr(node) else {
+                    return false;
+                };
+                self.is_side_effect_free(cond.when_true)
+                    && self.is_side_effect_free(cond.when_false)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let Some(bin) = self.ctx.arena.get_binary_expr(node) else {
+                    return false;
+                };
+                if self.is_assignment_operator(bin.operator_token) {
+                    return false;
+                }
+                self.is_side_effect_free(bin.left) && self.is_side_effect_free(bin.right)
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                || k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION =>
+            {
+                let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+                    return false;
+                };
+                matches!(
+                    unary.operator,
+                    k if k == SyntaxKind::ExclamationToken as u16
+                        || k == SyntaxKind::PlusToken as u16
+                        || k == SyntaxKind::MinusToken as u16
+                        || k == SyntaxKind::TildeToken as u16
+                        || k == SyntaxKind::TypeOfKeyword as u16
+                )
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a comma expression is an indirect call (e.g., `(0, obj.method)()`).
+    /// This pattern is used to change the `this` binding for the call.
+    pub(crate) fn is_indirect_call(
+        &self,
+        comma_idx: NodeIndex,
+        left: NodeIndex,
+        right: NodeIndex,
+    ) -> bool {
+        let parent = self
+            .ctx
+            .arena
+            .get_extended(comma_idx)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        if parent.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return false;
+        }
+        if !self.is_numeric_literal_zero(left) {
+            return false;
+        }
+
+        let grand_parent = self
+            .ctx
+            .arena
+            .get_extended(parent)
+            .map(|ext| ext.parent)
+            .unwrap_or(NodeIndex::NONE);
+        if grand_parent.is_none() {
+            return false;
+        }
+        let Some(grand_node) = self.ctx.arena.get(grand_parent) else {
+            return false;
+        };
+
+        let is_indirect_target = if grand_node.kind == syntax_kind_ext::CALL_EXPRESSION {
+            if let Some(call) = self.ctx.arena.get_call_expr(grand_node) {
+                call.expression == parent
+            } else {
+                false
+            }
+        } else if grand_node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+            if let Some(tagged) = self.ctx.arena.get_tagged_template(grand_node) {
+                tagged.tag == parent
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !is_indirect_target {
+            return false;
+        }
+
+        if self.is_access_expression(right) {
+            return true;
+        }
+        let Some(right_node) = self.ctx.arena.get(right) else {
+            return false;
+        };
+        if right_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.ctx.arena.get_identifier(right_node) else {
+            return false;
+        };
+        ident.escaped_text == "eval"
+    }
 }
