@@ -4757,6 +4757,20 @@ impl<'a> CheckerState<'a> {
                         continue; // Interface merging is always allowed
                     }
 
+                    // Check for type alias merging - multiple type alias declarations are allowed
+                    let both_type_aliases = (decl_flags & symbol_flags::TYPE_ALIAS) != 0
+                        && (other_flags & symbol_flags::TYPE_ALIAS) != 0;
+                    if both_type_aliases {
+                        continue; // Type alias merging is always allowed
+                    }
+
+                    // Check for enum merging - multiple enum declarations are allowed
+                    let both_enums = (decl_flags & symbol_flags::ENUM) != 0
+                        && (other_flags & symbol_flags::ENUM) != 0;
+                    if both_enums {
+                        continue; // Enum merging is always allowed
+                    }
+
                     // Check for namespace merging - namespaces can merge with functions, classes, and each other
                     let decl_is_namespace = (decl_flags
                         & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
@@ -8172,6 +8186,15 @@ impl<'a> CheckerState<'a> {
         }
         if (flags & symbol_flags::REGULAR_ENUM) != 0 {
             return symbol_flags::REGULAR_ENUM_EXCLUDES;
+        }
+        if (flags & symbol_flags::CONST_ENUM) != 0 {
+            return symbol_flags::CONST_ENUM_EXCLUDES;
+        }
+        if (flags & symbol_flags::VALUE_MODULE) != 0 {
+            return symbol_flags::VALUE_MODULE_EXCLUDES;
+        }
+        if (flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+            return symbol_flags::NAMESPACE_MODULE_EXCLUDES;
         }
         if (flags & symbol_flags::GET_ACCESSOR) != 0 {
             return symbol_flags::GET_ACCESSOR_EXCLUDES;
