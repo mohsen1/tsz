@@ -116,6 +116,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if member == TypeId::ANY && source != TypeId::ANY {
                 continue;
             }
+            // Optimization: For literal sources, check if the primitive type is in the union
+            // This helps reduce false positives when a literal should match a union containing its primitive
+            if let TypeKey::Literal(literal) = source_key {
+                let primitive_type = match literal {
+                    LiteralValue::String(_) => TypeId::STRING,
+                    LiteralValue::Number(_) => TypeId::NUMBER,
+                    LiteralValue::BigInt(_) => TypeId::BIGINT,
+                    LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+                };
+                if member == primitive_type {
+                    return SubtypeResult::True;
+                }
+            }
+            // Optimization: For union sources, check if any member matches directly
+            // This can help reduce false positives when checking (A | B) <: (A | B | C)
+            if let TypeKey::Union(source_members) = source_key {
+                let source_members_list = self.interner.type_list(*source_members);
+                if source_members_list.iter().any(|&m| m == member) {
+                    return SubtypeResult::True;
+                }
+            }
             if self.check_subtype(source, member).is_true() {
                 return SubtypeResult::True;
             }
@@ -406,6 +427,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Check if source's constraint is a subtype of the target type parameter
                 if self.check_subtype(s_constraint, target).is_true() {
                     return SubtypeResult::True;
+                }
+            }
+            // Check if target has a constraint that source can satisfy
+            // This handles cases like T extends U where we're checking if T is assignable to something
+            if let Some(t_constraint) = t_info.constraint {
+                // If target has a constraint, check if source's type parameter is compatible
+                // This handles cases where source type parameter's constraint is compatible with target's constraint
+                if let Some(s_constraint) = s_info.constraint {
+                    if self.check_subtype(s_constraint, t_constraint).is_true() {
+                        return SubtypeResult::True;
+                    }
                 }
             }
             // Two different type parameters with independent constraints are not interchangeable
