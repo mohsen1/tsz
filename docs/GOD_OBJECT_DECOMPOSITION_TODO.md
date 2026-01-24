@@ -291,29 +291,24 @@ This document provides a step-by-step plan for decomposing the "Big 6" god objec
 - [x] Identify dependencies between functions
 - [x] Plan extraction order (least dependent first)
 
-**Identified Functions**:
-- `get_type_of_node` - Main entry point
-- `get_type_of_identifier` - ~1,183 lines (complex, defer)
-- `get_type_of_symbol` - ~700 lines
-- `get_type_of_conditional_expression` - ✅ **EXTRACTED** (18 lines → type_computation.rs)
-- `get_type_of_array_literal` - ~130 lines
-- `get_type_of_object_literal` - ~280 lines
-- `get_type_of_binary_expression` - ~150 lines
-- `get_type_of_variable_declaration` - ~50 lines
-- `get_type_of_call_expression` - ~900 lines (complex, defer)
-- `get_type_of_new_expression` - ~400 lines
-- `get_type_of_property_access_by_name` - ~50 lines
-- `get_type_of_private_property_access` - ~250 lines
-- `get_type_of_element_access` - ~200 lines
-- `get_type_of_prefix_unary` - ~40 lines
-- `get_type_of_template_expression` - ~30 lines
-- `get_type_of_super_keyword` - ~100 lines
-- `get_type_of_interface_member` - ~170 lines
-- `get_type_of_class_member` - ~40 lines
-- `get_type_of_interface_member_simple` - ~40 lines
-- `get_type_of_assignment_target` - ~80 lines
+#### 7.2 Extract Basic Type Computation ✅ IN PROGRESS
+- [x] `get_type_of_conditional_expression` (~18 lines) ✅ **EXTRACTED**
+- [x] `get_type_of_array_literal` (~131 lines) ✅ **EXTRACTED**
+- [x] `get_type_of_prefix_unary` (~37 lines) ✅ **EXTRACTED**
+- [x] `get_type_of_template_expression` (~27 lines) ✅ **EXTRACTED**
+- [x] `get_type_of_variable_declaration` (~29 lines) ✅ **EXTRACTED**
+- [ ] `get_type_of_binary_expression` (~150 lines)
+- [ ] `get_type_of_super_keyword` (~100 lines)
+- [ ] `get_type_of_property_access_by_name` (~50 lines)
+- [ ] `get_type_of_element_access` (~200 lines)
+- [ ] `get_type_of_assignment_target` (~80 lines)
 
-**Progress**: state.rs 26,217 → 26,197 lines (-20 lines, 1 function extracted)
+**Progress**: state.rs 26,217 → 25,964 lines (**-253 lines, 5 functions extracted**)
+- `get_type_of_conditional_expression` → type_computation.rs
+- `get_type_of_array_literal` → type_computation.rs
+- `get_type_of_prefix_unary` → type_computation.rs
+- `get_type_of_template_expression` → type_computation.rs
+- `get_type_of_variable_declaration` → type_computation.rs
 
 #### 7.2 Extract Basic Type Computation
 - [ ] Extract `get_type_of_literal` family (~200-300 lines)
