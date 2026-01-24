@@ -29012,6 +29012,92 @@ for (const x of tuple) {
     );
 }
 
+/// Test that array destructuring with non-iterable number type emits TS2488
+#[test]
+fn test_iterator_array_destructuring_number_emits_ts2488() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const num: number = 42;
+const [a, b] = num;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 1,
+        "Expected 1 TS2488 error for array destructuring of number. All codes: {:?}",
+        codes
+    );
+}
+
+/// Test that array destructuring with valid array type does not emit TS2488
+#[test]
+fn test_iterator_array_destructuring_array_no_error() {
+    use crate::binder::BinderState;
+    use crate::checker::state::CheckerState;
+    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::parser::ParserState;
+    use crate::solver::TypeInterner;
+
+    let source = r#"
+const arr: number[] = [1, 2, 3];
+const [a, b] = arr;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let ts2488_count = codes
+        .iter()
+        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_SYMBOL_ITERATOR)
+        .count();
+
+    assert_eq!(
+        ts2488_count, 0,
+        "Expected 0 TS2488 errors for array destructuring of array. All codes: {:?}",
+        codes
+    );
+}
+
 // =============================================================================
 // Async Iterator Protocol Tests (TS2504)
 // =============================================================================
