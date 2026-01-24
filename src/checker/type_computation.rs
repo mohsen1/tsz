@@ -24,6 +24,30 @@ impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
 
+    /// Get the type of a conditional expression (ternary operator).
+    ///
+    /// Computes the type of `condition ? whenTrue : whenFalse`.
+    /// Returns the union of the two branch types if they differ.
+    pub(crate) fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(cond) = self.ctx.arena.get_conditional_expr(node) else {
+            return TypeId::ERROR;
+        };
+
+        let when_true = self.get_type_of_node(cond.when_true);
+        let when_false = self.get_type_of_node(cond.when_false);
+
+        if when_true == when_false {
+            when_true
+        } else {
+            // Use TypeInterner's union method for automatic normalization
+            self.ctx.types.union(vec![when_true, when_false])
+        }
+    }
+
     /// Get the type of a node with a fallback.
     ///
     /// Returns the computed type, or the fallback if the computed type is ERROR.
