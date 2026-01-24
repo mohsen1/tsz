@@ -429,6 +429,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
             }
+            // Check if target has a constraint that source can satisfy
+            // This handles cases like T extends U where we're checking if T is assignable to something
+            if let Some(t_constraint) = t_info.constraint {
+                // If target has a constraint, check if source's type parameter is compatible
+                // This handles cases where source type parameter's constraint is compatible with target's constraint
+                if let Some(s_constraint) = s_info.constraint {
+                    if self.check_subtype(s_constraint, t_constraint).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
             // Two different type parameters with independent constraints are not interchangeable
             return SubtypeResult::False;
         }
