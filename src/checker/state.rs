@@ -731,8 +731,36 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_prefix_unary(idx)
             }
 
-            // Postfix unary expression - ++ and -- always return number
-            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => TypeId::NUMBER,
+            // Postfix unary expression - ++ and -- require numeric operand
+            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                    // Get operand type for validation
+                    let operand_type = self.get_type_of_node(unary.expression);
+
+                    // Check if operand is valid for increment/decrement
+                    use crate::solver::BinaryOpEvaluator;
+                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    let is_valid = evaluator.is_arithmetic_operand(operand_type);
+
+                    if !is_valid {
+                        // Emit TS2362 for invalid increment/decrement operand
+                        if let Some(loc) = self.get_source_location(unary.expression) {
+                            use crate::checker::types::diagnostics::{diagnostic_codes, Diagnostic};
+                            self.ctx.diagnostics.push(Diagnostic {
+                                code: diagnostic_codes::LEFT_HAND_SIDE_OF_ARITHMETIC_MUST_BE_NUMBER,
+                                category: DiagnosticCategory::Error,
+                                message_text: "The operand of an increment or decrement operator must be a variable or a property access.".to_string(),
+                                file: self.ctx.file_name.clone(),
+                                start: loc.start,
+                                length: loc.length(),
+                                related_information: Vec::new(),
+                            });
+                        }
+                    }
+                }
+
+                TypeId::NUMBER
+            }
 
             // typeof expression
             k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => TypeId::STRING,
