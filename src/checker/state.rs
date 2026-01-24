@@ -3860,6 +3860,61 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
+    /// Push type parameters into scope for generic type resolution.
+    ///
+    /// This is a critical function for handling generic types (classes, interfaces,
+    /// functions, type aliases). It makes type parameters available for use within
+    /// the generic type's body and returns information for later scope restoration.
+    ///
+    /// ## Two-Pass Algorithm:
+    /// 1. **First pass**: Adds all type parameters to scope WITHOUT constraints
+    ///    - This allows self-referential constraints like `T extends Box<T>`
+    ///    - Creates unconstrained TypeParameter entries
+    /// 2. **Second pass**: Resolves constraints and defaults with all params in scope
+    ///    - Now all type parameters are visible for constraint resolution
+    ///    - Updates the scope with constrained TypeParameter entries
+    ///
+    /// ## Returns:
+    /// - `Vec<TypeParamInfo>`: Type parameter info with constraints and defaults
+    /// - `Vec<(String, Option<TypeId>)>`: Restoration data for `pop_type_parameters`
+    ///
+    /// ## Constraint Validation:
+    /// - Emits TS2315 if constraint type is error
+    /// - Emits TS2314 if default doesn't satisfy constraint
+    /// - Uses UNKNOWN for invalid constraints
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Simple type parameter
+    /// function identity<T>(value: T): T { return value; }
+    /// // push_type_parameters adds T to scope
+    ///
+    /// // Type parameter with constraint
+    /// interface Comparable<T> {
+    ///   compare(other: T): number;
+    /// }
+    /// function max<T extends Comparable<T>>(a: T, b: T): T {
+    ///   // T is in scope with constraint Comparable<T>
+    ///   return a.compare(b) > 0 ? a : b;
+    /// }
+    ///
+    /// // Type parameter with default
+    /// interface Box<T = string> {
+    ///   value: T;
+    /// }
+    /// // T has default type string
+    ///
+    /// // Self-referential constraint (requires two-pass algorithm)
+    /// type Box<T extends Box<T>> = T;
+    /// // First pass: T added to scope unconstrained
+    /// // Second pass: Constraint Box<T> resolved (T now in scope)
+    ///
+    /// // Multiple type parameters
+    /// interface Map<K, V> {
+    ///   get(key: K): V | undefined;
+    ///   set(key: K, value: V): void;
+    /// }
+    /// ```
     fn push_type_parameters(
         &mut self,
         type_parameters: &Option<crate::parser::NodeList>,
@@ -14598,7 +14653,50 @@ impl<'a> CheckerState<'a> {
         env
     }
 
-    /// Get type parameters for a symbol (for generic type aliases and interfaces).
+    /// Get type parameters for a symbol (generic types).
+    ///
+    /// Extracts type parameter information for generic types (classes, interfaces,
+    /// type aliases). Used for populating the type environment and for generic
+    /// type instantiation.
+    ///
+    /// ## Symbol Types Handled:
+    /// - **Type Alias**: Extracts type parameters from type alias declaration
+    /// - **Interface**: Extracts type parameters from interface declaration
+    /// - **Class**: Extracts type parameters from class declaration
+    /// - **Other**: Returns empty vector (no type parameters)
+    ///
+    /// ## Cross-Arena Resolution:
+    /// - Handles symbols defined in other arenas (e.g., imported symbols)
+    /// - Creates a temporary CheckerState for the other arena
+    /// - Delegates type parameter extraction to the temporary checker
+    ///
+    /// ## Type Parameter Information:
+    /// - Returns Vec<TypeParamInfo> with parameter names and constraints
+    /// - Includes default type arguments if present
+    /// - Used by TypeEnvironment for generic type expansion
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // Type alias with type parameters
+    /// type Pair<T, U> = [T, U];
+    /// // get_type_params_for_symbol(Pair) → [T, U]
+    ///
+    /// // Interface with type parameters
+    /// interface Box<T> {
+    ///   value: T;
+    /// }
+    /// // get_type_params_for_symbol(Box) → [T]
+    ///
+    /// // Class with type parameters
+    /// class Container<T> {
+    ///   constructor(public item: T) {}
+    /// }
+    /// // get_type_params_for_symbol(Container) → [T]
+    ///
+    /// // Type parameters with constraints
+    /// interface SortedMap<K extends Comparable, V> {}
+    /// // get_type_params_for_symbol(SortedMap) → [K: Comparable, V]
+    /// ```
     fn get_type_params_for_symbol(
         &mut self,
         sym_id: SymbolId,
@@ -14690,7 +14788,40 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Count the number of required type parameters for a symbol.
-    /// Required type parameters are those without default values.
+    ///
+    /// A type parameter is "required" if it doesn't have a default value.
+    /// This is important for validating generic type usage and error messages.
+    ///
+    /// ## Required vs Optional:
+    /// - **Required**: Must be explicitly provided by the caller
+    /// - **Optional**: Has a default value, can be omitted
+    ///
+    /// ## Use Cases:
+    /// - Validating that enough type arguments are provided
+    /// - Error messages: "Expected X type arguments but got Y"
+    /// - Generic function/method overload resolution
+    ///
+    /// ## TypeScript Examples:
+    /// ```typescript
+    /// // All required
+    /// interface Pair<T, U> {}
+    /// // count_required_type_params(Pair) → 2
+    /// const x: Pair = {};  // ❌ Error: Expected 2 type arguments
+    /// const y: Pair<string, number> = {};  // ✅
+    ///
+    /// // One optional
+    /// interface Box<T = string> {}
+    /// // count_required_type_params(Box) → 0 (T has default)
+    /// const a: Box = {};  // ✅ T defaults to string
+    /// const b: Box<number> = {};  // ✅ Explicit number
+    ///
+    /// // Mixed required and optional
+    /// interface Map<K, V = any> {}
+    /// // count_required_type_params(Map) → 1 (K required, V optional)
+    /// const m1: Map<string> = {};  // ✅ K=string, V=any
+    /// const m2: Map<string, number> = {};  // ✅ Both specified
+    /// const m3: Map = {};  // ❌ K is required
+    /// ```
     fn count_required_type_params(&mut self, sym_id: SymbolId) -> usize {
         let type_params = self.get_type_params_for_symbol(sym_id);
         type_params.iter().filter(|p| p.default.is_none()).count()
